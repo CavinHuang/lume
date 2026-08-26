@@ -48,6 +48,27 @@ class StaticProvider implements LLMProvider {
   }
 }
 
+class ToolUseOnceProvider implements LLMProvider {
+  readonly apiType = "anthropic-messages" as const
+  calls = 0
+
+  async createMessage(_params: CreateMessageParams): Promise<CreateMessageResponse> {
+    this.calls += 1
+    if (this.calls === 1) {
+      return {
+        content: [{ type: "tool_use", id: "call-live-1", name: "MetaTool", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }
+    }
+    return {
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }
+  }
+}
+
 class ToolUseProvider implements LLMProvider {
   readonly apiType = "anthropic-messages" as const
 
@@ -1521,6 +1542,149 @@ describe("Agent session message uuid realignment (#363)", () => {
     // The surviving real messages keep their own uuids.
     expect(rebuilt[1]!.uuid).toBe("a-mid")
     expect(rebuilt[2]!.uuid).toBe("u-6")
+  })
+
+  test("rebuild path applies the same _meta whitelist as the live push path (#709 item 1)", () => {
+    const history = [
+      { role: "user", content: "question" },
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: "{}",
+          _meta: {
+            computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 3, app: "IDE" }, screenshotId: "s1" },
+            toolName: "mcp__cu__click",
+            error: { code: "permission_denied", retryable: false },
+          },
+        }],
+      },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history)
+
+    const toolResult = (rebuilt[1]!.content as any[])[0]!
+    // 白名单最小集合成立：非法/私有字段（error 等）不落持久轨，
+    // 台账事实被投影为校验后的形状（screenshotId 剥离）。
+    expect(toolResult._meta).toEqual({
+      computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 3, app: "IDE" } },
+      toolName: "mcp__cu__click",
+    })
+  })
+
+  test("rebuild path drops _meta entirely when nothing survives the whitelist (#709 item 1)", () => {
+    const history = [
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: "ok",
+          _meta: { error: { code: "invalid_input", retryable: true }, ephemeral: "trusted_runtime" },
+        }],
+      },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history)
+    expect((rebuilt[0]!.content as any)[0]._meta).toBeUndefined()
+  })
+
+  test("live push path persists the whitelisted _meta shape (#725 review R9)", async () => {
+    // MetaTool 须留在 eager 池：默认 tst 模式会把它延迟进 ToolSearch，引擎直调即 Unknown tool
+    const previousToolSearchMode = process.env.ENABLE_TOOL_SEARCH
+    process.env.ENABLE_TOOL_SEARCH = "standard"
+    const metaTool: ToolDefinition = {
+      name: "MetaTool",
+      description: "emits private _meta",
+      inputSchema: { type: "object", properties: {} },
+      async call() {
+        return {
+          type: "tool_result",
+          tool_use_id: "",
+          content: "ok",
+          _meta: {
+            computerUseAction: { actionId: "action-live", action: "click", phase: "verified", window: { id: 3, app: "IDE" }, screenshotId: "s1" },
+            error: { code: "permission_denied" },
+            ephemeral: "trusted_runtime",
+          },
+        }
+      },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [metaTool],
+      provider: new ToolUseOnceProvider(),
+      canUseTool: async () => ({ behavior: "allow" }),
+    })
+
+    try {
+      for await (const _event of agent.query("hello")) {
+        // drain
+      }
+
+      const persisted = (agent as any).sessionMessages as Array<{ role: string; content: unknown }>
+      const toolResultMessage = persisted.find((message) =>
+        message.role === "user"
+        && Array.isArray(message.content)
+        && (message.content as any[]).some((block) => block?.type === "tool_result"))
+      expect(toolResultMessage).toBeDefined()
+      const block = (toolResultMessage!.content as any[]).find((b) => b?.type === "tool_result")
+      expect(block).toBeDefined()
+      // live 推送与重建路径共享同一投影：私有字段不落持久轨，台账事实验形后存活
+      expect(block._meta).toEqual({
+        computerUseAction: { actionId: "action-live", action: "click", phase: "verified", window: { id: 3, app: "IDE" } },
+      })
+    } finally {
+      await agent.close()
+      if (previousToolSearchMode === undefined) delete process.env.ENABLE_TOOL_SEARCH
+      else process.env.ENABLE_TOOL_SEARCH = previousToolSearchMode
+    }
+  })
+
+  test("compaction breakers persist across runs on one Agent (#725 review R6/R7)", async () => {
+    // engine 每 run 新建：计数器不跨 run 线程化则熔断门结构性不可达。
+    // 第一次 run 恢复失败烧 1 次；第二次 run 必须带着累计值起步（N=2）。
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages" as const,
+      async createMessage() {
+        const error = new Error("prompt is too long") as Error & { status: number }
+        error.status = 400
+        throw error
+      },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      contextController: {
+        shouldAutoCompact: () => false,
+        microCompactMessages: ({ messages }) => messages,
+        async compactConversation({ messages }) {
+          return {
+            compacted: false,
+            compactedMessages: messages,
+            summary: "",
+            failureReason: "max_tokens" as const,
+          }
+        },
+      },
+    })
+
+    try {
+      // 第 4 次 run 熔断门已关（failures=3 不再尝试）：N 封顶在 3
+      for (const expectedAttempts of [1, 2, 3, 3]) {
+        let lastError = ""
+        for await (const event of agent.query(`turn ${expectedAttempts}`)) {
+          if (event.type === "result" && event.subtype === "error_during_execution") {
+            lastError = event.errors[0] ?? ""
+          }
+        }
+        expect(lastError).toContain(`auto-compaction recovery attempted ${expectedAttempts} time(s)`)
+      }
+    } finally {
+      await agent.close()
+    }
   })
 })
 
