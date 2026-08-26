@@ -440,7 +440,21 @@ export async function runAutomationJobNow(input: AutomationRunNowInput): Promise
   if (!job.enabled) {
     throw new Error("任务已禁用，无法执行");
   }
-  return executeJob(job, "manual");
+  // #586:受理即返回回执，不同步等待回合完成——真实任务普遍超 desktop 45s RPC
+  // 超时，同步等待必然报 timed out 而任务实际在跑；完成经既有
+  // automation:run-completed 推送（useAutomationListeners 收到后自动刷新）。
+  void executeJob(job, "manual").catch(() => undefined);
+  const now = Date.now();
+  return {
+    id: `run-now:${job.id}:${now}`,
+    jobId: job.id,
+    jobName: job.name,
+    trigger: "manual",
+    status: "running",
+    message: "已受理，正在后台执行",
+    startedAt: now,
+    finishedAt: now
+  };
 }
 
 export function resumeAutomationAfterInteraction(threadId: string): void {

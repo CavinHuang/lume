@@ -69,21 +69,27 @@ describe("automation-runner-service", () => {
     rmSync(tempConfigDir, { recursive: true, force: true });
   });
 
-  it("应支持立即执行并写入运行记录", async () => {
+  it("立即执行受理即返回 running 回执，真实运行记录异步落盘(#586)", async () => {
     const job = createAutomationJob({
       name: "手动执行任务",
       schedule: { type: "interval", intervalMs: 60_000 },
       prompt: "测试"
     });
 
-    const run = await runAutomationJobNow({ id: job.id });
-    expect(run.jobId).toBe(job.id);
-    expect(["success", "failed", "skipped"]).toContain(run.status);
-    expect(run.trigger).toBe("manual");
+    const receipt = await runAutomationJobNow({ id: job.id });
+    expect(receipt.jobId).toBe(job.id);
+    expect(receipt.status).toBe("running");
+    expect(receipt.trigger).toBe("manual");
 
-    const runs = listAutomationRuns({ jobId: job.id, limit: 10 });
+    // 受理即返回：真实记录由后台 executeJob 完成后写入，轮询等待落盘
+    let runs = listAutomationRuns({ jobId: job.id, limit: 10 });
+    for (let i = 0; i < 50 && runs.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      runs = listAutomationRuns({ jobId: job.id, limit: 10 });
+    }
     expect(runs.length).toBeGreaterThanOrEqual(1);
-    expect(runs[0]?.id).toBe(run.id);
+    expect(["success", "failed", "skipped"]).toContain(runs[0]?.status);
+    expect(runs[0]?.id).not.toBe(receipt.id);
   });
 
   it("运行记录文件应使用 jsonl 追加写入", async () => {
@@ -96,8 +102,15 @@ describe("automation-runner-service", () => {
     await runAutomationJobNow({ id: job.id });
 
     const runsPath = join(tempConfigDir, "automation", "runs", "all.jsonl");
+    let lines: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (existsSync(runsPath)) {
+        lines = readFileSync(runsPath, "utf-8").trim().split("\n");
+        if (lines.length >= 2) break;
+      }
+    }
     expect(existsSync(runsPath)).toBeTrue();
-    const lines = readFileSync(runsPath, "utf-8").trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
   });
 
