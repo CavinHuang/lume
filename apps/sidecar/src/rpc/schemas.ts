@@ -1819,3 +1819,55 @@ export const oauthAnswerParamsSchema = z.object({
 }).strict();
 
 export const oauthCancelParamsSchema = z.object({ sessionId: idSchema.optional() }).strict();
+
+// ---------------------------------------------------------------------------
+// #522 裸 cast 收口：此前八处跨进程入参绕过 validateInput 体系，破坏
+// "入参非法即 throw" 契约。逐处补 schema 后统一走 validateInput。
+// ---------------------------------------------------------------------------
+
+export const forkThreadInputSchema = z.object({
+  threadId: idSchema,
+  upToMessageId: idSchema,
+}).strict();
+
+export const routineGetByDateInputSchema = z.object({
+  date: z.string().min(1),
+}).strict();
+
+export const routineTriggerEntryInputSchema = z.object({
+  entryId: z.string().min(1),
+}).strict();
+
+export const testSearchBackendInputSchema = z.object({
+  provider: z.enum(["guanlan", "exa", "tavily", "brave", "duckduckgo", "pipellm", "zhipu", "bing"]),
+  apiKey: z.string().optional(),
+}).strict();
+
+export const githubReleaseListOptionsSchema = z.object({
+  perPage: z.number().int().positive().optional(),
+  page: z.number().int().positive().optional(),
+  includePrerelease: z.boolean().optional(),
+}).strict();
+
+export const agentGenerateTitleInputSchema = z.object({
+  sourceText: z.string().optional(),
+  userMessage: z.string().optional(),
+  modelRef: z.string().optional(),
+  channelId: z.string().optional(),
+  modelId: z.string().optional(),
+}).strict();
+
+export const agentWelcomeSuggestionInputSchema = z.object({
+  workspaceSlug: z.string().optional(),
+  workspaceName: z.string().optional(),
+}).strict();
+
+export const desktopAssistantSettingsInputSchema = z.object({
+  enabled: z.boolean(),
+  allowedApps: z.array(z.string()),
+  retentionHours: z.number(),
+  maxStorageBytes: z.number(),
+  proactiveEnabled: z.boolean().optional(),
+  notificationsEnabled: z.boolean().optional(),
+  dailyWrapEnabled: z.boolean().optional(),
+});

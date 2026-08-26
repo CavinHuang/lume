@@ -9,7 +9,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, toLumeRpcErrorShape } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
@@ -392,10 +392,7 @@ async function handleRpcLine(line: string): Promise<void> {
     });
     writeResponse({
       id: payload.id,
-      error: {
-        code: "E_RPC",
-        message: error instanceof Error ? error.message : "Unknown sidecar error"
-      }
+      error: toLumeRpcErrorShape(error)
     });
   }
 }

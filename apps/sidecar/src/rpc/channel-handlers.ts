@@ -1,5 +1,5 @@
 import { CHANNEL_IPC_CHANNELS } from "@lume/shared";
-import type { ChannelCreateInput, ChannelUpdateInput, FetchModelsInput } from "@lume/shared";
+import type { FetchModelsInput } from "@lume/shared";
 import {
   createChannel,
   decryptApiKey,
@@ -35,10 +35,10 @@ export function createChannelHandlers(): Record<string, RpcHandler> {
   return {
     [CHANNEL_IPC_CHANNELS.LIST]: async () => listChannels(),
     [CHANNEL_IPC_CHANNELS.CREATE]: async (params) =>
-      createChannel(validateInput(channelCreateInputSchema, params, CHANNEL_IPC_CHANNELS.CREATE) as ChannelCreateInput),
+      createChannel(validateInput(channelCreateInputSchema, params, CHANNEL_IPC_CHANNELS.CREATE)),
     [CHANNEL_IPC_CHANNELS.UPDATE]: async (params) => {
       const input = validateInput(channelUpdateParamsSchema, params, CHANNEL_IPC_CHANNELS.UPDATE);
-      return updateChannel(input.id, input.input as ChannelUpdateInput);
+      return updateChannel(input.id, input.input);
     },
     [CHANNEL_IPC_CHANNELS.DELETE]: async (params) => {
       const input = validateInput(channelDeleteParamsSchema, params, CHANNEL_IPC_CHANNELS.DELETE);

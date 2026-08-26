@@ -3122,7 +3122,7 @@ function createSidecarHost({ onNotification }) {
               ...request.correlation,
               data: { method: request.method, error: payload.error },
             })
-            request.reject(new Error(payload.error.message || 'sidecar rpc failed'))
+            request.reject(withRpcErrorCode(payload.error))
           } else {
             if (durationMs >= SLOW_RPC_MS) {
               writeMainLog('warn', 'desktop.sidecar.rpc', 'rpc.slow', `slow sidecar RPC: ${request.method}`, {
@@ -3201,6 +3201,16 @@ function createSidecarHost({ onNotification }) {
     } finally {
       if (child === null) started = null
     }
+  }
+
+  // #579：sidecar 出站错误已带稳定 code（LumeRpcErrorShape），此处附着到
+  // rejected Error 上，调用方按 `error.code` 判别而非字符串匹配 message。
+  function withRpcErrorCode(shape: { code?: unknown; message?: string }): Error {
+    const error = new Error(shape.message || 'sidecar rpc failed')
+    if (typeof shape.code === 'string' && shape.code && shape.code !== 'E_RPC') {
+      ;(error as Error & { code?: string }).code = shape.code
+    }
+    return error
   }
 
   async function call(method, params, correlation = {}) {

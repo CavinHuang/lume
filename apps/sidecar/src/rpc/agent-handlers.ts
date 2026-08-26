@@ -2,8 +2,6 @@ import { AGENT_IPC_CHANNELS, type BootstrapFileType } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import type {
   AgentPendingInteractiveState,
-  AgentGenerateTitleInput,
-  AgentWelcomeSuggestionInput,
   AgentListSubagentRunsInput,
   AgentProxySettings,
   WorkspaceMcpConfig,
@@ -162,6 +160,8 @@ import {
   workspaceMcpConfigInputSchema,
   workspaceSlugInputSchema,
   workspaceUpdateInputSchema,
+  agentGenerateTitleInputSchema,
+  agentWelcomeSuggestionInputSchema,
 } from "./schemas";
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, asString, validateInput } from "./validation";
@@ -1103,9 +1103,13 @@ export function createAgentHandlers(
     }),
     ...createCodingHandlers(),
     [AGENT_IPC_CHANNELS.GENERATE_TITLE]: async (params) =>
-      generateAgentTitle(params as AgentGenerateTitleInput),
+      generateAgentTitle(
+        validateInput(agentGenerateTitleInputSchema, params, AGENT_IPC_CHANNELS.GENERATE_TITLE),
+      ),
     [AGENT_IPC_CHANNELS.GENERATE_WELCOME_SUGGESTIONS]: async (params) =>
-      generateWelcomeSuggestions(params as AgentWelcomeSuggestionInput),
+      generateWelcomeSuggestions(
+        validateInput(agentWelcomeSuggestionInputSchema, params, AGENT_IPC_CHANNELS.GENERATE_WELCOME_SUGGESTIONS),
+      ),
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(
         agentThreadIdInputSchema,
