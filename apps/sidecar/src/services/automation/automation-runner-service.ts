@@ -440,10 +440,28 @@ export async function runAutomationJobNow(input: AutomationRunNowInput): Promise
   if (!job.enabled) {
     throw new Error("任务已禁用，无法执行");
   }
+  // review P2:连点防护——上一轮未结束时二次触发会写 skipped 记录并在首轮
+  // 完成后隐含一次 schedule 补跑,对用户表现为假成功 toast,入口即拒绝。
+  const runtimeState = readAutomationRuntimeState(input.id);
+  if (runningJobs.has(input.id) || runtimeState?.status === "running"
+    || runtimeState?.status === "waiting_for_user" || runtimeState?.status === "waiting_for_approval") {
+    throw new Error("任务正在执行中，请等待完成后再试");
+  }
   // #586:受理即返回回执，不同步等待回合完成——真实任务普遍超 desktop 45s RPC
   // 超时，同步等待必然报 timed out 而任务实际在跑；完成经既有
   // automation:run-completed 推送（useAutomationListeners 收到后自动刷新）。
-  void executeJob(job, "manual").catch(() => undefined);
+  // review P2:.catch 必须日志化——executeJob 尾部的 appendRun/通知/重调度链
+  // 不在内部 try 内（Windows rename EBUSY 高发），零痕迹吞掉会让失败不可诊断。
+  void executeJob(job, "manual").catch((error: unknown) => {
+    writeLogRecord({
+      level: "error",
+      context: "automation.runner",
+      event: "automation.run_now_background_failed",
+      message: `立即执行的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+      status: "error",
+      data: { automationJobId: job.id }
+    });
+  });
   const now = Date.now();
   return {
     id: `run-now:${job.id}:${now}`,

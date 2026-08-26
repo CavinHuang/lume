@@ -52,8 +52,8 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
     (key) => typeof request.input?.[key] === 'string' && (request.input[key] as string).trim(),
   )
   const allowScopeHint: Record<AgentToolPermissionAllowScope, string> = {
-    exact: '仅逐字节相同的调用',
-    command: hasCommandInput ? '相同命令（参数可变）' : '相同路径的调用',
+    exact: '仅此调用',
+    command: hasCommandInput ? '相同命令（参数可变）' : '相同目标',
     tool: `所有 ${request.toolName} 调用`,
   }
   const subagentDisplayLabel = getSubagentDisplayLabel(request)
@@ -94,9 +94,17 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
       if (payload.threadPermissionMode === 'bypassPermissions') {
         setThreadPermissionModes((prev) => ({ ...prev, [threadId]: 'bypassPermissions' }))
       }
-      // 作用域回执（#558）：明确告知「始终允许」的真实生效范围，本线程内有效
+      // 作用域回执（#558）：明确告知「始终允许」的真实生效范围，本线程内有效。
+      // review F5:按档位单独成句,避免「…调用的 Bash 调用」重复拼接
       if (choice === 'allow_always') {
-        toast.success(`已允许本线程内${allowScopeHint[allowScope]}的 ${request.toolName} 调用`)
+        const scopeCopy: Record<AgentToolPermissionAllowScope, string> = {
+          exact: '已允许本线程内逐字节相同的此调用',
+          command: hasCommandInput
+            ? `已允许本线程内相同的 ${request.toolName} 命令（参数可变）`
+            : `已允许本线程内相同目标的 ${request.toolName} 调用`,
+          tool: `已允许本线程内所有 ${request.toolName} 调用`,
+        }
+        toast.success(scopeCopy[allowScope])
       }
       setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId))
     } catch (err) {

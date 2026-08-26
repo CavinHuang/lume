@@ -218,9 +218,10 @@ export function useGlobalAgentListeners() {
           if (event.type === 'tool.permission_timeout') {
             setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))
           }
-          // #560:MCP 连接失败等运行环境警告投影——原本只进 system prompt 用户不可见
+          // #560:MCP 连接失败等运行环境警告投影——原本只进 system prompt 用户不可见。
+          // review P2:以事件 id 作 sonner 聚合键,常驻坏 server 不每 run 刷屏
           if (event.type === 'runtime.warning') {
-            toast.warning(event.message)
+            toast.warning(event.message, { id: event.id })
           }
           if (event.type === 'permission.resolved') {
             setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))
