@@ -134,6 +134,7 @@ import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
 import { instrumentIpcCommand } from './logging/ipc-instrumentation'
 import { createLogLiveForwarder } from './logging/live-forwarder'
+import { stableStringify } from './logging/settings-diff'
 import {
   createChromeNativeHostInstallPlan,
   writeChromeNativeHostRegistration,
@@ -3120,8 +3121,9 @@ function createSidecarHost({ onNotification }) {
               const previous = (previousPersisted && typeof previousPersisted === 'object'
                 ? (previousPersisted as Record<string, unknown>)
                 : {}) as Record<string, unknown>
+              // #758: 裸 JSON.stringify 对嵌套对象键序敏感，会报假阳性变更键；改键序稳定比较。
               const changedKeys = Object.keys(incoming)
-                .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify(previous[key]))
+                .filter((key) => stableStringify(incoming[key]) !== stableStringify(previous[key]))
                 // dev trace 归一（持久化 info → 生效 trace）是既定语义而非用户变更，不计入审计。
                 .filter((key) => !(key === 'consoleLevel' && !app.isPackaged
                   && incoming.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel))

@@ -50,8 +50,9 @@ export function classifyLogKey(key: string): LogKeyClass {
 }
 
 export function clipLogPreview(text: string): string {
+  // #758: 截断标记全仓统一为 …[truncated]，保证人对日志文件 grep 行为一致。
   return text.length > LOG_PREVIEW_MAX_CHARS
-    ? `${text.slice(0, LOG_PREVIEW_MAX_CHARS)}…(+${text.length - LOG_PREVIEW_MAX_CHARS})`
+    ? `${text.slice(0, LOG_PREVIEW_MAX_CHARS)}…[truncated]`
     : text
 }
 
@@ -139,7 +140,7 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
   if (Object.keys(input).length === 0 && input.constructor && input.constructor !== Object) {
     return { type: input.constructor.name }
   }
-  if (depth >= SUMMARIZE_MAX_DEPTH) return '[MaxDepth]'
+  if (depth >= SUMMARIZE_MAX_DEPTH) return '…[truncated]'
   if (Array.isArray(input)) {
     return {
       length: input.length,
@@ -260,7 +261,7 @@ function normalizeLogValueInternal(
       ...(value.stack ? { stack: normalizeClip(value.stack) } : {}),
     };
   }
-  if (depth >= MAX_NORMALIZE_DEPTH) return "[MaxDepth]";
+  if (depth >= MAX_NORMALIZE_DEPTH) return "…[truncated]";
   if (!value || typeof value !== "object") return normalizeClip(String(value));
   if (state.seen.has(value)) return "[Circular]";
   state.seen.add(value);

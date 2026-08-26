@@ -45,7 +45,7 @@ describe("logger diagnostic helpers", () => {
     expect(summary).not.toContain("secret-token");
     expect(summary).toContain("[redacted]");
     expect(summary.length).toBeLessThanOrEqual(135);
-    expect(summary).toContain("(truncated)");
+    expect(summary).toContain("…[truncated]");
   });
 
   test("uses the shared daily log file name while main owns persistence", () => {

@@ -9,7 +9,7 @@ describe('clipLogPreview', () => {
     const text = 'a'.repeat(LOG_PREVIEW_MAX_CHARS + 10)
     const clipped = clipLogPreview(text)
     expect(clipped.startsWith('a'.repeat(LOG_PREVIEW_MAX_CHARS))).toBe(true)
-    expect(clipped.endsWith('…(+10)')).toBe(true)
+    expect(clipped.endsWith('…[truncated]')).toBe(true)
     expect(clipped.length).toBeLessThanOrEqual(LOG_PREVIEW_MAX_CHARS + 12)
   })
 })
@@ -34,7 +34,7 @@ describe('summarizeValue', () => {
     // 第一层字段照常分类；更深层被深度帽截断（凭据同样不可达）。
     expect(out.prompt.apiKey).toBe('[redacted]')
     expect(out.prompt.note).toBe('hello')
-    expect(out.prompt.nested).toBe('[MaxDepth]')
+    expect(out.prompt.nested).toBe('…[truncated]')
     expect(JSON.stringify(out)).not.toContain('sk-secret')
     expect(JSON.stringify(out)).not.toContain('"p"')
   })
@@ -42,7 +42,7 @@ describe('summarizeValue', () => {
     const out = summarizeValue({ body: [{ token: 't' }, 'plain'] }) as { body: { length: number; items: unknown[] } }
     expect(out.body.length).toBe(2)
     // 数组元素位于深度 2 → 骨架化，凭据不可达；标量项仍可见。
-    expect(out.body.items[0]).toBe('[MaxDepth]')
+    expect(out.body.items[0]).toBe('…[truncated]')
     expect(out.body.items[1]).toBe('plain')
     expect(JSON.stringify(out)).not.toContain('"t"')
   })
@@ -50,7 +50,7 @@ describe('summarizeValue', () => {
     const out = summarizeValue({ id: 7, ok: true, nested: { deep: { deeper: 1 } }, list: [1, 2, 3] }) as Record<string, unknown>
     expect(out.id).toBe(7)
     expect(out.ok).toBe(true)
-    expect(JSON.stringify(out.nested)).toContain('[MaxDepth]')
+    expect(JSON.stringify(out.nested)).toContain('…[truncated]')
     expect((out.list as { length: number }).length).toBe(3)
   })
   test('对象键数量截断到 30', () => {
@@ -72,7 +72,7 @@ describe('summarizeValue', () => {
   test('循环引用安全终止', () => {
     const cyc: Record<string, unknown> = {}
     cyc.self = cyc
-    expect(JSON.stringify(summarizeValue(cyc))).toContain('[MaxDepth]')
+    expect(JSON.stringify(summarizeValue(cyc))).toContain('…[truncated]')
   })
   test('TypedArray 输出骨架摘要而非键物化', () => {
     expect(summarizeValue(new Uint8Array(256 * 1024))).toEqual({ type: 'Uint8Array', byteLength: 262144 })

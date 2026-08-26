@@ -70,7 +70,8 @@ export function createDiagnosticLogSummary(input: unknown, maxChars = 500): stri
     text = String(redacted);
   }
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}...(truncated)`;
+  // #758: 截断标记与三端其余点位统一为单一风格。
+  return `${text.slice(0, maxChars)}…[truncated]`;
 }
 
 function isCredentialLikePathSegment(segment: string, previousSegment: string | undefined): boolean {

@@ -242,7 +242,7 @@ test('content keys are previewed instead of redacted', async () => {
     })
     assert.equal(event.data.apiKey, '[redacted]')
     assert.ok(event.data.prompt.startsWith('z'.repeat(200)))
-    assert.ok(event.data.prompt.endsWith('…(+300)'))
+    assert.ok(event.data.prompt.endsWith('…[truncated]'))
   } finally {
     await service.close()
     await rmRetry(configDir)

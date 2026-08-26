@@ -55,7 +55,7 @@ quiet 名单有两处：RPC 侧 `QUIET_RPC_METHODS`（packages/shared 单一来�
 键分类在 `packages/shared/src/logging/index.ts` 的 `classifyLogKey`，三端 normalizer 与 `summarizeValue` 共用：
 
 - **REDACT_KEY_PARTS**（子串命中，归一化后包含即命中）：token / secret / password / apikey / authorization / cookie / setcookie / accesstoken / refreshtoken / grant → 一律 `[redacted]`，永不落盘。
-- **CONTENT_PREVIEW_KEYS**（归一化后精确命中，13 键）：body / prompt / systemprompt / rawrequest / rawresponse / requestbody / responsebody / content / contents / html / markdown / input / output → 截断为前 200 字符预览（`clipLogPreview`，超长标注 `…(+N)`）。注意 `message` 不在名单内——错误消息走 8K 上限而非 200 预览。
+- **CONTENT_PREVIEW_KEYS**（归一化后精确命中，13 键）：body / prompt / systemprompt / rawrequest / rawresponse / requestbody / responsebody / content / contents / html / markdown / input / output → 截断为前 200 字符预览（`clipLogPreview`，超长标注 `…[truncated]`）。注意 `message` 不在名单内——错误消息走 8K 上限而非 200 预览。
 - **两层上限要分清**：
   - `summarizeValue` 层（IPC/RPC 摘要与显式调用）：字符串 >200 截预览；对象限深 2、键数 30；数组输出 `{length, items: 前 5 项}`；TypedArray/Buffer 输出 `{type, byteLength}` 骨架。
   - normalizer 层（各进程写入前的最终规整）：深度 6、键数 100、数组 100 项、字符串上限 8192——普通键的长字符串保留到 8K 而非 200 预览。
