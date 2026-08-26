@@ -21,11 +21,52 @@ export function classifyBrowserAction(method: string, params: Record<string, unk
   const actionMethod = canonicalActionMethod(method)
   if (method === "purchase") return { decision: "deny", category: "payment", preview: "支付或购买必须由用户完成" }
   if (method === "captcha") return { decision: "deny", category: "captcha", preview: "CAPTCHA 必须由用户完成", errorCode: "user_action_required" }
-  if ((method === "navigate" || method === "goto" || method === "navigate_tab_url") && isPrivateBrowserUrl(params.url)) {
-    return { decision: "confirm", category: "authorize", preview: `打开本地或私有地址：${safeOrigin(params.url) ?? "未知地址"}` }
+  // #602 review:navigate 与「建 tab 带 url」同属导航面,后者不设门则 agent 可借 create_tab/ensure
+  // 无提示打开任意站点(含私网地址绕过 SSRF 确认)。注意 classify 收到的是归一化前的 raw params:
+  // 内置 open 工具以 {options:{url}} 嵌套形制派发 create_tab(十视角 review 实证),
+  // 必须两处都解,否则门对主路径永远打不中。
+  const nestedOptionsUrl = (() => {
+    const options = params.options;
+    const nested = options && typeof options === "object" && !Array.isArray(options)
+      ? (options as Record<string, unknown>).url
+      : undefined;
+    return typeof nested === "string" && nested.trim().length > 0 ? nested : undefined;
+  })();
+  // #649 review P1-3:取序必须与 broker normalizeBrowserCommand 一致(options.url ?? params.url),
+  // 否则双键携带不同 URL 时弹窗确认的目标 ≠ 实际导航的目标(同意失真)
+  const navigationUrl = nestedOptionsUrl
+    ?? (typeof params.url === "string" && params.url.trim().length > 0 ? params.url : undefined);
+  const navigationMethod = method === "navigate" || method === "goto" || method === "navigate_tab_url"
+    || ((method === "create_tab" || method === "ensure") && navigationUrl !== undefined)
+  if (navigationMethod && isPrivateBrowserUrl(navigationUrl)) {
+    return { decision: "confirm", category: "authorize", preview: `打开本地或私有地址：${safeOrigin(navigationUrl) ?? "未知地址"}` }
   }
-  if (method === "navigate" || method === "goto" || method === "navigate_tab_url") {
-    return { decision: "confirm", category: "browse", preview: `打开网站：${safeOrigin(params.url) ?? "未知地址"}` }
+  if (navigationMethod) {
+    return { decision: "confirm", category: "browse", preview: `打开网站：${safeOrigin(navigationUrl) ?? "未知地址"}` }
+  }
+  // #649 review P1-4:tabs:content 批量后台导航同属导航面——registry policy "none"
+  // 不入门则 agent 可经 js 沙箱零确认静默浏览任意站点并取回正文,
+  // 「每次导航前确认」的出厂承诺对其失守。整批一次确认;私网方向另有
+  // BrowserNetworkGuard 第二层兜底,此处按 authorize 档提示。
+  if (runtimeMethod === "tabs:content" || method === "tabs_content") {
+    // #649 round3:双键取序与 broker normalize({...params, ...options} 使 options 覆盖)
+    // 一致——只读顶层 urls 会重蹈 P1-3 同款「确认 A 实际导航 B」失真
+    const options = params.options;
+    const nestedUrls = options && typeof options === "object" && !Array.isArray(options)
+      ? (options as Record<string, unknown>).urls
+      : undefined;
+    const rawUrls = nestedUrls ?? params.urls;
+    const urls = Array.isArray(rawUrls)
+      ? rawUrls.filter((value): value is string => typeof value === "string" && value.trim().length > 0).slice(0, 10)
+      : []
+    if (urls.length > 0) {
+      const origins = [...new Set(urls.map((url) => safeOrigin(url)).filter((origin): origin is string => origin !== undefined))]
+      const previewOrigins = origins.slice(0, 3).join("、")
+      if (urls.some((url) => isPrivateBrowserUrl(url))) {
+        return { decision: "confirm", category: "authorize", preview: `批量读取本地或私有地址（共 ${urls.length} 个）：${previewOrigins}` }
+      }
+      return { decision: "confirm", category: "browse", preview: `批量打开网站（共 ${urls.length} 个）：${previewOrigins}${origins.length > 3 ? " 等" : ""}` }
+    }
   }
   const explicit = EXPLICIT_CONFIRM.get(method)
   if (explicit) return { decision: "confirm", category: explicit, preview: preview(method, params) }

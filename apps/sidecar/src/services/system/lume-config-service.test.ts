@@ -1,14 +1,15 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
-  type LumeConfigFile
+  type LumeConfigFile,
+  type LumeConfigSectionSet
 } from "@lume/shared";
 import YAML from "yaml";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
-import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, updateLumeConfigSection } from "./lume-config-service";
+import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, KNOWN_LUME_SECTION_KEYS, updateLumeConfigSection } from "./lume-config-service";
 
 describe("lume-config-service", () => {
   let prevConfigDir: string | undefined;
@@ -176,20 +177,38 @@ describe("lume-config-service", () => {
     });
   });
 
-  test("应识别 guanlan 搜索后端并同步启用顺序到环境变量", () => {
+  test("#573① review M1: agent.maxAutoTurnContinuations 经 normalize 存活且越界值被钳制", () => {
+    updateLumeConfigSection({
+      source: "user",
+      path: "agent",
+      value: { maxAutoTurnContinuations: 5, permissionMode: "dontAsk", followUpQueueMode: "steer" },
+    });    const effective = getEffectiveLumeConfig("default").agent;
+    expect(effective?.maxAutoTurnContinuations).toBe(5);
+    expect(effective?.permissionMode).toBe("dontAsk");
+    // followUpQueueMode 同族：白名单缺失曾使配置恒回落 'queue'（web AgentInput 读取点）
+    expect(effective?.followUpQueueMode).toBe("steer");
+    updateLumeConfigSection({ source: "user", path: "agent", value: { followUpQueueMode: "interrupt" } });
+    expect(getEffectiveLumeConfig("default").agent?.followUpQueueMode).toBe("interrupt");
+
+    // 越界钳到硬上限 10；非有限数值回落默认（字段被剥）
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: 99 } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBe(10);
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: Number.NaN } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBeUndefined();
+    // 非法枚举值被剥
+    updateLumeConfigSection({ source: "user", path: "agent", value: { followUpQueueMode: "bogus" } });
+    expect(getEffectiveLumeConfig("default").agent?.followUpQueueMode).toBeUndefined();
+  });
+
+  test("应按配置同步搜索后端启用顺序到环境变量", () => {
     const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
-    const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;
-    const prevGuanlanPython = process.env.LUME_GUANLAN_PYTHON;
-    const prevLumePython = process.env.LUME_PYTHON;
     try {
-      process.env.LUME_PYTHON = "/custom/python";
       updateLumeConfigSection({
         source: "system",
         path: "webSearch",
         value: {
           strategy: "priority",
           providers: {
-            guanlan: { enabled: true },
             exa: { enabled: false, apiKey: "exa-key" },
             bing: { enabled: true },
             duckduckgo: { enabled: false }
@@ -199,50 +218,11 @@ describe("lume-config-service", () => {
 
       const effective = getEffectiveLumeConfig("default");
 
-      expect(effective.webSearch?.providers?.guanlan).toEqual({ enabled: true });
-      expect(process.env.LUME_WEB_SEARCH_PROVIDERS).toBe("guanlan,bing");
-      expect(process.env.LUME_GUANLAN_ENABLED).toBe("1");
-      expect(process.env.LUME_GUANLAN_PYTHON).toBe("/custom/python");
-    } finally {
-      if (prevProviders === undefined) delete process.env.LUME_WEB_SEARCH_PROVIDERS;
-      else process.env.LUME_WEB_SEARCH_PROVIDERS = prevProviders;
-      if (prevGuanlanEnabled === undefined) delete process.env.LUME_GUANLAN_ENABLED;
-      else process.env.LUME_GUANLAN_ENABLED = prevGuanlanEnabled;
-      if (prevGuanlanPython === undefined) delete process.env.LUME_GUANLAN_PYTHON;
-      else process.env.LUME_GUANLAN_PYTHON = prevGuanlanPython;
-      if (prevLumePython === undefined) delete process.env.LUME_PYTHON;
-      else process.env.LUME_PYTHON = prevLumePython;
-    }
-  });
-
-  test("禁用 guanlan 时不设置 guanlan 启用标记", () => {
-    const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
-    const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;
-    const prevGuanlanPython = process.env.LUME_GUANLAN_PYTHON;
-    try {
-      updateLumeConfigSection({
-        source: "system",
-        path: "webSearch",
-        value: {
-          providers: {
-            guanlan: { enabled: false },
-            bing: { enabled: true }
-          }
-        }
-      });
-
-      getEffectiveLumeConfig("default");
-
+      expect(effective.webSearch?.providers?.bing).toEqual({ enabled: true });
       expect(process.env.LUME_WEB_SEARCH_PROVIDERS).toBe("bing");
-      expect(process.env.LUME_GUANLAN_ENABLED).toBe("");
-      expect(process.env.LUME_GUANLAN_PYTHON).toBe("");
     } finally {
       if (prevProviders === undefined) delete process.env.LUME_WEB_SEARCH_PROVIDERS;
       else process.env.LUME_WEB_SEARCH_PROVIDERS = prevProviders;
-      if (prevGuanlanEnabled === undefined) delete process.env.LUME_GUANLAN_ENABLED;
-      else process.env.LUME_GUANLAN_ENABLED = prevGuanlanEnabled;
-      if (prevGuanlanPython === undefined) delete process.env.LUME_GUANLAN_PYTHON;
-      else process.env.LUME_GUANLAN_PYTHON = prevGuanlanPython;
     }
   });
 
@@ -719,5 +699,122 @@ describe("lume-config-service", () => {
     // workspace overlay 是显式配置，不参与迁移，合并后覆盖生效
     const overlay = getEffectiveLumeConfig("default");
     expect(overlay.permissions?.classifier?.enabled).toBe(false);
+  });
+
+  // ─── #706：writeYamlAtomic 并发交错收口 ───
+
+  test("#706：连续两次写入不碰撞、不留孤儿 tmp、终值正确", () => {
+    updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/a" });
+    updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/b" });
+
+    const leftovers = readdirSync(dirname(getLumeConfigYamlPath()))
+      .filter((name) => name.startsWith("lume.yaml.tmp."));
+    expect(leftovers).toEqual([]);
+    expect(getEffectiveLumeConfig().models?.title?.defaultModelRef).toBe("openai/b");
+  });
+
+  test("#706：崩溃遗留的过期 tmp 被清扫、新鲜 tmp 不误删", () => {
+    const dir = dirname(getLumeConfigYamlPath());
+    const stalePath = join(dir, `lume.yaml.tmp.999.${"a".repeat(8)}`);
+    writeFileSync(stalePath, "junk", "utf-8");
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(stalePath, twoHoursAgo, twoHoursAgo);
+    const freshPath = join(dir, `lume.yaml.tmp.${process.pid}.fresh000`);
+    writeFileSync(freshPath, "junk", "utf-8");
+
+    try {
+      updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/c" });
+      expect(existsSync(stalePath)).toBeFalse();
+      expect(existsSync(freshPath)).toBeTrue();
+    } finally {
+      rmSync(freshPath, { force: true });
+    }
+  });
+
+  test("#706：v2 迁移审计移到写盘成功后——恰好一条且重复读取不再追加", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      permissions: {
+        classifier: { enabled: false },
+        rules: []
+      }
+    }), "utf-8");
+
+    getEffectiveLumeConfig();
+    getEffectiveLumeConfig();
+
+    const migrationEntries = readFileSync(getLumeConfigAuditPath(), "utf-8")
+      .split("\n")
+      .filter((line) => line.includes("permissions.classifier.enabled"));
+    expect(migrationEntries).toHaveLength(1);
+  });
+
+  // #727 review 并发方向 P2：classifier 段缺失/非对象时 normalize 走兜底合并
+  // 而非「false→true」翻转，审计不得虚记。
+  test("#706：v1 无 classifier 段的文件不产生假迁移审计", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      permissions: { rules: [] }
+    }), "utf-8");
+
+    getEffectiveLumeConfig();
+
+    const migrationEntries = existsSync(getLumeConfigAuditPath())
+      ? readFileSync(getLumeConfigAuditPath(), "utf-8").split("\n").filter((line) => line.includes("permissions.classifier.enabled"))
+      : [];
+    expect(migrationEntries).toHaveLength(0);
+  });
+
+  // #727 review 测试完备 P2：写失败必须如实上抛（update 响亮路径）且不记未发生
+  // 的迁移/用户审计，tmp 不残留；读路径失败则优雅回退不崩。
+  // 注入点（bak 已删）：yaml 本位被目录占用——rename(file→dir) 跨平台必炸。
+  test("#706：配置位被目录占用时 update 上抛、零审计、tmp 清理，读取优雅回退", () => {
+    const yamlPath = getLumeConfigYamlPath();
+    rmSync(yamlPath, { force: true });
+    mkdirSync(yamlPath);
+
+    // 读路径：读取失败回退默认配置，不向 48 处热调用方抛错
+    expect(() => getEffectiveLumeConfig()).not.toThrow();
+
+    // 写路径：update 必须响亮失败（rename 落在目录位上）
+    let threw = false;
+    try {
+      updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/x" });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBeTrue();
+
+    const dir = dirname(yamlPath);
+    const leftovers = readdirSync(dir).filter((name) => name.startsWith("lume.yaml.tmp."));
+    expect(leftovers).toEqual([]);
+    if (existsSync(getLumeConfigAuditPath())) {
+      const auditLines = readFileSync(getLumeConfigAuditPath(), "utf-8").split("\n").filter((line) => line.trim());
+      expect(auditLines).toHaveLength(0);
+    }
+  });
+
+});
+
+describe("#649 round3: 剥键白名单与 normalize 实际处理集一致", () => {
+  test("KNOWN_LUME_SECTION_KEYS 覆盖 LumeConfigSectionSet 全部 section + 顶层 version/workspaces", () => {
+    // 与 shared LumeConfigSectionSet 十字段逐一对照——shared 新增 section 而未更新
+    // KNOWN 清单时,此处显式失败提醒同步(否则合法键被误报「未识别」刷屏)
+    const allSections: Required<Pick<LumeConfigSectionSet, keyof LumeConfigSectionSet>> = {
+      models: {}, agent: {}, providers: {}, mcp: {}, memory: {},
+      skills: {}, plugins: {}, permissions: {}, hooks: {}, webSearch: {}
+    };
+    for (const key of Object.keys(allSections)) {
+      expect(KNOWN_LUME_SECTION_KEYS).toContain(key);
+    }
+    // 顶层文件段由 normalizeLumeConfigFile 消费,同样必须豁免
+    expect(KNOWN_LUME_SECTION_KEYS).toContain("version");
+    expect(KNOWN_LUME_SECTION_KEYS).toContain("workspaces");
+    // 幽灵键守卫:清单里的每个键都必须真实存在于类型面
+    for (const key of KNOWN_LUME_SECTION_KEYS) {
+      const known = key === "version" || key === "workspaces"
+        || Object.prototype.hasOwnProperty.call(allSections, key);
+      expect(known).toBe(true);
+    }
   });
 });

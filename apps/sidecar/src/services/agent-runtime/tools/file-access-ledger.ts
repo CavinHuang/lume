@@ -23,7 +23,7 @@ export interface FileReadRecordInput {
   mtimeMs: number;
   contentHash?: string;
   fullRead: boolean;
-  readRange?: { offset: number; limit: number; totalLines?: number };
+  readRange?: { offset: number; limit?: number; totalLines?: number };
 }
 
 export interface FileWriteCheckInput {
@@ -42,7 +42,7 @@ interface FileReadRecord {
   mtimeMs: number;
   contentHash?: string;
   fullRead: boolean;
-  readRange?: { offset: number; limit: number; totalLines?: number };
+  readRange?: { offset: number; limit?: number; totalLines?: number };
 }
 
 export function createFileAccessLedger(): FileAccessLedger {
@@ -113,7 +113,15 @@ export function clearRuntimeFileAccessLedger(threadId: string): void {
 function fileLedgerKey(input: { threadId: string; cwd: string; filePath: string }): string {
   return [
     input.threadId,
-    resolve(input.cwd),
-    resolve(input.cwd, input.filePath)
+    normalizeLedgerPath(input.cwd),
+    normalizeLedgerPath(resolve(input.cwd, input.filePath))
   ].join("\0");
+}
+
+/** #649 follow-up:与 SDK FileStateCache toPathKey 同一口径——大小写不敏感平台归一
+ * 小写，否则 Read("D:\Repo\Foo.ts") 后 Edit("d:\repo\foo.ts") 台账 miss 误报「必须先完整读取」。
+ * 仅影响记账键；stat/hash 仍走调用方原始路径。 */
+function normalizeLedgerPath(path: string): string {
+  const resolved = resolve(path);
+  return process.platform === "win32" || process.platform === "darwin" ? resolved.toLowerCase() : resolved;
 }

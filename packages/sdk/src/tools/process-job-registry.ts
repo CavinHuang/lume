@@ -300,7 +300,9 @@ export const ProcessOutputTool: ToolDefinition = defineTool({
   inputSchema: {
     type: 'object',
     properties: {
-      processId: { type: 'string' }, task_id: { type: 'string' }, block: { type: 'boolean' }, timeout: { type: 'number' },
+      processId: { type: 'string' }, task_id: { type: 'string' },
+      block: { type: 'boolean', description: 'Wait for the job to reach a terminal state before returning (max `timeout` ms). Default false: return the current snapshot immediately.' },
+      timeout: { type: 'number', description: 'Max wait in ms when block is true (default 30000).' },
       offset: { type: 'number', description: 'Byte offset for incremental output reads.' },
       limit: { type: 'number', description: 'Maximum output bytes to return (default 65536).' },
     },
@@ -325,7 +327,8 @@ export const ProcessOutputTool: ToolDefinition = defineTool({
     if (job.threadId && context.sessionId && job.threadId !== context.sessionId) {
       return { data: `Process job ${job.id} belongs to another session`, is_error: true }
     }
-    const block = input.block !== false
+    // 默认快照读：与"勿轮询"文案一致，等待须显式 block=true（#538）
+    const block = input.block === true
     const timeout = Math.min(Math.max(Number(input.timeout ?? 30_000), 0), 600_000)
     let abortedWhileBlocking = false
     if (block && job.status === 'running') {

@@ -205,6 +205,23 @@ describe("automation-manager", () => {
     expect(corruptBackups().length).toBe(2);
   });
 
+  test("同毫秒连续两代损坏各自获得独立备份(#686)", () => {
+    // 曾在 CI Ubuntu 上三连红：mtime 同毫秒碰撞把第二代误判为同代而丢备份
+    // （CI 文件系统 mtime 粒度可达 4ms）。内容比对判定后本场景必须稳定通过，
+    // 作为回归钉保留。
+    const indexPath = getAutomationJobsPath();
+    const automationDir = join(tempConfigDir, "automation");
+    const corruptBackups = () =>
+      (existsSync(automationDir) ? readdirSync(automationDir) : []).filter((name) => name.startsWith("jobs.json.corrupt-"));
+
+    writeFileSync(indexPath, "{fast-gen-1", "utf-8");
+    listAutomationJobs();
+    writeFileSync(indexPath, "{fast-gen-2", "utf-8");
+    listAutomationJobs();
+
+    expect(corruptBackups().length).toBe(2);
+  });
+
   test("索引完好时检疫态自动解除(#647 P2-22)", () => {
     const indexPath = getAutomationJobsPath();
     writeFileSync(indexPath, "{broken-json", "utf-8");

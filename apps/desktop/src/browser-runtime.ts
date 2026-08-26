@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { rename as renamePromise, unlink as unlinkPromise, writeFile as writeFilePromise } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainEvent } from "electron"
 import {
@@ -610,40 +611,14 @@ export class BrowserRuntime {
 
   resetAgentCursor(): void { this.hideAgentCursor() }
 
-  // 用户接管是会话级暂停：同 session 任意 tab 处于 paused_by_user 时，
-  // Agent 不得开新 Tab 或认领其他 Tab 绕开暂停继续操作。
-  private hasPausedTakeoverTab(browserSessionId: string): boolean {
-    for (const tab of this.tabs.values()) {
-      if (tab.agentLease?.browserSessionId === browserSessionId && tab.agentControlState === "paused_by_user") return true
-    }
-    return false
-  }
-
-  // 共同操作模式：用户输入不再触发接管暂停，paused_by_user 仅保留为协议兼容状态（当前无置入路径）。
-  private resumeAgentControl(tabId: string, context: BrowserRequestContext): BrowserTabDescriptor {
-    if (context.actor !== "user") throw browserError("action_denied")
-    const tab = this.tabs.get(tabId)
-    if (!tab || tab.agentControlState !== "paused_by_user" || !tab.agentLease) throw browserError("invalid_browser_request")
-    tab.agentControlState = "active"
-    if (tab.handoff?.reason === "user_takeover") tab.handoff = undefined
-    tab.generation += 1
-    tab.inputSequence += 1
-    tab.agentLease = { ...tab.agentLease, generation: tab.generation }
-    this.inputLedger.clear(tab.tabId)
-    this.options.emit({ method: "browser:agent-control-resumed", params: { tabId: tab.tabId, generation: tab.generation } })
-    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
-    this.rememberTab(tab)
-    return publicTab(tab)
-  }
-
   private expectedAgentInputSender(tab: BrowserTab, sender: BrowserCdpCommandSender): BrowserCdpCommandSender {
     if (!tab.agentDispatching) return sender
     return {
       sendCommand: async (method, params = {}) => {
-        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
+        // #610:paused_by_user 无置入路径(共同操作模式下用户输入不再触发接管),
+        // 接管期中断检查已死——epoch 仲裁由输入队列在动作入队时完成
         this.inputLedger.expectCommand(tab.tabId, method, params)
         const result = await sender.sendCommand(method, params)
-        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
         return result
       },
     }
@@ -665,11 +640,14 @@ export class BrowserRuntime {
 
   private async waitForActionEffect(tab: BrowserTab, before: BrowserActionEffectSnapshot, agent: boolean): Promise<BrowserActionEffect> {
     const deadline = Date.now() + 300
+    let idlePolls = 0
     do {
-      if (agent && agentControlPaused(tab)) throw browserError("user_takeover_required")
-      await delay(50)
+      // #605：hover 等无效果动作原实现固定 50ms 轮询烧满 deadline；首个效果的检出延迟不变（首轮仍
+      // 50ms），连续空轮拉长间隔以减少空转 CDP 往返。
+      await delay(idlePolls < 2 ? 50 : 125)
       const effect = detectBrowserActionEffect(before, await this.captureActionEffect(tab))
       if (effect) return effect
+      idlePolls += 1
     } while (Date.now() < deadline)
     return { kind: "no_detectable_change" }
   }
@@ -791,7 +769,6 @@ export class BrowserRuntime {
     }
     if (method.startsWith("workspace:")) return this.dispatchWorkspace(method, params, context)
     if (method === "ensure") {
-      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
       return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
     }
     if (method === "mount:prepare") return this.prepareGuestMount(String(params.tabId ?? context.tabId ?? ""), context)
@@ -808,15 +785,9 @@ export class BrowserRuntime {
     if (method === "share") return this.shareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "unshare") return this.unshareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "claim") {
-      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
       return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
     }
     if (method === "close") {
-      // 被用户接管的 Tab 所有权已转移，Agent 不得关闭用户正在查看的页面
-      if (context.actor === "agent") {
-        const closeTarget = this.tabs.get(String(params.tabId ?? context.tabId ?? ""))
-        if (closeTarget?.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
-      }
       return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
     }
     if (method === "bounds") return this.updateBounds(String(params.tabId ?? context.tabId ?? ""), params)
@@ -837,6 +808,11 @@ export class BrowserRuntime {
     }
     if (method === "focus") return this.focus(String(params.tabId ?? context.tabId ?? ""))
     if (method === "settings:get") return this.getSettings()
+    // #602 review:审批档/外开链接是用户专属决策面,agent 通道(actor!=="user")不得触达,
+    // 否则可静默把 browserApprovalMode 翻回 neverAsk 拆掉人工关口
+    if (method === "settings:update" || method === "openExternal") {
+      if (context.actor !== "user") throw browserError("action_denied")
+    }
     if (method === "settings:update") return this.updateSettings(params as Partial<BrowserSettings>)
     if (method === "openExternal") return this.openExternal(String(params.url ?? ""))
     if (method === "openPopup") return this.openPopup(String(params.activationToken ?? ""), context)
@@ -902,10 +878,9 @@ export class BrowserRuntime {
       if (context.actor !== "user") throw browserError("action_denied")
       return this.annotations.migrate(params.sessions)
     }
-    if (method === "agentControl:resume") return this.resumeAgentControl(String(params.tabId ?? context.tabId ?? ""), context)
-
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
-    if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+    // #610:paused_by_user 相关接管检查已随置入路径移除——该状态自共同操作模式
+    // (PR#488)后无任何写入方,字段仅保留协议兼容且恒为 active
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
@@ -920,7 +895,6 @@ export class BrowserRuntime {
       return this.actionQueue.run(queueKey, async () => {
         if (this.tabs.get(tab.tabId) !== tab) throw browserError("tab_not_found")
         if (tab.generation !== queuedGeneration) throw browserError("stale_target")
-        if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
         if (context.actor === "agent" && !canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation)) throw browserError("action_denied")
         const operationId = request.idempotencyKey || request.requestId || randomUUID()
         this.journal.write({
@@ -936,11 +910,11 @@ export class BrowserRuntime {
           const activeAt = tab.lastUserActivationAt
           if (this.humanizedInput && activeAt !== undefined && Date.now() - activeAt < 2_000) await delay(250 + Math.random() * 450)
           tab.agentDispatching = true
-          this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: true } })
+          // url 供浏览器面板外的全局感知条显示当前操作站点(#607)
+          this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, url: tab.url, active: true } })
         }
         try {
           const result = await this.dispatchAction(tab, method, params, context)
-          if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
           this.journal.write({
             operationId,
             method,
@@ -964,7 +938,7 @@ export class BrowserRuntime {
         } finally {
           if (context.actor === "agent") {
             tab.agentDispatching = false
-            this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: false } })
+            this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, url: tab.url, active: false } })
             this.inputLedger.clear(tab.tabId)
           }
         }
@@ -2597,6 +2571,12 @@ export class BrowserRuntime {
     const from = tab.lastAgentPointer
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const sender = this.expectedAgentInputSender(tab, debuggerRef)
+      // #614:语义 ref 路径携带解析时 URL——注入前最后一刻重验,文档已换则坐标
+      // 作废(盲击新文档不可控),报 stale_target 让模型重观察
+      if (typeof params.documentUrl === "string") {
+        const current = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
+        if (current.result?.value !== params.documentUrl) throw browserError("stale_target")
+      }
       if (method === "click" || method === "doubleClick") {
         await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { natural: this.humanizedInput, from })
       } else {
@@ -2873,6 +2853,10 @@ export class BrowserRuntime {
             await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: hitObjectId }).catch(() => undefined)
           }
         }
+        // 解析时快照 document URL:坐标注入前重验,页面自导航(SPA 定时跳转/
+        // 倒计时刷新)落在 generation/inputSequence 校验之后、鼠标事件落地之前的
+        // 毫秒级窗口内时拒绝盲击(#614)
+        const hrefSnapshot = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
         return {
           x,
           y,
@@ -2880,6 +2864,8 @@ export class BrowserRuntime {
           height: bottom - top,
           tagName: typeof details.tagName === "string" ? details.tagName : "",
           ...(typeof details.role === "string" ? { role: details.role } : {}),
+          backendNodeId: entry.backendNodeId,
+          ...(typeof hrefSnapshot.result?.value === "string" ? { documentUrl: hrefSnapshot.result.value } : {}),
           editable: details.editable === true,
           ...(details.readOnly === true ? { readOnly: true } : {}),
           enabled: details.enabled !== false,
@@ -2910,8 +2896,14 @@ export class BrowserRuntime {
       if (tab.generation !== generation) throw browserError("stale_target")
       try {
         const target = await this.resolveTarget(tab, params, context)
-        if (previousTarget && browserTargetsStable(previousTarget, target)) return target
-        previousTarget = target
+        if (!previousTarget) {
+          previousTarget = target
+          // #605：首次成功后候一帧，仅以 getBoxModel 单往返复测坐标代替第二次全量解析；
+          // 静态页就此放行（happy-path 解析往返减半），复测漂移或不可复测则落入原双轮循环。
+          await delay(50)
+          if (await this.targetBoxUnmoved(tab, target)) return target
+        } else if (browserTargetsStable(previousTarget, target)) return target
+        else previousTarget = target
       } catch (error) {
         previousTarget = undefined
         const message = error instanceof Error ? error.message : ""
@@ -2928,6 +2920,30 @@ export class BrowserRuntime {
       if (Date.now() >= deadline) throw browserError(lastActionabilityCode)
       await delay(50)
     }
+  }
+
+  // #605：auto-wait 首次解析成功后的廉价稳定确认——仅 getBoxModel 复测中心/尺寸是否位移。
+  // 缺 backendNodeId 或复测失败一律返回 false，回落到完整二次解析的双轮路径。
+  private async targetBoxUnmoved(tab: BrowserTab, target: ResolvedBrowserTarget): Promise<boolean> {
+    const backendNodeId = typeof target.backendNodeId === "number" ? target.backendNodeId : undefined
+    if (backendNodeId === undefined) return false
+    try {
+      return await withDebugger(browserContents(tab), async (debuggerRef) => {
+        const box = await debuggerRef.sendCommand("DOM.getBoxModel", { backendNodeId }) as { model?: { border?: number[]; content?: number[] } }
+        const quad = box.model?.content ?? box.model?.border
+        if (!Array.isArray(quad) || quad.length < 8) return false
+        const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number)
+        const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number)
+        if ([...xs, ...ys].some((value) => !Number.isFinite(value))) return false
+        return browserTargetsStable(target, {
+          ...target,
+          x: (Math.min(...xs) + Math.max(...xs)) / 2,
+          y: (Math.min(...ys) + Math.max(...ys)) / 2,
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        })
+      })
+    } catch { return false }
   }
 
   private async dispatchScroll(tab: BrowserTab, target: ResolvedBrowserTarget, params: Record<string, unknown>): Promise<void> {
@@ -3041,6 +3057,9 @@ export class BrowserRuntime {
       const batches = await Promise.all(frameIds.map(async (frameId) => {
         try {
           const tree = await debuggerRef.sendCommand("Accessibility.getFullAXTree", { frameId }) as { nodes?: unknown }
+          // #604：AX 原始负载与 DOMSnapshot 同级字节护栏——极端页面单帧可达数十 MB，
+          // 超限帧弃采（该 frame 无语义节点），防主进程内存/序列化爆炸。
+          if (JSON.stringify(tree.nodes ?? []).length > 4_000_000) return []
           return Array.isArray(tree.nodes)
             ? tree.nodes.map((node) => isRecord(node) ? {
                 ...node,
@@ -4283,8 +4302,24 @@ export class BrowserRuntime {
     if (approvalMode === "neverAsk") return this.issuePolicyToken(bindingHash)
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("confirmation_unavailable")
-    const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${category}。批准仅对当前标签页的这一次操作有效。` })
-    if (result.response !== 0) return { approved: false }
+    const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${BROWSER_ACTION_CATEGORY_LABELS[category] ?? category}。批准仅对当前标签页的这一次操作有效。` })
+    if (result.response !== 0) {
+      // 可观测性 review F5/F6:「取消」必须以 deny 进审计并与动作类别关联——
+      // 否则 ndjson 里「允许」与「取消」同貌,且无法关联到具体浏览器动作
+      this.audit.record({
+        correlationId: randomUUID(),
+        actor: context.actor ?? "agent",
+        ...(context.threadId ? { threadId: context.threadId } : {}),
+        browserSessionId: context.browserSessionId ?? "",
+        backend,
+        generation: this.backendGeneration,
+        action: `policy:confirm:${category}`,
+        decision: "deny",
+        status: "failed",
+        errorCode: "user_declined",
+      })
+      return { approved: false }
+    }
     return this.issuePolicyToken(bindingHash)
   }
 
@@ -4482,8 +4517,6 @@ function canContextUseTab(tab: BrowserTab, context: BrowserRequestContext): bool
   return context.actor === "user" || (canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation) && (!context.tabId || context.tabId === tab.tabId))
 }
 
-function agentControlPaused(tab: BrowserTab): boolean { return tab.agentControlState === "paused_by_user" }
-
 function annotationThreadId(tab: BrowserTab, params: Record<string, unknown>): string {
   const value = typeof params.threadId === "string" ? params.threadId.trim() : (tab.ownerThreadId ?? "")
   if (!/^[a-zA-Z0-9._-]{1,200}$/.test(value) || (tab.ownerThreadId && tab.ownerThreadId !== value)) throw browserError("action_denied")
@@ -4494,6 +4527,13 @@ function browserError(code: BrowserErrorCode): Error & { code: BrowserErrorCode 
   const error = new Error(code) as Error & { code: BrowserErrorCode }
   error.code = code
   return error
+}
+
+/** #602:确认弹窗 detail 用中文类别名,不直出内部英文枚举 */
+const BROWSER_ACTION_CATEGORY_LABELS: Record<string, string> = {
+  browse: "浏览网站", submit: "提交表单", send: "发送消息", delete: "删除内容",
+  purchase: "购买下单", authorize: "授权操作", file: "文件传输", clipboard: "剪贴板",
+  credential: "填写凭证", history: "读取历史", payment: "支付确认", captcha: "人机验证", mfa: "多因素验证"
 }
 
 function closeWebContentsSafely(contents: Electron.WebContents): void {
@@ -4976,6 +5016,14 @@ class BrowserOperationJournal {
   private entries: JournalEntry[] = []
   private readonly path: string | null
   private readonly encryption?: BrowserRuntimeOptions["journalEncryption"]
+  // #612:变更型动作每次 write/complete 都在主进程热路径同步全量重写 500 条加密
+  // 数组(加密+writeFileSync+renameSync),动作密集时卡 UI 事件循环。改单飞异步
+  // 落盘:内存态即时生效,磁盘滞后一个微批;journal 仅审计消费(无读取方),
+  // 进程退出丢最后一帧可接受,exit 钩子同步兜底一次。
+  private flushing = false
+  private flushScheduled = false
+  private dirtyEpoch = 0
+  private flushedEpoch = 0
   constructor(configDir: () => string, encryption?: BrowserRuntimeOptions["journalEncryption"]) {
     this.encryption = encryption
     if (!encryption?.available || !encryption.encrypt) { this.path = null; return }
@@ -4991,15 +5039,38 @@ class BrowserOperationJournal {
   write(entry: JournalEntry): void {
     if (!this.path || !this.encryption) return
     this.entries = [...this.entries.filter((item) => item.operationId !== entry.operationId), entry].slice(-500)
-    const temporary = `${this.path}.${process.pid}.tmp`
-    writeFileSync(temporary, JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") }), "utf8")
-    try { renameSync(temporary, this.path) } catch { try { unlinkSync(temporary) } catch { /* best effort cleanup */ } }
+    this.scheduleFlush()
   }
   complete(operationId: string): void {
     if (!this.path || !this.encryption) return
     this.entries = this.entries.filter((entry) => entry.operationId !== operationId)
-    writeFileSync(this.path + ".tmp", JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") }), "utf8")
-    try { renameSync(this.path + ".tmp", this.path) } catch { try { unlinkSync(this.path + ".tmp") } catch { /* best effort cleanup */ } }
+    this.scheduleFlush()
+  }
+  private scheduleFlush(): void {
+    this.dirtyEpoch += 1
+    if (this.flushScheduled) return
+    this.flushScheduled = true
+    queueMicrotask(() => { void this.flushNow() })
+  }
+  private async flushNow(): Promise<void> {
+    this.flushing = true
+    try {
+      const epochAtSnapshot = this.dirtyEpoch
+      if (!this.path || !this.encryption?.encrypt) return
+      const payload = JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") })
+      const temporary = `${this.path}.${process.pid}.tmp`
+      await writeFilePromise(temporary, payload, "utf8")
+      try { await renamePromise(temporary, this.path) } catch { await unlinkPromise(temporary).catch(() => {}) }
+      this.flushedEpoch = epochAtSnapshot
+    } finally {
+      this.flushing = false
+      // 落盘期间又有新写入:再排一轮把最新内存态带走;否则解除排程标记
+      if (this.flushedEpoch !== this.dirtyEpoch) {
+        queueMicrotask(() => { void this.flushNow() })
+      } else {
+        this.flushScheduled = false
+      }
+    }
   }
 }
 

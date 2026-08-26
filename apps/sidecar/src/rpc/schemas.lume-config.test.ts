@@ -9,7 +9,7 @@ describe("lume config rpc schemas", () => {
       value: {
         strategy: "priority",
         providers: {
-          guanlan: { enabled: true },
+          exa: { enabled: true },
           duckduckgo: { enabled: false },
           bing: { enabled: true }
         }

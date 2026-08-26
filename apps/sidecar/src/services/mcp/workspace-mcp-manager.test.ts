@@ -549,6 +549,33 @@ describe("WorkspaceMcpManager", () => {
     expect(result.tools.map((tool) => tool.name)).not.toContain("mcp__github__create_issue");
   });
 
+  test("management tools are dropped when no server is enabled (#539)", async () => {
+    const fake = createFakeSdkManager();
+    fake.status = {
+      github: {
+        serverId: "github",
+        name: "GitHub",
+        transport: "stdio",
+        enabled: false,
+        status: "idle",
+        tools: [],
+        toolDetails: []
+      }
+    };
+    const manager = new WorkspaceMcpManager({
+      readConfig: () => createConfig({
+        github: { enabled: false, transport: "stdio", command: "node" }
+      }),
+      sdkManagerFactory: () => fake
+    });
+
+    const result = await manager.createRuntimeTools("demo");
+    const names = result.tools.map((tool) => tool.name);
+    expect(names).not.toContain("McpConfigTool");
+    expect(names).not.toContain("ListMcpResourcesTool");
+    expect(names).not.toContain("ReadMcpResourceTool");
+  });
+
   test("createRuntimeTools includeManagementTools:false drops fixed-name tools + stamps provider metadata", async () => {
     const fake = createFakeSdkManager();
     fake.status = {

@@ -16,7 +16,7 @@ import { pipeline } from "node:stream/promises";
 import nodemailer from "nodemailer";
 import { resolveGuardedEgressTarget } from "../core/guarded-fetch";
 import { isIpAddress } from "../core/request";
-import { mailAttachmentDownloadByteLimit, mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
+import { mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
 import { MailProtocolError } from "./errors";
 import { sanitizeTempFileName } from "./temp-files";
 
@@ -37,11 +37,11 @@ export interface MailProtocolConfig {
   attachmentFallbackPrefix: string;
   /**
    * Screen the resolved IP addresses of the mailbox hosts before connecting.
-   *
-   * Providers whose hosts are hardcoded do not need this: their hostnames are
-   * part of the integration. It is meant for providers whose hosts come from
-   * user input, where a save-time hostname check alone can be defeated by a DNS
-   * record that only points at an internal address once the connection is made.
+   * Enabled by default (#696): a save-time hostname check alone is defeated by
+   * a DNS record that only points at an internal address once the connection
+   * is made, so resolution and connection are pinned to the validated set.
+   * Providers whose hosts are hardcoded as part of the integration may opt out
+   * explicitly.
    */
   enforceHostNetworkPolicy?: boolean;
 }
@@ -127,15 +127,6 @@ export interface MailAttachment {
   contentId: string | null;
 }
 
-export interface MailDownloadedAttachment {
-  attachmentId: string;
-  filename: string | null;
-  contentType: string | null;
-  size: number | null;
-  filePath: string;
-  cleanup(): Promise<void>;
-}
-
 export interface MailFolderStatus {
   folder: string;
   messages: number | null;
@@ -158,7 +149,8 @@ export interface MailFetchedMessage {
 }
 
 export interface MailProtocol {
-  validateImapCredential(credential: MailCredential): Promise<void>;
+  /** waitSignal 只中止「排队等连接名额」阶段;名额到手后连接自身超时照旧。 */
+  validateImapCredential(credential: MailCredential, waitSignal?: AbortSignal): Promise<void>;
   validateSmtpCredential(credential: MailCredential): Promise<void>;
   sendMail(credential: MailCredential, input: MailSendInput): Promise<MailSendResult>;
   listFolders(credential: MailCredential): Promise<MailFolder[]>;
@@ -181,16 +173,11 @@ export interface MailProtocol {
     uid: number,
     options: { peek: true; maxBytes: number; skipAttachmentBodies: true },
   ): Promise<MailFetchedMessage>;
-  downloadAttachment(
-    credential: MailCredential,
-    folder: string,
-    uid: number,
-    attachmentId: string,
-  ): Promise<MailDownloadedAttachment>;
   markSeen(credential: MailCredential, folder: string, uid: number): Promise<void>;
   markUnseen(credential: MailCredential, folder: string, uid: number): Promise<void>;
   moveMessage(credential: MailCredential, folder: string, uid: number, targetFolder: string): Promise<void>;
-  deleteMessage(credential: MailCredential, folder: string, uid: number): Promise<void>;
+  /** Move the message into the server's \Trash folder; returns the Trash path. */
+  deleteMessage(credential: MailCredential, folder: string, uid: number): Promise<string>;
   getFolderStatus(credential: MailCredential, folder: string): Promise<MailFolderStatus>;
 }
 
@@ -238,18 +225,6 @@ type RuntimeImapClient = MailImapClient & {
       uidValidity: true;
     },
   ): Promise<unknown>;
-  download(
-    uid: number,
-    attachmentId: string,
-    options: { uid: true; maxBytes: number },
-  ): Promise<{
-    meta: {
-      expectedSize?: number;
-      contentType?: string;
-      filename?: string;
-    };
-    content: AsyncIterable<unknown>;
-  }>;
 };
 
 interface BodyPart {
@@ -260,12 +235,32 @@ interface BodyPart {
   size: number | null;
 }
 
+/**
+ * 已观测的邮箱状态(账号+文件夹 → UIDVALIDITY)。读动作建立基准,写动作前比对:
+ * 文件夹被删除重建后 UID 计数器归位,上轮记住的 UID N 与本轮的 UID N 是两封不同
+ * 邮件——叠加删除类动作为不可逆操作,过期 UID 的后果不可恢复。进程级缓存同时
+ * 覆盖同会话中途重建与 sidecar 重启后凭旧记忆直写的两个窗口。
+ */
+const observedMailboxUidValidity = new Map<string, string>();
+
+function mailboxStateKey(email: string, folder: string): string {
+  // 与连接闸门(#698)同口径:同一物理邮箱的大小写变体共享 UIDVALIDITY 基准,
+  // 否则混合大小写写入的基准对后续比对不可见,fail-closed 会误拒合法动作
+  return `${email.toLowerCase()}\0${folder}`;
+}
+
 export function createMailProtocol(config: MailProtocolConfig, deps: MailProtocolDependencies = {}): MailProtocol {
   return {
-    async validateImapCredential(credential) {
-      await withImapClient(config, deps, credential, async (client) => {
-        await client.list();
-      });
+    async validateImapCredential(credential, waitSignal) {
+      await withImapClient(
+        config,
+        deps,
+        credential,
+        async (client) => {
+          await client.list();
+        },
+        waitSignal,
+      );
     },
     async validateSmtpCredential(credential) {
       const transport = await createSmtpTransport(config, deps, credential);
@@ -387,27 +382,6 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
         };
       });
     },
-    async downloadAttachment(credential, folder, uid, attachmentId) {
-      return await withMailbox(config, deps, credential, folder, true, async (client) => {
-        const downloaded = await downloadAttachmentPart(client, uid, attachmentId);
-        const expectedSize = readInteger(downloaded.meta.expectedSize);
-        const filename =
-          readString(downloaded.meta.filename) ?? `${config.attachmentFallbackPrefix}-attachment-${attachmentId}`;
-        const { filePath, cleanup } = await writeAsyncIterableToTempFile(
-          downloaded.content,
-          filename,
-          `oomol-connect-${config.attachmentFallbackPrefix}-download-`,
-        );
-        return {
-          attachmentId,
-          filename,
-          contentType: readString(downloaded.meta.contentType),
-          size: expectedSize,
-          filePath,
-          cleanup,
-        };
-      });
-    },
     async markSeen(credential, folder, uid) {
       await withMailbox(config, deps, credential, folder, false, async (client) => {
         await requireMessageExists(client, uid);
@@ -436,12 +410,25 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
       });
     },
     async deleteMessage(credential, folder, uid) {
-      await withMailbox(config, deps, credential, folder, false, async (client) => {
+      return await withMailbox(config, deps, credential, folder, false, async (client) => {
         await requireMessageExists(client, uid);
-        const deleted = await client.messageDelete([uid], { uid: true });
-        if (!deleted) {
+        // 语义对齐 Gmail move_to_trash:移入 \Trash 可恢复,而非标记 \Deleted
+        // 后 EXPUNGE 物理删除(用户一次审批即不可逆)。服务器无 \Trash 时拒绝
+        // 执行而非退回硬删。
+        const trash = (await client.list())
+          .map(normalizeMailbox)
+          .find((mailbox) => mailbox.specialUse === "\\Trash");
+        if (!trash) {
+          throw new MailProtocolError(
+            "trash_missing",
+            "This server has no Trash folder; the message was left untouched instead of being permanently deleted.",
+          );
+        }
+        const moved = await moveMessageToFolder(client, uid, trash.path);
+        if (!moved) {
           throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
         }
+        return trash.path;
       });
     },
     async getFolderStatus(credential, folder) {
@@ -455,6 +442,11 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
             uidValidity: true,
           }),
         );
+        // 与 withMailbox 读路径同权:显式查状态也建立写前比对基准
+        const uidValidity = readBigIntString(status?.uidValidity);
+        if (uidValidity !== null) {
+          observedMailboxUidValidity.set(mailboxStateKey(credential.email, folder), uidValidity);
+        }
         return {
           folder,
           messages: readInteger(status?.messages),
@@ -466,20 +458,6 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
       });
     },
   };
-}
-
-async function downloadAttachmentPart(client: RuntimeImapClient, uid: number, attachmentId: string) {
-  try {
-    return await client.download(uid, attachmentId, {
-      uid: true,
-      maxBytes: mailAttachmentDownloadByteLimit,
-    });
-  } catch (error) {
-    if (isFolderMissingError(error)) {
-      throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
-    }
-    throw error;
-  }
 }
 
 /**
@@ -517,7 +495,8 @@ async function pinMailHost(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
 ): Promise<MailHostTarget> {
-  if (!config.enforceHostNetworkPolicy) {
+  // 默认启用(#696):仅硬编码 host 的内置 provider 显式豁免
+  if (config.enforceHostNetworkPolicy === false) {
     return { host };
   }
 
@@ -639,7 +618,124 @@ function createSmtpSocketFactory(host: string, port: number, lookup: LookupFunct
   };
 }
 
+/**
+ * QQ 等服务商对单账号并发 IMAP 连接数有上限(#698):协议层一动作一连接,
+ * agent 并行调用只读工具(search_emails + 多个 get_email)会各开一条连接撞限,
+ * 超限报错形如 "LOGIN failed" 又会被 isAuthError 启发式误判成授权码失效。
+ * 按账号把在途连接压到上限之下;排队即预占名额,唤醒者恢复后直接运行。
+ */
+export const maxImapConnectionsPerAccount = 2;
+
+/**
+ * 单账号排队深度上限(#698 审查 P2):超限快败而非无限堆积。engine 单轮
+ * 并发 ≤10(MAX_CONCURRENCY 默认),32 已为多会话叠加留足余量;触发即说明
+ * 服务端已不可达或调用方失控,挂死排队不如立刻把「稍后重试」还给模型。
+ */
+export const maxImapWaitersPerAccount = 32;
+
+interface ImapAccountGate {
+  active: number;
+  waiters: Array<() => void>;
+}
+
+const imapAccountGates = new Map<string, ImapAccountGate>();
+
+/**
+ * 排队等待一个连接名额;waitSignal 在排队阶段中止时退队并归还预占名额,
+ * 以 signal.reason(或缺省 provider 错误)reject。
+ */
+async function awaitImapSlot(gate: ImapAccountGate, waitSignal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const leaveQueueWithoutSlot = () => {
+      const index = gate.waiters.indexOf(wake);
+      if (index < 0) {
+        // 从未入队(携带已中止 signal 直达):本方未记过账,不退任何名额
+        return;
+      }
+      gate.waiters.splice(index, 1);
+      // 只退自己的预占,不放行队头:排队者的名额是「虚」的——它从未建连,
+      // 退出没有释放任何服务端容量;若在此 shift 转交,后继会立即建连使真实
+      // 连接数突破上限(#698 二轮审查实测复现)。放行只属于释放路径的真实
+      // active-- 配对,FIFO 由「waiters>0 ⇒ active≥max」不变式保持。
+      gate.active -= 1;
+    };
+    const onAbort = () => {
+      leaveQueueWithoutSlot();
+      reject(waitSignal?.reason ?? new MailProtocolError("provider", "aborted while waiting for a connection slot"));
+    };
+    const wake = () => {
+      waitSignal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+
+    if (waitSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    waitSignal?.addEventListener("abort", onAbort, { once: true });
+    // 排队即预占名额(active 含排队者):唤醒者恢复后直接运行、不再复查,
+    // 晚到者必见 active≥max 而入队,无法插队超发。守恒依赖此约定——
+    // 若改成「唤醒后补记」,排队窗口内的新到达会读到偏小的 active 造成超限。
+    gate.active += 1;
+    gate.waiters.push(wake);
+  });
+}
+
+async function withImapConnectionLimit<T>(
+  account: string,
+  run: () => Promise<T>,
+  waitSignal?: AbortSignal,
+): Promise<T> {
+  let gate = imapAccountGates.get(account);
+  if (!gate) {
+    gate = { active: 0, waiters: [] };
+    imapAccountGates.set(account, gate);
+  }
+  if (gate.active >= maxImapConnectionsPerAccount) {
+    if (gate.waiters.length >= maxImapWaitersPerAccount) {
+      // busy 而非 provider:请求未发往上游,是本地主动快败,模型应退避重试;
+      // message 不嵌 email——调用结果天然绑定发起上下文,且 email 不进错误面
+      throw new MailProtocolError("busy", "Too many pending operations for this account; retry shortly.");
+    }
+    // 中止路径在 awaitImapSlot 内部已退队并还原名额,此处直接向上抛
+    await awaitImapSlot(gate, waitSignal);
+  } else {
+    gate.active += 1;
+  }
+  try {
+    return await run();
+  } finally {
+    gate.active -= 1;
+    gate.waiters.shift()?.();
+    // 预占模型下被放行者仍计在 active 中,active===0 蕴含无人持有此 gate,
+    // 此刻删除安全;后续到达者新建条目,不会与旧引用互撞
+    if (gate.active === 0 && gate.waiters.length === 0) {
+      imapAccountGates.delete(account);
+    }
+  }
+}
+
+/** 仅供不变式测试观察闸门生命周期:账号空闲后条目应被清理。 */
+export function imapAccountGateStateForTest(email: string): { active: number; waiting: number } | undefined {
+  const gate = imapAccountGates.get(email.toLowerCase());
+  return gate ? { active: gate.active, waiting: gate.waiters.length } : undefined;
+}
+
 async function withImapClient<T>(
+  config: MailProtocolConfig,
+  deps: MailProtocolDependencies,
+  credential: MailCredential,
+  callback: (client: RuntimeImapClient) => Promise<T>,
+  waitSignal?: AbortSignal,
+) {
+  return withImapConnectionLimit(
+    credential.email.toLowerCase(),
+    () => openAndRunImapClient(config, deps, credential, callback),
+    waitSignal,
+  );
+}
+
+async function openAndRunImapClient<T>(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
   credential: MailCredential,
@@ -654,14 +750,23 @@ async function withImapClient<T>(
   } catch (error) {
     throw mapLibraryError(error, config);
   } finally {
+    // close 是清理兜底,自身失败不得顶替业务错误(或吞掉成功返回值);
+    // socket 资源由进程回收,静默即可
+    const closeQuietly = () => {
+      try {
+        client.close?.();
+      } catch {
+        /* 清理兜底的失败无诊断价值 */
+      }
+    };
     if (connected) {
       try {
         await client.logout();
       } catch {
-        client.close?.();
+        closeQuietly();
       }
     } else {
-      client.close?.();
+      closeQuietly();
     }
   }
 }
@@ -675,13 +780,37 @@ async function withMailbox<T>(
   callback: (client: RuntimeImapClient) => Promise<T>,
 ) {
   return await withImapClient(config, deps, credential, async (client) => {
+    let opened: Record<string, unknown> | null;
     try {
-      await client.mailboxOpen(folder, { readOnly });
+      opened = toRecord(await client.mailboxOpen(folder, { readOnly }));
     } catch (error) {
       if (isFolderMissingError(error)) {
         throw new MailProtocolError("folder_not_found", "Mail folder does not exist.");
       }
       throw error;
+    }
+
+    const uidValidity = readBigIntString(opened?.uidValidity);
+    if (uidValidity !== null) {
+      const key = mailboxStateKey(credential.email, folder);
+      const known = observedMailboxUidValidity.get(key);
+      if (!readOnly) {
+        // 变更类动作 fail-closed:基准缺失(进程重启后凭旧记忆直写)或失配
+        // (文件夹重建致计数器重置)都拒绝,要求重新 search 建立新鲜基准
+        if (known === undefined) {
+          throw new MailProtocolError(
+            "uid_validity_changed",
+            `No mailbox state observed for this folder in the current session. Run search_emails first and retry with fresh UIDs.`,
+          );
+        }
+        if (known !== uidValidity) {
+          throw new MailProtocolError(
+            "uid_validity_changed",
+            `The folder was recreated or reset (UIDVALIDITY changed): UIDs from earlier searches are stale. Re-run search_emails and retry with fresh UIDs.`,
+          );
+        }
+      }
+      observedMailboxUidValidity.set(key, uidValidity);
     }
 
     return await callback(client);
@@ -895,25 +1024,6 @@ function collectAttachmentMetadata(bodyStructure: unknown): MailAttachment[] {
       contentId: readString(record.id),
     },
   ];
-}
-
-async function writeAsyncIterableToTempFile(content: AsyncIterable<unknown>, name: string, prefix: string) {
-  const directory = await mkdtemp(join(tmpdir(), prefix));
-  const filePath = join(directory, `${randomUUID()}-${sanitizeTempFileName(name)}`);
-
-  try {
-    await pipeline(Readable.from(content), createWriteStream(filePath));
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true }).catch(() => {});
-    throw error;
-  }
-
-  return {
-    filePath,
-    cleanup: async () => {
-      await rm(directory, { recursive: true, force: true }).catch(() => {});
-    },
-  };
 }
 
 function isAttachment(record: Record<string, unknown>) {

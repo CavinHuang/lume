@@ -2,9 +2,6 @@
  * WebSearchTool - Web search with provider fallback
  */
 
-import { spawn } from 'node:child_process'
-import { existsSync } from 'node:fs'
-import { dirname, join } from 'node:path'
 import { defineTool } from './types.js'
 import { ensureNetworkAllowed } from '../utils/pathing.js'
 import { sdkFetch } from './web-request.js'
@@ -18,7 +15,6 @@ export interface SearchResult {
 }
 
 export type WebSearchProviderName =
-  | 'guanlan'
   | 'exa'
   | 'pipellm'
   | 'zhipu'
@@ -28,7 +24,6 @@ export type WebSearchProviderName =
   | 'bing'
 
 const DEFAULT_PROVIDER_ORDER: WebSearchProviderName[] = [
-  'guanlan',
   'exa',
   'pipellm',
   'zhipu',
@@ -46,7 +41,6 @@ export const ENGINE_TIMEOUT_MS: Record<WebSearchProviderName, number> = {
   brave: 10000,
   duckduckgo: 15000,
   bing: 10000,
-  guanlan: 20000,
 }
 
 const PROVIDER_NAMES = new Set<WebSearchProviderName>(DEFAULT_PROVIDER_ORDER)
@@ -124,9 +118,6 @@ function truncateContent(text: string, maxChars: number): string {
 const MAX_CONTENT_CHARS = 1500
 const MAX_PAGE_FETCH_BYTES = 5 * 1024 * 1024
 const MAX_CONCURRENT_FETCHES = 3
-const GUANLAN_TIMEOUT_MS = 20000
-const MAX_GUANLAN_STDERR_CHARS = 2000
-const MAX_GUANLAN_STDOUT_CHARS = 200000
 
 /**
  * Combine the caller's abort signal with the provider's fixed timeout so a
@@ -221,122 +212,8 @@ export function resolveEnabledWebSearchProviders(envValue = process.env.LUME_WEB
     .filter((item): item is WebSearchProviderName => PROVIDER_NAMES.has(item as WebSearchProviderName))
 }
 
-// ─── Search providers ─────────────────────────────────────────
-
-export interface CommandResult {
-  code: number
-  stdout: string
-  stderr: string
-}
-
-async function runCommand(command: string, args: string[], timeoutMs = GUANLAN_TIMEOUT_MS): Promise<CommandResult> {
-  return new Promise((resolve) => {
-    const child = spawn(command, args, {
-      stdio: ['ignore', 'pipe', 'pipe'],
-      env: {
-        ...process.env,
-        PYTHONIOENCODING: 'utf-8',
-      },
-    })
-    let stdout = ''
-    let stderr = ''
-    const timeout = setTimeout(() => {
-      child.kill('SIGTERM')
-      resolve({ code: 124, stdout, stderr: stderr || 'command timed out' })
-    }, timeoutMs)
-    child.stdout?.on('data', (chunk) => {
-      stdout = truncateRawText(stdout + chunk.toString('utf8'), MAX_GUANLAN_STDOUT_CHARS)
-    })
-    child.stderr?.on('data', (chunk) => {
-      stderr = truncateRawText(stderr + chunk.toString('utf8'), MAX_GUANLAN_STDERR_CHARS)
-    })
-    child.on('error', (error) => {
-      clearTimeout(timeout)
-      resolve({ code: 127, stdout, stderr: error.message })
-    })
-    child.on('close', (code) => {
-      clearTimeout(timeout)
-      resolve({ code: code ?? 0, stdout, stderr })
-    })
-  })
-}
-
-export function truncateRawText(text: string, maxChars: number): string {
-  return text.length > maxChars ? `${text.slice(0, maxChars)}...(truncated)` : text
-}
-
-export function parseGuanlanSearchOutput(output: string): SearchResult[] {
-  let payload: unknown
-  try {
-    payload = JSON.parse(output)
-  } catch {
-    return []
-  }
-  const items = Array.isArray(payload)
-    ? payload
-    : Array.isArray((payload as { results?: unknown[] } | null)?.results)
-      ? (payload as { results: unknown[] }).results
-      : []
-
-  return items
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null
-      const record = item as Record<string, unknown>
-      const title = readResultString(record.title) || readResultString(record.name)
-      const url = readResultString(record.url) || readResultString(record.link)
-      if (!title || !url) return null
-      const snippet = readResultString(record.snippet) || readResultString(record.content)
-      return { title, url, ...(snippet ? { snippet } : {}) }
-    })
-    .filter((item): item is SearchResult => !!item)
-}
-
-function readResultString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
-}
-
 export function clampProviderLimit(numResults: number): number {
   return Math.max(1, Math.min(Math.trunc(numResults || 5), 10))
-}
-
-export async function runGuanlanPython(args: string[], timeoutMs = GUANLAN_TIMEOUT_MS): Promise<CommandResult> {
-  const guanlanPath = await resolveGuanlanCLI()
-  if (guanlanPath) return runCommand(guanlanPath, args, timeoutMs)
-
-  const direct = await runCommand('guanlan', args, timeoutMs)
-  if (direct.code !== 127) return direct
-
-  return { code: 127, stdout: '', stderr: 'guanlan CLI not found. Install with: pip install guanlan' }
-}
-
-async function resolveGuanlanCLI(): Promise<string | null> {
-  const configuredPython = process.env.LUME_GUANLAN_PYTHON?.trim()
-  const candidates = configuredPython ? [configuredPython] : ['python3', 'python']
-
-  for (const python of candidates) {
-    const result = await runCommand(python, ['-c', 'import sys; print(sys.executable)'], 5000)
-    if (result.code !== 0 || !result.stdout.trim()) continue
-    const guanlanPath = join(dirname(result.stdout.trim()), 'guanlan')
-    if (existsSync(guanlanPath)) return guanlanPath
-  }
-  return null
-}
-
-async function searchWithGuanlan(query: string, numResults: number) {
-  if (process.env.LUME_GUANLAN_ENABLED !== '1') return null
-  const result = await runGuanlanPython([
-    'search',
-    query,
-    '--profile',
-    'china',
-    '--limit',
-    String(clampProviderLimit(numResults)),
-    '--json',
-  ])
-  if (result.code !== 0) {
-    throw new Error(`Guanlan search failed: ${truncateRawText(result.stderr || result.stdout, MAX_GUANLAN_STDERR_CHARS)}`)
-  }
-  return { data: parseGuanlanSearchOutput(result.stdout), is_error: false } as const
 }
 
 function decodeDuckDuckGoRedirectUrl(rawUrl: string): string {
@@ -632,7 +509,6 @@ export const WebSearchTool = defineTool({
       )
       const userSignal = context.abortSignal
       const providerAttempts: Record<WebSearchProviderName, () => Promise<unknown>> = {
-        guanlan: () => searchWithGuanlan(query, numResults),
         exa: () => searchWithExa(query, numResults, context.sandbox, userSignal),
         pipellm: () => searchWithPipellm(query, numResults, context.sandbox, userSignal),
         zhipu: () => searchWithZhipu(query, numResults, context.sandbox, userSignal),
