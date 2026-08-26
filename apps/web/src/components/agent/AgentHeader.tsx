@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { agentRuntimeEventsFamily, agentThreadsAtom, agentRuntimeStatusFamily, agentStreamingStatesFamily, agentWorkspacesAtom, activeTabIdAtom, tabsAtom } from '@/atoms'
 import { ThreadMoreActions } from './ThreadMoreActions'
+import { displayToolName } from './message-blocks/tool-summary'
 import { AGENT_IPC_CHANNELS, type AgentRuntimePhase, type AgentWorkspace, type AgentWorkspaceStatus } from '@lume/shared'
 import { getPlanningTodo, onPlanningTodoChange, openFolderDialog, sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
@@ -151,7 +152,7 @@ export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
           >
             <span className={cn('size-1.5 rounded-full', phaseStyle.dot)} />
             {isStreaming && toolName
-              ? `第 ${toolStepCount} 步 · ${toolName}`
+              ? `第 ${toolStepCount} 步 · ${displayToolName(toolName)}`
               : phaseStyle.label}
             {runtimeStatus?.queuedCount ? ` · 队列 ${runtimeStatus.queuedCount}` : ''}
           </span>
