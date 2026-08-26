@@ -233,6 +233,36 @@ test('createDesktopHostSpawnConfig launches macOS desktop host through its app b
   )
 })
 
+// #751: darwin 经 LaunchServices 拉起时宿主 stdio 不达 supervisor；
+// open --stdout/--stderr 把宿主日志重定向到文件，由 supervisor tail 跟随。
+test('createDesktopHostSpawnConfig redirects host stdout/stderr to files when paths provided (#751)', () => {
+  const config = createDesktopHostSpawnConfig({
+    binaryPath: '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Lume Computer Use.app/Contents/MacOS/lume_desktop_host',
+    endpoint: '/tmp/lume-desktop.sock',
+    sessionToken: 'secret-token',
+    tokenFilePath: '/tmp/lume-desktop.sock.token',
+    logStdoutPath: '/tmp/lume-host.out.log',
+    logStderrPath: '/tmp/lume-host.err.log',
+    platform: 'darwin',
+  })
+  // --stdout/--stderr 是 open 自身的选项，必须位于 app 路径之前；--args 之后才是宿主参数。
+  assert.deepEqual(config.args, [
+    '-n',
+    '-W',
+    '-g',
+    '--stdout',
+    '/tmp/lume-host.out.log',
+    '--stderr',
+    '/tmp/lume-host.err.log',
+    '/Applications/Lume.app/Contents/Resources/desktop-host/darwin-arm64/Lume Computer Use.app',
+    '--args',
+    '--endpoint',
+    '/tmp/lume-desktop.sock',
+    '--token-file',
+    '/tmp/lume-desktop.sock.token',
+  ])
+})
+
 test('createDesktopHostSpawnConfig rejects macOS host paths outside an app bundle', () => {
   assert.throws(
     () => createDesktopHostSpawnConfig({
