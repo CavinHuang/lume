@@ -557,7 +557,8 @@ describe("file tools", () => {
     expect(result.is_error).toBeFalsy();
     expect(result._meta?.read).toMatchObject({ partial: true, truncated: true, totalLines: 2500 });
     expect(String(result.content)).toContain("[truncated: showing lines 1-2000 of 2500 total");
-    expect(cache.get(filePath)?.isPartialView).toBe(true);
+    // 缓存键是 realpath 规范化路径(#336),查询须同侧
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(true);
   });
 
   test("#649 review P1-5: 超限大文件的显式全覆盖读判全文，解锁 Write/Edit", async () => {
@@ -579,7 +580,7 @@ describe("file tools", () => {
     // truncated 键只在真截断时存在（条件展开）
     expect(result._meta?.read).toMatchObject({ partial: false, totalLines: 2500 });
     expect(result._meta?.read?.truncated).toBeUndefined();
-    expect(cache.get(filePath)?.isPartialView).toBe(false);
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(false);
     expect(String(result.content)).toContain("line-2499");
 
     // #649 follow-up:summarize 与显式范围同给时范围优先，但必须显式告知 summarize 被忽略
@@ -605,8 +606,9 @@ describe("file tools", () => {
 
     expect(result.is_error).toBeFalsy();
     expect(result._meta?.read).toMatchObject({ partial: true });
-    expect(cache.get(filePath)?.isPartialView).toBe(true);
-    expect(cache.get(filePath)?.content).not.toContain("line-0");
+    // 缓存键是 realpath 规范化路径(#336),查询须同侧
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(true);
+    expect(cache.get(realpathSync(filePath))?.content).not.toContain("line-0");
   });
 
   test("rejects known binary files instead of decoding them as text", async () => {
