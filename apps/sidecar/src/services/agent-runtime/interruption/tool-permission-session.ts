@@ -148,6 +148,14 @@ export function waitForToolPermissionDecision(
       resolve: done,
       timeout
     });
+    // 二轮 review P2:abort 后挂的 listener 永不回调——Esc 与工具派发竞态
+    // 落进同步缝隙时 done 永不被调,横幅悬挂至超时(幽灵审批残余)。
+    if (signal.aborted) {
+      clearTimeout(timeout);
+      pendingToolPermissionResolvers.delete(request.requestId);
+      void done(null);
+      return;
+    }
     signal.addEventListener("abort", onAbort, { once: true });
     void persistToolApprovalInterruption(request).catch((error) => {
       log.warn("Failed to persist tool approval interruption", {

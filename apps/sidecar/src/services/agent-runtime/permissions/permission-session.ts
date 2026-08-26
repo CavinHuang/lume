@@ -1,5 +1,5 @@
 import type { LumeToolDescriptor } from "../tools/tool-types";
-import { allowsCommandScopeGrant, buildPermissionFingerprint } from "./permission-rules";
+import { COMMAND_CONNECTOR_PATTERN, allowsCommandScopeGrant, buildPermissionFingerprint } from "./permission-rules";
 import type { AgentToolPermissionAllowScope } from "@lume/shared";
 
 export interface PermissionSessionGrantInput {
@@ -94,11 +94,18 @@ export function createPermissionSessionStore(): PermissionSessionStore {
       if (grant.startsWith(TOOL_SCOPE_MARK) && normalized.startsWith(grant.slice(1) + ":")) {
         return true;
       }
-      // 同命令前缀档：key 以已授命令开头且止于词边界（不放行 `ls` → `lsblk`）
+      // 同命令前缀档：key 以已授命令开头且止于词边界（不放行 `ls` → `lsblk`）。
+      // 二轮 review P1:匹配侧必须与建档侧同一否决口径——rest 含连接符/管道/
+      // 重定向/命令替换时不得放行,否则 `npm test` 授档后
+      // `npm test && curl … | sh` 以空白开头照样命中。
       if (grant.startsWith(PREFIX_SCOPE_MARK)) {
         const grantedKey = grant.slice(PREFIX_SCOPE_MARK.length);
         const rest = normalized.slice(grantedKey.length);
-        if (normalized.startsWith(grantedKey) && (rest === "" || /^\s/.test(rest))) {
+        if (
+          normalized.startsWith(grantedKey)
+          && (rest === ""
+            || (/^\s/.test(rest) && !COMMAND_CONNECTOR_PATTERN.test(rest)))
+        ) {
           return true;
         }
       }

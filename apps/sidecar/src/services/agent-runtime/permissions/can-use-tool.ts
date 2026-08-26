@@ -965,6 +965,21 @@ export function createCanUseToolHandler(
       });
       return { behavior: "allow" };
     }
+    // 二轮 review(动线 F1):decision=null 是用户点停止/请求被取消,不是拒绝——
+    // 记 user_denied 会污染后续轮次上下文(模型以为用户拒绝过该操作)。
+    if (decision === null && !permissionTimedOut) {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+        reason: "cancelled",
+      });
+      return {
+        behavior: "deny",
+        message: `已取消，未执行工具: ${toolName}`,
+      };
+    }
     log.debug("[Agent 工具] 完成", {
       toolName,
       threadId: params.runtime.sessionId.slice(0, 8),

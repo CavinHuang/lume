@@ -338,7 +338,9 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
           toast.success('已归档')
         } catch (error) {
           console.error('[LeftSidebar] 归档失败:', error)
-          toast.error('归档失败')
+          // 二轮 review(动线 F8):护栏人话文案(如「线程正在运行中，请停止后再归档。」)
+          // 不再被通用文案吞掉
+          toast.error(error instanceof Error ? error.message : '归档失败')
         }
       },
     })

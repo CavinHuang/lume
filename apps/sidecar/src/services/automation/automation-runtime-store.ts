@@ -205,7 +205,7 @@ export function recoverAutomationRuntimeStates(): AutomationRuntimeState[] {
   return states;
 }
 
-function isStaleRunningLease(state: AutomationRuntimeState | null): boolean {
+export function isStaleRunningLease(state: AutomationRuntimeState | null): boolean {
   return Boolean(
     state?.status === "running"
     && state.lease

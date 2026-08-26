@@ -287,8 +287,9 @@ export class LumeRunner {
     }
     if (resultWithCoding.status !== "completed") {
       // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
-      // F3:空流/引擎早夭(无 result 消息)时 projector 未开 run,总线无终值——补发
-      await this.publishRunEndIfMissing("error", resultWithCoding.errorMessage ?? "Agent SDK 执行失败");
+      // F3:空流/引擎早夭(无 result 消息)时 projector 未开 run,总线无终值——补发。
+      // 二轮 review P2:与 fail() 出口同一口径过人性化层,终值出口不双标
+      await this.publishRunEndIfMissing("error", humanizeRuntimeErrorMessage(resultWithCoding.errorMessage ?? "Agent SDK 执行失败"));
       await this.observer.flush();
       return this.finalizeResult(resultWithCoding);
     }

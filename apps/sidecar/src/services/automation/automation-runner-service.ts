@@ -21,6 +21,7 @@ import {
   consumeLatestAutomationTrigger,
   finishAutomationLease,
   heartbeatAutomationLease,
+  isStaleRunningLease,
   mergeLatestAutomationTrigger,
   readAutomationRuntimeState,
   recoverAutomationRuntimeStates,
@@ -341,7 +342,19 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     const pendingScheduledAt = consumeLatestAutomationTrigger(job.id);
     if (pendingScheduledAt !== undefined) {
       const latest = listAutomationJobs().find((item) => item.id === job.id);
-      if (latest?.enabled) void executeJob(latest, "schedule", pendingScheduledAt);
+      // 二轮 review P3:void 递归不在任何外层 catch 链上,尾部失败须就地日志化
+      if (latest?.enabled) {
+        void executeJob(latest, "schedule", pendingScheduledAt).catch((error: unknown) => {
+          writeLogRecord({
+            level: "error",
+            context: "automation.runner",
+            event: "automation.reschedule_background_failed",
+            message: `合并触发补跑的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+            status: "error",
+            data: { automationJobId: latest.id }
+          });
+        });
+      }
     }
   }
   return run;
@@ -397,9 +410,22 @@ function scheduleJobInner(job: AutomationJob): void {
       void refreshAutomationRunnerJobs();
       return;
     }
+    // 二轮 review P3:executeJob 尾部(appendRun/重调度链)不在内部 try 内,
+    // schedule 入口与递归补跑同样需要日志化 catch,否则 unhandledRejection
+    // 进进程止损计数(累计 5 次退出)。
+    const logScheduleTailFailure = (error: unknown): void => {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.schedule_background_failed",
+        message: `调度执行的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+        status: "error",
+        data: { automationJobId: latest.id }
+      });
+    };
     void executeJob(latest, "schedule", scheduledAt).then((run) => {
       if (run.status !== "skipped") void refreshAutomationRunnerJobs();
-    });
+    }, logScheduleTailFailure);
   }, delay);
   jobDisposers.set(job.id, () => clearTimeout(timer));
 }
@@ -442,8 +468,14 @@ export async function runAutomationJobNow(input: AutomationRunNowInput): Promise
   }
   // review P2:连点防护——上一轮未结束时二次触发会写 skipped 记录并在首轮
   // 完成后隐含一次 schedule 补跑,对用户表现为假成功 toast,入口即拒绝。
+  // 二轮 review P1:仅「新鲜」running 态才拒绝——崩溃+30s 内重启留下的
+  // running 孤儿(心跳冻结)必须放行,executeJob 的 tryAcquire 会偷锁自愈;
+  // 无脑读盘拒绝会把「重试即自愈」通道堵死,任务永久砖化。waiting_* 心跳
+  // 停摆是设计内(#587),维持拒绝由交互解决路径收尾。
   const runtimeState = readAutomationRuntimeState(input.id);
-  if (runningJobs.has(input.id) || runtimeState?.status === "running"
+  const runtimeRunningLive =
+    runtimeState?.status === "running" && !isStaleRunningLease(runtimeState);
+  if (runningJobs.has(input.id) || runtimeRunningLive
     || runtimeState?.status === "waiting_for_user" || runtimeState?.status === "waiting_for_approval") {
     throw new Error("任务正在执行中，请等待完成后再试");
   }

@@ -61,6 +61,12 @@ export function matchPermissionRule(input: {
 }
 
 /**
+ * shell 连接符/管道/重定向/命令替换字符——command 档的写入侧与匹配侧共用
+ * 同一否决口径（#558 二轮 review P1）。
+ */
+export const COMMAND_CONNECTOR_PATTERN = /[;&|<>`]|\$\(/;
+
+/**
  * #558 review P1:command 档宽指纹的「前缀+词边界」校验可被 shell 连接符后缀
  * 绕过（`git status && curl … | sh` 的 rest 以空白开头照样命中）。与规则表
  * 「unparseable 命令永不获得持久 allow」同一口径：bash 类指纹必须能解析为
@@ -75,7 +81,7 @@ export function allowsCommandScopeGrant(canonicalName: string, key: string): boo
   // parse-unavailable）退守字符串级检查：含连接符/管道/重定向/命令替换的
   // 一律不给前缀档，纯「命令+参数」形态按前缀授予——不把 #558 弄成全灭。
   if (analysis.status === "parse-unavailable") {
-    return !/[;&|<>`]|\$\(/.test(key);
+    return !COMMAND_CONNECTOR_PATTERN.test(key);
   }
   return false;
 }
