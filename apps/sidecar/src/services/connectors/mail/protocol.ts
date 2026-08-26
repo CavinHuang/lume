@@ -16,6 +16,7 @@ import { pipeline } from "node:stream/promises";
 import nodemailer from "nodemailer";
 import { resolveGuardedEgressTarget } from "../core/guarded-fetch";
 import { isIpAddress } from "../core/request";
+import { createLogger } from "../../infra/logger";
 import { mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
 import { MailProtocolError } from "./errors";
 import { sanitizeTempFileName } from "./temp-files";
@@ -674,6 +675,63 @@ interface ImapAccountGate {
 
 const imapAccountGates = new Map<string, ImapAccountGate>();
 
+// ---------------------------------------------------------------------------
+// 池可观测性(#784①):分类计数器 + 只读快照。没有它「池在工作吗」「LOGIN
+// 频率下降多少」无法在线验证(#768 性能审查的量化数字只能离线建模)。
+// 协议层是模块级单例,计数器与日志同为进程级口径,不做 per-request 归因。
+// ---------------------------------------------------------------------------
+
+interface ImapPoolMetrics {
+  /** 借出命中池内兼容连接。 */
+  pool_hit: number;
+  /** 新建连接成功(= LOGIN 次数,衡量复用收益的直接口径)。 */
+  created: number;
+  /** 借出/清扫时超过空闲 TTL。 */
+  miss_ttl: number;
+  /** 借出/清扫时发现 dead 标记置位(看门狗/socket 故障)。 */
+  miss_dead: number;
+  /** 借出时 IMAP host 与建连时不符(host 设置变更)。 */
+  miss_host: number;
+  /** 借出时授权码与建连时不符(凭证轮换)。 */
+  miss_auth: number;
+  /** 借出时要求非 selected 态但候选已被 EXAMINE(getFolderStatus 路径)。 */
+  miss_unselected: number;
+  /** 动作失败或 error 事件导致的销毁(坏连接绝不回流池中)。 */
+  error_destroy: number;
+}
+
+const imapPoolMetrics: ImapPoolMetrics = {
+  pool_hit: 0,
+  created: 0,
+  miss_ttl: 0,
+  miss_dead: 0,
+  miss_host: 0,
+  miss_auth: 0,
+  miss_unselected: 0,
+  error_destroy: 0,
+};
+
+/** 只读快照:计数器副本 + 当前池内空闲连接总数(全账号)。 */
+export interface ImapPoolMetricsSnapshot extends Readonly<ImapPoolMetrics> {
+  idle_connections: number;
+}
+
+export function imapPoolMetricsSnapshot(): ImapPoolMetricsSnapshot {
+  let idle = 0;
+  for (const gate of imapAccountGates.values()) {
+    idle += gate.idle.length;
+  }
+  return { ...imapPoolMetrics, idle_connections: idle };
+}
+
+const poolLogger = createLogger("connectors.mail.protocol");
+
+/** 计数并留 debug 轨:dev trace 下可逐事件回放,生产默认零噪音。 */
+function bumpPoolMetric(metric: keyof ImapPoolMetrics): void {
+  imapPoolMetrics[metric] += 1;
+  poolLogger.debug("imap pool metric", { metric, total: imapPoolMetrics[metric] });
+}
+
 /**
  * 排队等待一个连接名额;waitSignal 在排队阶段中止时退队并归还预占名额,
  * 以 signal.reason(或缺省 provider 错误)reject。
@@ -787,6 +845,7 @@ function sweepStaleIdleConnections(now: () => number) {
     gate.idle = gate.idle.filter((conn) => {
       const stale = conn.dead || now() - conn.idledAt > imapIdleReuseTtlMs;
       if (stale) {
+        bumpPoolMetric(conn.dead ? "miss_dead" : "miss_ttl");
         destroyPooledClient(conn.client);
       }
       return !stale;
@@ -822,6 +881,7 @@ async function withImapClient<T>(
         }
         return result;
       } catch (error) {
+        bumpPoolMetric("error_destroy");
         destroyPooledClient(conn.client);
         throw mapLibraryError(error, config);
       }
@@ -858,11 +918,24 @@ async function acquirePooledClient(
     ) {
       reusable = candidate;
     } else {
+      // 判定顺序即分类优先级:dead 最优先(最危险),其余互斥可单因归类
+      bumpPoolMetric(
+        candidate.dead
+          ? "miss_dead"
+          : expired
+            ? "miss_ttl"
+            : candidate.host !== credential.imapHost
+              ? "miss_host"
+              : candidate.authCode !== credential.authorizationCode
+                ? "miss_auth"
+                : "miss_unselected",
+      );
       destroyPooledClient(candidate.client);
     }
   }
 
   if (reusable) {
+    bumpPoolMetric("pool_hit");
     return reusable;
   }
 
@@ -880,9 +953,11 @@ async function acquirePooledClient(
     await fresh.connect();
   } catch (error) {
     // socket 可能尚未建立或已死,直接静默关闭
+    bumpPoolMetric("error_destroy");
     destroyPooledClient(conn.client);
     throw mapLibraryError(error, config);
   }
+  bumpPoolMetric("created");
   return conn;
 }
 
@@ -912,6 +987,7 @@ function attachDeadMarker(conn: PooledImapConnection) {
     conn.dead = true;
     // imapflow 自身 closeAfter 已关 socket,此处补刀幂等;防止死 socket
     // 在被再次借出前滞留 fd 与服务端会话名额
+    bumpPoolMetric("error_destroy");
     destroyPooledClient(conn.client);
   });
 }

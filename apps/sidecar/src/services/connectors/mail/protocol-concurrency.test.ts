@@ -3,6 +3,7 @@ import {
   createMailProtocol,
   imapAccountGateStateForTest,
   imapIdleReuseTtlMs,
+  imapPoolMetricsSnapshot,
   maxImapConnectionsPerAccount,
   maxImapWaitersPerAccount,
   type MailCredential,
@@ -26,7 +27,9 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
   let live = 0;
   let peak = 0;
   let created = 0;
-  let clock = 0;
+  // 以真实时间为基:未注入时钟的测试文件(裸 Date.now)落池的连接,idledAt
+  // 与本工厂时钟同刻度,模块级清扫(#784① 测试的冲刷步骤)才能正确判其过期
+  let clock = Date.now();
   let logoutCalls = 0;
   let closeCalls = 0;
   const clients: Array<{ __emitError: () => void }> = [];
@@ -537,5 +540,53 @@ describe("per-account IMAP connection pool (#698)", () => {
     abort.abort(new Error("too late"));
     // 契约钉死:名额已兑现后 signal 中止不再有任何记账效应
     expect(imapAccountGateStateForTest(account.email)).toMatchObject({ active: 0, waiting: 0 });
+  });
+
+  it("classifies pool lifecycle events into metrics counters (#784①)", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    // 计数器是模块级单例:先把时钟推过 TTL 触发一次全局清扫,冲掉此前用例
+    // 遗留在池中的条目,再取基线,避免他例连接被我方推进的时钟误扫成 miss
+    fake.advanceClock(imapIdleReuseTtlMs * 10);
+    await protocol.listFolders(account);
+    const before = imapPoolMetricsSnapshot();
+
+    // 复用 → pool_hit
+    await protocol.getFolderStatus(account, "INBOX");
+
+    // TTL 过期由入口搭车清扫先行消化(非借出路径),随后借出只能新建
+    fake.advanceClock(imapIdleReuseTtlMs + 1);
+    await protocol.getFolderStatus(account, "INBOX");
+
+    // EXAMINE 置选中态后,getFolderStatus 的 requireUnselected 借出淘汰候选并新建
+    await protocol.searchSummaries(account, "INBOX", { unseen: true }, { limit: 5, peek: true });
+    await protocol.getFolderStatus(account, "INBOX");
+
+    // 池内空闲连接被看门狗 emit error 杀死:error_destroy 记在监听侧;
+    // 死条目滞留池中直到下次借出才被 miss_dead 淘汰
+    fake.clients.at(-1)!.__emitError();
+    await protocol.getFolderStatus(account, "INBOX");
+
+    // 动作失败(uid_not_found)→ 借出照常计 hit,callback 失败记 error_destroy,
+    // 坏连接不入池(此时池已空)
+    await expect(protocol.markSeen(account, "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
+
+    // 池空新建后换 host 借出:旧连接不复用 → miss_host + 新建
+    await protocol.listFolders(account);
+    await protocol.getFolderStatus({ ...account, imapHost: "imap.example.com" }, "INBOX");
+
+    const after = imapPoolMetricsSnapshot();
+    // 新建点:TTL 过期 / requireUnselected / miss_dead / markSeen 失败后 / host 变更
+    expect(after.created - before.created).toBe(5);
+    expect(after.pool_hit - before.pool_hit).toBe(3);
+    expect(after.miss_ttl - before.miss_ttl).toBe(1);
+    expect(after.miss_dead - before.miss_dead).toBe(1);
+    expect(after.miss_unselected - before.miss_unselected).toBe(1);
+    expect(after.miss_host - before.miss_host).toBe(1);
+    expect(after.error_destroy - before.error_destroy).toBe(2);
+    // 失败动作不回流 + host 变更新建照常入池
+    expect(after.idle_connections).toBe(1);
   });
 });
