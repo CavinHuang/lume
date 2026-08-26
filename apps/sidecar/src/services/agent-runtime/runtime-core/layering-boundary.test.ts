@@ -170,7 +170,7 @@ describe("分层方向守卫(#289)", () => {
         if (!clause.hasValueSpecifiers) continue;
         const target = resolveImportFromFile(file, clause.spec);
         if (!target || !target.startsWith(servicesRoot)) continue;
-        const dstDomain = relative(servicesRoot, dirname(target)).split("\\")[0].split("/")[0];
+        const dstDomain = relative(servicesRoot, dirname(target)).split("\\")[0]?.split("/")[0] ?? "";
         if (dstDomain === srcDomain) continue;
         const paired = forbiddenBidirectionalPairs.some(
           ([a, b]) => (srcDomain === a && dstDomain === b) || (srcDomain === b && dstDomain === a),

@@ -279,6 +279,9 @@ export function createCanUseToolHandler(
         id: `${requestRunId ?? params.runtime.sessionId}:${metadata?.toolUseId ?? toolName}:guidance.delivered`,
         type: "guidance.delivered",
         threadId: params.runtime.sessionId,
+        // #584:runtime-core 内 sessionId 即 threadId。LumeRuntimeEvent 契约
+        // 要求 runId 必填以供按 run 聚合;无活跃 run 的审批事件以 thread
+        // 身份归属(sessionId 兜底),非第三种 ID 翻译。
         runId: requestRunId ?? params.runtime.sessionId,
         createdAt: new Date().toISOString(),
         guidanceIds: pendingGuidance.guidanceIds,
