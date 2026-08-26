@@ -216,6 +216,14 @@ describe("permission classifier", () => {
       platform: "win32"
     })).resolves.toMatchObject({ riskLevel: "medium", shouldAsk: true });
 
+    // -f 不构成危险标志（ri -f 是真实 Ruby docs 用法）：「删除族×标志」组合不得因单 -f 命中
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "ri -f Array#map",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
+
     // 短别名单独出现不构成信号：POSIX 撞名防误拦口径在 win32 同样保持
     await expect(classifier.classify({
       toolName: "Bash",

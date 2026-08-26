@@ -9,6 +9,7 @@ import {
   PS_CLEAR_CONTENT_VERBS,
   PS_CONFIRM_COMMAND,
   PS_DELETE_COMMAND,
+  PS_DANGEROUS_DELETE_FLAGS,
   PS_DANGEROUS_PROBES,
   PS_DYNAMIC_EXEC_VERBS,
   PS_FORMAT_VERBS,
@@ -118,12 +119,22 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       platform: "win32",
       env: { LUME_BASH_PATH: "C:\\Program Files\\Git\\bin\\bash.exe" }
     };
+    // combo 形态判定与 guardrail FORCE_CONFIRM 第一条规则同源：无 natives 环境
+    // parse-unavailable 兜底也会返回 confirm，必须断言 reason 区分升级来源
+    const comboRule = new RegExp(
+      String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]${PS_DANGEROUS_DELETE_FLAGS}`,
+      "i"
+    );
     for (const command of PS_DANGEROUS_PROBES) {
       if (!hasPowerShellContentSignal(command)) {
         expect(hasPowerShellContentSignal(command)).toBe(false);
         continue;
       }
-      expect(evaluateRuntimeToolSafety("Bash", { command }, bashWin).behavior).toBe("confirm");
+      const decision = evaluateRuntimeToolSafety("Bash", { command }, bashWin);
+      expect(decision.behavior).toBe("confirm");
+      if (comboRule.test(command)) {
+        expect(decision.behavior === "confirm" && decision.reason).toBe("递归强制删除文件需要用户确认");
+      }
       const classification = classifyHeuristic({ toolName: "bash", command, shellKind: "bash", platform: "win32" });
       expect(classification.riskLevel).not.toBe("low");
       expect(classification.shouldAsk).toBe(true);

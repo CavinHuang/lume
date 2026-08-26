@@ -5,8 +5,9 @@
  * 跨层一致性由 ps-dangerous-verbs.test 遍历断言钉死，防止单侧静默漂移（format-* 曾只进一层）。
  */
 
-/** PS 命令位锚点：命令首、子命令/管道分隔符或换行之后（换行是多行脚本的命令分隔符） */
-export const PS_ANCHOR = String.raw`(?:^|[;&|(\r\n]\s*)`;
+/** PS 命令位锚点：命令首、子命令/管道分隔符、脚本块起始或换行之后（换行是多行脚本的命令分隔符；
+ *  { 使脚本块内命令位锚定，防 { del ~ } 形态绕过词表） */
+export const PS_ANCHOR = String.raw`(?:^|[;&|( {\r\n]\s*)`;
 
 /*
  * cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别。容忍引号包裹的可执行名（"cmd"）、
@@ -33,10 +34,11 @@ export const PS_FORMAT_VERBS = String.raw`(?:format-volume|format-disk)`;
 /** 清空文件内容动词 */
 export const PS_CLEAR_CONTENT_VERBS = String.raw`(?:clear-content)`;
 
-/** 删除族危险标志：-Recurse/-Force 及其缩写（-r/-re/-fo）、cmd 风格 /s /q；
- *  命名参数与 -WhatIf 干跑旗标不触发。-f 不入短缩写：ri -f 是真实 Ruby docs 用法，
- *  ri 在删除族词表内，「删除族×标志」组合会误拦 */
-export const PS_DANGEROUS_DELETE_FLAGS = String.raw`(?:-{1,2}r(?:ecurse)?\b|-{1,2}fo(?:rce)?\b|\/[sq]\b)`;
+/** 删除族危险标志：-Recurse/-Force 及其前缀缩写（-r/-re/-rec/-fo）、cmd 风格 /s /q；
+ *  命名参数与 -WhatIf 干跑旗标不触发。缩写必须逐级枚举：r(?:e(?:curse)?)?\b 一类的
+ *  嵌套可选组会把 -re/-rec 挤出命中面（回溯后 \b 落在 word char 之间必败）。
+ *  Force 缩写下限是 -fo：单 -f 会误拦 ri -f（真实 Ruby docs 用法，ri 在删除族词表内） */
+export const PS_DANGEROUS_DELETE_FLAGS = String.raw`(?:-{1,2}(?:r|re|rec|recurse)\b|-{1,2}fo(?:rce)?\b|\/[sq]\b)`;
 
 /** 无歧义全名动词基础清单：连字符 Verb-Noun 形态为 PS 独有，POSIX 无撞名读法。
  *  单一事实来源——分类器全名词表与内容信号均由此派生，新增动词只改这里 */
@@ -73,6 +75,11 @@ export function hasPowerShellContentSignal(command: string): boolean {
 export const PS_DANGEROUS_PROBES: string[] = [
   "Remove-Item -Force build.log",
   "Remove-Item -r build",
+  // 中缀缩写逐级钉死（曾因嵌套可选组回归丢失 -re 命中）
+  "ri -re build",
+  "rd -rec dist",
+  // 脚本块内命令位（PS_ANCHOR 的 { 锚）
+  "{ rd /s /q build }",
   "rd /s /q build",
   "cmd /c rd /s /q build",
   "cmd /c del /q cache.txt",
