@@ -37,6 +37,23 @@ export class PendingRequestRegistry<K, T, M extends object> {
   private readonly pending = new Map<K, PendingEntry<T, M>>();
 
   wait(key: K, input: PendingWaitInput<T, M>): Promise<T> {
+    // signal 已 aborted 时后加的 abort 监听永不触发,若不短路等待方将挂满
+    // 超时(run 中止与发起审批竞争的窗口)。与 abort 事件路径同语义:
+    // beforeResolve 持久化清理后返回 abort 值。
+    if (input.signal.aborted) {
+      const aborted = input.abortValue();
+      return (async () => {
+        try {
+          await input.beforeResolve?.(aborted, "aborted");
+        } catch (error) {
+          log.warn("Failed pending-request settle cleanup", {
+            reason: "aborted",
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+        return aborted;
+      })();
+    }
     let resolve!: (value: T) => void;
     const promise = new Promise<T>((res) => {
       resolve = res;
@@ -72,7 +89,15 @@ export class PendingRequestRegistry<K, T, M extends object> {
     const existing = this.pending.get(key);
     if (existing) existing.settle(input.supersededValue(), "superseded");
     timer = setTimeout(() => {
-      input.onTimeout?.();
+      // onTimeout 抛错不得阻断 settle——否则 timer 已触发完毕、无后续清理
+      // 入口,等待方将永久悬挂。
+      try {
+        input.onTimeout?.();
+      } catch (error) {
+        log.warn("onTimeout callback failed", {
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
       settle(input.timeoutValue(), "timeout");
     }, Math.max(0, input.timeoutMs));
     if (
