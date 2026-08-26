@@ -22,7 +22,7 @@ import {
   type WebSearchProvider
 } from "@lume/shared";
 import { getConfigDir, getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
-import { createLogger, writeLogRecord } from "../infra/logger";
+import { createLogger } from "../infra/logger";
 
 interface UpdateLumeConfigSectionInput {
   source: LumeConfigAuditSource;
