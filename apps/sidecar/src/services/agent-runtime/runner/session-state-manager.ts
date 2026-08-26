@@ -4,7 +4,7 @@
  * 管理会话状态，用于 runtime 统计
  */
 
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getSessionStatesPath } from "../../infra/config-paths";
 import { createLogger } from "../../infra/logger";
 
@@ -57,7 +57,11 @@ class SessionStateManager {
       for (const [id, state] of this.states) {
         data[id] = state;
       }
-      writeFileSync(getSessionStatesPath(), JSON.stringify(data), "utf-8");
+      // tmp+rename 原子写：裸 writeFileSync 崩溃半写会让 loadFromDisk 静默回空（统计全丢）
+      const path = getSessionStatesPath();
+      const tmpPath = `${path}.${process.pid}.${Date.now()}.tmp`;
+      writeFileSync(tmpPath, JSON.stringify(data), "utf-8");
+      renameSync(tmpPath, path);
     } catch (error) {
       // 持久化失败不影响主流程，但必须留痕——否则"清理已落盘"的日志与磁盘事实相反（#615 review round5）
       log.warn("会话状态落盘失败", {

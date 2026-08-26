@@ -149,7 +149,16 @@ export function finishAutomationLease(
     updatedAt: Date.now()
   });
   if (!input.keepForInteraction) {
-    rmSync(join(runtimeDir(lease.jobId), "lease.lock"), { force: true });
+    try {
+      rmSync(join(runtimeDir(lease.jobId), "lease.lock"), { force: true });
+    } catch (error) {
+      // rm 抛错（Windows EPERM）会向上传播打断 executeJob 收尾链、连 run 记录都丢；
+      // 孤儿锁由下次 tryAcquire 的 stale 自愈路径回收（round12 磁盘格式 review）
+      log.warn("清理 lease.lock 失败，交由 stale 自愈回收", {
+        jobId: lease.jobId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
   }
 }
 
