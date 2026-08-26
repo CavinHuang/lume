@@ -156,7 +156,7 @@ registerToolMetadata({
   name: "MultiEdit",
   category: "write",
   riskLevel: "medium",
-  description: "批量编辑多个文件"
+  description: "单文件多处精确替换"
 });
 
 registerToolMetadata({
@@ -556,6 +556,27 @@ registerToolMetadata({
   category: "control",
   riskLevel: "low",
   description: "管理任务列表",
+  allowedInPlanMode: false
+});
+
+// 子代理编排簿记：纯状态迁移（验收/退役），无 FS/进程写入——对齐 TodoWrite 的
+// control/low 免审批口径，避免每次验收子代理都弹审批。
+// FinishAgentTask 必须在 plan 模式保持可见：coordinator 完成守卫会强制模型调用
+// 它来解除 awaiting_review 阻塞，plan 禁用会造成 Unknown tool 死循环（review 发现）；
+// 它只做任务状态迁移，不违反 plan 只读承诺。RetireSubagent 无此依赖，维持 plan 禁。
+registerToolMetadata({
+  name: "FinishAgentTask",
+  description: "验收、延期或取消已提交的子代理任务",
+  category: "control",
+  riskLevel: "low",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "RetireSubagent",
+  description: "退役空闲的持久子代理会话",
+  category: "control",
+  riskLevel: "low",
   allowedInPlanMode: false
 });
 

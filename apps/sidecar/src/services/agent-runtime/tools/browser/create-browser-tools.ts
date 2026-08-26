@@ -9,11 +9,9 @@ import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "
 
 export const BROWSER_MCP_SERVER_ID = "browser"
 const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
-export const BROWSER_TOOL_NAMES = [
-  "list_tabs", "open", "switch_tab", "navigate", "back", "forward", "reload", "snapshot",
-  "click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll",
-  "screenshot", "upload", "download", "list_secrets", "fill_secret", "dialog", "handle_dialog", "run_script",
-] as const
+// #601 维护性 review:工具名唯一真源在 @lume/shared（LUME_BROWSER_TOOL_NAMES）——
+// 新增工具时 shared 一处登记，web 映射哨兵测试自动盯住
+import { LUME_BROWSER_TOOL_NAMES as BROWSER_TOOL_NAMES } from "@lume/shared"
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
 type BrowserToolBroker = Pick<BrowserBroker, "dispatch" | "listBackends">
@@ -70,16 +68,16 @@ export function createBrowserMcpTools(input: {
       async call(rawArgs, context) {
         const operationId = context.toolUseId || randomUUID()
         const args = asRecord(rawArgs)
-        if (isActionTool(name) && session.blockedActionLoop) {
+        if ((isActionTool(name) || session.blockedActionLoop?.tool === name) && session.blockedActionLoop) {
           const blocked = session.blockedActionLoop
           return toolResult(operationId, {
             ok: false,
             operation_id: operationId,
             active_tab_id: session.activeTabId ?? null,
             code: "repeated_action_failure",
-            message: `Browser actions stopped after ${blocked.tool} repeatedly failed with ${blocked.code} on @${blocked.ref}. Do not retry browser actions until the page navigates or the user intervenes.`,
+            message: `Browser actions stopped after ${blocked.tool} repeatedly failed with ${blocked.code}${blocked.ref ? ` on @${blocked.ref}` : ""}. Do not retry browser actions until the page navigates or the user intervenes.`,
             retryable: false,
-          }, true, { ok: false, tool: name, code: "repeated_action_failure", blocked_by: blocked.tool, ref: blocked.ref })
+          }, true, { ok: false, tool: name, code: "repeated_action_failure", blocked_by: blocked.tool, ...(blocked.ref ? { ref: blocked.ref } : {}) })
         }
         try {
           const broker = resolveBroker()
@@ -100,9 +98,13 @@ export function createBrowserMcpTools(input: {
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
           // broker 已把 desktop 富文本摧毁为裸码,navigation_timeout 的行为
           // 指导只能在此注入:页面可能仍在后台加载,先观察再决定。
+          // user_declined 同理(#601 端到端 review B1):用户否决不随参数/ref 变化,
+          // 不给指引模型会「换个姿势重试」再次弹窗骚扰。
           const hint = code === "navigation_timeout"
             ? "The page may still be loading in the background. Take a snapshot to check the actual state before deciding; do not retry navigate immediately. If it times out again, open a new tab or report this to the user instead of retrying."
-            : undefined
+            : code === "user_declined"
+              ? "The user explicitly declined this action in the confirmation dialog. Do NOT retry it with different parameters, selectors, or refs—the refusal is about the action itself, not its formulation. Ask the user how they would like to proceed."
+              : undefined
           const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
           if (failureKey) {
@@ -112,12 +114,14 @@ export function createBrowserMcpTools(input: {
               code,
               key: failureKey,
             }
-            if (current.attempts >= 2 && session.snapshot) {
+            if (current.attempts >= 2) {
+              // #661：非 ref 工具（run_script/upload/download/fill_secret）无 snapshot 也可置位，
+              // generation 取 0——任何后续真实快照都会因代际不符解锁，与既有解除路径一致。
               session.blockedActionLoop = {
                 code,
-                generation: session.snapshot.generation,
-                ref: String(args.ref).replace(/^@/, ""),
-                tabId: session.snapshot.tabId,
+                generation: session.snapshot?.generation ?? 0,
+                ...(typeof args.ref === "string" ? { ref: args.ref.replace(/^@/, "") } : {}),
+                tabId: session.snapshot?.tabId ?? session.activeTabId ?? "",
                 tool: name,
               }
             }
@@ -649,6 +653,14 @@ async function observeAfterMutation(
   dispatch: (broker: BrowserToolBroker, method: string, params?: Record<string, unknown>) => Promise<unknown>,
   session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>,
 ): Promise<Record<string, unknown>> {
+  // #604：desktop 已确认无可检测变化（含 domRevision 未动）时页面未变，上次快照的 refs 仍然
+  // 有效（generation 未变），跳过全量 AX 重扫与 400 行观察倾倒；导航类 effect 恒为字符串标签不受影响。
+  // effect 形态兼容对象（desktop 检测结果 {kind}）与字符串（navigate 分支的既成事实标签）。
+  const effect = asRecord(asRecord(action).click ?? action).effect
+  const effectKind = typeof effect === "string" ? effect : asRecord(effect).kind
+  if (session.snapshot && session.snapshot.tabId === tabId && effectKind === "no_detectable_change") {
+    return { active_tab_id: tabId, action, observation_unchanged: true }
+  }
   try {
     const observation = await dispatch(broker, "browser_snapshot", { tabId, interactive_only: true, limit: 400 })
     rememberSnapshot(session, observation)
@@ -695,7 +707,14 @@ function actionFailureKey(
 ): string | undefined {
   const ref = isActionTool(name) ? stringValue(args.ref)?.replace(/^@/, "") : undefined
   const snapshot = session.snapshot
-  return ref && snapshot ? JSON.stringify([name, ref, snapshot.tabId, snapshot.generation]) : undefined
+  if (ref && snapshot) return JSON.stringify([name, ref, snapshot.tabId, snapshot.generation])
+  // #661：非输入类工具（run_script/upload/download/fill_secret 等）无 ref 键可计，
+  // 按 [tool, tabId] 累计连拒/连败，≥2 同样熔断，防止确认真窗被无限重弹。
+  if (!ref) {
+    const tabId = snapshot?.tabId ?? session.activeTabId
+    return tabId ? JSON.stringify([name, null, tabId, snapshot?.generation ?? 0]) : undefined
+  }
+  return undefined
 }
 
 function clearActionFailures(session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>): void {

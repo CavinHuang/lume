@@ -1,6 +1,6 @@
 import type { BrowserLocator, BrowserLocatorStep, BrowserTextMatcher } from '@lume/shared'
 
-export type ResolvedBrowserTarget = { x: number; y: number; width: number; height: number; tagName: string; role?: string; editable: boolean; enabled: boolean; readOnly?: boolean }
+export type ResolvedBrowserTarget = { x: number; y: number; width: number; height: number; tagName: string; role?: string; editable: boolean; enabled: boolean; readOnly?: boolean; /** 内部字段：语义 ref 解析出的节点，供 auto-wait 廉价稳定复测使用(#605) */ backendNodeId?: number }
 export type BrowserLocatorQuery = "target" | "element" | "focus" | "evaluate" | "count" | "allTextContents" | "readAll" | "getAttribute" | "innerText" | "textContent" | "inputValue" | "editableValue" | "isVisible" | "isEnabled" | "isChecked" | "select"
 
 export function isBrowserLocator(value: unknown): value is BrowserLocator {

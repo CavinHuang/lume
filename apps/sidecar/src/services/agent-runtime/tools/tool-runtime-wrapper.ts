@@ -207,7 +207,9 @@ function enforceExecutionPolicy(
 function requestsBackgroundExecution(input: unknown): boolean {
   if (!input || typeof input !== "object") return false;
   const record = input as Record<string, unknown>;
-  return record.run_in_background === true || record.isolation === "remote";
+  // isolation 别名检查已删（#575）：Agent schema 不再声明 isolation，
+  // "remote" 永远到不了这里，原检查是恒假的死分支。
+  return record.run_in_background === true;
 }
 
 function summarizeToolInput(input: unknown, computerUse = false): string {
@@ -308,7 +310,7 @@ async function enforceFileAccessPolicy(
   }
   if (!(await exists(canonical))) return null;
 
-  if (name !== "write" && name !== "edit" && name !== "notebookedit") return null;
+  if (name !== "write" && name !== "edit" && name !== "multiedit" && name !== "notebookedit") return null;
 
   const check = await input.fileLedger.assertCanOverwrite({
     threadId: input.threadId,
@@ -329,6 +331,9 @@ async function recordFileRead(
   result: ToolResult
 ): Promise<void> {
   if (input.descriptor.canonicalName !== "read" || result.is_error) return;
+  // unchanged 短路结果不重录：重录会把此前记录的部分视图升级成全文读（#314 同族）
+  const readMeta = result._meta?.read;
+  if (readMeta && typeof readMeta === "object" && (readMeta as Record<string, unknown>).unchanged === true) return;
   const filePath = readInputPath(rawInput);
   if (!filePath) return;
   const canonical = resolve(input.cwd, filePath);
@@ -357,6 +362,7 @@ function getExecutionTerminationReason(result: ToolResult | undefined): string |
 function isMutationTool(canonicalName: string): boolean {
   return canonicalName === "write"
     || canonicalName === "edit"
+    || canonicalName === "multiedit"
     || canonicalName === "notebookedit"
     || canonicalName === "bash";
 }
@@ -371,9 +377,18 @@ function readInputPath(input: unknown): string | undefined {
 function isFullReadResult(result: ToolResult): boolean {
   const data = parseObjectContent(result.content);
   if (data.summarized === true) return false;
+  // #314:ranged 窗口凑满提前停读时不给 remainingLines（totalLines 只是下界），
+  // 此时绝非全文读——partial/truncated 标记优先于「缺 remainingLines 即全文」的默认
+  const readMeta = result._meta?.read;
+  if (readMeta && typeof readMeta === "object") {
+    const meta = readMeta as Record<string, unknown>;
+    if (meta.partial === true || meta.truncated === true) return false;
+  }
   if (typeof data.remainingLines === "number") {
     return (data.offset === undefined || data.offset === 0) && data.remainingLines <= 0;
   }
+  // 默认 true 服务「无 _meta.read 的旧形制/plugin/MCP read」——它们无法自证部分视图；
+  // 若未来再收窄判定，先想清楚这一默认值放宽的是谁（#314 三次补丁教训）
   return true;
 }
 

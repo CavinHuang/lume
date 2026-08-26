@@ -110,6 +110,163 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     });
   });
 
+  test("#314:ranged 早停读（缺 remainingLines + truncated 标记）不算全文读", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            // #314 形制：早停时省略 remainingLines，partial/truncated 只在 _meta
+            content: JSON.stringify({ offset: 0, limit: 100, totalLines: 600 }),
+            _meta: { read: { offset: 0, limit: 100, totalLines: 600, partial: true, truncated: true, summarized: false } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    // 部分视图不得解锁既有文件覆写（且命中更精确的部分读守卫文案）
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      content: "该文件只被部分读取，请完整读取后再写入。"
+    });
+  });
+
+  // #720 review：MultiEdit 与 Edit 同族，必须同走 file-ledger 完整读覆写闸
+  test("MultiEdit cannot overwrite without a full fresh read", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "note.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: JSON.stringify({ remainingLines: 0 })
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const multiEditTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("MultiEdit", {
+        name: "MultiEdit",
+        description: "multi-edit",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "edited" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await expect(multiEditTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      tool_use_id: "",
+      content: "写入已有文件前必须先完整读取该文件。"
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    await expect(multiEditTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      content: "edited"
+    });
+  });
+
+  test("#314 同族:unchanged 短路结果不重录，不把部分视图升级成全文读", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "big.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    let readCount = 0;
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          readCount += 1;
+          if (readCount === 1) {
+            // 首次：ranged 部分读
+            return {
+              type: "tool_result",
+              tool_use_id: "",
+              content: JSON.stringify({ offset: 0, limit: 100, totalLines: 600 }),
+              _meta: { read: { offset: 0, limit: 100, totalLines: 600, partial: true, truncated: true, summarized: false } }
+            };
+          }
+          // 第二次相同范围：SDK 层 unchanged 短路形制
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: `File unchanged since it was last read: ${filePath}`,
+            _meta: { read: { filePath, unchanged: true } }
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    await expect(writeTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true
+    });
+  });
+
   test("allows creating new files without a prior read", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
@@ -508,7 +665,7 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     expect(calls).toBe(0);
   });
 
-  test("blocks remote isolation when background execution is disallowed", async () => {
+  test("isolation alias no longer counts as background execution (#575)", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
     const ledger = createFileAccessLedger();
@@ -532,12 +689,13 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       fileLedger: ledger
     });
 
+    // isolation 别名已随 Agent schema 删参退役：携带该字段的输入不再被当作
+    // 后台请求拦截，只有 run_in_background === true 触发后台策略。
     await expect(
       tool.call({ prompt: "go", isolation: "remote" }, { cwd: root, toolUseId: "tool-remote" })
     ).resolves.toMatchObject({
-      is_error: true,
-      tool_use_id: "tool-remote",
-      content: "Agent 不允许后台执行"
+      type: "tool_result",
+      content: "started"
     });
   });
 

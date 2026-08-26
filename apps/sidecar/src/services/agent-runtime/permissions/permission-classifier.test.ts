@@ -54,6 +54,31 @@ describe("permission classifier", () => {
     });
   });
 
+  // #720 review P1：MultiEdit 必须与 Edit 同走写审批名单，否则 dontAsk 模式
+  // 下整批改文件零弹卡（探针实证过该旁路）。
+  test("treats MultiEdit as a write tool on par with Edit", async () => {
+    const classifier = createPermissionClassifier();
+
+    await expect(classifier.classify({
+      toolName: "MultiEdit",
+      path: "/tmp/project/.env"
+    })).resolves.toMatchObject({
+      riskLevel: "high",
+      shouldAsk: true,
+      reasonCode: "sensitive_path"
+    });
+
+    // 普通路径与 Edit 同权：medium + shouldAsk（此前旁路成 low 免审）
+    await expect(classifier.classify({
+      toolName: "MultiEdit",
+      path: "/tmp/project/src/normal.ts"
+    })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true,
+      reasonCode: "file_write"
+    });
+  });
+
   test("classifies unknown plugin tools as external approval risk", async () => {
     const classifier = createPermissionClassifier();
 

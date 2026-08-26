@@ -665,11 +665,15 @@ export class BrowserRuntime {
 
   private async waitForActionEffect(tab: BrowserTab, before: BrowserActionEffectSnapshot, agent: boolean): Promise<BrowserActionEffect> {
     const deadline = Date.now() + 300
+    let idlePolls = 0
     do {
       if (agent && agentControlPaused(tab)) throw browserError("user_takeover_required")
-      await delay(50)
+      // #605：hover 等无效果动作原实现固定 50ms 轮询烧满 deadline；首个效果的检出延迟不变（首轮仍
+      // 50ms），连续空轮拉长间隔以减少空转 CDP 往返。
+      await delay(idlePolls < 2 ? 50 : 125)
       const effect = detectBrowserActionEffect(before, await this.captureActionEffect(tab))
       if (effect) return effect
+      idlePolls += 1
     } while (Date.now() < deadline)
     return { kind: "no_detectable_change" }
   }
@@ -837,6 +841,11 @@ export class BrowserRuntime {
     }
     if (method === "focus") return this.focus(String(params.tabId ?? context.tabId ?? ""))
     if (method === "settings:get") return this.getSettings()
+    // #602 review:审批档/外开链接是用户专属决策面,agent 通道(actor!=="user")不得触达,
+    // 否则可静默把 browserApprovalMode 翻回 neverAsk 拆掉人工关口
+    if (method === "settings:update" || method === "openExternal") {
+      if (context.actor !== "user") throw browserError("action_denied")
+    }
     if (method === "settings:update") return this.updateSettings(params as Partial<BrowserSettings>)
     if (method === "openExternal") return this.openExternal(String(params.url ?? ""))
     if (method === "openPopup") return this.openPopup(String(params.activationToken ?? ""), context)
@@ -936,7 +945,8 @@ export class BrowserRuntime {
           const activeAt = tab.lastUserActivationAt
           if (this.humanizedInput && activeAt !== undefined && Date.now() - activeAt < 2_000) await delay(250 + Math.random() * 450)
           tab.agentDispatching = true
-          this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: true } })
+          // url 供浏览器面板外的全局感知条显示当前操作站点(#607)
+          this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, url: tab.url, active: true } })
         }
         try {
           const result = await this.dispatchAction(tab, method, params, context)
@@ -964,7 +974,7 @@ export class BrowserRuntime {
         } finally {
           if (context.actor === "agent") {
             tab.agentDispatching = false
-            this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, active: false } })
+            this.options.emit({ method: "browser:agent-dispatching", params: { tabId: tab.tabId, url: tab.url, active: false } })
             this.inputLedger.clear(tab.tabId)
           }
         }
@@ -2880,6 +2890,7 @@ export class BrowserRuntime {
           height: bottom - top,
           tagName: typeof details.tagName === "string" ? details.tagName : "",
           ...(typeof details.role === "string" ? { role: details.role } : {}),
+          backendNodeId: entry.backendNodeId,
           editable: details.editable === true,
           ...(details.readOnly === true ? { readOnly: true } : {}),
           enabled: details.enabled !== false,
@@ -2910,8 +2921,14 @@ export class BrowserRuntime {
       if (tab.generation !== generation) throw browserError("stale_target")
       try {
         const target = await this.resolveTarget(tab, params, context)
-        if (previousTarget && browserTargetsStable(previousTarget, target)) return target
-        previousTarget = target
+        if (!previousTarget) {
+          previousTarget = target
+          // #605：首次成功后候一帧，仅以 getBoxModel 单往返复测坐标代替第二次全量解析；
+          // 静态页就此放行（happy-path 解析往返减半），复测漂移或不可复测则落入原双轮循环。
+          await delay(50)
+          if (await this.targetBoxUnmoved(tab, target)) return target
+        } else if (browserTargetsStable(previousTarget, target)) return target
+        else previousTarget = target
       } catch (error) {
         previousTarget = undefined
         const message = error instanceof Error ? error.message : ""
@@ -2928,6 +2945,30 @@ export class BrowserRuntime {
       if (Date.now() >= deadline) throw browserError(lastActionabilityCode)
       await delay(50)
     }
+  }
+
+  // #605：auto-wait 首次解析成功后的廉价稳定确认——仅 getBoxModel 复测中心/尺寸是否位移。
+  // 缺 backendNodeId 或复测失败一律返回 false，回落到完整二次解析的双轮路径。
+  private async targetBoxUnmoved(tab: BrowserTab, target: ResolvedBrowserTarget): Promise<boolean> {
+    const backendNodeId = typeof target.backendNodeId === "number" ? target.backendNodeId : undefined
+    if (backendNodeId === undefined) return false
+    try {
+      return await withDebugger(browserContents(tab), async (debuggerRef) => {
+        const box = await debuggerRef.sendCommand("DOM.getBoxModel", { backendNodeId }) as { model?: { border?: number[]; content?: number[] } }
+        const quad = box.model?.content ?? box.model?.border
+        if (!Array.isArray(quad) || quad.length < 8) return false
+        const xs = [quad[0], quad[2], quad[4], quad[6]].map(Number)
+        const ys = [quad[1], quad[3], quad[5], quad[7]].map(Number)
+        if ([...xs, ...ys].some((value) => !Number.isFinite(value))) return false
+        return browserTargetsStable(target, {
+          ...target,
+          x: (Math.min(...xs) + Math.max(...xs)) / 2,
+          y: (Math.min(...ys) + Math.max(...ys)) / 2,
+          width: Math.max(...xs) - Math.min(...xs),
+          height: Math.max(...ys) - Math.min(...ys),
+        })
+      })
+    } catch { return false }
   }
 
   private async dispatchScroll(tab: BrowserTab, target: ResolvedBrowserTarget, params: Record<string, unknown>): Promise<void> {
@@ -3041,6 +3082,9 @@ export class BrowserRuntime {
       const batches = await Promise.all(frameIds.map(async (frameId) => {
         try {
           const tree = await debuggerRef.sendCommand("Accessibility.getFullAXTree", { frameId }) as { nodes?: unknown }
+          // #604：AX 原始负载与 DOMSnapshot 同级字节护栏——极端页面单帧可达数十 MB，
+          // 超限帧弃采（该 frame 无语义节点），防主进程内存/序列化爆炸。
+          if (JSON.stringify(tree.nodes ?? []).length > 4_000_000) return []
           return Array.isArray(tree.nodes)
             ? tree.nodes.map((node) => isRecord(node) ? {
                 ...node,
@@ -4283,8 +4327,24 @@ export class BrowserRuntime {
     if (approvalMode === "neverAsk") return this.issuePolicyToken(bindingHash)
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("confirmation_unavailable")
-    const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${category}。批准仅对当前标签页的这一次操作有效。` })
-    if (result.response !== 0) return { approved: false }
+    const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${BROWSER_ACTION_CATEGORY_LABELS[category] ?? category}。批准仅对当前标签页的这一次操作有效。` })
+    if (result.response !== 0) {
+      // 可观测性 review F5/F6:「取消」必须以 deny 进审计并与动作类别关联——
+      // 否则 ndjson 里「允许」与「取消」同貌,且无法关联到具体浏览器动作
+      this.audit.record({
+        correlationId: randomUUID(),
+        actor: context.actor ?? "agent",
+        ...(context.threadId ? { threadId: context.threadId } : {}),
+        browserSessionId: context.browserSessionId ?? "",
+        backend,
+        generation: this.backendGeneration,
+        action: `policy:confirm:${category}`,
+        decision: "deny",
+        status: "failed",
+        errorCode: "user_declined",
+      })
+      return { approved: false }
+    }
     return this.issuePolicyToken(bindingHash)
   }
 
@@ -4494,6 +4554,13 @@ function browserError(code: BrowserErrorCode): Error & { code: BrowserErrorCode 
   const error = new Error(code) as Error & { code: BrowserErrorCode }
   error.code = code
   return error
+}
+
+/** #602:确认弹窗 detail 用中文类别名,不直出内部英文枚举 */
+const BROWSER_ACTION_CATEGORY_LABELS: Record<string, string> = {
+  browse: "浏览网站", submit: "提交表单", send: "发送消息", delete: "删除内容",
+  purchase: "购买下单", authorize: "授权操作", file: "文件传输", clipboard: "剪贴板",
+  credential: "填写凭证", history: "读取历史", payment: "支付确认", captcha: "人机验证", mfa: "多因素验证"
 }
 
 function closeWebContentsSafely(contents: Electron.WebContents): void {

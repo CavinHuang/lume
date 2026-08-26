@@ -149,7 +149,7 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
     };
   }
 
-  if (tool === "write" || tool === "edit" || tool === "write_file" || tool === "edit_file") {
+  if (tool === "write" || tool === "edit" || tool === "multiedit" || tool === "write_file" || tool === "edit_file") {
     if (input.path && isDependencyManifest(input.path)) {
       return {
         riskLevel: "medium",

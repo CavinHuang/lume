@@ -90,6 +90,7 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  MultiEditTool,
   GlobTool,
   GrepTool,
   NotebookEditTool,

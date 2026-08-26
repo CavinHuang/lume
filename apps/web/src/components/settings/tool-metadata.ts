@@ -52,6 +52,13 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'write',
     riskLevel: 'medium',
   },
+  'multi-edit': {
+    name: 'multi-edit',
+    label: 'MultiEdit',
+    description: '单文件多处精确替换（原子应用）',
+    category: 'write',
+    riskLevel: 'medium',
+  },
   find: {
     name: 'find',
     label: 'Glob',
