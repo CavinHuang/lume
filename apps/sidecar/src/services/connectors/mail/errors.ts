@@ -2,6 +2,7 @@ export type MailProtocolErrorKind =
   | "auth"
   | "folder_not_found"
   | "uid_not_found"
+  | "trash_missing"
   | "timeout"
   | "network"
   | "blocked_host"

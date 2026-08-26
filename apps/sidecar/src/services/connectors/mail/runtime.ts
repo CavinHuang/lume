@@ -389,11 +389,12 @@ export async function executeMailAction(
       case "delete_email": {
         const deleteInput = input as { folder?: string; uid: number };
         const folder = deleteInput.folder ?? defaultFolder;
-        await protocol.deleteMessage(credential, folder, deleteInput.uid);
+        const trashFolder = await protocol.deleteMessage(credential, folder, deleteInput.uid);
         return {
           folder,
           uid: deleteInput.uid,
           deleted: true,
+          trashFolder,
         };
       }
       case "get_folder_status": {
@@ -813,6 +814,9 @@ export function mapProtocolError(
           400,
           `${config.displayName} message UID does not exist in the selected folder.`,
         );
+      case "trash_missing":
+        // 服务器未提供 \Trash:delete_email 拒绝硬删,属可向用户解释的输入/配置问题
+        return new ProviderRequestError(400, error.message);
       case "blocked_host":
         // The mailbox host came from the connected credential, so a host the
         // egress policy refuses is invalid input, not an upstream failure — the

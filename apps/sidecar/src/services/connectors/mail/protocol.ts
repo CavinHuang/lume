@@ -175,7 +175,8 @@ export interface MailProtocol {
   markSeen(credential: MailCredential, folder: string, uid: number): Promise<void>;
   markUnseen(credential: MailCredential, folder: string, uid: number): Promise<void>;
   moveMessage(credential: MailCredential, folder: string, uid: number, targetFolder: string): Promise<void>;
-  deleteMessage(credential: MailCredential, folder: string, uid: number): Promise<void>;
+  /** Move the message into the server's \Trash folder; returns the Trash path. */
+  deleteMessage(credential: MailCredential, folder: string, uid: number): Promise<string>;
   getFolderStatus(credential: MailCredential, folder: string): Promise<MailFolderStatus>;
 }
 
@@ -388,12 +389,25 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
       });
     },
     async deleteMessage(credential, folder, uid) {
-      await withMailbox(config, deps, credential, folder, false, async (client) => {
+      return await withMailbox(config, deps, credential, folder, false, async (client) => {
         await requireMessageExists(client, uid);
-        const deleted = await client.messageDelete([uid], { uid: true });
-        if (!deleted) {
+        // 语义对齐 Gmail move_to_trash:移入 \Trash 可恢复,而非标记 \Deleted
+        // 后 EXPUNGE 物理删除(用户一次审批即不可逆)。服务器无 \Trash 时拒绝
+        // 执行而非退回硬删。
+        const trash = (await client.list())
+          .map(normalizeMailbox)
+          .find((mailbox) => mailbox.specialUse === "\\Trash");
+        if (!trash) {
+          throw new MailProtocolError(
+            "trash_missing",
+            "This server has no Trash folder; the message was left untouched instead of being permanently deleted.",
+          );
+        }
+        const moved = await moveMessageToFolder(client, uid, trash.path);
+        if (!moved) {
           throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
         }
+        return trash.path;
       });
     },
     async getFolderStatus(credential, folder) {
