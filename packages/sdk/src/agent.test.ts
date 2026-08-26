@@ -1181,6 +1181,10 @@ describe("Agent session persistence", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-runtime-context-"))
     tempDirs.push(tempDir)
     process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    // 隔离宿主技能目录：默认根（~/.lume/skills、~/.alice/skills）会把本机真实
+    // 技能注入 <available_skills> runtime 块，挤掉 slice(-2) 断言窗口
+    process.env.LUME_CONFIG_DIR = join(tempDir, "config")
+    process.env.ALICE_CONFIG_DIR = join(tempDir, "alice")
     const sessionId = `runtime-context-${crypto.randomUUID()}`
     let capturedMessages: CreateMessageParams["messages"] = []
     const provider: LLMProvider = {

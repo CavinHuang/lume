@@ -478,7 +478,9 @@ describe("file tools", () => {
     expect(result.is_error).toBeFalsy();
     expect(result._meta?.read).toMatchObject({ partial: true, truncated: true });
     // The stale-read guard must not mistake the window for the whole file.
-    expect(cache.get(filePath)?.isPartialView).toBe(true);
+    // Read writes its cache under the canonicalized (realpath) key (#336),
+    // so the lookup must use the same key, not the lexical input path.
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(true);
   });
 
   test("#564: summarize 与普通读互不短路（视图键参与 unchanged 判定）", async () => {
@@ -635,9 +637,11 @@ describe("file tools", () => {
 
     const result = await FileReadTool.call({ file_path: filePath, offset: 1, limit: 1 }, { cwd: root });
     expect(result.is_error).toBeFalsy();
+    // Read resolves paths through resolveInputPath (#336): the payload echoes
+    // the canonicalized (realpath) path, not the lexical input.
     expect(JSON.parse(result.content as string)).toEqual({
       type: "notebook",
-      file: { filePath, cells: [{ cell_type: "markdown", source: ["# Title\n"] }] },
+      file: { filePath: realpathSync(filePath), cells: [{ cell_type: "markdown", source: ["# Title\n"] }] },
     });
     expect(result._meta?.read).toMatchObject({ kind: "notebook", totalCells: 2, partial: true });
   });

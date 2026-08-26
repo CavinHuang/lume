@@ -1,5 +1,5 @@
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { readFileSync, statSync } from "node:fs";
+import { readFileSync, realpathSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
@@ -68,6 +68,35 @@ function checkpointFileName(runId: string): string {
 function isPathInside(root: string, candidate: string): boolean {
   const relativePath = relative(resolve(root), resolve(candidate));
   return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
+}
+
+/**
+ * 已存在路径的规范化（realpath）；不存在时退回词法 resolve。
+ * git rev-parse --show-toplevel 在 macOS 返回真实路径（/var→/private/var），
+ * 而持久化的 baselineCommits 键 / record.cwd / roots 是词法路径——不规范化
+ * 就查不到基线，提交边界被误判消失，已提交文件可被 rewind（数据保护失效）。
+ */
+function canonicalizeExistingPath(path: string): string {
+  try {
+    return realpathSync(path);
+  } catch {
+    return resolve(path);
+  }
+}
+
+/**
+ * 按 git root 解析该仓库的 baseline commit：先查 baselineCommits 直达键，
+ * 键失配（词法 vs realpath）时按 canonical 路径对齐再查；最后回退到
+ * 「git root 位于 record.cwd 内」时的全局 baselineCommit。三处调用点同构。
+ */
+function findBaselineCommitForGitRoot(record: CodingRunCheckpointRecord, gitRoot: string): string | undefined {
+  const direct = record.baselineCommits?.[resolve(gitRoot)];
+  if (direct) return direct;
+  const canonicalGitRoot = canonicalizeExistingPath(gitRoot);
+  for (const [key, commit] of Object.entries(record.baselineCommits ?? {})) {
+    if (commit && canonicalizeExistingPath(key) === canonicalGitRoot) return commit;
+  }
+  return isPathInside(canonicalGitRoot, canonicalizeExistingPath(record.cwd)) ? record.baselineCommit : undefined;
 }
 
 function restrictCheckpointToRoots(roots: string[], checkpoint: FileCheckpoint): FileCheckpoint {
@@ -221,13 +250,18 @@ function getBeforeSnapshotText(
 
 function readBaselineContent(record: CodingRunCheckpointRecord, absolutePath: string): string | null {
   const gitRoot = findGitRootForPath(absolutePath);
-  if (!gitRoot || !isPathInside(gitRoot, absolutePath)) return null;
-  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
-    ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
+  if (!gitRoot) return null;
+  // git toplevel 返回真实路径（macOS /var→/private/var），absolutePath 可能是
+  // 词法路径：归属判定与 relative() 必须同侧规范化，否则会把同仓文件误判为仓外、
+  // 或产出 ../.. 形态的仓库外相对路径让 git show 恒败，基线恢复整条失效
+  const canonicalRoot = canonicalizeExistingPath(gitRoot);
+  const canonicalPath = canonicalizeExistingPath(absolutePath);
+  if (!isPathInside(canonicalRoot, canonicalPath)) return null;
+  const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot);
   if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
-  const gitPath = relative(gitRoot, absolutePath).split(sep).join("/");
+  const gitPath = relative(canonicalRoot, canonicalPath).split(sep).join("/");
   const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
-    cwd: gitRoot,
+    cwd: canonicalRoot,
     encoding: "utf8",
     windowsHide: true,
     maxBuffer: MAX_DIFF_SNAPSHOT_BYTES,
@@ -457,13 +491,17 @@ function snapshotBuffer(
 
 function readBaselineBuffer(record: CodingRunCheckpointRecord, absolutePath: string): Buffer | null {
   const gitRoot = findGitRootForPath(absolutePath);
-  if (!gitRoot || !isPathInside(gitRoot, absolutePath)) return null;
-  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
-    ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
+  if (!gitRoot) return null;
+  // 与 readBaselineContent 同口径：git toplevel 为 realpath 而入参可能为词法路径，
+  // 归属判定与 relative() 必须同侧规范化
+  const canonicalRoot = canonicalizeExistingPath(gitRoot);
+  const canonicalPath = canonicalizeExistingPath(absolutePath);
+  if (!isPathInside(canonicalRoot, canonicalPath)) return null;
+  const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot);
   if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
-  const gitPath = relative(gitRoot, absolutePath).split(sep).join("/");
+  const gitPath = relative(canonicalRoot, canonicalPath).split(sep).join("/");
   const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
-    cwd: gitRoot,
+    cwd: canonicalRoot,
     windowsHide: true,
     maxBuffer: 15 * 1024 * 1024,
   });
@@ -819,8 +857,7 @@ function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: strin
   }
   if (!gitRoot) return false;
   const rootKey = resolve(gitRoot);
-  const baselineCommit = record.baselineCommits?.[rootKey]
-    ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
+  const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot);
   if (!baselineCommit) return false;
   let currentCommit = probe?.headByRoot.get(rootKey);
   if (currentCommit === undefined) {

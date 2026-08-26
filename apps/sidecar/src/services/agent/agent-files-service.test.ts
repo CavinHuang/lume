@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -130,7 +130,8 @@ describe("agent-files-service file ops", () => {
 
     const resolved = resolveAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: "./.visible.md" });
     expect(resolved.relativePath).toBe(".visible.md");
-    expect(resolved.absolutePath).toBe(join(projectPath, ".visible.md"));
+    // resolver 返回 canonical（realpath）路径（macOS tmpdir /var→/private/var）
+    expect(resolved.absolutePath).toBe(realpathSync(join(projectPath, ".visible.md")));
 
     const listed = listProjectDirectory(workspace.slug);
     expect(listed.find((entry) => entry.name === ".visible.md")).toMatchObject({
@@ -216,7 +217,8 @@ describe("agent-files-service file ops", () => {
     });
 
     expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
-    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(join(workdir.filesRoot, "brief.md"));
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(realpathSync(join(workdir.filesRoot, "brief.md")));
   });
 
   test("browser uploads resolve only current thread project and session files", () => {
@@ -236,7 +238,11 @@ describe("agent-files-service file ops", () => {
       relativePath: "files/session.txt",
     })).toString("base64url")}`;
 
-    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([projectFile, sessionFile]);
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([
+      realpathSync(projectFile),
+      realpathSync(sessionFile),
+    ]);
     const outside = join(configDir, "outside-upload.txt");
     writeFileSync(outside, "outside", "utf8");
     expect(() => resolveAuthorizedBrowserUploadPaths(thread.id, [outside])).toThrow("不属于当前任务");

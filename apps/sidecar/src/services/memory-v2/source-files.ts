@@ -41,16 +41,19 @@ export function memoryFileRefForPath(input: {
   const paths = getMemoryV2ScopePaths({ scope: input.scope, workspaceSlug: input.workspaceSlug });
   const root = realpathSync(paths.root);
   const withoutLines = input.path.replace(/#L\d+(?:-L?\d+)?$/i, "");
-  const candidate = resolve(isAbsolute(withoutLines) ? withoutLines : resolve(root, withoutLines));
-  if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) return undefined;
+  let candidate = resolve(isAbsolute(withoutLines) ? withoutLines : resolve(root, withoutLines));
+  // 入参可能是词法路径而 root 已 realpath 化（macOS tmpdir /var→/private/var）：
+  // 归属判定前先把 candidate 规范化到同一口径，否则合法文件被误判为 scope 外
   if (!existsSync(candidate)) return undefined;
+  candidate = realpathSync(candidate);
+  if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) return undefined;
 
   let cursor = root;
   for (const part of relative(root, candidate).split(sep).filter(Boolean)) {
     cursor = resolve(cursor, part);
     if (lstatSync(cursor).isSymbolicLink()) return undefined;
   }
-  const canonical = realpathSync(candidate);
+  const canonical = candidate;
   if (canonical !== root && !canonical.startsWith(`${root}${sep}`)) return undefined;
   if (!lstatSync(canonical).isFile()) return undefined;
   return {
@@ -84,11 +87,15 @@ function walkSourceTarget(target: string, root: string, scopeId: string): Memory
 }
 
 function toSourceFile(path: string, root: string, scopeId: string, size: number, modifiedAt: string): MemorySourceFile {
+  // root 经 realpath 规范化而 path 仍是探测时的词法形态（macOS tmpdir
+  // /var→/private/var）：relative 前必须同侧规范化，否则产出 ../.. 爬出目录的
+  // 相对路径，ref 与 memoryFileRefForPath 的口径分裂。
+  const relativePath = relative(root, realpathSync(path)).split(sep).join("/");
   return {
     ref: {
       source: "memory",
       scopeId,
-      relativePath: relative(root, path).split(sep).join("/"),
+      relativePath,
     },
     size,
     modifiedAt,
