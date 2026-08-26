@@ -389,12 +389,13 @@ function safeLogIpcEvent(emit: () => void): void {
   }
 }
 
-async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T): Promise<T> {
+async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T, origin?: string): Promise<T> {
   return instrumentIpcCommand({
     isQuiet: (candidate) => QUIET_IPC_COMMANDS.has(candidate),
     emit: (e) => safeLogIpcEvent(() => writeMainLog(e.level, IPC_LOG_CONTEXT, e.event, e.message, {
       durationMs: e.durationMs,
       ...e.correlation,
+      ...(origin ? { origin } : {}),
       data: {
         command: e.name,
         args: summarizeValue(e.args),
@@ -2216,11 +2217,24 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         data: payload.data ?? undefined,
       })
       return null
-    case 'write_web_log_batch':
+    case 'write_web_log_batch': {
+      // 多窗口（主窗/快输窗/island）各自运行 renderer 日志实例，按 sender 注入 surface 归因，
+      // 否则同源故障在日志里无法区分来自哪个窗口。
+      const webBatch = payload as any
+      let surfaceOrigin: string | undefined
+      try {
+        surfaceOrigin = resolveRendererTraceOrigin(context.ownerWebContentsId)
+      } catch {
+        surfaceOrigin = 'renderer_unknown'
+      }
+      if (Array.isArray(webBatch?.events)) {
+        for (const e of webBatch.events) e.origin ??= surfaceOrigin
+      }
       return {
-        accepted: getLoggingService().ingestBatch(payload as any, 'renderer'),
+        accepted: getLoggingService().ingestBatch(webBatch as any, 'renderer'),
         batchId: payload.batchId,
       }
+    }
     case 'desktop_list_log_files':
       return getLoggingService().listFiles()
     case 'desktop_read_log_file':
@@ -3113,10 +3127,17 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
     })
   }
   const commandName = validateRendererInvokeCommand(command)
+  let surfaceOrigin: string | undefined
+  try {
+    surfaceOrigin = resolveRendererTraceOrigin(ownerWebContentsId)
+  } catch {
+    surfaceOrigin = 'renderer_unknown'
+  }
   return logIpcCommand(
     commandName,
     payload,
     () => dispatchCommand(commandName, payload, { ownerWebContentsId }),
+    surfaceOrigin,
   )
 })
 handleLogged('lume:window-control', async (event, op) => {

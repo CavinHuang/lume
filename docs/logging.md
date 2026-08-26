@@ -54,7 +54,7 @@ quiet 名单有两处：RPC 侧 `QUIET_RPC_METHODS`（packages/shared 单一来�
 键分类在 `packages/shared/src/logging/index.ts` 的 `classifyLogKey`，三端 normalizer 与 `summarizeValue` 共用：
 
 - **REDACT_KEY_PARTS**（子串命中，归一化后包含即命中）：token / secret / password / apikey / authorization / cookie / setcookie / accesstoken / refreshtoken / grant → 一律 `[redacted]`，永不落盘。
-- **CONTENT_PREVIEW_KEYS**（归一化后精确命中）：body / prompt / content / message 类载荷键 → 截断为前 200 字符预览（`clipLogPreview`，超长标注 `…(+N)`）。
+- **CONTENT_PREVIEW_KEYS**（归一化后精确命中，13 键）：body / prompt / systemprompt / rawrequest / rawresponse / requestbody / responsebody / content / contents / html / markdown / input / output → 截断为前 200 字符预览（`clipLogPreview`，超长标注 `…(+N)`）。注意 `message` 不在名单内——错误消息走 8K 上限而非 200 预览。
 - **两层上限要分清**：
   - `summarizeValue` 层（IPC/RPC 摘要与显式调用）：字符串 >200 截预览；对象限深 2、键数 30；数组输出 `{length, items: 前 5 项}`；TypedArray/Buffer 输出 `{type, byteLength}` 骨架。
   - normalizer 层（各进程写入前的最终规整）：深度 6、键数 100、数组 100 项、字符串上限 8192——普通键的长字符串保留到 8K 而非 200 预览。
@@ -84,7 +84,7 @@ LUMELOG {"level":"warn","context":"host.pipe","event":"client.disconnected","mes
 - desktop-host 的输出由 `apps/desktop/src/desktop-host-supervisor.ts` 行缓冲解析 → 结构化事件（source=`desktop-host`）；node-repl 的输出由 `node-repl-runtime-manager.ts` 解析（批协议限制下 source 保持 `sidecar`，用 context `node-repl.host` 过滤）。
 - 无前缀或解析失败的行回退纯文本路径（`[desktop-host] ...` / `.stderr` 诊断缓冲）。
 - level 允许 trace..fatal；`fatal` 在两侧都映射为 `error`。
-- **已知平台限制（macOS）**：darwin 上 desktop-host 经 `/usr/bin/open -n -W -g`（LaunchServices）拉起以保留 .app bundle 的 TCC 权限身份，宿主 stderr 不经管道转发——supervisor 收到的是 open 进程自身的 stdio。因此宿主结构化行在 Windows/Linux 全量生效，macOS 上暂收不到（此限制对本 PR 之前的文本日志同样存在）。改进方向见仓库 issue 追踪。
+- **已知平台限制（macOS）**：darwin 上 desktop-host 经 `/usr/bin/open -n -W -g`（LaunchServices）拉起以保留 .app bundle 的 TCC 权限身份，宿主 stderr 不经管道转发——supervisor 收到的是 open 进程自身的 stdio。因此宿主结构化行在 Windows/Linux 全量生效，macOS 上暂收不到（此限制在本次重构前的文本日志同样存在）。改进方向见仓库 issue 追踪。
 
 ## 8. dev 怎么看日志
 
@@ -112,3 +112,4 @@ pretty 行尾带 ≤200 字符 JSON 摘要（status/durationMs/data/error），�
 - **web 渲染层凭据子串名单随 shared 收紧**：由 6 片段扩至与桌面端一致的 10 片段（新增 setcookie/accesstoken/refreshtoken/grant）。
 - **宿主结构化行不进文本诊断缓冲**：node-repl 宿主崩溃时 `rejectAll` 携带的 stderr 不含已被结构化解析的 LUMELOG 行（它们已入统一日志）。
 - **close() 尾窗补偿**：LoggingService.close() 对 flush await 期间入队的事件做有界补冲刷（≤3 遍）；supervisor/manager 的残尾冲刷同时挂在 exit 与 close（幂等）。
+- **多窗口 surface 归因**：renderer 事件与 lume:invoke 命令事件带顶层 `origin` 字段（`main_window` / `quick_input` / island 等），由主进程按 sender webContents 统一注入；无法判定时为 `renderer_unknown`。
