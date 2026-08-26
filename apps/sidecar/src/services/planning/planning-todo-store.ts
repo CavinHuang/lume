@@ -402,6 +402,11 @@ function migrate(db: Db): void {
     }
     // #647 P2-14：isTrustedPrimarySubmission/getOperation 按 operation_id 直查的支撑索引（幂等创建）
     db.exec("CREATE INDEX IF NOT EXISTS planning_todo_event_operation ON planning_todo_event(operation_id, seq)");
+    // #593③:审计表无 TTL 单调增长,逐行 JSON.parse(含 before/after 全量快照)的
+    // 信任判定路径随表龄恶化。保留 90 天窗口,打开库时清一次(重启级频率的一次性
+    // 索引范围删除);90 天未推进的 operation 已无恢复意义,listRecoverableOperations
+    // 语义不受影响。
+    db.prepare("DELETE FROM planning_todo_event WHERE created_at < ?").run(Date.now() - 90 * 24 * 60 * 60 * 1000);
     db.exec("COMMIT");
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* preserve the migration error */ }
