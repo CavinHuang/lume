@@ -654,8 +654,8 @@ test("per-tab queue slot is reclaimed after settle and kept while a newer reques
   });
   broker.setPluginState({ browserEnabled: true });
   const queues = (broker as unknown as { queues: Map<string, Promise<unknown>> }).queues;
-  const first = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } }) as Promise<unknown>;
-  const second = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } }) as Promise<unknown>;
+  const first = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } });
+  const second = broker.dispatch({ method: "list", browserSessionId: "s", browserTurnId: "t", params: { tabId: "tab-9" } });
   assert.equal(queues.size, 1);
   // 钉死保留语义：首个 settle 后第二个仍在链上，槽位不得被误删（否则串行语义断裂）
   await first;

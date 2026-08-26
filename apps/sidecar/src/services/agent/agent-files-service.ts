@@ -501,8 +501,14 @@ const MOVE_ERRNO_MESSAGES: Record<string, string> = {
   EMFILE: "系统打开的文件过多，请稍后重试",
 };
 
+function errnoOf(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as NodeJS.ErrnoException).code)
+    : undefined;
+}
+
 function translateMoveError(error: unknown): Error {
-  const code = (error as NodeJS.ErrnoException).code;
+  const code = errnoOf(error);
   const hint = typeof code === "string" ? MOVE_ERRNO_MESSAGES[code] : undefined;
   if (!hint) return error instanceof Error ? error : new Error(String(error));
   return new Error(hint);
@@ -528,7 +534,7 @@ function movePathWithFallbackInner(sourcePath: string, targetPath: string): stri
   } catch (error) {
     // EXDEV=跨设备（全平台降级）；EPERM/EBUSY 仅 Windows 走占用重试+降级——
     // POSIX 上二者多为永久语义（如 mount point rename 返回 EBUSY），降级拷贝后删源会清空挂载内容（#552 review round5）
-    const code = (error as NodeJS.ErrnoException).code;
+    const code = errnoOf(error);
     const occupancyRetry = process.platform === "win32" && (code === "EPERM" || code === "EBUSY");
     if (code !== "EXDEV" && !occupancyRetry) {
       throw error;
@@ -544,7 +550,7 @@ function movePathWithFallbackInner(sourcePath: string, targetPath: string): stri
         log.info("文件移动占用重试成功", { code: firstErrorCode, sourcePath, targetPath, retriedAfterMs: delayMs });
         return;
       } catch (error) {
-        const code = (error as NodeJS.ErrnoException).code;
+        const code = errnoOf(error);
         if (code !== "EPERM" && code !== "EBUSY") {
           throw error;
         }

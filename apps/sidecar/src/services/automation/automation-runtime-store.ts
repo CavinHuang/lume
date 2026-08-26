@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createLogger } from "../infra/logger";
 import {
   closeSync,
   existsSync,
@@ -13,6 +14,8 @@ import {
 import { join } from "node:path";
 import type { AutomationRunStatus } from "@lume/shared";
 import { getConfigDir } from "../infra/config-paths";
+
+const log = createLogger("automation-runtime-store");
 
 export interface AutomationRuntimeState {
   version: 1;
@@ -95,8 +98,12 @@ export function tryAcquireAutomationLease(input: {
           lease: undefined,
           updatedAt: Date.now()
         });
-      } catch {
+      } catch (error) {
         // 盘满下自愈写失败：放弃本周期，不得向外抛（fire-and-forget 调用链）
+        log.warn("stale lease 自愈写失败，放弃本周期", {
+          jobId: input.jobId,
+          error: error instanceof Error ? error.message : String(error)
+        });
         try { rmSync(lockPath, { force: true }); } catch { /* ignore */ }
         return null;
       }
@@ -222,6 +229,8 @@ export function recoverAutomationRuntimeStates(): AutomationRuntimeState[] {
   return states;
 }
 
+// 注：不能用 `state is AutomationRuntimeState` 类型谓词——state 非联合类型时
+// else-if 的反向收窄会产生 never；调用处沿用既有 `state!` 断言。
 function isStaleRunningLease(state: AutomationRuntimeState | null): boolean {
   return Boolean(
     state?.status === "running"

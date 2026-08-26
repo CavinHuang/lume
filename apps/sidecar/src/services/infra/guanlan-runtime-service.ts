@@ -469,7 +469,11 @@ export async function downloadFile(
           response.on("data", () => armIdleTimer(target));
           const file = createWriteStream(destination);
           response.pipe(file);
-          file.on("finish", () => file.close(() => settleOk()));
+          // close 回调带 err=flush 失败：文件可能不完整，不得误判成功（round10 错误路径 review 轻微项）
+          file.on("finish", () => file.close((closeError) => {
+            if (closeError) settleFail(new Error(`下载文件落盘失败: ${closeError.message}`));
+            else settleOk();
+          }));
           file.on("error", settleFail);
         });
         currentRequest = request;
