@@ -20,9 +20,12 @@ let messageTokenCache = new WeakMap<object, number>()
 /**
  * Rough token estimation.
  *
- * ASCII-heavy text is roughly 4 chars/token, while CJK and emoji-like
- * codepoints are closer to 1 char/token. This keeps live context estimates from
- * badly undercounting Chinese/Japanese/Korean prompts.
+ * Prefers native tiktoken counting (exact ≤8KB; chunked approximation for
+ * larger inputs, see countTokensNativeChunked). Falls back to a character
+ * heuristic when natives are unavailable: ASCII-heavy text is roughly
+ * 4 chars/token, while CJK and emoji-like codepoints are closer to 1
+ * char/token — keeps live context estimates from badly undercounting
+ * Chinese/Japanese/Korean prompts.
  */
 export function estimateTokens(text: string): number {
   if (!text) return 0
@@ -49,30 +52,18 @@ export function estimateTokens(text: string): number {
 
 /**
  * 原生计数入口的分块保护（#736）：tiktoken 对「单 regex piece 内无换行的长
- * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。按
- * 换行切块、单块超限再定长硬切；块内二次分量使总成本 ∝ N×LIMIT——8KB 时
- * 1MiB 单行实测从 ~10min 冻结降到 ~2.4s（napi 单调用开销仅 ~1.5µs，调小近乎免费）。
- * 近似口径（#738 review 实测）：跨块边界丢失 BPE 合并致恒保守多计——多行
- * 散文约 +1~3%（每边界 ≤1），极端纯换行串因逐分隔符成块可放大数倍；本
- * 计数只服务阈值/展示估算，保守方向无资源越界风险。
+ * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。定长
+ * 硬切把单次 encode 规模压回线性安全区——8KB 下 1MiB 单行实测 ~2.4s，且
+ * 漂移仅 +0.009%（曾试过换行优先切块：空白密集 markdown 反而 +6~10%，
+ * 因空行游程被人工打断丢失 BPE 合并；定长硬切两项全优故弃之）。
+ * 近似只服务阈值/展示估算，恒保守多计无资源越界风险。
  */
 const TOKEN_NATIVE_PIECE_LIMIT = 8 * 1024
 
 function countTokensNativeChunked(text: string): number {
-  if (text.length <= TOKEN_NATIVE_PIECE_LIMIT) {
-    return countStringTokens(text)
-  }
   let total = 0
-  let start = 0
-  while (start < text.length) {
-    // 切块边界落在换行之后：分隔符计入前块，多行文本的计数不因切块丢失
-    let boundary = text.indexOf("\n", start)
-    boundary = boundary === -1 ? text.length : boundary + 1
-    while (start < boundary) {
-      const stop = Math.min(start + TOKEN_NATIVE_PIECE_LIMIT, boundary)
-      total += countStringTokens(text.slice(start, stop))
-      start = stop
-    }
+  for (let start = 0; start < text.length; start += TOKEN_NATIVE_PIECE_LIMIT) {
+    total += countStringTokens(text.slice(start, start + TOKEN_NATIVE_PIECE_LIMIT))
   }
   return total
 }

@@ -32,7 +32,7 @@ describe("token estimation", () => {
   })
 
   // #736：原生 tiktoken 对长同构游程近 O(n²)（256KB 曾实测 30s）。分块保护
-  // 后本地 ~3.2s、CI 硬件更高——显式 20s 预算吸收硬件方差，旧直连实现
+  // 后本地 ~1.4s、CI ~2s——显式 20s 预算吸收硬件方差，旧直连实现
   // （256KB≈30s）在此必超时显形。natives 缺席时 JS 回退本就线性，跳过。
   test.skipIf(!isNativeAvailable())("long uniform runs complete linearly via chunked counting (#736)", () => {
     const text = "o".repeat(256 * 1024)
@@ -42,16 +42,17 @@ describe("token estimation", () => {
     expect(estimateTokens(text)).toBe(first)
   }, 20_000)
 
-  test("#736：跨行大文本分块计数的换行边界记账——与逐行求和偏差至多每界 1 token", () => {
-    // 夹具必须 >32KB 才走分块路径（短文本直连精确无边界可言）
+  test.skipIf(!isNativeAvailable())("#736：定长硬切下多行计数自洽——newline 计入且切片漂移有界", () => {
+    // 夹具必须 >8KB 才走分块路径（短文本直连精确无边界可言）
     const lines = Array.from({ length: 1_200 }, (_, i) => `line-${i}-${"x".repeat(28)}`)
     const joined = lines.join("\n")
-    expect(joined.length).toBeGreaterThan(32 * 1024)
+    expect(joined.length).toBeGreaterThan(8 * 1024)
 
     const whole = estimateTokens(joined)
     const perLineSum = lines.reduce((sum, line) => sum + estimateTokens(line), 0)
-    // 每个换行边界至多损失 1 个合并 token
-    expect(Math.abs(whole - perLineSum)).toBeLessThanOrEqual(lines.length)
+    const newlineCount = lines.length - 1
+    // 整文计数 ≈ 逐行求和 + 每换行 1 token；硬切边界漂移实测 +0.009%，容差 8 已宽
+    expect(Math.abs(whole - perLineSum - newlineCount)).toBeLessThanOrEqual(8)
   })
 })
 
