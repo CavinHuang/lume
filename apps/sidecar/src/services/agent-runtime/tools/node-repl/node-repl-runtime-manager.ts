@@ -255,15 +255,19 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       if (this.child === child) this.child = null;
       this.rejectAll(error);
     });
+    let exited = false;
     child.once("exit", (code, signal) => {
+      exited = true;
       if (this.child === child) this.child = null;
       // 冲刷残尾：宿主死在半行输出时，退出诊断前先处理缓冲里的最后一行。
       this.ingestStderrChunk("\n");
       this.rejectAll(new Error(`node_repl runtime exited: code=${code ?? "null"} signal=${signal ?? "null"}${this.stderr ? `\n${this.stderr}` : ""}`));
     });
     // Node 不保证末尾 stdio data 先于 exit 排空——close 才是流排空的确定时点，兜住迟到的尾随字节。
+    // 仅在「本代已退出且尚无新一代 spawn」时补冲刷：this.child 已被新一代占用则旧代
+    // 迟到的 '\n' 会截断新代缓冲中的半行，必须跳过（旧代残尾随之丢弃，有界取舍）。
     child.once("close", () => {
-      if (this.child === child) this.ingestStderrChunk("\n");
+      if (exited && this.child === null) this.ingestStderrChunk("\n");
     });
   }
 

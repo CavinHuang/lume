@@ -2779,7 +2779,6 @@ function createSidecarHost({ onNotification }) {
                 .filter((key) => !(key === 'consoleLevel' && !app.isPackaged
                   && incoming.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel))
               getLoggingService().updateSettings(logging)
-              getLoggingService().updateSettings(logging)
               // 文件级别运行时下发给 sidecar（其门槛在 spawn 时冻结，热更原不生效）。
               const sidecarFileLevel = process.env.LUME_LOG_FILE_LEVEL
                 ?? (!app.isPackaged ? 'trace' : (logging as { fileLevel?: string }).fileLevel)
