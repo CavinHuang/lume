@@ -609,7 +609,56 @@ function createSmtpSocketFactory(host: string, port: number, lookup: LookupFunct
   };
 }
 
+/**
+ * QQ 等服务商对单账号并发 IMAP 连接数有上限(#698):协议层一动作一连接,
+ * agent 并行调用只读工具(search_emails + 多个 get_email)会各开一条连接撞限,
+ * 超限报错形如 "LOGIN failed" 又会被 isAuthError 启发式误判成授权码失效。
+ * 按账号把在途连接压到上限之下;排队即预占名额,唤醒者恢复后直接运行。
+ */
+export const maxImapConnectionsPerAccount = 2;
+
+interface ImapAccountGate {
+  active: number;
+  waiters: Array<() => void>;
+}
+
+const imapAccountGates = new Map<string, ImapAccountGate>();
+
+async function withImapConnectionLimit<T>(account: string, run: () => Promise<T>): Promise<T> {
+  let gate = imapAccountGates.get(account);
+  if (!gate) {
+    gate = { active: 0, waiters: [] };
+    imapAccountGates.set(account, gate);
+  }
+  if (gate.active >= maxImapConnectionsPerAccount) {
+    // executor 同步完成 push 才返回 promise,释放路径的 shift 不可能早于入队
+    await new Promise<void>((resolve) => {
+      gate!.active += 1;
+      gate!.waiters.push(resolve);
+    });
+  } else {
+    gate.active += 1;
+  }
+  try {
+    return await run();
+  } finally {
+    gate.active -= 1;
+    gate.waiters.shift()?.();
+  }
+}
+
 async function withImapClient<T>(
+  config: MailProtocolConfig,
+  deps: MailProtocolDependencies,
+  credential: MailCredential,
+  callback: (client: RuntimeImapClient) => Promise<T>,
+) {
+  return withImapConnectionLimit(credential.email.toLowerCase(), () =>
+    openAndRunImapClient(config, deps, credential, callback),
+  );
+}
+
+async function openAndRunImapClient<T>(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
   credential: MailCredential,
