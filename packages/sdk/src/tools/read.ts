@@ -64,7 +64,7 @@ export const FileReadTool = defineTool({
       },
       summarize: {
         type: 'boolean',
-        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them.',
+        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them. Mutually exclusive with offset/limit: an explicit range always wins and summarize is ignored (the response flags summarizeIgnored).',
       },
       pages: {
         type: 'string',
@@ -175,13 +175,18 @@ export const FileReadTool = defineTool({
           limit,
           isPartialView,
         })
+        const rangedBody = ranged.content
+          ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
+          : '(empty file)'
         return {
           data: {
             filePath,
             // 行尾换行已忠实入缓存（#569），显示前去掉以免多出幽灵空行。
-            content: ranged.content
-              ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
-              : '(empty file)',
+            // #649 follow-up:schema 承诺 summarize 返回大纲，与显式范围同给时范围
+            // 优先、summarize 被忽略——静默丢弃会让模型误以为拿到的是大纲，必须显式告知。
+            content: input.summarize === true
+              ? `${rangedBody}\n[注意：本次按显式范围读取，summarize 参数未生效；如需全文件大纲请仅传 summarize:true]`
+              : rangedBody,
             offset,
             limit,
             totalLines: ranged.totalLines,

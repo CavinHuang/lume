@@ -669,11 +669,23 @@ function showPlanningReminderNotification(method, params) {
 
 // #566 端到端 review A2:automation 停摆/失败必须有主动通知面——无人值守场景用户
 // 不会盯着管理页；success 保持静默不打扰，failed/waiting 才是「需要人介入」的信号。
+// #649 follow-up:同 job 冷却窗——常驻失败的定时 job 按 cron 频率会无限刷 OS 通知。
+const AUTOMATION_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000
+const automationNotifyLastAt = new Map()
+
 function showAutomationRunNotification(method, params) {
   if (method !== 'automation:run-completed' || !params || typeof params !== 'object') return
   const run = params.run
   if (!run || (run.status !== 'failed' && run.status !== 'waiting_for_user' && run.status !== 'waiting_for_approval')) return
   if (!Notification.isSupported()) return
+  const jobKey = typeof run.jobId === 'string' ? run.jobId : ''
+  const lastAt = jobKey ? automationNotifyLastAt.get(jobKey) : undefined
+  const now = Date.now()
+  if (lastAt !== undefined && now - lastAt < AUTOMATION_NOTIFY_COOLDOWN_MS) {
+    writeMainLog('info', 'desktop.notification', 'automation_run.cooldown_skip', 'automation notification suppressed by per-job cooldown', { data: { jobId: jobKey, status: run.status } })
+    return
+  }
+  if (jobKey) automationNotifyLastAt.set(jobKey, now)
   try {
     const title = run.status === 'failed' ? `自动化任务未完成：${params.jobName ?? '未命名任务'}` : `自动化任务等待处理：${params.jobName ?? '未命名任务'}`
     const desktopNotification = new Notification({
