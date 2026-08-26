@@ -1236,6 +1236,9 @@ describe("Agent session persistence", () => {
       tools: [],
       cwd: tempDir,
       runtimeContext: "current runtime",
+      // 隔离宿主 skills(~/.lume/skills 等):registry 为空时 engine 不注入
+      // available_skills 目录消息,保证下方消息顺序断言只覆盖 runtime context。
+      skillsDirectories: [join(tempDir, "no-skills")],
     })
     await agent.getInitializationResult()
     ;(agent as any).provider = provider
@@ -1267,6 +1270,7 @@ describe("Agent session persistence", () => {
       tools: [],
       cwd: tempDir,
       runtimeContext: "next runtime",
+      skillsDirectories: [join(tempDir, "no-skills")],
     })
     await resumedAgent.getInitializationResult()
     ;(resumedAgent as any).provider = provider

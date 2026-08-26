@@ -23,7 +23,7 @@
   "dependencies": {
     "@lume/natives": "workspace:*",
     "@lume/shared": "workspace:*",
-    "@microsoft/mxc-sdk": "0.7.0",
+    "@microsoft/mxc-sdk": "0.8.0",
     "@modelcontextprotocol/sdk": "^1.12.1",
     "@mozilla/readability": "^0.6.0",
     "fast-xml-parser": "^5.2.3",
