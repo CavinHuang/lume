@@ -24,6 +24,9 @@ import type {
   RuntimeCodingFileChange,
   RuntimeCodingRepository,
 } from "@lume/shared";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("coding-change-service");
 
 const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 10_000;
@@ -41,10 +44,11 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
 
   parentPort.on("message", ({ id, args, cwd, timeoutMs }) => {
     let settled = false;
-    const finish = (value) => {
+    // diag：异常终态原因回传主线程记日志（worker 内无 logger），正常完成不带
+    const finish = (value, diag) => {
       if (settled) return;
       settled = true;
-      parentPort.postMessage({ id, value });
+      parentPort.postMessage(diag ? { id, value, diag } : { id, value });
     };
     let child;
     try {
@@ -54,17 +58,19 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
         env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
       });
     } catch {
-      finish(null);
+      finish(null, "spawn_error");
       return;
     }
     child.stdout.setEncoding("utf8");
     let stdout = "";
     let stdoutBytes = 0;
     let overflowed = false;
+    // String.raw 不影响插值求值：水位与主线程版 MAX_GIT_TEXT_OUTPUT_BYTES
+    // 编译期同源，避免双写魔法数漂移（worker 经 eval 访问不到模块作用域）
     child.stdout.on("data", (chunk) => {
       if (overflowed) return;
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
-      if (stdoutBytes > 16 * 1024 * 1024) {
+      if (stdoutBytes > ${MAX_GIT_TEXT_OUTPUT_BYTES}) {
         overflowed = true;
         stdout = "";
         child.kill();
@@ -74,15 +80,15 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     });
     const timeout = setTimeout(() => {
       child.kill();
-      finish(null);
+      finish(null, "timeout");
     }, timeoutMs);
     child.on("error", () => {
       clearTimeout(timeout);
-      finish(null);
+      finish(null, "spawn_error");
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      finish(!overflowed && code === 0 ? stdout : null);
+      finish(!overflowed && code === 0 ? stdout : null, overflowed ? "stdout_overflow" : undefined);
     });
   });
 `;
@@ -1708,7 +1714,14 @@ async function readGitTextSource(
   source: GitReviewContentSource,
 ): Promise<string> {
   if (source.kind === "worktree") return readSafeContent(root, filePath);
-  const result = await runGitCommand(["show", source.kind === "index" ? `:${filePath}` : `${source.ref}:${filePath}`], root);
+  const rev = source.kind === "index" ? `:${filePath}` : `${source.ref}:${filePath}`;
+  // 超过水位（16MB）的 blob 会被 runGitCommand 截断为 null 并静默变空串——
+  // 先用 cat-file -s 显式报错；比"整读后再 throw"更省（不搬运整个 blob）
+  const size = await runGitCommand(["cat-file", "-s", rev], root);
+  if (size !== null && Number(size) > MAX_FILE_SIZE_BYTES) {
+    throw new Error("文件过大，无法生成 diff");
+  }
+  const result = await runGitCommand(["show", rev], root);
   if (result === null) return "";
   if (Buffer.byteLength(result, "utf-8") > MAX_FILE_SIZE_BYTES) throw new Error("文件过大，无法生成 diff");
   return normalizeLineEndings(result);
@@ -1766,6 +1779,8 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
         overflowed = true;
         stdout = "";
         child.kill();
+        // 超限返回 null 的调用方只能看到通用失败，补一条可归因日志（#594）
+        log.warn("git 命令输出超过水位上限已截断", { bytesLimit: MAX_GIT_TEXT_OUTPUT_BYTES });
         return;
       }
       stdout += chunk;
@@ -1809,10 +1824,14 @@ function getGitCommandWorker(): Worker {
   if (gitCommandWorker) return gitCommandWorker;
   const worker = new Worker(GIT_COMMAND_WORKER_SOURCE, { eval: true });
   worker.unref();
-  worker.on("message", (message: { id: number; value: string | null }) => {
+  worker.on("message", (message: { id: number; value: string | null; diag?: string }) => {
     const resolveResult = pendingGitCommands.get(message.id);
     if (!resolveResult) return;
     pendingGitCommands.delete(message.id);
+    // 超限返回 null 的调用方只能看到通用失败，此处补一条可归因日志（#594）
+    if (message.diag === "stdout_overflow") {
+      log.warn("git 命令输出超过水位上限已截断", { bytesLimit: MAX_GIT_TEXT_OUTPUT_BYTES });
+    }
     resolveResult(message.value);
   });
   const resetWorker = () => {
