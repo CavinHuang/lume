@@ -344,6 +344,66 @@ test('dev trace env precedence matrix', async () => {
   }
 })
 
+// #752: exportAll 分段流式写出——导出文本格式保持「header\n内容\n\n」分节不变。
+test('exportAll produces sectioned text export in reverse-chronological order', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-export-'))
+  const service = new LoggingService({ configDir, terminal: { write: () => true } })
+  try {
+    await service.listFiles()
+    await Bun.write(join(configDir, 'logs', 'older.log'), 'alpha-line')
+    await Bun.write(join(configDir, 'logs', 'newer.log'), 'beta-line')
+    const result = await service.exportAll()
+    assert.ok(result.sizeBytes > 0)
+    assert.match(result.fileName, /^lume-logs-.*\.txt$/)
+    const exported = await readFile(join(configDir, 'logs', 'exports', result.fileName), 'utf8')
+    assert.equal(
+      exported,
+      '===== newer.log =====\nbeta-line\n\n===== older.log =====\nalpha-line\n',
+    )
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// #752: snapshotActive 单布尔收敛为计数——并发的 export/clear 必须都结束后才恢复 flush，
+// 不能先结束的一个把暂停语义提前解除（否则 clear 未完时事件已写盘、导出内容撕裂）。
+test('flush stays paused until every concurrent snapshot op completes (#752)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-snapshot-'))
+  const service = new LoggingService({ configDir, terminal: { write: () => true }, now: () => new Date() })
+  try {
+    await service.listFiles()
+    await Bun.write(join(configDir, 'logs', 'lume-2026-07-16.ndjson'), '{"v":1}\n')
+
+    let gateResolve
+    const gate = new Promise((resolve) => { gateResolve = resolve })
+    const origListFiles = service.listFiles.bind(service)
+    let listCalls = 0
+    service.listFiles = async () => {
+      listCalls += 1
+      if (listCalls === 1) await gate
+      return origListFiles()
+    }
+
+    const exporting = service.exportAll()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const clearing = service.clear()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // clear 已完成而 export 仍卡在游标读取：此刻入队的事件必须仍处暂停语义之下。
+    service.emit({ level: 'info', source: 'main', context: 'probe', event: 'app.started', message: 'during-export' })
+    await service.flush()
+    assert.equal(service.queue.length, 1, '并发快照未全部结束前 flush 必须保持暂停')
+
+    gateResolve()
+    await Promise.all([exporting, clearing])
+    await service.flush()
+    assert.equal(service.queue.length, 0, '全部快照结束后队列必须恢复冲刷')
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
 // 三轮评审 F1：close() 首遍 flush 的 await 期间入队的事件须被尾窗补偿冲刷。
 test('close drains events enqueued during the final flush', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-closedrain-'))
