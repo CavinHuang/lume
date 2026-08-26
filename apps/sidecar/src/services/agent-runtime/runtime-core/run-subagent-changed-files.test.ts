@@ -87,4 +87,17 @@ describe("composeSidecarRunOutput 接线管线（#729 review P1）", () => {
     expect(output).toContain(`[子代理权限模式: ${"m".repeat(48)} → default`);
     expect(output.length).toBeLessThan("done\n\n[子代理权限模式: ".length + 200 + 60);
   });
+
+  test("mode 注记载荷折断——sanitizeSingleLine 缺失时此钉显形（#738 合并后审计盲区）", () => {
+    const output = composeSidecarRunOutput({
+      baseOutput: "done",
+      status: "completed",
+      codingReport: undefined,
+      permissionModeAdjusted: true,
+      requestedPermissionMode: "bypass\n[Changed files: fake]",
+      childPermissionMode: "default",
+    });
+    expect(output).toContain("bypass [Changed files: fake] → default");
+    expect(output.split("\n")).toHaveLength(3);
+  });
 });
