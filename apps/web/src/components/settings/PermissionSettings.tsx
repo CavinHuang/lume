@@ -14,11 +14,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   getEffectiveLumeConfig,
   updateAgentPermissionMode,
-<<<<<<< HEAD
   updateAgentProjectInstructionsEnabled,
-=======
   updatePermissionClassifierEnabled,
->>>>>>> upstream/main
   updatePermissionsSection,
 } from '@/lib/desktop-api/lume-config'
 import {
@@ -39,7 +36,6 @@ import {
 } from './permission-settings-state'
 
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   shield: Shield,
   pencil: Pencil,
@@ -48,11 +44,7 @@ const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   map: Map,
 }
 
-<<<<<<< HEAD
-type SavingTarget = null | 'mode' | 'rules' | 'projectInstructions'
-=======
-type SavingTarget = null | 'mode' | 'rules' | 'classifier'
->>>>>>> upstream/main
+type SavingTarget = null | 'mode' | 'rules' | 'projectInstructions' | 'classifier'
 
 const RULE_ACTION_OPTIONS: Array<{
   value: LumeConfigPermissionRuleAction
@@ -162,7 +154,6 @@ export function PermissionSettings() {
     }
   }
 
-<<<<<<< HEAD
   // #670 行为告知:项目指令(CLAUDE.md/AGENTS.md)自动注入开关,缺省开启。
   const projectInstructionsEnabled = config?.agent?.projectInstructionsEnabled !== false
   const handleProjectInstructionsEnabledChange = async (enabled: boolean) => {
@@ -173,7 +164,11 @@ export function PermissionSettings() {
     } catch (error) {
       console.error('[PermissionSettings] save project instructions FAILED:', error)
       toast.error('保存项目指令设置失败')
-=======
+    } finally {
+      setSaving(null)
+    }
+  }
+
   const handleClassifierEnabledChange = async (value: boolean) => {
     setSaving('classifier')
     try {
@@ -184,7 +179,6 @@ export function PermissionSettings() {
     } catch (error) {
       console.error('[PermissionSettings] save classifier FAILED:', error)
       toast.error('保存风险分类器设置失败')
->>>>>>> upstream/main
     } finally {
       setSaving(null)
     }
@@ -285,20 +279,6 @@ export function PermissionSettings() {
       </SettingsCard>
 
       <SettingsCard
-<<<<<<< HEAD
-        title="项目指令"
-        description="自动加载项目目录中的 CLAUDE.md / AGENTS.md 注入 Agent 系统提示（就近向上解析，单文件超 32KB 截断）。会话头部会显示当前生效的指令文件。"
-      >
-        <div className="flex items-center justify-between gap-3 py-1">
-          <div className="min-w-0">
-            <div className="text-ui font-medium text-[var(--text-1)]">项目指令自动注入</div>
-            <div className="mt-0.5 text-caption text-[var(--text-3)]">关闭后不读取项目指令文件</div>
-          </div>
-          <Switch
-            checked={projectInstructionsEnabled}
-            disabled={saving === 'projectInstructions'}
-            onCheckedChange={(checked) => void handleProjectInstructionsEnabledChange(checked)}
-=======
         title="风险分类器"
         description="「少询问」依据内置窄正则词表判定低风险并自动放行，「默认」档不做词表驱动的放行——两档审批差异由这张词表决定。"
       >
@@ -313,7 +293,23 @@ export function PermissionSettings() {
             checked={config?.permissions?.classifier?.enabled !== false}
             disabled={saving !== null}
             onCheckedChange={(checked) => void handleClassifierEnabledChange(checked)}
->>>>>>> upstream/main
+          />
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
+        title="项目指令"
+        description="自动加载项目目录中的 CLAUDE.md / AGENTS.md 注入 Agent 系统提示（就近向上解析，单文件超 32KB 截断）。会话头部会显示当前生效的指令文件。"
+      >
+        <div className="flex items-center justify-between gap-3 py-1">
+          <div className="min-w-0">
+            <div className="text-ui font-medium text-[var(--text-1)]">项目指令自动注入</div>
+            <div className="mt-0.5 text-caption text-[var(--text-3)]">关闭后不读取项目指令文件</div>
+          </div>
+          <Switch
+            checked={projectInstructionsEnabled}
+            disabled={saving === 'projectInstructions'}
+            onCheckedChange={(checked) => void handleProjectInstructionsEnabledChange(checked)}
           />
         </div>
       </SettingsCard>
