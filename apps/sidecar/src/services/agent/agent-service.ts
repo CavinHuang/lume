@@ -36,7 +36,7 @@ import {
   appendAgentThreadSDKMessages,
   getAgentThreadMessages,
   getAgentThreadMeta,
-  getAgentThreadSDKMessages,
+  getRecentAgentThreadSDKMessages,
   readRuntimeCoreTranscriptMessages,
   replaceAgentThreadTranscript,
   tryUpdateAgentThreadMeta
@@ -1215,7 +1215,8 @@ async function prepareAgentSendStage({
     modelFacingUserMessage = [capabilityProjection.context, modelFacingUserMessage].filter(Boolean).join("\n\n");
   }
   if (!isManualCompactCommand) {
-    const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getAgentThreadSDKMessages(threadId));
+    // #554:发送路径只需文件尾部的后台任务通知,尾部有界读取替代全量解析
+    const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getRecentAgentThreadSDKMessages(threadId));
     if (pendingBackgroundTasks) {
       modelFacingUserMessage = [modelFacingUserMessage, pendingBackgroundTasks].join("\n\n");
     }
