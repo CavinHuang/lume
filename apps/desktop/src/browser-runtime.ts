@@ -2571,6 +2571,12 @@ export class BrowserRuntime {
     const from = tab.lastAgentPointer
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const sender = this.expectedAgentInputSender(tab, debuggerRef)
+      // #614:语义 ref 路径携带解析时 URL——注入前最后一刻重验,文档已换则坐标
+      // 作废(盲击新文档不可控),报 stale_target 让模型重观察
+      if (typeof params.documentUrl === "string") {
+        const current = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
+        if (current.result?.value !== params.documentUrl) throw browserError("stale_target")
+      }
       if (method === "click" || method === "doubleClick") {
         await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { natural: this.humanizedInput, from })
       } else {
@@ -2847,6 +2853,10 @@ export class BrowserRuntime {
             await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: hitObjectId }).catch(() => undefined)
           }
         }
+        // 解析时快照 document URL:坐标注入前重验,页面自导航(SPA 定时跳转/
+        // 倒计时刷新)落在 generation/inputSequence 校验之后、鼠标事件落地之前的
+        // 毫秒级窗口内时拒绝盲击(#614)
+        const hrefSnapshot = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
         return {
           x,
           y,
@@ -2855,6 +2865,7 @@ export class BrowserRuntime {
           tagName: typeof details.tagName === "string" ? details.tagName : "",
           ...(typeof details.role === "string" ? { role: details.role } : {}),
           backendNodeId: entry.backendNodeId,
+          ...(typeof hrefSnapshot.result?.value === "string" ? { documentUrl: hrefSnapshot.result.value } : {}),
           editable: details.editable === true,
           ...(details.readOnly === true ? { readOnly: true } : {}),
           enabled: details.enabled !== false,
@@ -5010,6 +5021,7 @@ class BrowserOperationJournal {
   // 落盘:内存态即时生效,磁盘滞后一个微批;journal 仅审计消费(无读取方),
   // 进程退出丢最后一帧可接受,exit 钩子同步兜底一次。
   private flushing = false
+  private flushScheduled = false
   private dirtyEpoch = 0
   private flushedEpoch = 0
   constructor(configDir: () => string, encryption?: BrowserRuntimeOptions["journalEncryption"]) {
@@ -5040,8 +5052,6 @@ class BrowserOperationJournal {
     this.flushScheduled = true
     queueMicrotask(() => { void this.flushNow() })
   }
-  private flushing = false
-  private flushedEpoch = 0
   private async flushNow(): Promise<void> {
     this.flushing = true
     try {
