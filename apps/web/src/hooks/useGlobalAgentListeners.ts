@@ -120,16 +120,20 @@ export function useGlobalAgentListeners() {
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
   const desktopActionVisualTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   // #676:rAF + 后台回退竞速调度(见 runtime-event-flush-scheduler.ts)。
-  // flushRuntimeEvents 引用稳定(useSetAtom setter 稳定),首建后闭包不过期。
+  // 调度器经 flushRef 中转而非直接捕获 flushRuntimeEvents:不依赖「useSetAtom
+  // setter 引用稳定」这一外部不变量(Provider scoped/remount 或迁移 createStore
+  // 时首建闭包会过期),每次渲染中转指向最新回调。
+  const flushRuntimeEventsRef = useRef<() => void>(() => {})
   const flushRuntimeEvents = useCallback(() => {
     const batch = pendingRuntimeEventsRef.current
     if (batch.length === 0) return
     pendingRuntimeEventsRef.current = []
     setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
   }, [setRuntimeEvents])
+  flushRuntimeEventsRef.current = flushRuntimeEvents
   const runtimeEventsSchedulerRef = useRef<RuntimeEventFlushScheduler | null>(null)
   if (runtimeEventsSchedulerRef.current === null) {
-    runtimeEventsSchedulerRef.current = createRuntimeEventFlushScheduler(flushRuntimeEvents)
+    runtimeEventsSchedulerRef.current = createRuntimeEventFlushScheduler(() => flushRuntimeEventsRef.current())
   }
   const enqueueRuntimeEvent = useCallback((event: LumeRuntimeEvent) => {
     pendingRuntimeEventsRef.current.push(event)
