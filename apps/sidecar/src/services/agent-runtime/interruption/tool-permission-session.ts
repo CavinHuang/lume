@@ -79,6 +79,7 @@ export function waitForToolPermissionDecision(
   emit: (request: AgentToolPermissionRequest) => void,
   options: {
     onTimeout?: (request: AgentToolPermissionRequest) => void;
+    onCancelled?: (request: AgentToolPermissionRequest) => void;
   } = {}
 ): Promise<AgentToolPermissionDecision | null> {
   return new Promise((resolve) => {
@@ -88,6 +89,17 @@ export function waitForToolPermissionDecision(
         clearTimeout(pending.timeout);
       }
       pendingToolPermissionResolvers.delete(request.requestId);
+      // abort/超时等无决策终结路径必须通知 UI 摘横幅，否则审批卡片悬挂到超时（幽灵审批）
+      if (decision === null) {
+        try {
+          options.onCancelled?.(request);
+        } catch (error) {
+          log.warn("onCancelled callback failed", {
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
       signal.removeEventListener("abort", onAbort);
       try {
         await resolveToolApprovalInterruption({

@@ -214,12 +214,8 @@ export function useGlobalAgentListeners() {
               }, 1_600)
             }
           }
-          if (
-            event.type === 'tool.permission_timeout' ||
-            (event.type === 'tool.failed' && event.error.message.includes('工具权限确认超时'))
-          ) {
-            const requestId = event.type === 'tool.permission_timeout' ? event.requestId : event.toolCallId
-            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, requestId))
+          if (event.type === 'tool.permission_timeout') {
+            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))
           }
           if (event.type === 'permission.resolved') {
             setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))

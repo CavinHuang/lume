@@ -424,6 +424,23 @@ export function createCanUseToolHandler(
                 message: `插件权限确认超时: ${toolName}`,
               });
             },
+            onCancelled: (permissionRequest) => {
+              emit.onRuntimeEvent?.({
+                id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:permission.cancelled`,
+                type: "permission.resolved",
+                threadId: approvalThreadId,
+                runId:
+                  requestRunId ??
+                  permissionRequest.runId ??
+                  params.runtime.sessionId,
+                createdAt: new Date().toISOString(),
+                toolCallId: permissionRequest.toolUseId,
+                requestId: permissionRequest.requestId,
+                toolName,
+                decision: "cancelled",
+                source: "system",
+              });
+            },
           },
         );
         if (pluginDecision === "allow_always") {
@@ -843,6 +860,24 @@ export function createCanUseToolHandler(
             requestId: permissionRequest.requestId,
             toolName,
             message: `工具权限确认超时: ${toolName}`,
+          });
+        },
+        onCancelled: (permissionRequest) => {
+          // abort/超时时补发 resolved 事件，让 web 端按 requestId 摘掉审批横幅
+          emit.onRuntimeEvent?.({
+            id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:permission.cancelled`,
+            type: "permission.resolved",
+            threadId: approvalThreadId,
+            runId:
+              requestRunId ??
+              permissionRequest.runId ??
+              params.runtime.sessionId,
+            createdAt: new Date().toISOString(),
+            toolCallId: permissionRequest.toolUseId,
+            requestId: permissionRequest.requestId,
+            toolName,
+            decision: "cancelled",
+            source: "system",
           });
         },
       },

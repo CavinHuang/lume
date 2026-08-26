@@ -210,8 +210,8 @@ export interface ToolPermissionResolvedRuntimeEvent extends RuntimeEventBase {
   toolCallId?: string;
   requestId: string;
   toolName?: string;
-  decision: "allow_once" | "allow_always" | "deny";
-  source: "ui" | "im";
+  decision: "allow_once" | "allow_always" | "deny" | "cancelled";
+  source: "ui" | "im" | "system";
 }
 
 export interface PlanPreviewRuntimeEvent extends RuntimeEventBase {

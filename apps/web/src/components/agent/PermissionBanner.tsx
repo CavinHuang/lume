@@ -102,7 +102,20 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
     return () => window.removeEventListener('keydown', onKeyDown)
   }, [hidden, busy, respond])
 
-  if (hidden) return null
+  if (hidden) {
+    // Esc 收起后保留可找回入口，否则请求在 sidecar 继续计时、任务静默等到超时
+    return (
+      <button
+        type="button"
+        onClick={() => setHidden(false)}
+        className="mx-auto flex items-center gap-1.5 rounded-full border border-white/[0.10] bg-[#2a2a2a]/95 px-3 py-1.5 text-[12px] text-[#bdbdbd] shadow-lg backdrop-blur transition-colors hover:bg-[#333] hover:text-[#e5e5e5]"
+      >
+        <ShieldOff size={12} className="text-[#8f8f8f]" />
+        <span className="font-mono">{request.toolName}</span>
+        <span>审批已收起，点击查看</span>
+      </button>
+    )
+  }
 
   return (
     <InteractiveOverlayFrame

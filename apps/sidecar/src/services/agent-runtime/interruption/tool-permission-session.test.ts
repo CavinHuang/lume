@@ -54,6 +54,54 @@ describe("tool-permission-session", () => {
     expect(decision).toBe("allow_once");
   });
 
+  test("abort 终结必须触发 onCancelled（幽灵审批事件钉）", async () => {
+    const controller = new AbortController();
+    const cancelled: string[] = [];
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-abort",
+        requestId: "req-abort",
+        toolUseId: "tool-abort",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        input: { command: "ls" }
+      },
+      controller.signal,
+      () => {},
+      { onCancelled: (request) => void cancelled.push(request.requestId) }
+    );
+    controller.abort();
+    const decision = await waitPromise;
+    expect(decision).toBeNull();
+    expect(cancelled).toEqual(["req-abort"]);
+  });
+
+  test("用户正常决策不得误触 onCancelled", async () => {
+    const cancelled: string[] = [];
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-decide",
+        requestId: "req-decide",
+        toolUseId: "tool-decide",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        input: { command: "ls" }
+      },
+      new AbortController().signal,
+      () => {},
+      { onCancelled: (request) => void cancelled.push(request.requestId) }
+    );
+    submitToolPermissionDecision({
+      threadId: "s-decide",
+      requestId: "req-decide",
+      decision: "allow_once"
+    });
+    expect(await waitPromise).toBe("allow_once");
+    expect(cancelled).toEqual([]);
+  });
+
   test("持久化失败时 done 仍必须 resolve（不允许无限悬挂）", async () => {
     // 配置根指向普通文件 → 其下所有目录/文件写入抛 ENOTDIR，模拟 AV 锁/磁盘满等 IO 失败
     const invalidBase = join(tmpdir(), `lume-tps-invalid-${Date.now()}-${Math.random().toString(16).slice(2)}`);
