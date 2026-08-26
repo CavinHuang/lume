@@ -9,7 +9,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, extractCorrelationIds, summarizeValue } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
@@ -19,8 +19,8 @@ import {
   flushLogTransport,
   setLogBatchNotificationWriter,
   writeEmergencyLog,
-  writeLogRecord
-} from "./services/infra/logger";
+  writeLogRecord,
+  setLogFileLevel,} from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_UNITS } from "./rpc/process-transport";
 import { browserRpcErrorFromPayload, classifyBrowserRequestTimeout, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
@@ -148,15 +148,6 @@ if ((process as typeof process & { parentPort?: unknown }).parentPort) {
   }));
 }
 
-const QUIET_RPC_METHODS = new Set([
-  "healthcheck",
-  "general-settings:get",
-  "agent:list-threads",
-  "agent:list-subagent-runs",
-  "agent:get-pending-interactive",
-  "agent:list-workspaces",
-  "model-meta:get"
-]);
 const SLOW_RPC_MS = 2_000;
 // Process-wide reverse-RPC render client. Bridges WebFetch JS-render requests
 // to the desktop PageRenderer. Fed into BOTH the RPC handlers (so render:result
@@ -341,7 +332,16 @@ async function handleRpcLine(line: string): Promise<void> {
     return;
   }
 
+  if (method === "system.log-level") {
+    // main 在 logging 设置热更时下发；无效级别静默忽略（保持当前门槛）。
+    setLogFileLevel((payload.params as { level?: unknown } | null)?.level);
+    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    return;
+  }
+
   const handler = handlers[method];
+  // 关联 ID 提前到 try 外声明，failed 分支同样可用。
+  const correlation = extractCorrelationIds(payload.params);
   if (!handler) {
     writeResponse({
       id: payload.id,
@@ -357,39 +357,55 @@ async function handleRpcLine(line: string): Promise<void> {
     const startedAt = performance.now();
     const result = await handler(payload.params);
     const durationMs = performance.now() - startedAt;
+    // 与 main 进程 safeLogIpcEvent 同语义：摘要/记录自身的异常不得把成功 RPC 变成失败。
+    const emitRpcLog = (record: Parameters<typeof writeLogRecord>[0]) => {
+      try {
+        writeLogRecord(record);
+      } catch {
+        // ignore：观测异常静默降级。
+      }
+    };
     if (durationMs >= SLOW_RPC_MS) {
-      writeLogRecord({
+      emitRpcLog({
         level: "warn",
         context: "rpc.server",
         event: "rpc.slow",
         message: `slow sidecar RPC: ${method}`,
         durationMs,
+        // correlation 在前：信封的真实请求 ID 不被 params 内的同名字段遮蔽。
+        ...correlation,
         rpcRequestId: String(payload.id),
-        data: { method }
+        data: { method, params: summarizeValue(payload.params) }
       });
     } else if (!QUIET_RPC_METHODS.has(method)) {
-      writeLogRecord({
+      emitRpcLog({
         level: "debug",
         context: "rpc.server",
         event: "rpc.completed",
         message: `sidecar RPC completed: ${method}`,
         status: "ok",
         durationMs,
+        ...correlation,
         rpcRequestId: String(payload.id),
-        data: { method }
+        data: { method, params: summarizeValue(payload.params), result: summarizeValue(result) }
       });
     }
     writeResponse({ id: payload.id, result });
   } catch (error) {
-    writeLogRecord({
-      level: "error",
-      context: "rpc.server",
-      event: "rpc.failed",
-      message: `sidecar RPC failed: ${method}`,
-      status: "error",
-      rpcRequestId: String(payload.id),
-      data: { method, error }
-    });
+    try {
+      writeLogRecord({
+        level: "error",
+        context: "rpc.server",
+        event: "rpc.failed",
+        message: `sidecar RPC failed: ${method}`,
+        status: "error",
+        ...correlation,
+        rpcRequestId: String(payload.id),
+        data: { method, params: summarizeValue(payload.params), error }
+      });
+    } catch {
+      // failed 记录自身异常不得吞掉原始错误响应。
+    }
     writeResponse({
       id: payload.id,
       error: {
