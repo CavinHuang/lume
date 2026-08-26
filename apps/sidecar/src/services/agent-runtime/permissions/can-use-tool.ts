@@ -5,7 +5,7 @@
  */
 import { isHardDeniedTool, type CanUseToolFn } from "@lume/agent-sdk";
 import { randomUUID } from "node:crypto";
-import type { AgentToolPermissionRequest } from "@lume/shared";
+import type { AgentToolPermissionPreview, AgentToolPermissionRequest } from "@lume/shared";
 import type { PluginPermissions, SensitiveCapabilityKey } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import type {
@@ -77,6 +77,65 @@ function sanitizeToolInput(input: unknown): Record<string, unknown> {
     }
   }
   return copied;
+}
+
+const PERMISSION_PREVIEW_MAX_CHARS = 4_000;
+
+/**
+ * Edit/Write 类工具的审批前 diff 预览（#560）：事后 EditResult 有完整 diff、
+ * 事前审批却只有一行路径。从原始（未截断）input 提取 old/new，超长截断——
+ * 预览够看即可，完整内容仍以执行结果为准。
+ */
+function buildPermissionPreview(
+  toolName: string,
+  rawInput: Record<string, unknown>
+): AgentToolPermissionPreview | undefined {
+  const normalized = toolName.trim().toLowerCase();
+  const isEditLike =
+    normalized.includes("edit") || normalized.includes("write");
+  if (!isEditLike) return undefined;
+
+  const path = [rawInput.file_path, rawInput.path, rawInput.notebook_path].find(
+    (value) => typeof value === "string" && value.trim()
+  ) as string | undefined;
+
+  // MultiEdit：edits 数组逐对拼接；Edit 单对；Write 全文（old 侧为空）
+  const edits = Array.isArray(rawInput.edits) ? rawInput.edits : [];
+  let oldText = "";
+  let newText = "";
+  if (edits.length > 0) {
+    oldText = edits
+      .map((edit) => (isRecord(edit) && typeof edit.old_string === "string" ? edit.old_string : ""))
+      .filter(Boolean)
+      .join("\n…\n");
+    newText = edits
+      .map((edit) => (isRecord(edit) && typeof edit.new_string === "string" ? edit.new_string : ""))
+      .filter(Boolean)
+      .join("\n…\n");
+  } else {
+    oldText = typeof rawInput.old_string === "string" ? rawInput.old_string : "";
+    newText =
+      typeof rawInput.new_string === "string"
+        ? rawInput.new_string
+        : typeof rawInput.content === "string"
+          ? rawInput.content
+          : "";
+  }
+  if (!oldText && !newText) return undefined;
+  const clip = (value: string): string =>
+    value.length > PERMISSION_PREVIEW_MAX_CHARS
+      ? `${value.slice(0, PERMISSION_PREVIEW_MAX_CHARS)}\n…(预览截断)`
+      : value;
+  return {
+    kind: "diff",
+    ...(path ? { path } : {}),
+    oldText: clip(oldText),
+    newText: clip(newText)
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function toReadableString(value: unknown): string {
@@ -760,6 +819,10 @@ export function createCanUseToolHandler(
       };
     }
 
+    const permissionPreview = buildPermissionPreview(
+      toolName,
+      isRecord(input) ? input : {}
+    );
     const request = {
       threadId: params.runtime.sessionId,
       ...(requestRunId ? { runId: requestRunId } : {}),
@@ -783,6 +846,7 @@ export function createCanUseToolHandler(
         : {}),
       canAllowAlways,
       input: sanitizeToolInput(input),
+      ...(permissionPreview ? { preview: permissionPreview } : {}),
       ...(automationExecution
         ? {
             interruptionType: "automation_approval" as const,

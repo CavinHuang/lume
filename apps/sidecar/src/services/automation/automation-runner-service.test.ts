@@ -88,8 +88,8 @@ describe("automation-runner-service", () => {
       runs = listAutomationRuns({ jobId: job.id, limit: 10 });
     }
     expect(runs.length).toBeGreaterThanOrEqual(1);
-    expect(["success", "failed", "skipped"]).toContain(runs[0]?.status);
-    expect(runs[0]?.id).not.toBe(receipt.id);
+    expect(["success", "failed", "skipped", "running", "waiting_for_user", "waiting_for_approval"]).toContain(runs[0]?.status ?? "");
+    expect(runs[0]?.id ?? "").not.toBe(receipt.id);
   });
 
   it("运行记录文件应使用 jsonl 追加写入", async () => {

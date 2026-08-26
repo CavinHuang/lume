@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { toast } from 'sonner'
 import { acknowledgeRendererDelivery, onSidecarEvent, onSuggestionsChanged, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
@@ -216,6 +217,10 @@ export function useGlobalAgentListeners() {
           }
           if (event.type === 'tool.permission_timeout') {
             setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))
+          }
+          // #560:MCP 连接失败等运行环境警告投影——原本只进 system prompt 用户不可见
+          if (event.type === 'runtime.warning') {
+            toast.warning(event.message)
           }
           if (event.type === 'permission.resolved') {
             setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))

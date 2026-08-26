@@ -1114,8 +1114,28 @@ async function createRuntimeCoreSessionImpl(
     pendingCleanup,
   });
 
-  const toolset = buildRuntimeCoreTools({
-    cwd: input.cwd,
+  // #560:MCP 连接失败原本只进 system prompt/日志——本轮静默缺一组工具，直到模型
+  // 回答「我没有这个工具」。组装完成即向线程投影 runtime.warning 给用户。
+  for (const diagnostic of [
+    ...(workspaceMcpRuntime.diagnostics ?? []),
+    ...(pluginMcpRuntime.diagnostics ?? []),
+  ]) {
+    try {
+      input.emitRuntimeEvent?.({
+        id: `${input.lumeSessionId}:${input.runId}:runtime.warning:${diagnostic.pluginName}`,
+        type: "runtime.warning",
+        threadId: input.lumeSessionId,
+        runId,
+        createdAt: new Date().toISOString(),
+        message: `${diagnostic.pluginName}：${diagnostic.reason}`,
+        source: "mcp"
+      });
+    } catch {
+      // 投影失败不阻断 run 组装
+    }
+  }
+
+  const toolset = buildRuntimeCoreTools({    cwd: input.cwd,
     filesRoot: input.filesRoot,
     plansRoot: input.plansRoot,
     artifactsRoot: input.artifactsRoot,

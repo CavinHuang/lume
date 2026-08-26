@@ -1,9 +1,10 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSetAtom } from 'jotai'
 import { toast } from 'sonner'
 import { Bot, Check, ChevronRight, ShieldOff, TerminalSquare, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { PierreDiffView, createPierreFileDiff } from '@/components/diff/PierreDiffView'
 import { agentPendingInteractiveAtom, agentThreadPermissionModesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, type AgentToolPermissionAllowScope, type AgentToolPermissionDecision, type AgentToolPermissionRequest, type AgentToolPermissionResponseInput } from '@lume/shared'
@@ -45,7 +46,6 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const classification = request.classification
-  const grantLabel = request.grantSuggestion?.label
   const canAllowAlways = request.canAllowAlways !== false
   // command 档仅对带命令/文本输入的工具有意义（#558）
   const hasCommandInput = ['command', 'cmd', 'prompt', 'query'].some(
@@ -171,6 +171,9 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
             </div>
             <pre title={invocationText} className="max-h-10 overflow-hidden whitespace-pre-wrap break-words font-mono text-[12px] leading-5 text-[#f5f7fa]">{invocationText}</pre>
           </div>
+          {request.preview?.kind === 'diff' && (
+            <PermissionDiffPreview preview={request.preview} />
+          )}
           <div className="mt-2 border-t border-white/[0.08] pt-2">
             <p className="truncate text-[12px] leading-5 text-[#bdbdbd]">{request.reason}</p>
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -331,6 +334,45 @@ function PermissionChoice({
       </span>
       {selected ? <Check size={15} className="mr-1 shrink-0 text-[#ddd]" /> : <ChevronRight size={15} className="mr-1 shrink-0 text-[#777] opacity-0 transition-opacity group-hover:opacity-100" />}
     </Button>
+  )
+}
+
+function PermissionDiffPreview({ preview }: { preview: NonNullable<AgentToolPermissionRequest['preview']> }) {
+  const stats = useMemo(() => {
+    try {
+      const files = createPierreFileDiff({
+        oldContent: preview.oldText,
+        newContent: preview.newText,
+        filePath: preview.path ?? 'preview',
+      })
+      return files.reduce(
+        (acc, file) => ({
+          added: acc.added + file.hunks.reduce((count, hunk) => count + hunk.additionLines, 0),
+          removed: acc.removed + file.hunks.reduce((count, hunk) => count + hunk.deletionLines, 0),
+        }),
+        { added: 0, removed: 0 },
+      )
+    } catch {
+      return { added: 0, removed: 0 }
+    }
+  }, [preview.oldText, preview.newText, preview.path])
+
+  return (
+    <div className="mt-2 overflow-hidden rounded-[10px] border border-white/[0.08] bg-[#1b1b1b]">
+      <div className="flex items-center gap-2 border-b border-white/[0.06] px-2.5 py-1.5 text-[11px]">
+        <span className="min-w-0 flex-1 truncate font-mono text-[#bdbdbd]">{preview.path ?? '变更预览'}</span>
+        <span className="tabular-nums text-emerald-400">+{stats.added}</span>
+        <span className="tabular-nums text-red-400">-{stats.removed}</span>
+      </div>
+      <PierreDiffView
+        oldContent={preview.oldText}
+        newContent={preview.newText}
+        filePath={preview.path ?? 'preview'}
+        compact
+        disableHeader
+        className="max-h-56"
+      />
+    </div>
   )
 }
 
