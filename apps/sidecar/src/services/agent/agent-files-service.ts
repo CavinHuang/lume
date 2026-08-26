@@ -480,26 +480,50 @@ function validateNewName(newName: string): string {
 function movePathWithFallback(sourcePath: string, targetPath: string): void {
   // Windows 杀毒/索引器瞬时占用会抛 EPERM/EBUSY：短退避重试后仍失败，
   // 与 EXDEV 同走 copy+delete 降级，避免文件面板日常移动硬失败（#552）。
-  const transientCodes = new Set(["EXDEV", "EPERM", "EBUSY"]);
-  for (const delayMs of [0, 50, 150]) {
-    try {
-      if (delayMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
-      renameSync(sourcePath, targetPath);
-      return;
-    } catch (error) {
-      if (!transientCodes.has((error as NodeJS.ErrnoException).code ?? "")) {
-        throw error;
+  try {
+    renameSync(sourcePath, targetPath);
+    return;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    // EXDEV 重试无意义直接降级；EPERM/EBUSY 仅 Windows 视为杀毒/索引器瞬态占用——
+    // POSIX 上 EBUSY 常为挂载点等永久语义，copy+delete 后删源会清空挂载内容，不得降级
+    const transient =
+      code === "EXDEV" ||
+      (process.platform === "win32" && (code === "EPERM" || code === "EBUSY"));
+    if (!transient) throw error;
+    if (code !== "EXDEV") {
+      // 短退避重试（Atomics.wait 同步睡眠，task-store 同款范式），瞬时锁常在百毫秒内自愈
+      for (const delayMs of [50, 150]) {
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+        try {
+          renameSync(sourcePath, targetPath);
+          return;
+        } catch (retryError) {
+          const retryCode = (retryError as NodeJS.ErrnoException).code;
+          if (retryCode !== "EPERM" && retryCode !== "EBUSY") throw retryError;
+        }
       }
     }
   }
   try {
     mkdirSync(dirname(targetPath), { recursive: true });
-    rmSync(targetPath, { recursive: true, force: true });
+    // 收窄 TOCTOU：调用方预检后外部进程可能在目标路径创建内容，仅在实际存在时清理
+    if (existsSync(targetPath)) rmSync(targetPath, { recursive: true, force: true });
     cpSync(sourcePath, targetPath, { recursive: true });
+  } catch (error) {
+    // 复制阶段失败才清目标；清理自身失败（如扫描器锁新副本）不得掩盖原始错误
+    try { rmSync(targetPath, { recursive: true, force: true }); } catch { /* 尽力而为 */ }
+    throw error;
+  }
+  // 复制成功即移动语义完成：源删除失败（Windows 锁）只告警不回滚——回滚需删掉
+  // 唯一完整副本且源已部分删除，会造出双侧数据丢失；与 POSIX mv 语义一致（#552）
+  try {
     rmSync(sourcePath, { recursive: true, force: true });
   } catch (error) {
-    rmSync(targetPath, { recursive: true, force: true });
-    throw error;
+    log.warn("move 降级复制成功但源删除失败，保留完整目标副本", {
+      sourcePath,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 }
 
