@@ -6,9 +6,10 @@
  */
 
 /** PS 命令位锚点：命令首、子命令/管道分隔符、脚本块起始或换行之后（换行是多行脚本的命令分隔符；
- *  { 使脚本块内命令位锚定，防 { del ~ } 形态绕过词表）。刻意不含空格：参数位置
- *  （空格分隔）不是命令位，echo 回显文本不得触发词表 */
-export const PS_ANCHOR = String.raw`(?:^|[;&|({\r\n]\s*)`;
+ *  { 使脚本块内命令位锚定，防 { del ~ } 形态绕过词表）。\\s* 作用于全部分支——行首缩进
+ *  （^ 后空白）同样是命令位。刻意不含空格成员：参数位置（空格分隔）不是命令位，
+ *  echo 回显文本不得触发词表 */
+export const PS_ANCHOR = String.raw`(?:^|[;&|({\r\n])\s*`;
 
 /*
  * cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别。容忍引号包裹的可执行名（"cmd"）、
@@ -17,11 +18,20 @@ export const PS_ANCHOR = String.raw`(?:^|[;&|({\r\n]\s*)`;
  */
 export const CMD_WRAP_ANCHOR = String.raw`${PS_ANCHOR}(?:"?cmd(?:\.exe)?"?\s*(?:\/[^\s"]+\s+)*\/[ck]\s*["']?\s*)+`;
 
-/** 确认组共用锚点：命令位或 cmd 包裹内层（与删除族同源，防止包裹识别只覆盖单侧规则组） */
-export const PS_CONFIRM_COMMAND = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR})`;
+/**
+ * 显式 powershell/pwsh 可执行前缀：-Command 类参数位的裸载荷按词表识别（镜像 SDK
+ * parse-unavailable 短路的可执行名读法）。此前靠锚集误含空格才意外覆盖该形态，
+ * 修正锚集后需显式入锚——否则方言机 pwsh -Command Remove-Item C:\ 从硬拒降为通用确认。
+ * 引号包裹载荷不可达（\s+ 无法跨越引号），维持通用确认档不变。
+ */
+export const PS_EXPLICIT_PREFIX = String.raw`(?:^|[;&|({\r\n])\s*(?:powershell|pwsh)(?:\.exe)?\b(?:\s+-[^\s]+)*\s+`;
 
-/** PS 删除族在命令位的完整锚点：Remove-Item 及别名（rd/rmdir/del/erase/ri），含 cmd 包裹内层 */
-export const PS_DELETE_COMMAND = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR})(?:remove-item|rd|rmdir|del|erase|ri)\b`;
+/** 确认组共用锚点：命令位、cmd 包裹内层或显式 powershell 前缀载荷位（三支同源，防单侧漂移） */
+export const PS_CONFIRM_COMMAND = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR}|${PS_EXPLICIT_PREFIX})`;
+
+/** PS 删除族在命令位的完整锚点：Remove-Item 及别名（rd/rmdir/del/erase/ri）。
+ *  锚与确认组同源（命令位/cmd 包裹内层/pwsh 载荷位），防单侧漂移 */
+export const PS_DELETE_COMMAND = String.raw`${PS_CONFIRM_COMMAND}(?:remove-item|rd|rmdir|del|erase|ri)\b`;
 
 /** 停止进程/服务/系统类动词 */
 export const PS_STOP_VERBS = String.raw`(?:stop-process|stop-service|stop-computer|restart-computer)`;
@@ -82,6 +92,10 @@ export const PS_DANGEROUS_PROBES: string[] = [
   "ri -re build",
   "rd -rec dist",
   "rd /sq build",
+  // 行首空白缩进命令位（锚集去空格成员后 ^ 分支须自带 \s*，曾单前导空格击穿词表）
+  "  del /s /q build",
+  // 显式 powershell 前缀的裸载荷（-Command 参数位的动词按词表识别）
+  "pwsh -NoProfile -Command Remove-Item C:\\",
   // 脚本块内命令位（PS_ANCHOR 的 { 锚）；括号包裹的主目录裸目标
   "{ rd /s /q build }",
   "Remove-Item ($home)",

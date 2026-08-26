@@ -50,12 +50,15 @@ const FORCE_CONFIRM_BASH_RULES: CommandRule[] = [
  * 良性 Get-* / Format-Table 等命令不受影响。
  */
 
+const HARD_DENY_TARGETS = String.raw`(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile)`;
+
 const HARD_DENY_POWERSHELL_RULES: CommandRule[] = [
   {
-    // 删除族指向盘符根/根路径/用户主目录裸目标（含括号包裹形态 ($home)——表达式内裸标记
-    // 同样是主目录意图）；不带递归标志也拒，比 bash 侧更严；完整 UNC 根（\\server\share）
+    // 删除族指向盘符根/根路径/用户主目录裸目标；不带递归标志也拒，比 bash 侧更严。
+    // 双支结构：裸/引号形态共享前瞻（边界后不得再接路径，防 ($home)\Documents 子路径
+    // 被过度硬拒）；括号包裹要求配对闭合且闭合后即边界。完整 UNC 根（\\server\share）
     // 不在目标命中面内。填充区不含换行，防跨行吞并下一行的良性参数
-    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n][(["']?(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile)["')]?(?=\s|$|[;&|)])`, "i"),
+    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n](?:[(["']?${HARD_DENY_TARGETS}["')]?(?=\s|$|[;&|])|\(\s*${HARD_DENY_TARGETS}\s*\)(?=\s|$|[;&|]))`, "i"),
     reason: "禁止删除根目录或用户主目录"
   }
 ];
