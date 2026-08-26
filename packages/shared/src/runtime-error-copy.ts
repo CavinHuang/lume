@@ -63,8 +63,9 @@ export function humanizeRuntimeErrorMessage(message: string): string {
     stripped = stripped.replace(prefix, "");
   }
   const normalized = stripped.trim();
-  // 剥完只剩空壳（如裸的「Agent SDK 执行失败」），给兜底指引而非无因报错
-  if (!normalized) return FALLBACK_GUIDANCE;
+  // 剥完只剩空壳（如裸的「Agent SDK 执行失败」），给兜底指引而非无因报错。
+  // 三轮 review F1:「前缀+未知错误」组合形态剥完剩字面量,同样落兜底。
+  if (!normalized || normalized === "未知错误") return FALLBACK_GUIDANCE;
 
   for (const rule of RULES) {
     if (rule.match(normalized)) return rule.render(normalized);

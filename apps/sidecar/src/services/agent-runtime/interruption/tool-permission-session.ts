@@ -41,10 +41,10 @@ export function markToolFingerprintAllowed(
   threadId: string,
   fingerprint?: string,
   scope: AgentToolPermissionAllowScope = "exact"
-): void {
+): AgentToolPermissionAllowScope {
   const normalized = fingerprint?.trim();
-  if (!normalized) return;
-  runtimePermissionSessionStore.grantFingerprintWithScope(threadId, normalized, scope);
+  if (!normalized) return "exact";
+  return runtimePermissionSessionStore.grantFingerprintWithScope(threadId, normalized, scope);
 }
 
 export function markToolPermissionSessionBypassed(...threadIds: Array<string | undefined>): void {
@@ -167,7 +167,13 @@ export function waitForToolPermissionDecision(
   });
 }
 
-export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): boolean {
+export interface ToolPermissionSubmitResult {
+  handled: boolean;
+  /** allow_always 实际生效档（宽档被否决时降级 exact），供 UI 如实回执 */
+  effectiveScope?: AgentToolPermissionAllowScope;
+}
+
+export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): ToolPermissionSubmitResult {
   const shouldBypassThread = input.threadPermissionMode === "bypassPermissions" && input.decision !== "deny";
   const pending = pendingToolPermissionResolvers.get(input.requestId);
   if (!pending) {
@@ -186,14 +192,15 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
     if (handled && shouldBypassThread) {
       markToolPermissionSessionBypassed(input.threadId, persisted?.threadId, persisted?.originThreadId);
     }
+    let effectiveScope: AgentToolPermissionAllowScope | undefined;
     if (handled && input.decision === "allow_always" && persisted?.grantSuggestion?.fingerprint) {
-      markToolFingerprintAllowed(
+      effectiveScope = markToolFingerprintAllowed(
         persisted.originThreadId ?? persisted.threadId,
         persisted.grantSuggestion.fingerprint,
         input.allowAlwaysScope
       );
     }
-    return handled;
+    return { handled, ...(effectiveScope ? { effectiveScope } : {}) };
   }
   if (pending.approvalSessionId !== input.threadId) {
     throw new Error("工具权限确认会话不匹配");
@@ -207,16 +214,17 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
   if (shouldBypassThread) {
     markToolPermissionSessionBypassed(input.threadId, pending.threadId, pending.request.originThreadId);
   }
+  let effectiveScope: AgentToolPermissionAllowScope | undefined;
   if (input.decision === "allow_always") {
     // #558:按用户选择的档位写宽指纹（缺省 exact 保持逐字节）
-    markToolFingerprintAllowed(
+    effectiveScope = markToolFingerprintAllowed(
       pending.request.originThreadId ?? pending.threadId,
       pending.request.grantSuggestion?.fingerprint,
       input.allowAlwaysScope
     );
   }
   void pending.resolve(input.decision);
-  return true;
+  return { handled: true, ...(effectiveScope ? { effectiveScope } : {}) };
 }
 
 export function cancelPendingToolPermissionBySession(threadId: string): void {

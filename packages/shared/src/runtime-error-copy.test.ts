@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { humanizeRuntimeErrorMessage } from "./error-message";
+import { humanizeRuntimeErrorMessage } from "./runtime-error-copy";
 
 describe("humanizeRuntimeErrorMessage", () => {
   test("渠道 snake_case 错误码映射为人话 + 下一步指引", () => {
@@ -51,6 +51,8 @@ describe("humanizeRuntimeErrorMessage", () => {
 
   test("review F5:「未知错误」字面量给兜底指引", () => {
     expect(humanizeRuntimeErrorMessage("未知错误")).toContain("重试");
+    // 三轮 review F1:「内部前缀+未知错误」组合形态剥完同样落兜底
+    expect(humanizeRuntimeErrorMessage("Agent Runtime 执行失败: 未知错误")).toContain("重试");
   });
 
   test("review F4:runtime-core 前缀剥离带词边界,不误伤连字符标识", () => {

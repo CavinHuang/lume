@@ -349,12 +349,15 @@ export function AgentView({
                 />
               </div>
               {activeToolPermission && (
-                <div className="absolute inset-x-0 bottom-0 z-30">
-                  <PermissionBanner
-                    threadId={threadId}
-                    request={activeToolPermission}
-                    onHiddenChange={setPermissionCollapsed}
-                  />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+                  {/* 三轮 review P3:容器全宽,收起态 pill 两侧透明区不得吞 composer 点击 */}
+                  <div className="pointer-events-auto">
+                    <PermissionBanner
+                      threadId={threadId}
+                      request={activeToolPermission}
+                      onHiddenChange={setPermissionCollapsed}
+                    />
+                  </div>
                 </div>
               )}
               {activeDesktopActionRequest && (

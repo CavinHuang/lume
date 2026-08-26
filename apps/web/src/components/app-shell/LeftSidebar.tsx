@@ -575,12 +575,15 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   )
 }
 
-/** 打开设置 tab(动线 F6):供 ErrorBanner 等组件复用「一键到设置」 */
+/** 打开设置 tab(动线 F6):供 ErrorBanner 等组件复用「一键到设置」;可带初始分段深链 */
 export function openSettingsTab(
   setTabs: (update: (tabs: Tab[]) => Tab[]) => void,
   setActiveTabId: (id: string) => void,
+  setInitialTab?: (tab: string) => void,
+  initialTab?: string,
 ): void {
   const settingsId = '__settings__'
+  if (setInitialTab && initialTab) setInitialTab(initialTab)
   setActiveTabId(settingsId)
   setTabs((previous) => previous.some((tab) => tab.id === settingsId)
     ? previous

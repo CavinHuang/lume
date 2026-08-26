@@ -11,8 +11,8 @@ export interface PermissionSessionGrantInput {
 export interface PermissionSessionStore {
   grant(input: PermissionSessionGrantInput): void;
   grantFingerprint(threadId: string, fingerprint: string): void;
-  /** 按「始终允许」作用域档位写入宽指纹（#558）。 */
-  grantFingerprintWithScope(threadId: string, fingerprint: string, scope: AgentToolPermissionAllowScope): void;
+  /** 按「始终允许」作用域档位写入宽指纹（#558），返回实际生效档（宽档被否决时降级 exact）。 */
+  grantFingerprintWithScope(threadId: string, fingerprint: string, scope: AgentToolPermissionAllowScope): AgentToolPermissionAllowScope;
   bypass(threadId: string): void;
   isGranted(input: PermissionSessionGrantInput): boolean;
   isFingerprintGranted(threadId: string, fingerprint: string): boolean;
@@ -71,17 +71,26 @@ export function createPermissionSessionStore(): PermissionSessionStore {
     threadId: string,
     fingerprint: string,
     scope: AgentToolPermissionAllowScope
-  ): void => {
+  ): AgentToolPermissionAllowScope => {
     grantFingerprint(threadId, fingerprint);
+    // 三轮 review(UI F6):返回实际生效档——宽档被否决时静默降级 exact,
+    // 上游据此生成如实的 toast 回执,不再宣称未生效的作用域
     if (scope === "tool") {
       const encoded = toolScopeFingerprint(fingerprint.trim());
-      if (encoded) grantsFor(threadId).add(encoded);
-      return;
+      if (encoded) {
+        grantsFor(threadId).add(encoded);
+        return "tool";
+      }
+      return "exact";
     }
     if (scope === "command") {
       const encoded = commandScopeFingerprint(fingerprint.trim());
-      if (encoded) grantsFor(threadId).add(encoded);
+      if (encoded) {
+        grantsFor(threadId).add(encoded);
+        return "command";
+      }
     }
+    return "exact";
   };
   const isFingerprintGranted = (threadId: string, fingerprint: string): boolean => {
     const normalized = fingerprint.trim();

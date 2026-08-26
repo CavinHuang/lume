@@ -145,7 +145,16 @@ function normalizePathSeparators(value: string): string {
 }
 
 function normalizeWhitespace(value: string): string {
-  return value.trim().replace(/\s+/g, " ");
+  // 三轮 review P1:\n 在 bash 中是命令分隔符,此前折叠成普通空格会让
+  // 「npm test\nrm -rf x」与合法参数形态同指纹,写入/匹配双层连接符否诀
+  // 全部落空(仅剩守卫层单点兜底)。换行规范为分号保持分隔语义,使
+  // COMMAND_CONNECTOR_PATTERN 在写/匹两侧自然命中。
+  return value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter((line) => line.length > 0)
+    .join("; ");
 }
 
 function stableStringify(value: unknown): string {

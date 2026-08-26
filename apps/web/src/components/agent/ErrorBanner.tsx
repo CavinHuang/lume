@@ -1,6 +1,6 @@
 import { AlertTriangle, X, RotateCcw, Settings2 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentErrorMessagesAtom, agentStreamingStatesAtom, tabsAtom, activeTabIdAtom } from '@/atoms'
+import { agentErrorMessagesAtom, agentStreamingStatesAtom, tabsAtom, activeTabIdAtom, settingsInitialTabAtom } from '@/atoms'
 import { agentSend } from '@/lib/desktop-api'
 import { openSettingsTab } from '@/components/app-shell/LeftSidebar'
 
@@ -15,6 +15,7 @@ export function ErrorBanner({ threadId }: ErrorBannerProps) {
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
   const setTabs = useSetAtom(tabsAtom)
   const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
 
   const errorMsg = errorMessages[threadId]
 
@@ -47,8 +48,8 @@ export function ErrorBanner({ threadId }: ErrorBannerProps) {
           {hasSettingsGuidance && (
             <Button
               variant="ghost"
-              onClick={() => openSettingsTab(setTabs, setActiveTabId)}
-              className="mt-1.5 h-7 gap-1 rounded-md px-2 text-[11px] text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
+              onClick={() => openSettingsTab(setTabs, setActiveTabId, setSettingsInitialTab, 'channel')}
+              className="mt-1.5 h-7 gap-1 rounded-md px-2 text-caption text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
             >
               <Settings2 size={12} />
               打开设置

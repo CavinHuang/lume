@@ -96,21 +96,27 @@ export function PermissionBanner({ threadId, request, onHiddenChange }: Permissi
         allowAllInThread,
         allowAlwaysScope: allowScope,
       })
-      await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION, payload)
+      // 三轮 review(UI F6):sidecar 回传实际生效档——宽档被否决静默降级 exact 时
+      // toast 不再谎报;旧 sidecar 无字段时回落本地选择
+      const result = await sidecarCall<{ ok: true; effectiveScope?: AgentToolPermissionAllowScope }>(
+        AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION,
+        payload,
+      )
       if (payload.threadPermissionMode === 'bypassPermissions') {
         setThreadPermissionModes((prev) => ({ ...prev, [threadId]: 'bypassPermissions' }))
       }
       // 作用域回执（#558）：明确告知「始终允许」的真实生效范围，本线程内有效。
       // review F5:按档位单独成句,避免「…调用的 Bash 调用」重复拼接
       if (choice === 'allow_always') {
+        const effectiveScope = result?.effectiveScope ?? allowScope
         const scopeCopy: Record<AgentToolPermissionAllowScope, string> = {
-          exact: '已允许本线程内逐字节相同的此调用',
-          command: hasCommandInput
-            ? `已允许本线程内相同的 ${request.toolName} 命令（参数可变）`
-            : `已允许本线程内相同目标的 ${request.toolName} 调用`,
+          exact: hasCommandInput || request.preview
+            ? `已允许本线程内的此调用（${request.toolName} 的组合形态仍会再次询问）`
+            : '已允许本线程内逐字节相同的此调用',
+          command: `已允许本线程内相同的 ${request.toolName} 命令（参数可变）`,
           tool: `已允许本线程内所有 ${request.toolName} 调用${request.risk === 'high' ? '（含危险操作）' : ''}`,
         }
-        toast.success(scopeCopy[allowScope])
+        toast.success(scopeCopy[effectiveScope])
       }
       setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId, threadId))
     } catch (err) {
