@@ -193,10 +193,30 @@ function enrichEntriesWithAttachmentMeta(
   });
 }
 
+// #616②:threadId→workspaceSlug 归属天然稳定(目录不迁移),但反查每次同步穷举
+// workspaces 根并对每个 workspace 做 existsSync(Windows 单次 stat ≈0.1-0.5ms),
+// 文件面板密集操作逐 RPC 放大。TTL 缓存:未命中也缓存(null),新线程创建后的
+// 首个 TTL 窗口内反查不到时自然过期自愈。
+const WORKSPACE_SLUG_CACHE_TTL_MS = 5_000;
+const workspaceSlugCache = new Map<string, { at: number; slug: string | null }>();
+
 export function resolveWorkspaceSlugBySessionId(
   sessionId: string,
 ): string | null {
   validatePathSegment(sessionId, "sessionId");
+  const cached = workspaceSlugCache.get(sessionId);
+  if (cached && Date.now() - cached.at < WORKSPACE_SLUG_CACHE_TTL_MS) {
+    return cached.slug;
+  }
+  const slug = resolveWorkspaceSlugBySessionIdUncached(sessionId);
+  workspaceSlugCache.set(sessionId, { at: Date.now(), slug });
+  if (workspaceSlugCache.size > 2_000) workspaceSlugCache.clear();
+  return slug;
+}
+
+function resolveWorkspaceSlugBySessionIdUncached(
+  sessionId: string,
+): string | null {
   const workspacesDir = getAgentWorkspacesDir();
   if (!existsSync(workspacesDir)) return null;
   for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
@@ -474,13 +494,44 @@ function validateNewName(newName: string): string {
   return trimmed;
 }
 
-function movePathWithFallback(sourcePath: string, targetPath: string): void {
+// #552:Windows 杀毒/索引器对刚写入文件的瞬时句柄占用表现为 EPERM/EBUSY,
+// renameSync 直接硬失败且 copy+delete 同样会被占用拖死。短退避重试吸收瞬态,
+// 仍占用再降级(降级路径对可读文件即可成功)。
+const MOVE_BUSY_RETRY_DELAYS_MS = [50, 250];
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * #552 导出仅供测试:重试与降级策略需要注入 rename 失败序列验证。
+ */
+export function movePathWithFallback(
+  sourcePath: string,
+  targetPath: string,
+  rename: typeof renameSync = renameSync
+): void {
+  let needsFallback = false;
   try {
-    renameSync(sourcePath, targetPath);
+    rename(sourcePath, targetPath);
     return;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EXDEV") {
+    if (code === "EXDEV") {
+      needsFallback = true;
+    } else if (code === "EPERM" || code === "EBUSY") {
+      for (const delay of MOVE_BUSY_RETRY_DELAYS_MS) {
+        sleepSync(delay);
+        try {
+          rename(sourcePath, targetPath);
+          return;
+        } catch (retryError) {
+          const retryCode = (retryError as NodeJS.ErrnoException).code;
+          if (retryCode !== "EPERM" && retryCode !== "EBUSY") throw retryError;
+        }
+      }
+      needsFallback = true;
+    } else {
       throw error;
     }
   }

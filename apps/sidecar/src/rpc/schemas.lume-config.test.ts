@@ -69,4 +69,21 @@ describe("lume config rpc schemas", () => {
       value: { "openai/gpt-5-mini": 128000 }
     }).success).toBeTrue();
   });
+
+  test("accepts agent followUpQueueMode updates (输入框队列模式保存此前被 union 拒绝)", () => {
+    for (const value of ["steer", "queue", "interrupt", null] as const) {
+      expect(lumeConfigUpdateInputSchema.safeParse({
+        source: "user",
+        path: "agent.followUpQueueMode",
+        value,
+        summary: "update agent follow-up queue mode"
+      }).success).toBeTrue();
+    }
+    // 非法枚举值仍拒绝
+    expect(lumeConfigUpdateInputSchema.safeParse({
+      source: "user",
+      path: "agent.followUpQueueMode",
+      value: "bogus"
+    }).success).toBeFalse();
+  });
 });
