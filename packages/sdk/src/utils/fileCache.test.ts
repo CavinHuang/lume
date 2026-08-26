@@ -1,5 +1,9 @@
 // packages/sdk/src/utils/fileCache.test.ts
 import { describe, expect, test } from "bun:test"
+import { mkdir, mkdtemp, symlink, writeFile } from "fs/promises"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
+import { realpathSync } from "node:fs"
 import { FileStateCache } from "./fileCache.js"
 
 describe("FileStateCache capacity accounting", () => {
@@ -55,5 +59,32 @@ describe("FileStateCache capacity accounting", () => {
     }
     expect(cache.size).toBeLessThanOrEqual(8)
     expect(cache.accountedBytes).toBeLessThanOrEqual(200)
+  })
+})
+
+describe("FileStateCache canonical path identity", () => {
+  test("lexical and realpath spellings of the same file share one entry", async () => {
+    // f4643e04 收口后 Read 工具以 canonicalize 后的路径写缓存,而
+    // NotebookEditTool 等仍以词法 resolve 路径查询——同一文件两种拼写
+    // 必须命中同一条目,否则 read-before-edit 校验在 symlink 环境(macOS
+    // /tmp、/var)整体失效。
+    const root = await mkdtemp(join(tmpdir(), "lume-filecache-"))
+    const realDir = join(root, "real")
+    await mkdir(realDir)
+    const linkDir = join(root, "link")
+    await symlink(realDir, linkDir)
+    const filePath = join(linkDir, "book.txt")
+    await writeFile(filePath, "hello", "utf8")
+    const realPath = realpathSync(filePath)
+
+    const cache = new FileStateCache()
+    cache.set(realPath, { content: "hello", timestamp: 1 })
+
+    expect(cache.get(filePath)).toBeDefined()
+    expect(cache.get(realPath)).toBeDefined()
+
+    cache.delete(filePath)
+    expect(cache.get(realPath)).toBeUndefined()
+    expect(cache.wasDroppedByCapacity(realPath)).toBe(false)
   })
 })

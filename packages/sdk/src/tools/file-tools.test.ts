@@ -635,10 +635,11 @@ describe("file tools", () => {
 
     const result = await FileReadTool.call({ file_path: filePath, offset: 1, limit: 1 }, { cwd: root });
     expect(result.is_error).toBeFalsy();
-    expect(JSON.parse(result.content as string)).toEqual({
-      type: "notebook",
-      file: { filePath, cells: [{ cell_type: "markdown", source: ["# Title\n"] }] },
-    });
+    // f4643e04 收口后 resolveInputPath 返回 canonicalize 后的路径(macOS /var→/private/var)
+    const payload = JSON.parse(result.content as string);
+    expect(payload.type).toBe("notebook");
+    expect(realpathSync(filePath)).toBe(payload.file.filePath);
+    expect(payload.file.cells).toEqual([{ cell_type: "markdown", source: ["# Title\n"] }]);
     expect(result._meta?.read).toMatchObject({ kind: "notebook", totalCells: 2, partial: true });
   });
 

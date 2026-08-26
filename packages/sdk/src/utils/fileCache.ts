@@ -6,7 +6,7 @@
  * avoiding redundant reads.
  */
 
-import { toPathKey } from './pathing.js'
+import { canonicalizePath, toPathKey } from './pathing.js'
 
 /**
  * 记账口径（#655 终局 review：性能与资源）：字符数 × 2。
@@ -64,9 +64,15 @@ export class FileStateCache {
 
   /**
    * Normalize a file path for cache lookup.
+   *
+   * key 按文件身份归一:canonicalizePath 解析 symlink(f4643e04 收口后
+   * Read 走 resolveInputPath 存 realpath,而 NotebookEditTool 等词法
+   * resolve——同一文件两种拼写必须命中同一条目,否则 read-before-edit
+   * 校验在 macOS /tmp、/var 等 symlink 环境整体失效),toPathKey 叠加
+   * 大小写归一(macOS/Windows 不敏感盘)。
    */
   private normalizePath(filePath: string): string {
-    return toPathKey(filePath)
+    return toPathKey(canonicalizePath(filePath))
   }
 
   /**
