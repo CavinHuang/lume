@@ -244,7 +244,7 @@ describe("downloadFile 超时与清理（#548）", () => {
     }
   });
 
-  test("SHA256 校验：内容不匹配拒绝安装，未收录平台跳过（供应链防护）", () => {
+  test("SHA256 校验：内容不匹配拒绝安装，未收录平台 fail-closed（供应链防护）", () => {
     const knownName = "cpython-3.11.15+20260414-aarch64-apple-darwin-install_only_stripped.tar.gz";
     const badFile = join(tmpdir(), `lume-checksum-bad-${process.pid}.bin`);
     const skipFile = join(tmpdir(), `lume-checksum-skip-${process.pid}.bin`);
@@ -252,8 +252,10 @@ describe("downloadFile 超时与清理（#548）", () => {
     writeFileSync(skipFile, "whatever");
     try {
       expect(() => verifyPythonArchiveChecksum(badFile, knownName)).toThrow(PythonRuntimeChecksumError);
-      // 表外名称=未收录平台，跳过校验不抛
-      expect(() => verifyPythonArchiveChecksum(skipFile, "unknown-platform-archive.tar.gz")).not.toThrow();
+      // 表外名称=未收录平台：fail-closed 拒绝安装（对抗 review round11）
+      expect(() => verifyPythonArchiveChecksum(skipFile, "unknown-platform-archive.tar.gz")).toThrow(
+        /暂不支持自动安装/
+      );
     } finally {
       rmSync(badFile, { force: true });
       rmSync(skipFile, { force: true });

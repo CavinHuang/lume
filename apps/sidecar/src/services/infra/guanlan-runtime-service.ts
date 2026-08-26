@@ -358,9 +358,11 @@ export class PythonRuntimeChecksumError extends Error {}
 export function verifyPythonArchiveChecksum(archivePath: string, archiveName: string): void {
   const expected = PYTHON_ARCHIVE_SHA256[archiveName];
   if (!expected) {
-    // 未收录的平台跳过校验不阻断安装，但必须留痕——解压产物将被执行
-    log.warn("Python 运行时归档不在 checksum 表内，跳过校验", { archiveName, archivePath });
-    return;
+    // fail-closed（对抗 review round11）：未收录平台的归档同样将被解压执行，
+    // 静默跳过会让 checksum 防御在部分平台形同虚设；明确拒绝并指引手动安装
+    throw new PythonRuntimeChecksumError(
+      `平台 ${archiveName} 暂不支持自动安装（无官方校验值），请手动安装 Python 3.11+ 并配置 LUME_PYTHON`
+    );
   }
   const actual = createHash("sha256").update(readFileSync(archivePath)).digest("hex");
   if (actual !== expected) {
