@@ -149,7 +149,8 @@ export interface MailFetchedMessage {
 }
 
 export interface MailProtocol {
-  validateImapCredential(credential: MailCredential): Promise<void>;
+  /** waitSignal 只中止「排队等连接名额」阶段;名额到手后连接自身超时照旧。 */
+  validateImapCredential(credential: MailCredential, waitSignal?: AbortSignal): Promise<void>;
   validateSmtpCredential(credential: MailCredential): Promise<void>;
   sendMail(credential: MailCredential, input: MailSendInput): Promise<MailSendResult>;
   listFolders(credential: MailCredential): Promise<MailFolder[]>;
@@ -243,15 +244,23 @@ interface BodyPart {
 const observedMailboxUidValidity = new Map<string, string>();
 
 function mailboxStateKey(email: string, folder: string): string {
-  return `${email}\0${folder}`;
+  // 与连接闸门(#698)同口径:同一物理邮箱的大小写变体共享 UIDVALIDITY 基准,
+  // 否则混合大小写写入的基准对后续比对不可见,fail-closed 会误拒合法动作
+  return `${email.toLowerCase()}\0${folder}`;
 }
 
 export function createMailProtocol(config: MailProtocolConfig, deps: MailProtocolDependencies = {}): MailProtocol {
   return {
-    async validateImapCredential(credential) {
-      await withImapClient(config, deps, credential, async (client) => {
-        await client.list();
-      });
+    async validateImapCredential(credential, waitSignal) {
+      await withImapClient(
+        config,
+        deps,
+        credential,
+        async (client) => {
+          await client.list();
+        },
+        waitSignal,
+      );
     },
     async validateSmtpCredential(credential) {
       const transport = await createSmtpTransport(config, deps, credential);
@@ -609,7 +618,124 @@ function createSmtpSocketFactory(host: string, port: number, lookup: LookupFunct
   };
 }
 
+/**
+ * QQ 等服务商对单账号并发 IMAP 连接数有上限(#698):协议层一动作一连接,
+ * agent 并行调用只读工具(search_emails + 多个 get_email)会各开一条连接撞限,
+ * 超限报错形如 "LOGIN failed" 又会被 isAuthError 启发式误判成授权码失效。
+ * 按账号把在途连接压到上限之下;排队即预占名额,唤醒者恢复后直接运行。
+ */
+export const maxImapConnectionsPerAccount = 2;
+
+/**
+ * 单账号排队深度上限(#698 审查 P2):超限快败而非无限堆积。engine 单轮
+ * 并发 ≤10(MAX_CONCURRENCY 默认),32 已为多会话叠加留足余量;触发即说明
+ * 服务端已不可达或调用方失控,挂死排队不如立刻把「稍后重试」还给模型。
+ */
+export const maxImapWaitersPerAccount = 32;
+
+interface ImapAccountGate {
+  active: number;
+  waiters: Array<() => void>;
+}
+
+const imapAccountGates = new Map<string, ImapAccountGate>();
+
+/**
+ * 排队等待一个连接名额;waitSignal 在排队阶段中止时退队并归还预占名额,
+ * 以 signal.reason(或缺省 provider 错误)reject。
+ */
+async function awaitImapSlot(gate: ImapAccountGate, waitSignal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const leaveQueueWithoutSlot = () => {
+      const index = gate.waiters.indexOf(wake);
+      if (index < 0) {
+        // 从未入队(携带已中止 signal 直达):本方未记过账,不退任何名额
+        return;
+      }
+      gate.waiters.splice(index, 1);
+      // 只退自己的预占,不放行队头:排队者的名额是「虚」的——它从未建连,
+      // 退出没有释放任何服务端容量;若在此 shift 转交,后继会立即建连使真实
+      // 连接数突破上限(#698 二轮审查实测复现)。放行只属于释放路径的真实
+      // active-- 配对,FIFO 由「waiters>0 ⇒ active≥max」不变式保持。
+      gate.active -= 1;
+    };
+    const onAbort = () => {
+      leaveQueueWithoutSlot();
+      reject(waitSignal?.reason ?? new MailProtocolError("provider", "aborted while waiting for a connection slot"));
+    };
+    const wake = () => {
+      waitSignal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+
+    if (waitSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    waitSignal?.addEventListener("abort", onAbort, { once: true });
+    // 排队即预占名额(active 含排队者):唤醒者恢复后直接运行、不再复查,
+    // 晚到者必见 active≥max 而入队,无法插队超发。守恒依赖此约定——
+    // 若改成「唤醒后补记」,排队窗口内的新到达会读到偏小的 active 造成超限。
+    gate.active += 1;
+    gate.waiters.push(wake);
+  });
+}
+
+async function withImapConnectionLimit<T>(
+  account: string,
+  run: () => Promise<T>,
+  waitSignal?: AbortSignal,
+): Promise<T> {
+  let gate = imapAccountGates.get(account);
+  if (!gate) {
+    gate = { active: 0, waiters: [] };
+    imapAccountGates.set(account, gate);
+  }
+  if (gate.active >= maxImapConnectionsPerAccount) {
+    if (gate.waiters.length >= maxImapWaitersPerAccount) {
+      // busy 而非 provider:请求未发往上游,是本地主动快败,模型应退避重试;
+      // message 不嵌 email——调用结果天然绑定发起上下文,且 email 不进错误面
+      throw new MailProtocolError("busy", "Too many pending operations for this account; retry shortly.");
+    }
+    // 中止路径在 awaitImapSlot 内部已退队并还原名额,此处直接向上抛
+    await awaitImapSlot(gate, waitSignal);
+  } else {
+    gate.active += 1;
+  }
+  try {
+    return await run();
+  } finally {
+    gate.active -= 1;
+    gate.waiters.shift()?.();
+    // 预占模型下被放行者仍计在 active 中,active===0 蕴含无人持有此 gate,
+    // 此刻删除安全;后续到达者新建条目,不会与旧引用互撞
+    if (gate.active === 0 && gate.waiters.length === 0) {
+      imapAccountGates.delete(account);
+    }
+  }
+}
+
+/** 仅供不变式测试观察闸门生命周期:账号空闲后条目应被清理。 */
+export function imapAccountGateStateForTest(email: string): { active: number; waiting: number } | undefined {
+  const gate = imapAccountGates.get(email.toLowerCase());
+  return gate ? { active: gate.active, waiting: gate.waiters.length } : undefined;
+}
+
 async function withImapClient<T>(
+  config: MailProtocolConfig,
+  deps: MailProtocolDependencies,
+  credential: MailCredential,
+  callback: (client: RuntimeImapClient) => Promise<T>,
+  waitSignal?: AbortSignal,
+) {
+  return withImapConnectionLimit(
+    credential.email.toLowerCase(),
+    () => openAndRunImapClient(config, deps, credential, callback),
+    waitSignal,
+  );
+}
+
+async function openAndRunImapClient<T>(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
   credential: MailCredential,
@@ -624,14 +750,23 @@ async function withImapClient<T>(
   } catch (error) {
     throw mapLibraryError(error, config);
   } finally {
+    // close 是清理兜底,自身失败不得顶替业务错误(或吞掉成功返回值);
+    // socket 资源由进程回收,静默即可
+    const closeQuietly = () => {
+      try {
+        client.close?.();
+      } catch {
+        /* 清理兜底的失败无诊断价值 */
+      }
+    };
     if (connected) {
       try {
         await client.logout();
       } catch {
-        client.close?.();
+        closeQuietly();
       }
     } else {
-      client.close?.();
+      closeQuietly();
     }
   }
 }
