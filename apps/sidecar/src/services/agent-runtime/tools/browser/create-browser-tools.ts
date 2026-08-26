@@ -7,7 +7,7 @@ import {
   type BrowserBackendDescriptor,
   type BrowserTabDescriptor,
 } from "@lume/shared"
-import { BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared"
+import { BROWSER_HANDLER_WAIT_CAP_MS, stableSerialize } from "@lume/shared"
 // #601 维护性 review：工具名唯一真源在 @lume/shared（LUME_BROWSER_TOOL_NAMES）——
 // 新增工具时 shared 一处登记，web 映射哨兵测试自动盯住
 import { LUME_BROWSER_TOOL_NAMES as BROWSER_TOOL_NAMES } from "@lume/shared"
@@ -72,6 +72,30 @@ export function createBrowserMcpTools(input: {
       async call(rawArgs, context) {
         const operationId = context.toolUseId || randomUUID()
         const args = asRecord(rawArgs)
+        // #603:executed_unknown(传输超时,动作可能已执行)后同代际同参重试在发起
+        // 前拦截——盲目重试即双击/双下载。页面代际已变(动作触发了导航)视为新语境
+        // 放行;连续两次拦截后尊重模型意志不再阻止。
+        const unknownOutcomeKey = isActionTool(name)
+          ? `${name}:${stableSerialize(args)}`
+          : undefined
+        if (unknownOutcomeKey && session.unknownOutcomeActions) {
+          const pending = session.unknownOutcomeActions.get(unknownOutcomeKey)
+          if (pending) {
+            if ((session.snapshot?.generation ?? pending.generation) !== pending.generation || pending.attempts >= 2) {
+              session.unknownOutcomeActions.delete(unknownOutcomeKey)
+            } else {
+              pending.attempts += 1
+              return toolResult(operationId, {
+                ok: false,
+                operation_id: operationId,
+                active_tab_id: session.activeTabId ?? null,
+                code: "outcome_unknown_retry_blocked",
+                message: "The previous identical action timed out with an unknown outcome and may have already been applied. Take a snapshot to observe the actual state before doing anything else; only retry once you have confirmed it did not take effect.",
+                retryable: false,
+              }, true, { ok: false, tool: name, code: "outcome_unknown_retry_blocked", blocked_by: "unknown_outcome" })
+            }
+          }
+        }
         if ((isActionTool(name) || session.blockedActionLoop?.tool === name) && session.blockedActionLoop) {
           const blocked = session.blockedActionLoop
           return toolResult(operationId, {
@@ -99,6 +123,12 @@ export function createBrowserMcpTools(input: {
         } catch (error) {
           const code = browserErrorCode(error)
           if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found" || code === "user_takeover_required") session.snapshot = undefined
+          // #603:结果未知(超时,动作可能已执行)——记指纹供同代际重试闸使用;
+          // confirmation_timeout 确定未执行,不入册
+          if (code === "executed_unknown" && unknownOutcomeKey) {
+            const registry = session.unknownOutcomeActions ?? (session.unknownOutcomeActions = new Map())
+            registry.set(unknownOutcomeKey, { attempts: 0, generation: session.snapshot?.generation ?? 0 })
+          }
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
           // broker 已把 desktop 富文本摧毁为裸码,navigation_timeout 的行为
           // 指导只能在此注入:页面可能仍在后台加载,先观察再决定。

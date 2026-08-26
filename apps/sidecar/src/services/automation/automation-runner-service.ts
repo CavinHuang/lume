@@ -446,7 +446,6 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
           });
         });
       }
-
     }
   }
   return run;
@@ -522,7 +521,6 @@ function scheduleJobInner(job: AutomationJob): void {
     void executeJob(latest, "schedule", scheduledAt).then((run) => {
       if (run.status !== "skipped") void refreshAutomationRunnerJobs();
     }, logScheduleTailFailure);
-
   }, delay);
   jobDisposers.set(job.id, () => clearTimeout(timer));
 }

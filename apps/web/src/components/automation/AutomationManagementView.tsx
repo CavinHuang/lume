@@ -1081,7 +1081,7 @@ function AutomationJobDetail({
                   // 影子记录的说明挂整行 title：后缀可能被 truncate 裁掉，行级 tooltip 必须仍可达
                   const rowTitle = run.persistenceLost
                     ? '本次运行确实发生，但记录写入磁盘失败（磁盘满或被占用），重启后此条将消失'
-                    : clickable ? '查看会话回放' : '无可查看的会话'
+                    : [run.message, clickable ? '查看会话回放' : '无可查看的会话'].filter(Boolean).join(' · ')
                   return (
                     <div
                       key={run.id}
