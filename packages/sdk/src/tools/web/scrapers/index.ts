@@ -47,7 +47,6 @@ import { handleNuGet } from "./nuget.js";
 import { handleNvd } from "./nvd.js";
 import { handleOllama } from "./ollama.js";
 import { handleOpenVsx } from "./open-vsx.js";
-import { handleOpenCorporates } from "./opencorporates.js";
 import { handleOpenLibrary } from "./openlibrary.js";
 import { handleOrcid } from "./orcid.js";
 import { handleOsv } from "./osv.js";
@@ -55,13 +54,11 @@ import { handlePackagist } from "./packagist.js";
 import { handlePubDev } from "./pub-dev.js";
 import { handlePubMed } from "./pubmed.js";
 import { handlePyPI } from "./pypi.js";
-import { handleRawg } from "./rawg.js";
 import { handleReadTheDocs } from "./readthedocs.js";
 import { handleReddit } from "./reddit.js";
 import { handleRepology } from "./repology.js";
 import { handleRfc } from "./rfc.js";
 import { handleRubyGems } from "./rubygems.js";
-import { handleSearchcode } from "./searchcode.js";
 import { handleSecEdgar } from "./sec-edgar.js";
 import { handleSemanticScholar } from "./semantic-scholar.js";
 import { handleSnapcraft } from "./snapcraft.js";
@@ -127,7 +124,6 @@ export {
 	handleNuGet,
 	handleNvd,
 	handleOllama,
-	handleOpenCorporates,
 	handleOpenLibrary,
 	handleOpenVsx,
 	handleOrcid,
@@ -136,13 +132,11 @@ export {
 	handlePubDev,
 	handlePubMed,
 	handlePyPI,
-	handleRawg,
 	handleReadTheDocs,
 	handleReddit,
 	handleRepology,
 	handleRfc,
 	handleRubyGems,
-	handleSearchcode,
 	handleSecEdgar,
 	handleSemanticScholar,
 	handleSnapcraft,
@@ -161,95 +155,98 @@ export {
 	handleYouTube,
 };
 
-export const specialHandlers: SpecialHandler[] = [
+// 单表驱动（#540）：名字与 handler 同源派生，新增条目漏登名字不再可能。
+// 表项顺序即 handleSpecialUrl 的探测顺序，勿随意重排。
+const SPECIAL_HANDLER_TABLE: ReadonlyArray<readonly [string, SpecialHandler]> = [
 	// Git hosting
-	handleGitHubGist,
-	handleGitHub,
-	handleGitLab,
+	["github-gist", handleGitHubGist],
+	["github", handleGitHub],
+	["gitlab", handleGitLab],
 	// Video/Media
-	handleYouTube,
-	handleVimeo,
-	handleSpotify,
-	handleDiscogs,
-	handleMusicBrainz,
+	["youtube", handleYouTube],
+	["vimeo", handleVimeo],
+	["spotify", handleSpotify],
+	["discogs", handleDiscogs],
+	["musicbrainz", handleMusicBrainz],
 	// Games
-	handleRawg,
 	// Social/News
-	handleTwitter,
-	handleBluesky,
-	handleMastodon,
-	handleLemmy,
-	handleHackerNews,
-	handleLobsters,
-	handleReddit,
-	handleDiscourse,
+	["twitter", handleTwitter],
+	["bluesky", handleBluesky],
+	["mastodon", handleMastodon],
+	["lemmy", handleLemmy],
+	["hackernews", handleHackerNews],
+	["lobsters", handleLobsters],
+	["reddit", handleReddit],
+	["discourse", handleDiscourse],
 	// Developer content
-	handleStackOverflow,
-	handleDevTo,
-	handleMDN,
-	handleDocsRs,
-	handleReadTheDocs,
-	handleSearchcode,
-	handleSourcegraph,
-	handleTldr,
-	handleCheatSh,
+	["stackoverflow", handleStackOverflow],
+	["devto", handleDevTo],
+	["mdn", handleMDN],
+	["docs-rs", handleDocsRs],
+	["readthedocs", handleReadTheDocs],
+	["sourcegraph", handleSourcegraph],
+	["tldr", handleTldr],
+	["cheatsh", handleCheatSh],
 	// Package registries
-	handleNpm,
-	handleFirefoxAddons,
-	handleVscodeMarketplace,
-	handleNuGet,
-	handleChocolatey,
-	handleClojars,
-	handleBrew,
-	handlePyPI,
-	handleCratesIo,
-	handleDockerHub,
-	handleFdroid,
-	handleFlathub,
-	handleGoPkg,
-	handleHex,
-	handlePackagist,
-	handlePubDev,
-	handleMaven,
-	handleJetBrainsMarketplace,
-	handleOpenVsx,
-	handleArtifactHub,
-	handleRubyGems,
-	handleTerraform,
-	handleAur,
-	handleHackage,
-	handleMetaCPAN,
-	handleRepology,
-	handleSnapcraft,
+	["npm", handleNpm],
+	["firefox-addons", handleFirefoxAddons],
+	["vscode-marketplace", handleVscodeMarketplace],
+	["nuget", handleNuGet],
+	["chocolatey", handleChocolatey],
+	["clojars", handleClojars],
+	["brew", handleBrew],
+	["pypi", handlePyPI],
+	["crates-io", handleCratesIo],
+	["dockerhub", handleDockerHub],
+	["fdroid", handleFdroid],
+	["flathub", handleFlathub],
+	["go-pkg", handleGoPkg],
+	["hex", handleHex],
+	["packagist", handlePackagist],
+	["pub-dev", handlePubDev],
+	["maven", handleMaven],
+	["jetbrains-marketplace", handleJetBrainsMarketplace],
+	["open-vsx", handleOpenVsx],
+	["artifacthub", handleArtifactHub],
+	["rubygems", handleRubyGems],
+	["terraform", handleTerraform],
+	["aur", handleAur],
+	["hackage", handleHackage],
+	["metacpan", handleMetaCPAN],
+	["repology", handleRepology],
+	["snapcraft", handleSnapcraft],
 	// ML/AI
-	handleHuggingFace,
-	handleOllama,
+	["huggingface", handleHuggingFace],
+	["ollama", handleOllama],
 	// Academic
-	handleArxiv,
-	handleBiorxiv,
-	handleCrossref,
-	handleIacr,
-	handleOrcid,
-	handleSemanticScholar,
-	handlePubMed,
-	handleRfc,
+	["arxiv", handleArxiv],
+	["biorxiv", handleBiorxiv],
+	["crossref", handleCrossref],
+	["iacr", handleIacr],
+	["orcid", handleOrcid],
+	["semantic-scholar", handleSemanticScholar],
+	["pubmed", handlePubMed],
+	["rfc", handleRfc],
 	// Security
-	handleCisaKev,
-	handleNvd,
-	handleOsv,
+	["cisa-kev", handleCisaKev],
+	["nvd", handleNvd],
+	["osv", handleOsv],
 	// Crypto
-	handleCoinGecko,
+	["coingecko", handleCoinGecko],
 	// Business
-	handleOpenCorporates,
-	handleSecEdgar,
+	["sec-edgar", handleSecEdgar],
 	// Reference
-	handleOpenLibrary,
-	handleChooseALicense,
-	handleW3c,
-	handleSpdx,
-	handleWikidata,
-	handleWikipedia,
+	["openlibrary", handleOpenLibrary],
+	["choosealicense", handleChooseALicense],
+	["w3c", handleW3c],
+	["spdx", handleSpdx],
+	["wikidata", handleWikidata],
+	["wikipedia", handleWikipedia],
 ];
+
+export const specialHandlers: SpecialHandler[] = SPECIAL_HANDLER_TABLE.map(([, handler]) => handler);
+
+export const specialHandlerNames = SPECIAL_HANDLER_TABLE.map(([name]) => name);
 
 
 
@@ -265,18 +262,6 @@ export interface ScraperContext {
   fetchImpl: FetchImpl;
   storage?: AgentStorage | null;
 }
-
-export const specialHandlerNames = [
-  "github-gist", "github", "gitlab", "youtube", "vimeo", "spotify", "discogs", "musicbrainz", "rawg",
-  "twitter", "bluesky", "mastodon", "lemmy", "hackernews", "lobsters", "reddit", "discourse",
-  "stackoverflow", "devto", "mdn", "docs-rs", "readthedocs", "searchcode", "sourcegraph", "tldr", "cheatsh",
-  "npm", "firefox-addons", "vscode-marketplace", "nuget", "chocolatey", "clojars", "brew", "pypi", "crates-io",
-  "dockerhub", "fdroid", "flathub", "go-pkg", "hex", "packagist", "pub-dev", "maven", "jetbrains-marketplace",
-  "open-vsx", "artifacthub", "rubygems", "terraform", "aur", "hackage", "metacpan", "repology", "snapcraft",
-  "huggingface", "ollama", "arxiv", "biorxiv", "crossref", "iacr", "orcid", "semantic-scholar", "pubmed", "rfc",
-  "cisa-kev", "nvd", "osv", "coingecko", "opencorporates", "sec-edgar", "openlibrary", "choosealicense", "w3c",
-  "spdx", "wikidata", "wikipedia",
-] as const;
 
 export async function handleSpecialUrl(url: string, context: ScraperContext): Promise<RenderResult | null> {
   const timeout = Math.max(0.001, context.timeoutMs / 1000);

@@ -1785,7 +1785,38 @@ describe("QueryEngine context controller", () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: "result",
       subtype: "error_during_execution",
-      is_error: true
+      is_error: true,
+      errors: [expect.stringContaining("auto-compaction recovery attempted 1 time(s)")]
+    }));
+  });
+
+  test("non-prompt-too-long errors carry no recovery suffix (#725 review R9)", async () => {
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        const error = new Error("invalid api key") as Error & { status: number };
+        error.status = 401;
+        throw error;
+      }
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    const events = await collectEvents(engine, "current task");
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "result",
+      subtype: "error_during_execution",
+      errors: ["invalid api key"]
     }));
   });
 
@@ -2469,16 +2500,16 @@ describe("QueryEngine deferred tool promotion", () => {
       description: "probe",
       inputSchema: { type: "object" as const, properties: {} },
       async call(_input: unknown, context: ToolContext) {
-        promoted = context.activateTools?.(["GuanlanSearch", "GuanlanSearch", "NoSuchTool"]) ?? [];
+        promoted = context.activateTools?.(["DeepSearch", "DeepSearch", "NoSuchTool"]) ?? [];
         return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
       }
     };
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep" };
       }
     };
 
@@ -2498,11 +2529,11 @@ describe("QueryEngine deferred tool promotion", () => {
     await collectResult(engine);
 
     // Unknown names are ignored and already-promoted names are not duplicated.
-    expect(promoted).toEqual(["GuanlanSearch"]);
+    expect(promoted).toEqual(["DeepSearch"]);
     const lastRequest = provider.requests[provider.requests.length - 1];
     const names = (lastRequest.tools ?? []).map((tool) => tool.name);
-    expect(names).toContain("GuanlanSearch");
-    expect(names.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+    expect(names).toContain("DeepSearch");
+    expect(names.filter((name) => name === "DeepSearch")).toHaveLength(1);
   });
 
   test("activateTools reports promoted names through onToolsActivated", async () => {
@@ -2524,18 +2555,18 @@ describe("QueryEngine deferred tool promotion", () => {
       description: "probe",
       inputSchema: { type: "object" as const, properties: {} },
       async call(_input: unknown, context: ToolContext) {
-        context.activateTools?.(["GuanlanSearch", "NoSuchTool"]);
+        context.activateTools?.(["DeepSearch", "NoSuchTool"]);
         // Second call promotes nothing: no callback, no duplicate report.
-        context.activateTools?.(["GuanlanSearch"]);
+        context.activateTools?.(["DeepSearch"]);
         return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
       }
     };
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep" };
       }
     };
 
@@ -2555,7 +2586,7 @@ describe("QueryEngine deferred tool promotion", () => {
 
     await collectResult(engine);
 
-    expect(activations).toEqual([["GuanlanSearch"]]);
+    expect(activations).toEqual([["DeepSearch"]]);
   });
 
   test("listAvailableTools returns native plus deferred tools live", async () => {
@@ -2579,7 +2610,7 @@ describe("QueryEngine deferred tool promotion", () => {
       inputSchema: { type: "object" as const, properties: {} },
       async call(_input: unknown, context: ToolContext) {
         before = (context.listAvailableTools?.() ?? []).map((tool) => tool.name);
-        context.activateTools?.(["GuanlanSearch"]);
+        context.activateTools?.(["DeepSearch"]);
         after = (context.listAvailableTools?.() ?? []).map((tool) => tool.name);
         return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
       }
@@ -2593,11 +2624,11 @@ describe("QueryEngine deferred tool promotion", () => {
       }
     };
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep" };
       }
     };
 
@@ -2616,20 +2647,20 @@ describe("QueryEngine deferred tool promotion", () => {
 
     await collectResult(engine);
 
-    expect(before).toEqual(["ProbeTool", "NativeTool", "GuanlanSearch"]);
+    expect(before).toEqual(["ProbeTool", "NativeTool", "DeepSearch"]);
     // After promotion the deferred tool is native, so the live catalog still lists it exactly once.
-    expect(after).toEqual(["ProbeTool", "NativeTool", "GuanlanSearch"]);
+    expect(after).toEqual(["ProbeTool", "NativeTool", "DeepSearch"]);
   });
 
   test("ToolSearch end to end: constructor rebinding, native promotion, and deferred removal", async () => {
     const provider = new StaticProvider([
       {
-        content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:GuanlanSearch" } }],
+        content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:DeepSearch" } }],
         stopReason: "tool_use",
         usage: { input_tokens: 1, output_tokens: 1 }
       },
       {
-        content: [{ type: "tool_use", id: "guanlan-1", name: "GuanlanSearch", input: {} }],
+        content: [{ type: "tool_use", id: "deep-1", name: "DeepSearch", input: {} }],
         stopReason: "tool_use",
         usage: { input_tokens: 1, output_tokens: 1 }
       },
@@ -2639,14 +2670,14 @@ describe("QueryEngine deferred tool promotion", () => {
         usage: { input_tokens: 1, output_tokens: 1 }
       }
     ]);
-    let guanlanCalls = 0;
+    let deepCalls = 0;
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        guanlanCalls += 1;
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan result" };
+        deepCalls += 1;
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep result" };
       }
     };
 
@@ -2672,14 +2703,14 @@ describe("QueryEngine deferred tool promotion", () => {
     expect(JSON.stringify(provider.requests[1]?.messages)).toContain("call them directly by name");
     // Turn 2 request exposes the promoted tool natively, exactly once.
     const turnTwoNames = (provider.requests[1]?.tools ?? []).map((tool) => tool.name);
-    expect(turnTwoNames).toContain("GuanlanSearch");
-    expect(turnTwoNames.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+    expect(turnTwoNames).toContain("DeepSearch");
+    expect(turnTwoNames.filter((name) => name === "DeepSearch")).toHaveLength(1);
     // The promoted tool executed natively and its result reached the final turn.
-    expect(guanlanCalls).toBe(1);
-    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("guanlan result");
+    expect(deepCalls).toBe(1);
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("deep result");
     // Promotion removed the tool from the deferred pool.
     const deferredNames = ((engine as any).config.deferredTools as Array<{ name: string }>).map((tool) => tool.name);
-    expect(deferredNames).not.toContain("GuanlanSearch");
+    expect(deferredNames).not.toContain("DeepSearch");
   });
 });
 
