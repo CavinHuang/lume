@@ -2959,6 +2959,13 @@ function createSidecarHost({ onNotification }) {
                 data: { error },
               })
             }
+          } else {
+            // 首装失败（启动窗口内 sidecar 崩溃 / keyring 暂不可用）时
+            // secretEncryptionKey 为 null 且无其他恢复点——存量 v2 密文会在本
+            // session 内锁死、新密文静默降级 legacy（交叉复审 F1）。惰性重启
+            // 的 READY 是唯一恢复时机，fire-and-forget 重试安装；失败仍走
+            // install 内部 catch 记日志，等下一次 READY 再试。
+            void installSecretEncryptionKeyInSidecar()
           }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
@@ -3660,8 +3667,10 @@ function getConnectionVaultKeyPath(): string {
 }
 
 // 应用级随机密钥（safeStorage 包裹落盘，仅原机可解）：注入后 sidecar 的
-// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。safeStorage 不可用
-// （如无 keyring 的 Linux）时跳过，sidecar 自动退回 legacy 行为。
+// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。Linux 无 keyring 时
+// Electron 退 basic_text 后端，isEncryptionAvailable 仍返回 true——照样注入，
+// 包裹文件靠 loadOrCreateDesktopContextKey 的 0600 收权兜底；真正注入失败
+// （key 文件损坏等）时 catch 跳过，sidecar 自动退回 legacy 行为。
 async function installSecretEncryptionKeyInSidecar(): Promise<void> {
   let key: Buffer | null = null
   try {

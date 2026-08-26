@@ -1626,6 +1626,7 @@ export class QueryEngine {
         this.workingDirectory = resolve(cwd)
       },
       additionalDirectories: this.config.additionalDirectories,
+      privateWriteRoots: this.config.privateWriteRoots,
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
       fileStateCache: this.fileStateCache,
