@@ -170,4 +170,27 @@ describe("projectPersistedToolResultMeta (#709 items 1+2)", () => {
     expect(projectPersistedToolResultMeta({})).toBeUndefined();
     expect(projectPersistedToolResultMeta({ computerUseAction: { phase: "bogus" } })).toBeUndefined();
   });
+
+  test("batched computerUseActions survive per-fact validation with cap (#725 review R1/R10 residual)", () => {
+    const meta = projectPersistedToolResultMeta({
+      computerUseActions: [
+        { actionId: "action-1", action: "click", phase: "observed", window: { id: 1, app: "IDE" }, screenshotId: "s1" },
+        { actionId: "action-2", action: "type_text", phase: "bogus" },
+        { actionId: "action-3", action: "scroll", phase: "verified", window: { app: "Browser" } },
+      ],
+    });
+    expect(meta).toEqual({
+      computerUseActions: [
+        { actionId: "action-1", action: "click", phase: "observed", window: { id: 1, app: "IDE" } },
+        { actionId: "action-3", action: "scroll", phase: "verified", window: { app: "Browser" } },
+      ],
+    });
+
+    const flooded = projectPersistedToolResultMeta({
+      computerUseActions: Array.from({ length: 50 }, (_, i) => ({
+        actionId: `a-${i}`, action: "click", phase: "verified", window: { app: "App" },
+      })),
+    });
+    expect((flooded!.computerUseActions as unknown[]).length).toBe(32);
+  });
 });
