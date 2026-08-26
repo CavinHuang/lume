@@ -202,7 +202,10 @@ export function ensureWriteContained(
   // 路径（\\srv\share、断开映射盘）可能阻塞事件循环至 SMB 超时（跨平台复审
   // P2）；workspace 根集本就不含 UNC，fail 方向与下方 containment 一致。
   // 注意 `\\` 开头在 POSIX 只是普通文件名，仅在 win32 生效。
-  if (process.platform === 'win32' && /^\\\\(?:\?\\|\.\\)?/.test(path)) {
+  // 正斜杠形式 `//srv/share` 经 resolve 后同样落为 UNC，词法检查须在归一
+  // 分隔符之后进行，否则绕过本守卫直达同步 realpath（#711 follow-up）。
+  const lexNormalized = process.platform === 'win32' ? path.replace(/\//g, '\\') : path
+  if (process.platform === 'win32' && /^\\\\(?:\?\\|\.\\)?/.test(lexNormalized)) {
     return `Write denied: ${path} is a UNC/device path outside the workspace`
   }
   const canonical = canonicalizePath(path)
