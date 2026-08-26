@@ -178,11 +178,12 @@ function shortId(value: string | undefined): string | undefined {
 
 // pretty 格式默认不带 data——而参数/结果摘要恰是埋点的核心价值，行尾追加裁剪摘要保证终端可读。
 function prettyDetails(event: LumeLogEventV2): string {
+  // error 优先于 data：200 字符截断时保住排障最需要的错误消息。
   const parts: Record<string, unknown> = {}
   if (event.status) parts.status = event.status
   if (Number.isFinite(event.durationMs)) parts.durationMs = event.durationMs
-  if (event.data) parts.data = event.data
   if (event.error?.message) parts.error = event.error.message
+  if (event.data) parts.data = event.data
   if (Object.keys(parts).length === 0) return ''
   try {
     return ` ${clipLogPreview(JSON.stringify(parts))}`

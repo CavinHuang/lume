@@ -35,6 +35,7 @@ Rust 宿主 eprintln!("LUMELOG {json}")
 
 - context 用「域.子域」：`desktop.ipc`、`rpc.server`、`browser.workspace`、`logging.config`、`agent.run`。
 - event 用点分短语（名词.动词过去式/状态）：`command.completed`、`command.failed`、`rpc.slow`。两类既定风格并存：流程/生命周期动作用点分（`command.completed`）；UI 实体的离散动作用 snake 过去式（`tab_closed`、`tabs_imported`）。event 名不得重复 context 前缀（context 已含 `browser.workspace` 时，event 写 `tab_closed` 而非全串）。
+- message 统一英文短句并携带关键 ID（如 `closed tab browser:abc`）；面向用户的错误详情放 error 字段或 UI 层，不写进 message。
 
 ## 4. 级别使用规则
 
