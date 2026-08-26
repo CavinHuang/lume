@@ -13,6 +13,7 @@
 2. node-repl 结构化事件经 sidecar 传输时 source 只能是 sidecar（batch 协议校验），以 context 'node-repl.host' 区分。
 3. G5「约 10–20 个事件点」定稿为 4 个（workspace 三事件 + logging.settings_updated）；高频 UI churn 明确不埋。
 4. CONTENT_PREVIEW_KEYS 最终清单未纳入规格示例中的 message/text（错误消息不宜截 200 字符），实际 13 键含 contents。
+5. accept() 级别早退门使双向不可见事件不登记 recentEventIds/seq——级别热更后同 eventId 重发会被接受（无消费方依赖，见 docs §9）。
 
 **原两处偏差说明：**
 1. submission 生命周期不再新增埋点——`rpc/agent-handlers.ts` 的 trace spine 已覆盖（agent.queue.accepted / execution.started 等）。

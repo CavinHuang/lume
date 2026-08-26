@@ -156,6 +156,7 @@ export function createDesktopHostSupervisor({
     running.once?.('exit', (code) => {
       if (stopped || child !== running) return
       // 冲刷残尾：宿主死在半行输出时，退出前把缓冲里最后一行处理掉。
+      // Node 不保证末尾 stdio data 先于 exit 排空，故 close 再兜一次（幂等）。
       ingestChunk('stdout', '\n')
       ingestChunk('stderr', '\n')
       log(`[desktop-host] exited with code ${code}`)
@@ -165,6 +166,11 @@ export function createDesktopHostSupervisor({
       if (stopped || child !== running) return
       log(`[desktop-host] failed: ${error instanceof Error ? error.message : String(error)}`)
       scheduleRestart(`desktop host failed: ${error instanceof Error ? error.message : String(error)}; restarting`, spawnedAt)
+    })
+    running.once?.('close', () => {
+      // stdio 流排空的确定时点：兜住 exit 之后才到达的尾随 data（幂等，空缓冲为无操作）。
+      ingestChunk('stdout', '\n')
+      ingestChunk('stderr', '\n')
     })
   }
 

@@ -261,6 +261,10 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       this.ingestStderrChunk("\n");
       this.rejectAll(new Error(`node_repl runtime exited: code=${code ?? "null"} signal=${signal ?? "null"}${this.stderr ? `\n${this.stderr}` : ""}`));
     });
+    // Node 不保证末尾 stdio data 先于 exit 排空——close 才是流排空的确定时点，兜住迟到的尾随字节。
+    child.once("close", () => {
+      if (this.child === child) this.ingestStderrChunk("\n");
+    });
   }
 
   private handleLine(line: string): void {

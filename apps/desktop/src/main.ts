@@ -142,7 +142,7 @@ import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
 import type { BrowserSettings } from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
-import { nativeEventToIntent, summarizeValue, normalizeHostLevel } from '@lume/shared'
+import { nativeEventToIntent, summarizeValue, normalizeHostLevel, LUME_LOGGING_DEFAULTS } from '@lume/shared'
 import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
 import {
@@ -2763,14 +2763,22 @@ function createSidecarHost({ onNotification }) {
         if (payload && payload.method === SIDECAR_SETTINGS_REPLACE_METHOD && payload.id === undefined) {
           const mutationId = typeof payload.params?.mutationId === 'string' ? payload.params.mutationId : null
           try {
+            // changedKeys 的对比基线必须是「上一次持久化值」而非 LoggingService 生效快照——
+            // dev 下生效值含 applyDevConsoleDefault 注入的 trace，混用会导致假变更/吞真变更。
+            const previousPersisted = (getSettingsBroker().read().generalSettings as { logging?: unknown } | undefined)?.logging
             const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
             const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
             if (logging && typeof logging === 'object') {
-              // 全量快照回填是常态：对比生效前的值列出真正变化的键，事件才可读。
-              const before = getLoggingService().getSettings()
               const incoming = logging as Record<string, unknown>
+              const previous = (previousPersisted && typeof previousPersisted === 'object'
+                ? (previousPersisted as Record<string, unknown>)
+                : {}) as Record<string, unknown>
               const changedKeys = Object.keys(incoming)
-                .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify((before as unknown as Record<string, unknown>)[key]))
+                .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify(previous[key]))
+                // dev trace 归一（持久化 info → 生效 trace）是既定语义而非用户变更，不计入审计。
+                .filter((key) => !(key === 'consoleLevel' && !app.isPackaged
+                  && incoming.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel))
+              getLoggingService().updateSettings(logging)
               getLoggingService().updateSettings(logging)
               // 文件级别运行时下发给 sidecar（其门槛在 spawn 时冻结，热更原不生效）。
               const sidecarFileLevel = process.env.LUME_LOG_FILE_LEVEL

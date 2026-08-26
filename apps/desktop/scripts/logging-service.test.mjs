@@ -343,3 +343,28 @@ test('dev trace env precedence matrix', async () => {
     await rmRetry(configDir)
   }
 })
+
+// 三轮评审 F1：close() 首遍 flush 的 await 期间入队的事件须被尾窗补偿冲刷。
+test('close drains events enqueued during the final flush', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-closedrain-'))
+  const service = new LoggingService({ configDir, terminal: { write: () => true }, now: () => new Date() })
+  try {
+    service.emit({ level: 'info', source: 'main', context: 'probe', event: 'app.started', message: 'A-first' })
+    const closing = service.close()
+    // close 内部 flushInternal 挂起于 await mkdir/appendFile 时同步入队 B
+    service.emit({ level: 'info', source: 'main', context: 'probe', event: 'app.started', message: 'B-during-flush' })
+    await closing
+    const files = await (async () => {
+      const { readdir } = await import('node:fs/promises')
+      return readdir(join(configDir, 'logs'))
+    })()
+    const content = files
+      .filter((f) => f.endsWith('.ndjson'))
+      .map((f) => require('node:fs').readFileSync(join(configDir, 'logs', f), 'utf8'))
+      .join('')
+    assert.ok(content.includes('A-first'))
+    assert.ok(content.includes('B-during-flush'), '尾窗事件必须落盘')
+  } finally {
+    await rmRetry(configDir)
+  }
+})

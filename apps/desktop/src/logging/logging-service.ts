@@ -307,6 +307,11 @@ export class LoggingService {
 
   async close(): Promise<void> {
     await this.flush()
+    // 尾窗补偿：首次 flush 的 await 期间入队的事件只被重新武装 50ms timer（close 已返回，
+    // will-quit 后该 timer 永不触发）。有界补冲刷，防止关停期持续生产者造成死循环。
+    for (let pass = 0; pass < 3 && this.queue.length > 0 && !this.snapshotActive; pass += 1) {
+      await this.flush()
+    }
   }
 
   async listFiles(): Promise<LogFileListResult> {

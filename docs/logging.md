@@ -41,7 +41,8 @@ Rust 宿主 eprintln!("LUMELOG {json}")
 | 场景 | 级别 |
 |---|---|
 | 状态变更的关键动作（workspace 变更、日志设置热更、宿主启停） | `info` —— 生产日志文件的可见性由它承载 |
-| 读取/高频操作、全量 IPC/RPC 往返（参数结果摘要） | `debug` —— 面向 dev 排查 |
+| 读取/高频操作、全量 IPC/RPC 往返（参数结果摘要） | `debug` —— 面向 dev 排查；**成功但耗时 ≥2s 升为 `warn`**，穿透生产 info 门留痕 |
+| sidecar 的 `channel:oauth-status` 等轮询命令 | 成功日志被 quiet 名单抑制（收敛前 sidecar 侧可见，现双端一致） |
 | 可恢复异常、降级、重试 | `warn` |
 | 操作失败（附 error 字段） | `error`；高频入口的失败可降为 `warn` 控制噪声（如主进程 `command.failed`） |
 | 链路 spine（message.accepted / agent.run.* 等） | 任意级别 + `kind:'trace'` |
@@ -103,3 +104,11 @@ pretty 行尾带 ≤200 字符 JSON 摘要（status/durationMs/data/error），�
 生产排查：应用内 设置 → 日志（过滤级别/来源/关键字/traceId、实时订阅、导出），或直接看 `~/.lume/logs/lume-*.ndjson`（按天轮转，保留 14 天 / 总量 500MB 上限）。
 
 已知预期行为：renderer 的 console.error/warn 经桥接进入统一日志（限流 30 条/分钟，溢出汇总为 `console.dropped`），与全局错误 toast 对同一失败可能各出一条事件——context 不同、信息互补，属预期。
+
+## 9. 运行时语义注记
+
+- **文件级别热更即时生效**：主进程在 logging 设置变更时经反向 RPC `system.log-level` 把生效级别下发给运行中的 sidecar（dev 下恒 trace）；sidecar 崩溃重启时 spawn env 会重新带上当前级别。
+- **级别早退门的去重副作用**：双向不可见的事件不登记 `recentEventIds`、不占 `seq`。若之后调高级别，同一 eventId 的重发会被接受而非去重（fire-and-forget 使用下无功能影响）。
+- **web 渲染层凭据子串名单随 shared 收紧**：由 6 片段扩至与桌面端一致的 10 片段（新增 setcookie/accesstoken/refreshtoken/grant）。
+- **宿主结构化行不进文本诊断缓冲**：node-repl 宿主崩溃时 `rejectAll` 携带的 stderr 不含已被结构化解析的 LUMELOG 行（它们已入统一日志）。
+- **close() 尾窗补偿**：LoggingService.close() 对 flush await 期间入队的事件做有界补冲刷（≤3 遍）；supervisor/manager 的残尾冲刷同时挂在 exit 与 close（幂等）。
