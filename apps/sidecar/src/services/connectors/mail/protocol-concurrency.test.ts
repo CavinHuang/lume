@@ -18,6 +18,10 @@ interface TrackingFactoryOptions {
   failConnectTimes?: number;
   /** status() 挂起到该 promise 决算,用于手动控制名额持有窗口。 */
   holdStatus?: Promise<void>;
+  /** 让 logout() 必败,覆盖「logout 失败回退 close」的清理分支。 */
+  failLogout?: boolean;
+  /** 让 close() 自身抛错,覆盖「清理兜底吞错不顶替业务结果」分支。 */
+  throwOnClose?: boolean;
 }
 
 function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
@@ -51,9 +55,15 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
         },
         logout: async () => {
           release();
+          if (options.failLogout) {
+            throw new Error("logout failed");
+          }
         },
         close: () => {
           release();
+          if (options.throwOnClose) {
+            throw new Error("close exploded");
+          }
         },
         list: async () => [],
         mailboxOpen: async () => ({}),
@@ -266,5 +276,42 @@ describe("per-account IMAP connection gate (#698)", () => {
     await Promise.all(calls);
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(maxImapWaitersPerAccount + 2);
     expect(imapAccountGateStateForTest("cap@qq.com")).toBeUndefined();
+  });
+
+  it("falls back to close when logout fails, keeping the outcome and slot ledger intact", async () => {
+    const fake = makeTrackingFactory({ failLogout: true });
+    const protocol = createMailProtocol(config, fake);
+    const account = credential("logout@qq.com");
+
+    // 清理失败被静默兜底:业务结果不受影响(logout 在 finally 内吞错)
+    await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+    // 名额照常归还:账号后续可用,gate 条目正常清理
+    await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+    expect(imapAccountGateStateForTest("logout@qq.com")).toBeUndefined();
+  });
+
+  it("keeps the business error intact when the fallback close itself throws", async () => {
+    const fake = makeTrackingFactory({ failConnectTimes: 1, throwOnClose: true });
+    const protocol = createMailProtocol(config, fake);
+    const account = credential("closethrow@qq.com");
+
+    // connect 失败的业务错误(auth)不被 close 的爆炸顶替
+    await expect(protocol.getFolderStatus(account, "INBOX")).rejects.toMatchObject({ kind: "auth" });
+    // 名额未被清理爆炸吞掉:账号照常可用
+    await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+    expect(imapAccountGateStateForTest("closethrow@qq.com")).toBeUndefined();
+  });
+
+  it("ignores an abort that arrives after the slot was granted", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake);
+    const account = credential("late-abort@qq.com");
+    const abort = new AbortController();
+
+    const queued = protocol.validateImapCredential(account, abort.signal);
+    await queued;
+    abort.abort(new Error("too late"));
+    // 契约钉死:名额已兑现后 signal 中止不再有任何记账效应
+    expect(imapAccountGateStateForTest("late-abort@qq.com")).toBeUndefined();
   });
 });
