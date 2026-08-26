@@ -2,6 +2,7 @@ import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { SensitiveApprovalRecord } from "@lume/agent-sdk";
+import { backupCorruptFile } from "../../infra/corrupt-file-backup";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("plugin-state-store");
@@ -64,14 +65,10 @@ export class FilePluginStateStore {
         return { plugins: {} };
       }
       // #596③：损坏文件改名保留现场后重建，install/uninstall/审批门不再被
-      // 一个坏文件永久锁死（照抄 backupCorruptFile 模式）
-      const backupPath = `${this.path}.corrupt-${Date.now()}`;
-      try {
-        await rename(this.path, backupPath);
-        log.warn("plugins-state file was corrupt; backed up and rebuilt", { backupPath });
-      } catch (renameError) {
-        log.warn("failed to back up corrupt plugins-state file; rebuilding in place", { backupPath, error: renameError instanceof Error ? renameError.message : String(renameError) });
-      }
+      // 一个坏文件永久锁死（backupCorruptFile 共享收口）
+      // 改名失败已由 backupCorruptFile 统一告警，此处只记成功分支
+      const backupPath = backupCorruptFile(this.path);
+      if (backupPath) log.warn("plugins-state file was corrupt; backed up and rebuilt", { backupPath });
       return { plugins: {} };
     }
   }
