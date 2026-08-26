@@ -52,6 +52,8 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
     },
     async call(rawInput, context) {
       const startedAt = Date.now();
+      // 前缀与 create-computer-use-tools 的注入名同源约定；权威化到常量避免
+      // 字面量漂移（browser 族同模式见 shared BROWSER_TOOL_NAME_PREFIX）
       const computerUseTool = descriptor.name.startsWith("mcp__computer_use__");
       // 单次摘要两处复用（#539）：diagnostic 版脱敏最全（含 JWT/凭据路径检测），
       // 日志与事件共用，不再各算一遍深克隆+stringify
@@ -173,6 +175,12 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       }
 
       await recordFileRead(input, rawInput, result);
+      // 写类工具成功落盘后以写后 stat+hash 重录 fullRead：否则账本停留在读前
+      // 快照，连续第二次编辑必吃 stale 拒绝、被迫每步插一次 Read（#711 follow-up；
+      // 与 SDK 层 updateFileState 写后刷新 cache 的既有语义对齐）
+      if (isMutationTool(descriptor.canonicalName) && result.is_error !== true) {
+        await reRecordWrittenFile(input, rawInput);
+      }
       const governed = normalizeToolResultWithPolicies(result, descriptor.metadata.resultPolicy?.maxChars);
 
       context.emitEvent?.({
@@ -398,6 +406,33 @@ function getExecutionTerminationReason(result: ToolResult | undefined): string |
     : undefined;
 }
 
+// 写后重录：mutation 工具成功落盘的文件即视为已完整读过（内容是本 run 写的），
+// 以写后 stat+hash 覆盖账本快照，支撑连续编辑不被 stale 拒绝。采样失败静默跳过
+// ——失败时保留读前记录，下次写入走既有 stale 校验兜底。
+async function reRecordWrittenFile(
+  input: ToolRuntimeWrapInput,
+  rawInput: unknown,
+): Promise<void> {
+  try {
+    const filePath = readInputPath(rawInput);
+    if (!filePath) return;
+    const canonical = resolve(input.cwd, filePath);
+    if (!(await exists(canonical))) return;
+    const fileStat = await stat(canonical);
+    const contentHash = createHash("sha256").update(await readFile(canonical)).digest("hex");
+    input.fileLedger.recordRead({
+      threadId: input.threadId,
+      cwd: input.cwd,
+      filePath: canonical,
+      mtimeMs: fileStat.mtimeMs,
+      contentHash,
+      fullRead: true
+    });
+  } catch {
+    // 静默：写后采样的任何异常都不阻塞工具返回
+  }
+}
+
 function isMutationTool(canonicalName: string): boolean {
   return canonicalName === "write"
     || canonicalName === "edit"
@@ -421,7 +456,9 @@ function isFullReadResult(result: ToolResult): boolean {
   const readMeta = result._meta?.read;
   if (!readMeta || typeof readMeta !== "object") return true;
   const meta = readMeta as Record<string, unknown>;
-  return meta.partial !== true && meta.summarized !== true;
+  // truncated 单独出现（三方只给 truncated:true 不给 partial）同样非全文——
+  // 漏判会把截断视图记成完整读解锁覆写
+  return meta.partial !== true && meta.summarized !== true && meta.truncated !== true;
 }
 
 function getReadRange(
