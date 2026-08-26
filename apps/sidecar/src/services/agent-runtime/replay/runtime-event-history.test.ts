@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { appendFileSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { getAgentThreadMessagesPath } from "../../infra/config-paths";
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
 import type { LumeRunState } from "../runtime-core/run-state";
@@ -79,6 +80,45 @@ describe("runtime event history", () => {
       ]);
     } finally {
       rmSync(sessionDir, { recursive: true, force: true });
+    }
+  });
+
+  test("#553 缓存按输入签名精确失效:落盘新消息后必须重算", async () => {
+    const sessionDir = mkdtempSync(join(tmpdir(), "lume-hydrate-cache-"));
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-hydrate-cache-cfg-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      await createFileBackedLumeRunStateStore(sessionDir).create(completedRun("thread-cache"));
+      // 旧线程路径(events.jsonl 空)→ 全量旧投影;首次计算并写入缓存
+      const first = await listThreadRuntimeEvents({ sessionDir, threadId: "thread-cache" });
+      expect(first.events.map((event) => event.type)).not.toContain("memory.changed");
+
+      // memory.changed 数据源在全局 sessions 目录(sdkMessages.jsonl),不在
+      // sessionDir 树内——落盘后签名必须变化击穿缓存,不得返回陈旧结果
+      appendFileSync(
+        getAgentThreadMessagesPath("thread-cache"),
+        `${JSON.stringify({
+          type: "system",
+          subtype: "memory_saved",
+          run_id: "run-h1",
+          uuid: "mem-msg-1",
+          created_at: "2026-08-01T00:03:00.000Z",
+          mutation_ids: ["mut-1"],
+          memory_ids: ["mem-1"],
+          summary: "记忆摘要",
+          details: []
+        })}\n`,
+        "utf-8",
+      );
+
+      const second = await listThreadRuntimeEvents({ sessionDir, threadId: "thread-cache" });
+      expect(second.events.map((event) => event.type)).toContain("memory.changed");
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+      else process.env.LUME_CONFIG_DIR = previousConfigDir;
+      rmSync(sessionDir, { recursive: true, force: true });
+      rmSync(configDir, { recursive: true, force: true });
     }
   });
 });

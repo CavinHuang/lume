@@ -1,4 +1,7 @@
 import type { AgentThreadRuntimeEventsResult, LumeRuntimeEvent } from "@lume/shared";
+import { readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
+import { getAgentThreadMessagesPath } from "../../infra/config-paths";
 import { getRuntimeHostPorts } from "../host-ports";
 import { projectRunStateToRuntimeEvents } from "../runtime-core/run-item-events";
 import { createFileBackedLumeRunStateStore } from "../runtime-core/run-state-store";
@@ -26,7 +29,68 @@ export function projectRunStateToReplayEvents(run: LumeRunState): LumeRuntimeEve
   return events.filter((event) => event.type === "run.started" || event.type === "message.user.submitted");
 }
 
+// #553:web 每收到一条 MESSAGE_APPENDED 就拉一次全量运行时事件,handler 对
+// runs/items/sdkMessages 全量读盘解析,老线程单次 350-600ms 且每次对话往返付两次。
+// 输入全部来自 sessionDir 树内文件,以整树聚合 (size,mtime) 为签名做精确失效缓存:
+// 任何落盘(消息追加/run items 增长/事件写入)都改变签名,命中时零解析返回。
+// ceiling:同尺寸截断重写理论漏判,append-only 常态下不发生;签名采集为
+// O(sessionDir 文件数) 次 stat(~毫秒级),远低于解析成本。
+const RUNTIME_EVENTS_CACHE_MAX = 500;
+const runtimeEventsCache = new Map<string, { signature: string; result: AgentThreadRuntimeEventsResult }>();
+
+function collectTreeSignature(root: string): string {
+  let size = 0;
+  let mtime = 0;
+  const stack = [root];
+  while (stack.length > 0) {
+    const directory = stack.pop()!;
+    let entries: Array<{ name: string; isDirectory(): boolean }>;
+    try {
+      entries = readdirSync(directory, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = join(directory, entry.name);
+      if (entry.isDirectory()) {
+        stack.push(fullPath);
+        continue;
+      }
+      try {
+        const stats = statSync(fullPath);
+        size += stats.size;
+        mtime += stats.mtimeMs;
+      } catch {
+        // 竞态删除的临时文件不参与签名
+      }
+    }
+  }
+  return `${size}:${mtime}`;
+}
+
 export async function listThreadRuntimeEvents(input: {
+  sessionDir: string;
+  threadId: string;
+}): Promise<AgentThreadRuntimeEventsResult> {
+  // sdkMessages.jsonl 在全局 sessions 目录而非 sessionDir 树内(memory.changed
+  // 的数据源),必须单独纳入签名
+  let sdkMessagesSignature = "";
+  try {
+    const stats = statSync(getAgentThreadMessagesPath(input.threadId));
+    sdkMessagesSignature = `${stats.size}:${stats.mtimeMs}`;
+  } catch {
+    sdkMessagesSignature = "missing";
+  }
+  const signature = `${collectTreeSignature(input.sessionDir)}|${sdkMessagesSignature}`;
+  const cached = runtimeEventsCache.get(input.threadId);
+  if (cached && cached.signature === signature) return cached.result;
+  const result = await computeListThreadRuntimeEvents(input);
+  if (runtimeEventsCache.size >= RUNTIME_EVENTS_CACHE_MAX) runtimeEventsCache.clear();
+  runtimeEventsCache.set(input.threadId, { signature, result });
+  return result;
+}
+
+async function computeListThreadRuntimeEvents(input: {
   sessionDir: string;
   threadId: string;
 }): Promise<AgentThreadRuntimeEventsResult> {
