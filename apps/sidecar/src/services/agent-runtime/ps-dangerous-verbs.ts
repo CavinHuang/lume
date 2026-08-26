@@ -9,7 +9,8 @@
  *  或换行之后（换行是多行脚本的命令分隔符；{ 使脚本块内命令位锚定，防 { del ~ } 形态绕过
  *  词表）。\\s* 作用于全部分支——行首缩进（^ 后空白）同样是命令位。刻意不含空格成员：
  *  参数位置（空格分隔）不是命令位，echo 回显文本不得触发词表。= 成员的已知误伤面是
- *  参数值恰好以 =危险动词 开头的形态（如 --format=stop-process），频率≈0 且方向 fail-closed */
+ *  「文本中 = 紧跟动词」的形态：全名动词参数值（--format=stop-process）与短别名紧贴等号
+ *  （sed 's/a=del/b/'、make VARIANT=erase），频率低且方向 fail-closed（多弹一次卡） */
 export const PS_ANCHOR = String.raw`(?:^|[;&|({=\r\n])\s*`;
 
 /*
@@ -23,10 +24,11 @@ export const CMD_WRAP_ANCHOR = String.raw`${PS_ANCHOR}(?:"?cmd(?:\.exe)?"?\s*(?:
  * 显式 powershell/pwsh 可执行前缀：-Command 类参数位的载荷按词表识别（镜像 SDK
  * parse-unavailable 短路的可执行名读法）。此前靠锚集误含空格才意外覆盖该形态，
  * 修正锚集后需显式入锚——否则方言机 pwsh -Command Remove-Item C:\ 从硬拒降为通用确认。
+ * 头部兼收 CMD_WRAP：cmd /c pwsh -Command "…" 复合包裹的内层载荷同属执行位。
  * 尾部 ["']? 容忍引号包裹载荷的起始引号（引号内即执行的脚本，词表判定方向正确）；
  * 引号内分号分隔的后续命令由 ; 锚独立覆盖。
  */
-export const PS_EXPLICIT_PREFIX = String.raw`(?:^|[;&|({=\r\n])\s*(?:powershell|pwsh)(?:\.exe)?\b(?:\s+-[^\s]+)*\s+["']?`;
+export const PS_EXPLICIT_PREFIX = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR})\s*(?:powershell|pwsh)(?:\.exe)?\b(?:\s+-[^\s]+)*\s+["']?`;
 
 /** 确认组共用锚点：命令位、cmd 包裹内层或显式 powershell 前缀载荷位（三支同源，防单侧漂移） */
 export const PS_CONFIRM_COMMAND = String.raw`(?:${PS_ANCHOR}|${CMD_WRAP_ANCHOR}|${PS_EXPLICIT_PREFIX})`;
@@ -95,8 +97,9 @@ export const PS_DANGEROUS_PROBES: string[] = [
   "rd -rec dist",
   "rd /sq build",
   "rmdir /qs .cache",
-  // 赋值执行位（= 锚：右侧真实执行）
+  // 赋值执行位（= 锚：右侧真实执行）；cmd 包裹接续 pwsh 前缀的复合形态（并列锚曾无法表达串联）
   "$x = Remove-Item ~",
+  'cmd /c pwsh -Command "Remove-Item ~"',
   // 显式 powershell 前缀的引号包裹载荷
   'pwsh -Command "Remove-Item ~"',
   // 行首空白缩进命令位（锚集去空格成员后 ^ 分支须自带 \s*，曾单前导空格击穿词表）
