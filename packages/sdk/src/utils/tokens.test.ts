@@ -43,7 +43,7 @@ describe("token estimation", () => {
   }, 20_000)
 
   test.skipIf(!isNativeAvailable())("#736：定长硬切下多行计数自洽——newline 计入且切片漂移有界", () => {
-    // 夹具必须 >8KB 才走分块路径（短文本直连精确无边界可言）
+    // 夹具必须 >8K code units 才走分块路径（短文本直连精确无边界可言）
     const lines = Array.from({ length: 1_200 }, (_, i) => `line-${i}-${"x".repeat(28)}`)
     const joined = lines.join("\n")
     expect(joined.length).toBeGreaterThan(8 * 1024)
