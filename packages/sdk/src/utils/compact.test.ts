@@ -6,7 +6,9 @@ import {
   prepareCompaction,
   serializeConversation,
   shouldAutoCompact,
+  truncateSerializedConversation,
 } from "./compact.js";
+import { estimateTokens } from "./tokens.js";
 
 const VALID_SUMMARY = `## Goal
 Preserve the current task.
@@ -60,6 +62,29 @@ function providerWithSummary(summary = VALID_SUMMARY, stopReason = "end_turn") {
 }
 
 describe("context compaction", () => {
+  test("generateSummary caps its own input on a true small-window model (#709 item 6 end-to-end)", async () => {
+    const { provider, requests } = providerWithSummary();
+    const longText = "x".repeat(40_000);
+    const messages = [
+      { role: "user", content: longText },
+      { role: "assistant", content: [{ type: "text", text: "noted" }] },
+      { role: "user", content: "y".repeat(30_000) },
+      { role: "assistant", content: [{ type: "text", text: "noted too" }] },
+      { role: "user", content: "latest request" },
+    ] as any[];
+
+    const result = await compactConversation(provider, "gpt-3.5", messages, createAutoCompactState(), {
+      keepRecentTokens: 5_000,
+    });
+
+    expect(result.compacted).toBe(true);
+    expect(requests).toHaveLength(1);
+    const promptText = String(requests[0].messages[0].content);
+    // 摘要请求自身必须落在小窗模型的输入预算内，而不是带着未裁切的全文超窗
+    expect(promptText).toContain("[... characters truncated ...]");
+    expect(estimateTokens(promptText)).toBeLessThanOrEqual(2_048 + 512);
+  });
+
   test("removes image payloads from summaries while retaining action facts", async () => {
     const { provider, requests } = providerWithSummary();
     const messages = [
@@ -286,6 +311,44 @@ describe("context compaction", () => {
       String(request.messages[0].content).includes("PREFIX of a turn"));
     expect(prefixRequest).toBeDefined();
     expect(prefixRequest.messages[0].content).not.toContain(MARKER);
+  });
+});
+
+describe("truncateSerializedConversation (#709 item 6)", () => {
+  test("keeps text within budget untouched", () => {
+    const text = "[User]: hello world";
+    expect(truncateSerializedConversation(text, 10_000)).toBe(text);
+  });
+
+  test("truncates middle while preserving head and tail when over budget", () => {
+    // ASCII ≈4 chars/token：8_000 字符 ≈ 2_000 tokens，预算 1_000 tokens 必触发
+    const head = `[User]: ${"a".repeat(3_900)}`;
+    const tail = `[Assistant]: ${"z".repeat(3_900)}`;
+    const text = `${head}\n\n${tail}`;
+    const truncated = truncateSerializedConversation(text, 1_000);
+    expect(truncated.length).toBeLessThan(text.length);
+    expect(truncated).toContain("[... characters truncated ...]");
+    expect(truncated.startsWith(`[User]: aaa`)).toBe(true);
+    expect(truncated.endsWith("zzz")).toBe(true);
+  });
+
+  test("mixed-density text converges to the token budget (#725 review R5)", () => {
+    // 中文头尾（~1 char/token 高密度）+ ASCII 工具输出中段（~4 chars/token 低密度）：
+    // 全文平均外推会低估保留区 token，实测旧实现超预算 3 倍+；复测循环必须收敛。
+    const head = `[User]: ${"中文消息".repeat(1_000)}`;
+    const middle = `\n\n[Tool result t1]: ${"x".repeat(80_000)}\n\n`;
+    const tail = `[Assistant]: ${"近期进展".repeat(1_000)}`;
+    const budget = 2_048;
+    const truncated = truncateSerializedConversation(`${head}${middle}${tail}`, budget);
+    expect(estimateTokens(truncated)).toBeLessThanOrEqual(budget);
+    expect(truncated).toContain("[User]: 中文消息");
+    expect(truncated.endsWith("近期进展")).toBe(true);
+  });
+
+  test("zero budget degrades gracefully instead of returning the full text via slice(-0)", () => {
+    const text = "a".repeat(500);
+    const truncated = truncateSerializedConversation(text, 0);
+    expect(truncated.length).toBeLessThan(text.length);
   });
 });
 
