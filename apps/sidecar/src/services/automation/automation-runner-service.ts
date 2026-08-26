@@ -33,19 +33,13 @@ import {
   recoverAutomationRuntimeStates,
   tryAcquireAutomationLease
 } from "./automation-runtime-store";
+import { getOutboundNotificationWriter } from "../infra/outbound-notification";
 
 type JobDisposer = () => void;
 
 const jobDisposers = new Map<string, JobDisposer>();
 const runningJobs = new Set<string>();
 let runnerStarted = false;
-
-type NotificationWriter = (method: string, params: unknown) => void;
-let notificationWriter: NotificationWriter | null = null;
-
-export function setAutomationNotificationWriter(writer: NotificationWriter): void {
-  notificationWriter = writer;
-}
 
 function appendRun(run: AutomationRun): void {
   const runsPath = getAutomationRunsPath();
@@ -377,6 +371,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     durationMs: run.finishedAt - run.startedAt,
     data: { automationJobId: job.id, runId: run.id, trigger, runStatus: run.status }
   });
+  const notificationWriter = getOutboundNotificationWriter();
   if (notificationWriter) {
     notificationWriter("automation:run-completed", {
       run,

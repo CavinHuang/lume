@@ -4,6 +4,7 @@ import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/w
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
 import { initProxySettings, getActiveProxyConfig } from "./services/system/proxy-settings-manager";
 import { setProxyConfigProvider } from "./services/infra/proxy-config-holder";
+import { setOutboundNotificationWriter } from "./services/infra/outbound-notification";
 import {
   startAutomationRunner,
   stopAutomationRunner
@@ -131,6 +132,8 @@ function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", seque
 }
 
 if ((process as typeof process & { parentPort?: unknown }).parentPort) {
+  // #580:出站通知写入器组合根一次注入,取代 agent/automation/desktop-context 三域分散 setter
+  setOutboundNotificationWriter(writeNotification);
   setLogBatchNotificationWriter((batch) => writeNotification("system.log-batch", batch));
   setPersistedSettingsMutationWriter((settings) => new Promise<void>((resolve, reject) => {
     const mutationId = randomUUID();
@@ -482,12 +485,6 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   });
-  // 完成事件写入器恒注册：懒启动路径（run-now/create 等）同样依赖它把
-  // automation:run-completed 推给前端，不能随 autostart 门控一起被跳过（#647 P0-2）。
-  {
-    const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
-    setAutomationNotificationWriter(writeNotification);
-  }
   // 默认自启：否则 sidecar 重启后既有 enabled 任务全部静默停摆，
   // 只能靠次日日程生成或用户恰好编辑任务才被拉起（#647 P0-1）。
   if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", true)) {
@@ -515,10 +512,6 @@ async function boot(): Promise<void> {
   }
   if (envAutostartEnabled("LUME_DEFAULT_SKILLS_AUTOSTART", false)) {
     seedDefaultSkills();
-  }
-  {
-    const { setDesktopContextNotificationWriter } = await import("./services/desktop-context/desktop-context-runtime");
-    setDesktopContextNotificationWriter(writeNotification);
   }
   if (envAutostartEnabled("LUME_IM_AUTOSTART", true)) {
     void imRuntimeManager.startEnabledAccounts().catch((error) => {

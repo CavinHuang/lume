@@ -11,20 +11,20 @@ import {
   updateAskUserApprovalSession
 } from "./ask-user-service";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
+import { PendingRequestRegistry } from "./pending-request-registry";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("ask-user-question-session");
 
-const pendingAskUserQuestionResolvers = new Map<
-  string,
-  {
-    threadId: string;
-    approvalSessionId: string;
-    request: AgentAskUserQuestionRequest;
-    resolve: (result: AskUserQuestionWaitResult) => void;
-    timeout?: ReturnType<typeof setTimeout>;
-  }
->();
+interface AskUserPendingMeta {
+  threadId: string;
+  approvalSessionId: string;
+  request: AgentAskUserQuestionRequest;
+}
+
+// #580:Map+timeout+resolve 手写三联收编进 PendingRequestRegistry。
+const pendingAskUserQuestionResolvers =
+  new PendingRequestRegistry<string, AskUserQuestionWaitResult, AskUserPendingMeta>();
 
 const DEFAULT_ASK_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -43,15 +43,15 @@ export type AskUserQuestionSubmitResult =
   | PersistedAskUserInterruptionResolution;
 
 export function setAskUserQuestionApprovalSession(toolUseId: string, approvalSessionId: string): void {
-  const pending = pendingAskUserQuestionResolvers.get(toolUseId);
-  if (!pending) return;
+  const meta = pendingAskUserQuestionResolvers.getMeta(toolUseId);
+  if (!meta) return;
   const normalized = approvalSessionId.trim();
   if (!normalized) return;
-  pending.approvalSessionId = normalized;
+  pendingAskUserQuestionResolvers.updateMeta(toolUseId, { approvalSessionId: normalized });
   void updateAskUserApprovalSession({
-    originalThreadId: pending.threadId,
+    originalThreadId: meta.threadId,
     approvalThreadId: normalized,
-    request: pending.request
+    request: meta.request
   }).catch((error) => {
     log.warn("Failed to update ask-user approval session", {
       toolUseId,
@@ -77,14 +77,26 @@ export function waitForAskUserQuestionAnswers(
   emit: (request: AgentAskUserQuestionRequest) => void,
   requestMeta?: Pick<AgentAskUserQuestionRequest, "runId" | "originThreadId" | "subagentRunId" | "subagentLabel">
 ): Promise<AskUserQuestionWaitResult> {
-  return new Promise((resolve) => {
-    const done = async (result: AskUserQuestionWaitResult): Promise<void> => {
-      const pending = pendingAskUserQuestionResolvers.get(toolUseId);
-      if (pending?.timeout) {
-        clearTimeout(pending.timeout);
-      }
-      pendingAskUserQuestionResolvers.delete(toolUseId);
-      signal.removeEventListener("abort", onAbort);
+  const timeoutMs = resolveAskTimeoutMs();
+  const request: AgentAskUserQuestionRequest = {
+    threadId,
+    ...(requestMeta?.runId ? { runId: requestMeta.runId } : {}),
+    ...(requestMeta?.originThreadId ? { originThreadId: requestMeta.originThreadId } : {}),
+    ...(requestMeta?.subagentRunId ? { subagentRunId: requestMeta.subagentRunId } : {}),
+    ...(requestMeta?.subagentLabel ? { subagentLabel: requestMeta.subagentLabel } : {}),
+    toolUseId,
+    questions
+  };
+  const promise = pendingAskUserQuestionResolvers.wait(toolUseId, {
+    meta: { threadId, approvalSessionId: threadId, request },
+    timeoutMs,
+    signal,
+    timeoutValue: () => ({ status: "timeout", answers: null }),
+    abortValue: () => ({ status: "aborted", answers: null }),
+    supersededValue: () => ({ status: "canceled", answers: null }),
+    // Bun test 环境下超短 unref timer 可能不会按预期触发，测试专用短超时不做 unref。
+    unref: timeoutMs >= 1000,
+    beforeResolve: async (result) => {
       try {
         await resolveAskUserInterruption({
           threadId,
@@ -93,70 +105,30 @@ export function waitForAskUserQuestionAnswers(
           answers: result.answers ?? undefined
         });
       } catch (error) {
-        // 持久化失败只降级冷启动恢复能力；resolve 必须仍被执行（在 try 之外），
-        // 否则 timeout 已清除、abort 监听已摘除，等待方将无限悬挂
+        // 持久化失败只降级冷启动恢复能力;resolve 必须仍被执行(Registry 保证)
         log.warn("Failed to resolve ask-user interruption", {
           toolUseId,
           threadId,
           error: error instanceof Error ? error.message : String(error)
         });
       }
-      resolve(result);
-    };
-
-    const onAbort = (): void => {
-      done({ status: "aborted", answers: null });
-    };
-
-    const existing = pendingAskUserQuestionResolvers.get(toolUseId);
-    if (existing) {
-      existing.resolve({ status: "canceled", answers: null });
     }
-    const timeoutMs = resolveAskTimeoutMs();
-    const timeout = setTimeout(() => {
-      done({ status: "timeout", answers: null });
-    }, timeoutMs);
-    // Bun test 环境下超短 unref timer 可能不会按预期触发，测试专用短超时不做 unref。
-    if (
-      timeoutMs >= 1000
-      && typeof timeout === "object"
-      && "unref" in timeout
-      && typeof timeout.unref === "function"
-    ) {
-      timeout.unref();
-    }
-    const request: AgentAskUserQuestionRequest = {
-      threadId,
-      ...(requestMeta?.runId ? { runId: requestMeta.runId } : {}),
-      ...(requestMeta?.originThreadId ? { originThreadId: requestMeta.originThreadId } : {}),
-      ...(requestMeta?.subagentRunId ? { subagentRunId: requestMeta.subagentRunId } : {}),
-      ...(requestMeta?.subagentLabel ? { subagentLabel: requestMeta.subagentLabel } : {}),
-      toolUseId,
-      questions
-    };
-    pendingAskUserQuestionResolvers.set(toolUseId, {
-      threadId,
-      approvalSessionId: threadId,
-      request,
-      resolve: done,
-      timeout
-    });
-    signal.addEventListener("abort", onAbort, { once: true });
-    void persistAskUserInterruption(request).catch((error) => {
-      log.warn("Failed to persist ask-user interruption", {
-        toolUseId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
-    emit(request);
   });
+  void persistAskUserInterruption(request).catch((error) => {
+    log.warn("Failed to persist ask-user interruption", {
+      toolUseId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+  emit(request);
+  return promise;
 }
 
 export async function submitAskUserQuestionAnswers(
   input: AgentAskUserQuestionResponseInput
 ): Promise<AskUserQuestionSubmitResult | null> {
-  const pending = pendingAskUserQuestionResolvers.get(input.toolUseId);
-  if (!pending) {
+  const meta = pendingAskUserQuestionResolvers.getMeta(input.toolUseId);
+  if (!meta) {
     return await resolvePersistedAskUserInterruption({
       approvalThreadId: input.threadId,
       toolUseId: input.toolUseId,
@@ -164,54 +136,35 @@ export async function submitAskUserQuestionAnswers(
       answers: input.answers
     });
   }
-  if (pending.approvalSessionId !== input.threadId) {
+  if (meta.approvalSessionId !== input.threadId) {
     throw new Error("AskUserQuestion 会话不匹配");
   }
-  if (input.canceled) {
-    pending.resolve({ status: "canceled", answers: null });
-    return {
-      handledBy: "live",
-      threadId: pending.threadId,
-      approvalThreadId: input.threadId,
-      ...(pending.request.runId ? { runId: pending.request.runId } : {})
-    };
-  }
-  pending.resolve({ status: "answered", answers: input.answers ?? {} });
+  const waitResult: AskUserQuestionWaitResult = input.canceled
+    ? { status: "canceled", answers: null }
+    : { status: "answered", answers: input.answers ?? {} };
+  pendingAskUserQuestionResolvers.settle(input.toolUseId, waitResult);
   return {
     handledBy: "live",
-    threadId: pending.threadId,
+    threadId: meta.threadId,
     approvalThreadId: input.threadId,
-    ...(pending.request.runId ? { runId: pending.request.runId } : {})
+    ...(meta.request.runId ? { runId: meta.request.runId } : {})
   };
 }
 
 export function cancelPendingAskUserQuestionBySession(threadId: string): void {
-  for (const [toolUseId, pending] of pendingAskUserQuestionResolvers) {
-    if (pending.threadId !== threadId && pending.approvalSessionId !== threadId) {
-      continue;
-    }
-    void resolveAskUserInterruption({
-      threadId: pending.threadId,
-      toolUseId,
-      canceled: true
-    }).catch((error) => {
-      log.warn("Failed to resolve cancelled ask-user interruption", {
-        toolUseId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
-    pending.resolve({ status: "canceled", answers: null });
-    pendingAskUserQuestionResolvers.delete(toolUseId);
-  }
+  pendingAskUserQuestionResolvers.cancelWhere(
+    (meta) => meta.threadId === threadId || meta.approvalSessionId === threadId,
+    () => ({ status: "canceled", answers: null })
+  );
 }
 
 export function listPendingAskUserQuestionRequests(): AgentAskUserQuestionRequest[] {
-  const liveRequests = Array.from(pendingAskUserQuestionResolvers.values()).map((pending) => ({
-    ...pending.request,
-    threadId: pending.approvalSessionId,
-    ...(pending.request.originThreadId ? {} : (
-      pending.threadId !== pending.approvalSessionId
-        ? { originThreadId: pending.threadId }
+  const liveRequests = pendingAskUserQuestionResolvers.list().map(({ meta }) => ({
+    ...meta.request,
+    threadId: meta.approvalSessionId,
+    ...(meta.request.originThreadId ? {} : (
+      meta.threadId !== meta.approvalSessionId
+        ? { originThreadId: meta.threadId }
         : {}
     ))
   }));
