@@ -50,12 +50,13 @@ export function estimateTokens(text: string): number {
 /**
  * 原生计数入口的分块保护（#736）：tiktoken 对「单 regex piece 内无换行的长
  * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。按
- * 换行切块、单块超限再定长硬切，把单次 encode 规模压回线性安全区；短文本
- * 走直连保持逐字节精确。跨硬切边界的 BPE 合并损失使大文本计数变为近似值——
- * 本计数只服务阈值/展示估算，~0.1% 漂移无害。natives 包装层吞错返 0，
- * 加载失败由调用方的 >0 守卫落回 JS 回退。
+ * 换行切块、单块超限再定长硬切；块内二次分量使总成本 ∝ N×LIMIT——8KB 时
+ * 1MiB 单行从 10s 级降到亚秒（napi 单调用开销仅 ~1.5µs，调小近乎免费）。
+ * 近似口径（#738 review 实测）：跨块边界丢失 BPE 合并致恒保守多计——多行
+ * 散文约 +1~3%（每边界 ≤1），极端纯换行串因逐分隔符成块可放大数倍；本
+ * 计数只服务阈值/展示估算，保守方向无资源越界风险。
  */
-const TOKEN_NATIVE_PIECE_LIMIT = 32 * 1024
+const TOKEN_NATIVE_PIECE_LIMIT = 8 * 1024
 
 function countTokensNativeChunked(text: string): number {
   if (text.length <= TOKEN_NATIVE_PIECE_LIMIT) {
