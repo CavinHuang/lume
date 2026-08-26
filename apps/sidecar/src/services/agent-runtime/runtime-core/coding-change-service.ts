@@ -29,6 +29,8 @@ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_PUBLISH_TIMEOUT_MS = 120_000;
 const MAX_REVIEW_SEARCH_OUTPUT_BYTES = 16 * 1024 * 1024;
+// 字符串版 runGitCommand 同款水位：超限 kill 返回 null，防 binary diff 场景内存暴涨（#594）
+const MAX_GIT_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_BLAME_CACHE_ENTRIES = 128;
 const blameCache = new Map<string, CodingBlameResult>();
 const SHOULD_ISOLATE_GIT_SPAWN = "bun" in process.versions;
@@ -56,7 +58,12 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     }
     child.stdout.setEncoding("utf8");
     let stdout = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    let stdoutBytes = 0;
+    child.stdout.on("data", (chunk) => {
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes <= ${MAX_GIT_COMMAND_OUTPUT_BYTES}) stdout += chunk;
+      else child.kill();
+    });
     const timeout = setTimeout(() => {
       child.kill();
       finish(null);
@@ -67,7 +74,7 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      finish(code === 0 ? stdout : null);
+      finish(code === 0 && stdoutBytes <= ${MAX_GIT_COMMAND_OUTPUT_BYTES} ? stdout : null);
     });
   });
 `;
@@ -1742,7 +1749,12 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
     }
     child.stdout?.setEncoding("utf8");
     let stdout = "";
-    child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    let stdoutBytes = 0;
+    child.stdout?.on("data", (chunk) => {
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes <= MAX_GIT_COMMAND_OUTPUT_BYTES) stdout += chunk;
+      else child.kill();
+    });
     const timeout = setTimeout(() => {
       child.kill();
       finish(null);
@@ -1753,7 +1765,7 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      finish(code === 0 ? stdout : null);
+      finish(code === 0 && stdoutBytes <= MAX_GIT_COMMAND_OUTPUT_BYTES ? stdout : null);
     });
   });
 }

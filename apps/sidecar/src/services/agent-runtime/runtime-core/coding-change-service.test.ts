@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -568,5 +569,20 @@ describe("coding-change-service", () => {
       expectedIndexHash: state.indexHash,
     })).rejects.toThrow("暂存区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
+  }, 30_000);
+
+  test("staged 大二进制产物使 git 输出超限时 Publish 状态降级为不可用而非全量累积", async () => {
+    const root = makeTempDir("lume-coding-publish-big-binary-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    // 不可压缩随机数据：--binary 的 zlib 压不动，base85 编码后 diff 输出必然超 16MB 水位
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    await expect(getCodingRepositoryPublishState(root)).resolves.toMatchObject({
+      available: false,
+      reason: "无法读取当前 Git 仓库状态",
+    });
   }, 30_000);
 });
