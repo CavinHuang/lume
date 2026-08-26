@@ -904,21 +904,23 @@ function isVerificationSegment(segment: string): boolean {
   // 写盘型格式化器是变更不是证据(#649 review P2):ruff format / biome format
   // 纯重排无检查语义,任何破坏性重排后 exit 0 也不得翻 verified(check --fix 仍算)
   if (/^(ruff|biome)$/i.test(head)) return firstArg.toLowerCase() !== "format";
-  // 包管理器:npm/pnpm/yarn/bun 的 test 直认;run 后看 script 名(script 带 watch/dev 类排除)
+  // 包管理器:npm/pnpm/yarn/bun 的 test 直认;run 后看 script 名(script 带 watch/dev 类排除;
+  // #649 round3:允许固定词表的冒号后缀形态 lint:fix/test:unit——#573 原意即认这些,
+  // 且 build 回归进表(JS 构建成功与 go/dotnet build 同为编译证据)
   if (/^(npm|pnpm|yarn|bun)$/i.test(head)) {
     const sub = firstArg.toLowerCase();
     if (sub === "test") return true;
     if (sub === "run" || sub === "run-script") {
       const script = args.filter((token) => !token.startsWith("-"))[1]?.toLowerCase().replace(/^["']+|["']+$/g, "") ?? "";
       if (!script || /(watch|dev|serve|preview)/i.test(script)) return false;
-      return /^(test|tests|check|verify|typecheck|lint|ci)$/.test(script);
+      return /^(test|tests|check|verify|typecheck|lint|ci|build)(:[\w-]+)?$/.test(script);
     }
     return false;
   }
-  if (/^npx$/i.test(head)) return /^(tsc|vitest|jest|eslint|biome|pytest|mypy|pyright|ruff)$/i.test(firstArg);
+  if (/^(npx|bunx)$/i.test(head)) return /^(tsc|vitest|jest|eslint|biome|pytest|mypy|pyright|ruff)$/i.test(firstArg);
   // 变更类工具链只认验证性子命令
   if (/^cargo$/i.test(head)) return /^(test|check|clippy)$/i.test(firstArg);
-  if (/^make$/i.test(head)) return /^(test|check)$/i.test(firstArg);
+  if (/^make$/i.test(head)) return /^(test|check|build)$/i.test(firstArg);
   if (/^(mvn|gradle|gradlew)$/i.test(head.replace(/^\.\//, ""))) {
     return args.some((token) => /^(?:-{1,2})?(?:test|check|verify)$/i.test(token.replace(/^["']+|["']+$/g, "")));
   }

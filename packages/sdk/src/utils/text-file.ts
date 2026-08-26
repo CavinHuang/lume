@@ -91,6 +91,10 @@ export async function readTextFileRange(
         consumeCompleteLines();
         if (totalLines > observedAtFill) { sawMoreLines = true; break; }
       }
+      // #649 round3:EOF 时 buffer 仍挂着未换行的尾巴行——它是窗口外的下一行
+      // (收尾 flush 会计入 totalLines 却进不了 selected),并非精确全文。
+      // (buffer 为悬挂 \r 的罕见形态会被保守误判 truncated,方向安全)
+      if (!sawMoreLines && !gaveUpScanning && buffer.length > 0) sawMoreLines = true;
       truncated = sawMoreLines || gaveUpScanning;
       stream.destroy();
       break;

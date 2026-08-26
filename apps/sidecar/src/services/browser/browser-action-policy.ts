@@ -49,8 +49,15 @@ export function classifyBrowserAction(method: string, params: Record<string, unk
   // 「每次导航前确认」的出厂承诺对其失守。整批一次确认;私网方向另有
   // BrowserNetworkGuard 第二层兜底,此处按 authorize 档提示。
   if (runtimeMethod === "tabs:content" || method === "tabs_content") {
-    const urls = Array.isArray(params.urls)
-      ? params.urls.filter((value): value is string => typeof value === "string" && value.trim().length > 0).slice(0, 10)
+    // #649 round3:双键取序与 broker normalize({...params, ...options} 使 options 覆盖)
+    // 一致——只读顶层 urls 会重蹈 P1-3 同款「确认 A 实际导航 B」失真
+    const options = params.options;
+    const nestedUrls = options && typeof options === "object" && !Array.isArray(options)
+      ? (options as Record<string, unknown>).urls
+      : undefined;
+    const rawUrls = nestedUrls ?? params.urls;
+    const urls = Array.isArray(rawUrls)
+      ? rawUrls.filter((value): value is string => typeof value === "string" && value.trim().length > 0).slice(0, 10)
       : []
     if (urls.length > 0) {
       const origins = [...new Set(urls.map((url) => safeOrigin(url)).filter((origin): origin is string => origin !== undefined))]

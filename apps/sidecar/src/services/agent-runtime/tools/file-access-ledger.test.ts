@@ -105,13 +105,21 @@ describe("file access ledger", () => {
     });
 
     // Read 用大写路径登记，Edit 用小写路径写入——归一前台账 miss 误报「必须先完整读取」。
-    // 仅在大小写不敏感平台断言（Linux 上两路径本就是不同文件，fail-closed 正确）。
+    // 大小写不敏感平台(win32/darwin):归一后同键,放行。
     if (process.platform === "win32" || process.platform === "darwin") {
       await expect(ledger.assertCanOverwrite({
         threadId: "thread-1",
         cwd: root.toLowerCase(),
         filePath: filePath.toLowerCase()
       })).resolves.toEqual({ ok: true });
+    } else {
+      // #649 round3 Linux 断言补集:大小写敏感 FS 上两路径是不同文件,
+      // 归一化若被误改为无条件 toLowerCase 会跨文件放行——必须保持 not_read
+      await expect(ledger.assertCanOverwrite({
+        threadId: "thread-1",
+        cwd: root.toLowerCase(),
+        filePath: filePath.toLowerCase()
+      })).resolves.toMatchObject({ ok: false });
     }
   });
 });

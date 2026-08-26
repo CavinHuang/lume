@@ -587,6 +587,26 @@ describe("file tools", () => {
     expect(String(bothGiven.content)).toContain("line-99");
   });
 
+  test("#649 round3: 尾窗读(offset>0 延伸到 EOF)仍是 partial 视图——缓存只有片段不得标全文", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "tail.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 10 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    // offset=5 读到文件尾:公式若漏 offset===0 会判全文,后续 Edit 内容比对片段≠全文 → 假性 stale 死锁
+    const result = await FileReadTool.call({ file_path: filePath, offset: 5, limit: 2000 }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: true });
+    expect(cache.get(filePath)?.isPartialView).toBe(true);
+    expect(cache.get(filePath)?.content).not.toContain("line-0");
+  });
+
   test("rejects known binary files instead of decoding them as text", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
