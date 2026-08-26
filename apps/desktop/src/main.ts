@@ -133,6 +133,7 @@ import {
 import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
+import { instrumentIpcCommand } from './logging/ipc-instrumentation'
 import {
   createChromeNativeHostInstallPlan,
   writeChromeNativeHostRegistration,
@@ -159,9 +160,11 @@ import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecu
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
-import type { BrowserSettings } from '@lume/shared'
+import type { BrowserSettings,
+  LumeLogLevel, LumeLogEventInput,} from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
-import { nativeEventToIntent } from '@lume/shared'
+import { nativeEventToIntent, summarizeValue, normalizeHostLevel, LUME_LOGGING_DEFAULTS } from '@lume/shared'
+import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
 import {
   createAsyncSingleFlight,
@@ -219,16 +222,7 @@ const SIDECAR_LOG_METHOD = 'system.log'
 const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
 const SIDECAR_LOG_ACK_METHOD = 'system.log-ack'
 const SIDECAR_SETTINGS_REPLACE_METHOD = 'system.settings-replace'
-const QUIET_SIDECAR_RPC_METHODS = new Set([
-  'healthcheck',
-  'general-settings:get',
-  'agent:list-threads',
-  'agent:list-subagent-runs',
-  'agent:get-pending-interactive',
-  'agent:list-workspaces',
-  'channel:oauth-status',
-  'model-meta:get',
-])
+const SIDECAR_LOG_LEVEL_METHOD = 'system.log-level'
 const SLOW_RPC_MS = 2_000
 const RENDERER_DELIVERY_ACK_TIMEOUT_MS = 10_000
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 15_000
@@ -343,6 +337,7 @@ function getLoggingService() {
     const logging = (persisted.generalSettings as { logging?: unknown } | undefined)?.logging
     loggingService = new LoggingService({
       configDir: resolveConfigDir(),
+      isDev: !app.isPackaged,
       ...(logging && typeof logging === 'object' ? { settings: logging } : {}),
     })
   }
@@ -386,7 +381,14 @@ function getDiagnosticLease(): LumeDiagnosticCaptureSettings | null {
     : lease
 }
 
-function writeMainLog(level, context, event, message, extra = {}) {
+// 显式签名：本函数是全部主进程埋点的汇入点，隐式 any 会让 schema 校验归零。
+function writeMainLog(
+  level: LumeLogLevel,
+  context: string,
+  event: string,
+  message: string,
+  extra: Partial<LumeLogEventInput> = {},
+) {
   return getLoggingService().emit({
     level,
     source: 'main',
@@ -395,6 +397,58 @@ function writeMainLog(level, context, event, message, extra = {}) {
     message,
     ...extra,
   })
+}
+
+const QUIET_IPC_COMMANDS = new Set<string>([
+  // 日志类命令走 lume:invoke 分发而非独立 handle，必须静默避免埋点自喂。
+  'write_web_log',
+  'write_web_log_batch',
+  'desktop_list_log_files',
+  'desktop_read_log_file',
+  'desktop_open_logs_dir',
+  'desktop_export_logs',
+  'desktop_delete_logs',
+  'desktop_log_live_subscribe',
+  'desktop_log_live_unsubscribe',
+  // 敏感内容通道：参数/结果摘要会把正文带进日志，超出内容键预览的授权范围。
+  'desktop_diagnostic_decrypt',
+  'read_clipboard_text',
+  'write_clipboard_text',
+  'save_text_file_dialog',
+  'save_binary_file_dialog',
+  // 启动后观察 dev 终端 command.completed 频率，把高频轮询命令加进来。
+])
+const IPC_LOG_CONTEXT = 'desktop.ipc'
+
+// 埋点自身的故障绝不能改变 IPC 调用的成功/错误语义。
+function safeLogIpcEvent(emit: () => void): void {
+  try {
+    emit()
+  } catch {
+    // ignore：日志设施不可用时静默降级。
+  }
+}
+
+async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T, origin?: string): Promise<T> {
+  return instrumentIpcCommand({
+    isQuiet: (candidate) => QUIET_IPC_COMMANDS.has(candidate),
+    emit: (e) => safeLogIpcEvent(() => writeMainLog(e.level, IPC_LOG_CONTEXT, e.event, e.message, {
+      durationMs: e.durationMs,
+      status: e.event === 'command.completed' ? 'ok' : 'error',
+      ...e.correlation,
+      ...(origin ? { origin } : {}),
+      data: {
+        command: e.name,
+        args: summarizeValue(e.args),
+        ...(e.result !== undefined ? { result: summarizeValue(e.result) } : {}),
+      },
+      ...(e.error ? { error: e.error } : {}),
+    })),
+  }, name, args, run)
+}
+
+function handleLogged(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+  ipcMain.handle(channel, (event, ...args) => logIpcCommand(channel, args[0], () => handler(event, ...args)))
 }
 
 function writeRateLimitedTrayWarning(event, message, ownerWebContentsId, data = {}) {
@@ -435,6 +489,7 @@ function getTrustedWindows() {
 function resolveRendererTraceOrigin(ownerWebContentsId) {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id === ownerWebContentsId) return 'main_window'
   if (quickInputWindow && !quickInputWindow.isDestroyed() && quickInputWindow.webContents.id === ownerWebContentsId) return 'quick_input'
+  if (islandWindow && !islandWindow.isDestroyed() && islandWindow.webContents.id === ownerWebContentsId) return 'agent_island'
   throw new Error('cannot derive trace origin from untrusted renderer')
 }
 
@@ -456,7 +511,7 @@ function createSafeMessageLogSummary(value) {
   }
 }
 
-function logDesktopStartup(message, event = 'app.lifecycle', level = 'info') {
+function logDesktopStartup(message: string, event = 'app.lifecycle', level: LumeLogLevel = 'info') {
   writeMainLog(level, 'desktop.lifecycle', event, message)
   const logPath = process.env.LUME_DESKTOP_STARTUP_LOG?.trim()
   if (!logPath) return
@@ -2450,11 +2505,29 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         data: payload.data ?? undefined,
       })
       return null
-    case 'write_web_log_batch':
+    case 'write_web_log_batch': {
+      // 多窗口（主窗/快输窗/island）各自运行 renderer 日志实例，按 sender 注入 surface 归因，
+      // 否则同源故障在日志里无法区分来自哪个窗口。
+      // 先校验形状再变异：origin 注入不能在 ingestBatch 校验之前制造 TypeError。
+      const webBatch = payload as { events?: unknown; batchId?: unknown }
+      let surfaceOrigin: string | undefined
+      try {
+        surfaceOrigin = resolveRendererTraceOrigin(context.ownerWebContentsId)
+      } catch {
+        surfaceOrigin = 'renderer_unknown'
+      }
+      if (Array.isArray(webBatch?.events)) {
+        for (const e of webBatch.events) {
+          if (e && typeof e === 'object') {
+            ;(e as Record<string, unknown>).origin ??= surfaceOrigin
+          }
+        }
+      }
       return {
-        accepted: getLoggingService().ingestBatch(payload as any, 'renderer'),
+        accepted: getLoggingService().ingestBatch(webBatch as any, 'renderer'),
         batchId: payload.batchId,
       }
+    }
     case 'desktop_list_log_files':
       return getLoggingService().listFiles()
     case 'desktop_read_log_file':
@@ -2792,6 +2865,9 @@ function createSidecarHost({ onNotification }) {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
+      // sidecar 源头门槛决定 debug/trace 是否进入传输；落盘仍由主进程 fileLevel 把关。
+      LUME_LOG_FILE_LEVEL: process.env.LUME_LOG_FILE_LEVEL
+        ?? (!app.isPackaged ? 'trace' : loggingService?.getSettings().fileLevel ?? 'info'),
       // session manifest 版本清单消费(#256):sidecar 写 manifest.json 时读取
       LUME_APP_VERSION: app.getVersion(),
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',
@@ -3022,9 +3098,36 @@ function createSidecarHost({ onNotification }) {
         if (payload && payload.method === SIDECAR_SETTINGS_REPLACE_METHOD && payload.id === undefined) {
           const mutationId = typeof payload.params?.mutationId === 'string' ? payload.params.mutationId : null
           try {
+            // changedKeys 的对比基线必须是「上一次持久化值」而非 LoggingService 生效快照——
+            // dev 下生效值含 applyDevConsoleDefault 注入的 trace，混用会导致假变更/吞真变更。
+            const previousPersisted = (getSettingsBroker().read().generalSettings as { logging?: unknown } | undefined)?.logging
             const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
             const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
-            if (logging && typeof logging === 'object') getLoggingService().updateSettings(logging)
+            if (logging && typeof logging === 'object') {
+              const incoming = logging as Record<string, unknown>
+              const previous = (previousPersisted && typeof previousPersisted === 'object'
+                ? (previousPersisted as Record<string, unknown>)
+                : {}) as Record<string, unknown>
+              const changedKeys = Object.keys(incoming)
+                .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify(previous[key]))
+                // dev trace 归一（持久化 info → 生效 trace）是既定语义而非用户变更，不计入审计。
+                .filter((key) => !(key === 'consoleLevel' && !app.isPackaged
+                  && incoming.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel))
+              getLoggingService().updateSettings(logging)
+              // 文件级别运行时下发给 sidecar（其门槛在 spawn 时冻结，热更原不生效）。
+              const sidecarFileLevel = process.env.LUME_LOG_FILE_LEVEL
+                ?? (!app.isPackaged ? 'trace' : (logging as { fileLevel?: string }).fileLevel)
+              if (typeof sidecarFileLevel === 'string') {
+                void sidecarHost.call(SIDECAR_LOG_LEVEL_METHOD, { level: sidecarFileLevel }).catch(() => {
+                  // sidecar 未就绪/调用失败不阻塞设置流程；下次设置变更会再次下发。
+                })
+              }
+              if (changedKeys.length > 0) {
+                writeMainLog('info', 'logging.config', 'logging.settings_updated', 'logging settings replaced', {
+                  data: { changedKeys, settings: summarizeValue(logging) },
+                })
+              }
+            }
             // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入
             // （含 renderer toggle → sidecar general-settings:update）的唯一汇聚点，故在此处
             // 检测 agentIsland.enabled 翻为 false 即停整个渲染面（native host + Electron 窗）；
@@ -3375,9 +3478,21 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
       pluginAssets.revokeOwner(ownerWebContentsId)
     })
   }
-  return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })
+  const commandName = validateRendererInvokeCommand(command)
+  let surfaceOrigin: string | undefined
+  try {
+    surfaceOrigin = resolveRendererTraceOrigin(ownerWebContentsId)
+  } catch {
+    surfaceOrigin = 'renderer_unknown'
+  }
+  return logIpcCommand(
+    commandName,
+    payload,
+    () => dispatchCommand(commandName, payload, { ownerWebContentsId }),
+    surfaceOrigin,
+  )
 })
-ipcMain.handle('lume:window-control', async (event, op) => {
+handleLogged('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。
   // 子窗口 close 会命中 createQuickInputWindow 的 close 拦截 → hide（除非退出中）。
   const target = [mainWindow, quickInputWindow].find(
@@ -3401,7 +3516,7 @@ ipcMain.handle('lume:window-control', async (event, op) => {
       throw new Error(`unsupported window-control op: ${String(op)}`)
   }
 })
-ipcMain.handle('lume:relaunch', async (event) => {
+handleLogged('lume:relaunch', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   setImmediate(() => {
     app.relaunch()
@@ -3409,7 +3524,7 @@ ipcMain.handle('lume:relaunch', async (event) => {
   })
   return null
 })
-ipcMain.handle('lume:update:check', async (event) => {
+handleLogged('lume:update:check', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   autoUpdater.autoDownload = false
@@ -3417,7 +3532,7 @@ ipcMain.handle('lume:update:check', async (event) => {
   const result = await autoUpdater.checkForUpdates()
   return createUpdateInfo(result?.updateInfo, app.getVersion())
 })
-ipcMain.handle('lume:update:download', async (event) => {
+handleLogged('lume:update:download', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   const sender = event.sender
@@ -3459,14 +3574,14 @@ ipcMain.handle('lume:update:download', async (event) => {
     }).catch(onError)
   })
 })
-ipcMain.handle('lume:update:download-asset', async (event, payload) => {
+handleLogged('lume:update:download-asset', async (event, payload) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (!payload || typeof payload.url !== 'string') throw new Error('缺少更新安装包地址')
   await downloadMacUpdateAsset(payload.url, event.sender)
   return null
 })
-ipcMain.handle('lume:update:install', async (event) => {
+handleLogged('lume:update:install', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (pendingMacUpdatePath) {
@@ -3508,7 +3623,7 @@ ipcMain.handle('lume:update:install', async (event) => {
   })
 })
 
-ipcMain.handle('lume:app:signature', async (event) => {
+handleLogged('lume:app:signature', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   const macSignatureStable = await detectMacSignatureStable({
     platform: process.platform,
@@ -3553,6 +3668,8 @@ app.whenReady().then(async () => {
         data: { method, actor, ...(tabId ? { tabId } : {}), message },
       })
     },
+    onWorkspaceEvent: ({ level, event, message, data }) =>
+      writeMainLog(level, 'browser.workspace', event, message, { ...(data ? { data } : {}) }),
   })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()
@@ -3659,6 +3776,16 @@ async function startDesktopHost(): Promise<DesktopHostState> {
     desktopHostSupervisor = createDesktopHostSupervisor({
       binaryPath,
       log: logDesktopStartup,
+      logEvent: ({ level, context, event, message, data }) => {
+        // LumeHostLogLine 契约下四核心字段必为 string，仅 data 可缺。
+        writeMainLog(
+          normalizeHostLevel(level),
+          context,
+          event,
+          message,
+          { source: 'desktop-host', ...(data ? { data } : {}) },
+        )
+      },
     })
     const state = await desktopHostSupervisor.start()
     logDesktopStartup(state.available ? 'desktop host started' : ('reason' in state ? state.reason : 'desktop host unavailable'))

@@ -282,11 +282,14 @@ export class BrowserBroker {
     if (WAIT_COMMANDS.has(input.method)) return execute().catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
     const current = previous.then(execute)
     const settled = current.catch(() => undefined)
-    // 队尾 settle 后回收槽位（#615）：仅当仍是队尾才删，已被新请求替换则保留串行语义
+    this.queues.set(queueKey, settled)
+    // #615③:队尾 settle 后回收 Map 槽——长寿命进程里每个曾被操作的 tabId
+    // 都会留一个条目单调增长。仅当队尾仍是本 promise 时才删(已被新请求替换
+    // 则保持,串行语义不变)。
     void settled.finally(() => {
       if (this.queues.get(queueKey) === settled) this.queues.delete(queueKey)
     })
-    this.queues.set(queueKey, settled)
+
     return current.catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
   }
   // agentBrowserUseEnabled=false(设置「允许 Browser Use」关)时返回空:isEnabled
@@ -501,6 +504,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "release_tabs": return { method: "release", params }
     case "handoff_tabs": return { method: "handoff", params }
     case "resume_handoff_tabs": return { method: "resumeHandoff", params }
+    case "prune_thread_tabs": return { method: "pruneThread", params }
     case "finalize_tabs": return {
       method: "finalize",
       params: {

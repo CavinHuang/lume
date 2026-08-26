@@ -69,6 +69,9 @@ function appendRun(run: AutomationRun): void {
   }
 }
 
+/** #615 测试钩子:appendRun 的吞错契约需直接验证(调用方全在 executeJob 内部)。 */
+export const appendRunForTest = appendRun;
+
 // #555:automation-runs.jsonl 只追加、无轮转,三处高频列表入口(自动化页/routine
 // 执行/cron 工具)全量读盘解析的成本随文件永久恶化。软上限触发的尾部截断使文件
 // 有界:平时零开销(stat 一次),超限才一次性原子重写保留最近窗口,频率随增长

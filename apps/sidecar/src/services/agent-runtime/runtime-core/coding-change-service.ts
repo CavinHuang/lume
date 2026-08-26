@@ -62,11 +62,15 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     child.stdout.setEncoding("utf8");
     let stdout = "";
     let stdoutBytes = 0;
+    let outputDiscarded = false;
     child.stdout.on("data", (chunk) => {
+      if (outputDiscarded) return;
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
       if (stdoutBytes <= ${MAX_GIT_COMMAND_OUTPUT_BYTES}) stdout += chunk;
-      else child.kill();
-
+      else {
+        outputDiscarded = true;
+        child.kill("SIGKILL");
+      }
     });
     const timeout = setTimeout(() => {
       child.kill();
@@ -754,7 +758,7 @@ export async function applyCodingDiffAction(
   if (input.action === "stage") {
     if (!actions.canStage) throw new Error("当前文件没有可 Stage 的变更");
     const unstagedPatch = await runGitCommand(["diff", "--no-ext-diff", "--no-color", "--binary", "--unified=3", "--", safePath], gitRoot);
-    if (unstagedPatch === null) throw new Error("文件变更超过 16MB 补丁上限，无法生成补丁");
+    if (unstagedPatch === null) throw new Error(`文件变更超过 ${MAX_GIT_COMMAND_OUTPUT_BYTES / 1024 / 1024}MB 补丁上限，无法生成补丁`);
     patch = unstagedPatch;
     if (!patch && current.status === "untracked" && input.scope === "file") {
       await runGitAction(["add", "--", safePath], gitRoot);
@@ -764,7 +768,7 @@ export async function applyCodingDiffAction(
   } else {
     if (!actions.canUnstage) throw new Error("当前文件没有可 Unstage 的变更");
     const stagedPatch = await runGitCommand(["diff", "--cached", "--no-ext-diff", "--no-color", "--binary", "--unified=3", "--", safePath], gitRoot);
-    if (stagedPatch === null) throw new Error("文件变更超过 16MB 补丁上限，无法生成补丁");
+    if (stagedPatch === null) throw new Error(`文件变更超过 ${MAX_GIT_COMMAND_OUTPUT_BYTES / 1024 / 1024}MB 补丁上限，无法生成补丁`);
     patch = stagedPatch;
     args = ["apply", "--cached", "--reverse"];
   }
@@ -826,7 +830,7 @@ async function applyCodingDiffSectionAction(
     "--",
     ...safeFiles.map((file) => file.path),
   ], gitRoot);
-  if (patch === null) throw new Error("分区变更超过 16MB 补丁上限，无法生成补丁");
+  if (patch === null) throw new Error(`分区变更超过 ${MAX_GIT_COMMAND_OUTPUT_BYTES / 1024 / 1024}MB 补丁上限，无法生成补丁`);
   if (!patch) throw new Error("没有可 Unstage 的 Diff");
   await runGitAction(["apply", "--cached", "--reverse", "--check", "--whitespace=nowarn", "-"], gitRoot, patch);
   await runGitAction(["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"], gitRoot, patch);
@@ -926,7 +930,7 @@ export async function getCodingRepositoryPublishState(
     return { available: false, reason: "无法读取当前 Git 仓库状态" };
   }
   if (cachedPatch === null) {
-    return { available: false, reason: "暂存区变更超过 16MB 补丁上限，请拆分提交" };
+    return { available: false, reason: `暂存区变更超过 ${MAX_GIT_COMMAND_OUTPUT_BYTES / 1024 / 1024}MB 补丁上限，请拆分提交` };
   }
   const [stagedPaths, unstagedPaths, untrackedPaths, worktreePatch] = await Promise.all([
     runGitCommand(["diff", "--cached", "--name-only", "-z"], gitRoot).then(parseNulPaths),
@@ -936,26 +940,26 @@ export async function getCodingRepositoryPublishState(
     // 指纹缺失时由 applyCodingRepositoryPublishAction 拦截 includeUnstagedChanges。
     runGitCommand(["diff", "HEAD", "--binary", "--full-index", "--no-color"], gitRoot),
   ]);
-  const sortedUntrackedPaths = [...untrackedPaths].sort((left, right) => left.localeCompare(right));
-  const untrackedHashes = new Array<{ path: string; hash: string }>(sortedUntrackedPaths.length);
-  let untrackedCursor = 0;
-  const hashUntrackedFiles = async () => {
-    while (untrackedCursor < sortedUntrackedPaths.length) {
-      const index = untrackedCursor;
-      untrackedCursor += 1;
-      const path = sortedUntrackedPaths[index]!;
-      untrackedHashes[index] = {
-        path,
-        hash: (await runGitCommand(["hash-object", "--", path], gitRoot))?.trim() ?? "missing",
-      };
-    }
-  };
-  await Promise.all(Array.from(
-    { length: Math.min(6, sortedUntrackedPaths.length) },
-    hashUntrackedFiles,
-  ));
   let worktreeHashHex: string | undefined;
   if (worktreePatch !== null) {
+    const sortedUntrackedPaths = [...untrackedPaths].sort((left, right) => left.localeCompare(right));
+    const untrackedHashes = new Array<{ path: string; hash: string }>(sortedUntrackedPaths.length);
+    let untrackedCursor = 0;
+    const hashUntrackedFiles = async () => {
+      while (untrackedCursor < sortedUntrackedPaths.length) {
+        const index = untrackedCursor;
+        untrackedCursor += 1;
+        const path = sortedUntrackedPaths[index]!;
+        untrackedHashes[index] = {
+          path,
+          hash: (await runGitCommand(["hash-object", "--", path], gitRoot))?.trim() ?? "missing",
+        };
+      }
+    };
+    await Promise.all(Array.from(
+      { length: Math.min(6, sortedUntrackedPaths.length) },
+      hashUntrackedFiles,
+    ));
     const worktreeHash = createHash("sha256").update(worktreePatch);
     for (const entry of untrackedHashes) {
       worktreeHash.update("\0").update(entry.path).update("\0").update(entry.hash);
@@ -1010,7 +1014,7 @@ export async function applyCodingRepositoryPublishAction(
   if (input.action !== "push") {
     if (state.indexHash !== input.expectedIndexHash) throw new Error("暂存区已变化，请刷新后重试");
     if (input.includeUnstagedChanges && !state.worktreeHash) {
-      throw new Error("工作区变更超过 16MB 补丁上限，请分次提交");
+      throw new Error(`工作区变更超过 ${MAX_GIT_COMMAND_OUTPUT_BYTES / 1024 / 1024}MB 补丁上限，请分次提交`);
     }
     if (input.includeUnstagedChanges && state.worktreeHash !== input.expectedWorktreeHash) {
       throw new Error("工作区已变化，请刷新后重试");
@@ -1719,7 +1723,12 @@ async function readGitTextSource(
   source: GitReviewContentSource,
 ): Promise<string> {
   if (source.kind === "worktree") return readSafeContent(root, filePath);
-  const result = await runGitCommand(["show", source.kind === "index" ? `:${filePath}` : `${source.ref}:${filePath}`], root);
+  const spec = source.kind === "index" ? `:${filePath}` : `${source.ref}:${filePath}`;
+  // 先以 cat-file -s 预检 blob 大小：>10MB 提前抛错，避免 git show 输出超水位被
+  // runGitCommand 返回 null 后在此处静默成空串（与 10-16MB 区间的报错语义对齐）
+  const blobSize = Number((await runGitCommand(["cat-file", "-s", spec], root))?.trim());
+  if (Number.isFinite(blobSize) && blobSize > MAX_FILE_SIZE_BYTES) throw new Error("文件过大，无法生成 diff");
+  const result = await runGitCommand(["show", spec], root);
   if (result === null) return "";
   if (Buffer.byteLength(result, "utf-8") > MAX_FILE_SIZE_BYTES) throw new Error("文件过大，无法生成 diff");
   return normalizeLineEndings(result);
@@ -1750,7 +1759,7 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
 }
 
 // 生产 sidecar 走 Electron utilityProcess.fork（Node 运行时）时 SHOULD_ISOLATE_GIT_SPAWN=false，
-// 本函数即生产路径；导出仅供测试直接覆盖主线程版水位行为。
+// 本函数即生产路径；导出仅供测试钉死主线程版水位行为。
 export function runGitCommandInline(args: string[], cwd: string): Promise<string | null> {
   return new Promise((resolveResult) => {
     let settled = false;
@@ -1775,11 +1784,17 @@ export function runGitCommandInline(args: string[], cwd: string): Promise<string
     child.stdout?.setEncoding("utf8");
     let stdout = "";
     let stdoutBytes = 0;
+    let outputDiscarded = false;
     child.stdout?.on("data", (chunk) => {
+      if (outputDiscarded) return;
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
       if (stdoutBytes <= MAX_GIT_COMMAND_OUTPUT_BYTES) stdout += chunk;
-      else child.kill();
-
+      else {
+        // 输出已废弃：SIGKILL 硬杀不等优雅退出，并丢弃 kill→close 窗口内的残余 chunk
+        // （与 runGitSearchDiff 的 truncated 早退口径一致）
+        outputDiscarded = true;
+        child.kill("SIGKILL");
+      }
     });
     const timeout = setTimeout(() => {
       child.kill();
@@ -1935,7 +1950,7 @@ function runGitBuffer(args: string[], cwd: string): Promise<Buffer | null> {
     }, GIT_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => {
       size += chunk.length;
-      if (size <= 16 * 1024 * 1024) chunks.push(chunk);
+      if (size <= MAX_GIT_COMMAND_OUTPUT_BYTES) chunks.push(chunk);
       else child.kill();
     });
     child.on("error", () => {
@@ -1944,7 +1959,7 @@ function runGitBuffer(args: string[], cwd: string): Promise<Buffer | null> {
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      resolveResult(code === 0 && size <= 16 * 1024 * 1024 ? Buffer.concat(chunks) : null);
+      resolveResult(code === 0 && size <= MAX_GIT_COMMAND_OUTPUT_BYTES ? Buffer.concat(chunks) : null);
     });
   });
 }

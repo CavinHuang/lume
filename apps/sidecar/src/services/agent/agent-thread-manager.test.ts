@@ -386,6 +386,32 @@ describe("agent-thread-manager advanced ops", () => {
     expect(getPermissionDeniedSummary(session.id)).toBe("");
   });
 
+  test("deleteAgentThread 回收审批会话与拒绝记录（#519）", () => {
+    const session = createAgentThread("权限清理会话");
+    const neighbor = createAgentThread("相邻会话");
+
+    // 预置三 Map 状态 + 相邻线程对照
+    runtimePermissionSessionStore.grantFingerprint(session.id, "fp:bash:alpha");
+    runtimePermissionSessionStore.bypass(session.id);
+    recordPermissionDenial({ threadId: session.id, toolName: "bash", rawInput: "rm -rf /", reasonCode: "denied_by_rule" });
+    runtimePermissionSessionStore.grantFingerprint(neighbor.id, "fp:write:beta");
+    runtimePermissionSessionStore.bypass(neighbor.id);
+    recordPermissionDenial({ threadId: neighbor.id, toolName: "write", rawInput: "/tmp/x", reasonCode: "denied_by_rule" });
+
+    deleteAgentThread(session.id);
+
+    expect(runtimePermissionSessionStore.isFingerprintGranted(session.id, "fp:bash:alpha")).toBeFalse();
+    expect(runtimePermissionSessionStore.isBypassed(session.id)).toBeFalse();
+    expect(getPermissionDeniedSummary(session.id)).toBe("");
+    // 相邻线程的授权/bypass/denials 不受串扰
+    expect(runtimePermissionSessionStore.isFingerprintGranted(neighbor.id, "fp:write:beta")).toBeTrue();
+    expect(runtimePermissionSessionStore.isBypassed(neighbor.id)).toBeTrue();
+    expect(getPermissionDeniedSummary(neighbor.id)).not.toBe("");
+
+    deleteAgentThread(neighbor.id);
+    expect(runtimePermissionSessionStore.isBypassed(neighbor.id)).toBeFalse();
+  });
+
   test("truncateAgentMessagesFrom 应直接重建裁剪后的 transcript", () => {
     const session = createAgentThread("truncate transcript");
     const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);

@@ -136,6 +136,7 @@ class SessionStateManager {
    */
   delete(sessionId: string): void {
     this.states.delete(sessionId);
+    this.saveToDisk();
     log.debug("删除会话状态", { sessionId: sessionId.slice(0, 8) });
   }
 
