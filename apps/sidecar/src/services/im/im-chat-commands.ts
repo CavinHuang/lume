@@ -1,5 +1,5 @@
 import type { AgentThreadMeta, Channel } from "@lume/shared";
-import { normalizeProviderId } from "../channel/model-selection";
+import { normalizeProviderId } from "../infra/model-refs";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 
 /**

@@ -1,9 +1,12 @@
 import type { Channel } from "@lume/shared";
 
-// 模型引用语法与渠道模型解析的单一来源(#581:此前 resolve* 族在
-// runtime-core/model-candidates、parseModelRef 族在 channel/model-selection
-// 各存一份靠注释人肉同步,#504 已为此付过学费)。kernel 与 channel 域均向下
-// 引用本文件,不再互相依赖。
+// resolve*/parseModelRef 两族(渠道默认模型 + 引用语法解析)的单一来源
+// (#581:此前 resolve* 族在 runtime-core/model-candidates、parseModelRef 族
+// 在 channel/model-selection 各存一份靠注释人肉同步,#504 已为此付过学费)。
+// kernel 与 channel 域均向下引用本文件,不再互相依赖。
+// 注意:runtime-core/provider-resolution.ts 另有一套 provider 别名表与
+// parseProviderModelRef(语义不同:无 "/" 返回 null、经 KnownProvider 映射),
+// 不在本文件管辖内——改别名前先确认目标解析器。
 
 export interface ModelRef {
   provider: string;

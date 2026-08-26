@@ -134,6 +134,9 @@ function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", seque
 if ((process as typeof process & { parentPort?: unknown }).parentPort) {
   // #580:出站通知写入器组合根一次注入,取代 agent/automation/desktop-context 三域分散 setter
   setOutboundNotificationWriter(writeNotification);
+  // #578 review fix:proxy 读取器与通知写入器同级顶层注入——若晚于 rpcTransport.listen 注入,
+  // 启动窗口内的出站 fetch 会静默降级直连绕过用户代理(fail-open)。
+  setProxyConfigProvider(getActiveProxyConfig);
   setLogBatchNotificationWriter((batch) => writeNotification("system.log-batch", batch));
   setPersistedSettingsMutationWriter((settings) => new Promise<void>((resolve, reject) => {
     const mutationId = randomUUID();
@@ -490,8 +493,6 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   }
-  // #578:infra/proxy-fetch 经 holder 读代理配置,组合根注入读取器剪断 infra→system 上行边。
-  setProxyConfigProvider(getActiveProxyConfig);
   void initProxySettings().catch((error) => {
     writeLogRecord({
       level: "error",

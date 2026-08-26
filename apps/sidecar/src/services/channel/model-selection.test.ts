@@ -10,11 +10,13 @@ import {
 import {
   normalizeProviderId,
   parseModelRef,
-  resolveAgentDefaultStrategy,
   resolveModelCandidatesForChannel,
   resolveChannelDefaultModelId,
-  resolveChannelModelSelection,
   resolveRequestedModelIdForChannel
+} from "../infra/model-refs";
+import {
+  resolveAgentDefaultStrategy,
+  resolveChannelModelSelection
 } from "./model-selection";
 import { installConnectionVaultKey } from "./connection-credential-store";
 

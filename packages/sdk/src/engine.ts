@@ -2368,14 +2368,14 @@ export class QueryEngine {
     const toolUseNames = new Map<string, string>()
     for (const message of this.messages) {
       if (message.role !== 'assistant' || !Array.isArray(message.content)) continue
-      for (const block of message.content as any[]) {
+      for (const block of message.content) {
         if (block.type === 'tool_use') toolUseNames.set(block.id, block.name)
       }
     }
 
     for (const message of this.messages) {
-      const content = Array.isArray(message.content) ? message.content : [{ type: 'text', text: String(message.content) }]
-      for (const block of content as any[]) {
+      const content = Array.isArray(message.content) ? message.content : [{ type: 'text' as const, text: String(message.content) }]
+      for (const block of content) {
         if (block.type === 'tool_use') {
           const estimated = Math.ceil(JSON.stringify(block).length / 4)
           toolCallTokens += estimated

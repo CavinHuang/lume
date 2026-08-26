@@ -1,17 +1,4 @@
 import type { LumeConfigAgentDefaultStrategy, ProviderType } from "@lume/shared";
-
-// 模型引用语法与渠道模型解析纯函数簇已合并下沉 infra/model-refs(#581:
-// 此前与 runtime-core/model-candidates 两处各存一份靠注释人肉同步);
-// 此处 re-export 维持既有 import 路径。
-export {
-  parseModelRef,
-  normalizeProviderId,
-  resolveChannelDefaultModelId,
-  resolveRequestedModelIdForChannel,
-  resolveModelCandidatesForChannel
-} from "../infra/model-refs";
-export type { ModelRef } from "../infra/model-refs";
-
 import { parseModelRef } from "../infra/model-refs";
 
 export type AgentDefaultStrategySource = "thread-override" | "global-default" | "empty";
