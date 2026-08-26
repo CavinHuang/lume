@@ -234,6 +234,18 @@ interface BodyPart {
   size: number | null;
 }
 
+/**
+ * 已观测的邮箱状态(账号+文件夹 → UIDVALIDITY)。读动作建立基准,写动作前比对:
+ * 文件夹被删除重建后 UID 计数器归位,上轮记住的 UID N 与本轮的 UID N 是两封不同
+ * 邮件——叠加删除类动作为不可逆操作,过期 UID 的后果不可恢复。进程级缓存同时
+ * 覆盖同会话中途重建与 sidecar 重启后凭旧记忆直写的两个窗口。
+ */
+const observedMailboxUidValidity = new Map<string, string>();
+
+function mailboxStateKey(email: string, folder: string): string {
+  return `${email}\0${folder}`;
+}
+
 export function createMailProtocol(config: MailProtocolConfig, deps: MailProtocolDependencies = {}): MailProtocol {
   return {
     async validateImapCredential(credential) {
@@ -421,6 +433,11 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
             uidValidity: true,
           }),
         );
+        // 与 withMailbox 读路径同权:显式查状态也建立写前比对基准
+        const uidValidity = readBigIntString(status?.uidValidity);
+        if (uidValidity !== null) {
+          observedMailboxUidValidity.set(mailboxStateKey(credential.email, folder), uidValidity);
+        }
         return {
           folder,
           messages: readInteger(status?.messages),
@@ -627,13 +644,37 @@ async function withMailbox<T>(
   callback: (client: RuntimeImapClient) => Promise<T>,
 ) {
   return await withImapClient(config, deps, credential, async (client) => {
+    let opened: Record<string, unknown> | null;
     try {
-      await client.mailboxOpen(folder, { readOnly });
+      opened = toRecord(await client.mailboxOpen(folder, { readOnly }));
     } catch (error) {
       if (isFolderMissingError(error)) {
         throw new MailProtocolError("folder_not_found", "Mail folder does not exist.");
       }
       throw error;
+    }
+
+    const uidValidity = readBigIntString(opened?.uidValidity);
+    if (uidValidity !== null) {
+      const key = mailboxStateKey(credential.email, folder);
+      const known = observedMailboxUidValidity.get(key);
+      if (!readOnly) {
+        // 变更类动作 fail-closed:基准缺失(进程重启后凭旧记忆直写)或失配
+        // (文件夹重建致计数器重置)都拒绝,要求重新 search 建立新鲜基准
+        if (known === undefined) {
+          throw new MailProtocolError(
+            "uid_validity_changed",
+            `No mailbox state observed for this folder in the current session. Run search_emails first and retry with fresh UIDs.`,
+          );
+        }
+        if (known !== uidValidity) {
+          throw new MailProtocolError(
+            "uid_validity_changed",
+            `The folder was recreated or reset (UIDVALIDITY changed): UIDs from earlier searches are stale. Re-run search_emails and retry with fresh UIDs.`,
+          );
+        }
+      }
+      observedMailboxUidValidity.set(key, uidValidity);
     }
 
     return await callback(client);

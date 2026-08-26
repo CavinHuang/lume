@@ -817,6 +817,9 @@ export function mapProtocolError(
       case "trash_missing":
         // 服务器未提供 \Trash:delete_email 拒绝硬删,属可向用户解释的输入/配置问题
         return new ProviderRequestError(400, error.message);
+      case "uid_validity_changed":
+        // 邮箱重建/无基准:UID 已不可信,拒绝是可自纠冲突(重新 search 后重试)
+        return new ProviderRequestError(409, error.message);
       case "blocked_host":
         // The mailbox host came from the connected credential, so a host the
         // egress policy refuses is invalid input, not an upstream failure — the
