@@ -156,13 +156,19 @@ export async function withRetry<T>(
  * Check if an error is a "prompt too long" error.
  */
 export function isPromptTooLongError(err: any): boolean {
-  // 413 is unambiguous. For 400, structured OpenAI-style codes take priority and
-  // the message match stays a fallback — OpenAI-compat gateways rephrase the
-  // Anthropic wording freely (#567 item 1).
-  if (err?.status === 413) return true
-  if (err?.status !== 400) return false
+  const message = String(err?.error?.error?.message || err?.error?.message || err?.message || '')
+  // An HTML body means a gateway/proxy error page, not a provider API error:
+  // it carries no token semantics and recovery would just burn three summary
+  // calls before the breaker trips (#709 item 3). It vetoes both the 413 fast
+  // path and the message regex; a structured context_length_exceeded code on a
+  // 400 still wins over an incidental <html> fragment in the message text.
+  const hasHtmlBody = /<html/i.test(message)
+  if (err?.status === 413) return !hasHtmlBody
+  // TGI's router answers ValidationError with HTTP 422 (unlike OpenAI-compat
+  // gateways that normalize to 400) — without it the TGI wordings below are
+  // unreachable against a direct self-hosted endpoint (#725 review S3).
+  if (err?.status !== 400 && err?.status !== 422) return false
   const code = String(err?.error?.error?.code || err?.error?.code || '')
   if (code.includes('context_length_exceeded')) return true
-  const message = err?.error?.error?.message || err?.error?.message || err?.message || ''
-  return /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large/i.test(String(message))
+  return !hasHtmlBody && /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large|exceeds the maximum number of tokens|must have less than \d+ tokens|input token count|max_new_tokens.{0,3}must be/i.test(message)
 }

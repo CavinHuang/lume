@@ -108,7 +108,8 @@ export const NotebookEditTool = defineTool({
       cell_number: { type: 'number' },
       source: { type: 'string' },
     },
-    required: ['new_source'],
+    // new_source 不设 required：delete 模式合法地不带内容，严格 provider 会拦掉
+    // 合法 delete；运行时校验（validateInput）按模式精确把关（#538）
   },
   isReadOnly: false,
   isConcurrencySafe: false,

@@ -30,6 +30,7 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
 } from "@lume/shared";
+import { isBuiltinBrowserToolName } from "@lume/shared";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -86,7 +87,6 @@ import {
   buildPluginIdIndex,
   PLUGIN_MCP_WORKSPACE_SLUG,
 } from "../plugins/plugin-mcp-bridge.js";
-import { clearRuntimeToolDescriptors } from "../tools/tool-descriptor-session";
 import { getThreadFileStateCache } from "../tools/thread-file-state-cache";
 import {
   createCodingRunTracker,
@@ -659,7 +659,7 @@ async function assembleSessionContext({
   initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
   subagentDefinition: AgentDefinition | undefined;
 }) {
-  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+  const runtimeSkills = toolset.availableToolNames.some(isBuiltinBrowserToolName)
     && !input.browserAttachments?.length
     ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
     : surfaceSkills;
@@ -1396,11 +1396,8 @@ async function createRuntimeCoreSessionImpl(
           messageMetadata: input.messageMetadata,
         },
       }),
-    registerGeneratedRuntimeTools: (tools) =>
-      ToolRuntime.registerGeneratedTools({
-        tools,
-        sessionId: input.lumeSessionId,
-      }),
+    // registerGeneratedRuntimeTools 不再需要：生成的 ToolSearch/ExecuteTool 定义自带
+    // runtimeMetadata，canUseTool 直接从定义组装 descriptor（#541 双载体合一）
     ...(input.userMessage?.trim() ? { completionGuard } : {}),
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
@@ -1436,9 +1433,6 @@ async function createRuntimeCoreSessionImpl(
 
   const agent = createAgent(agentOptions);
   pendingCleanup.push(() => agent.close());
-  pendingCleanup.push(() => {
-    clearRuntimeToolDescriptors(input.lumeSessionId);
-  });
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 
@@ -1478,9 +1472,9 @@ async function createRuntimeCoreSessionImpl(
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      clearRuntimeToolDescriptors(input.lumeSessionId);
       // file-access-ledger 与线程级 fileStateCache 不随 run 清理（#569）：
       // 跨消息 stale 防护依赖记录存活；清理挂点=线程删除。
+      // descriptor-session 已随 #541 双载体合一删除，无清理挂点。
     },
   };
 

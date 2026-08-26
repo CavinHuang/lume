@@ -1,17 +1,21 @@
 import { randomUUID } from "node:crypto"
 import { withRepeatGuardState } from "@lume/agent-sdk"
 import type { ToolDefinition, ToolInputSchema, ToolResult } from "@lume/agent-sdk"
-import type { BrowserBackendDescriptor, BrowserTabDescriptor } from "@lume/shared"
+import {
+  BROWSER_MCP_SERVER_ID,
+  BROWSER_TOOL_NAME_PREFIX,
+  type BrowserBackendDescriptor,
+  type BrowserTabDescriptor,
+} from "@lume/shared"
 import { BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared"
+// #601 维护性 review：工具名唯一真源在 @lume/shared（LUME_BROWSER_TOOL_NAMES）——
+// 新增工具时 shared 一处登记，web 映射哨兵测试自动盯住
+import { LUME_BROWSER_TOOL_NAMES as BROWSER_TOOL_NAMES } from "@lume/shared"
 import type { BrowserBroker } from "../../../browser/browser-broker"
 import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder"
 import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "./browser-tool-session"
 
-export const BROWSER_MCP_SERVER_ID = "browser"
-const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
-// #601 维护性 review:工具名唯一真源在 @lume/shared（LUME_BROWSER_TOOL_NAMES）——
-// 新增工具时 shared 一处登记，web 映射哨兵测试自动盯住
-import { LUME_BROWSER_TOOL_NAMES as BROWSER_TOOL_NAMES } from "@lume/shared"
+const WRAPPER_PREFIX = BROWSER_TOOL_NAME_PREFIX
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
 type BrowserToolBroker = Pick<BrowserBroker, "dispatch" | "listBackends">

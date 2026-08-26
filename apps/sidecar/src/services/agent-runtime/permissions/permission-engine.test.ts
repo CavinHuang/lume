@@ -275,7 +275,8 @@ describe("PermissionEngine", () => {
       context: { threadId: "thread-1", cwd: "/tmp/project" }
     })).resolves.toMatchObject({
       status: "approval_required",
-      reasonCode: "metadata_requires_approval",
+      reasonCode: "classifier_disabled_requires_approval",
+      explanation: "风险分类器已关闭，该操作需要用户确认",
       riskLevel: "high"
     });
     expect(classifierCalls).toBe(0);

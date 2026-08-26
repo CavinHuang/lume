@@ -1,9 +1,13 @@
 import { createCipheriv, createDecipheriv, createHash, randomBytes } from "node:crypto";
+import { createLogger } from "./logger";
 
 const AES_ALGO = "aes-256-gcm";
 const V2_PREFIX = "enc:v2:";
 
+const secretCryptoLog = createLogger("secret-crypto");
+
 let installedKey: Buffer | undefined;
+let legacyFallbackWarned = false;
 
 /**
  * 主进程经 RPC 注入的应用级随机密钥（safeStorage 包裹落盘，仅原机可解）。
@@ -68,8 +72,15 @@ function unseal(key: Buffer, payload: Buffer): string {
 
 export function encryptSecret(plainSecret: string): string {
   const key = getV2Key();
-  // 无注入且无显式覆盖时保持 legacy 行为（开发/CI 场景），不阻塞功能
-  if (!key) return seal(getLegacyKey(), plainSecret);
+  // 无注入且无显式覆盖时保持 legacy 行为（开发/CI 场景），不阻塞功能；
+  // 生产形态下若写密请求抢在密钥注入 RPC 之前会静默落弱密文——至少留痕
+  if (!key) {
+    if (!legacyFallbackWarned) {
+      legacyFallbackWarned = true;
+      secretCryptoLog.warn("encryptSecret fell back to legacy derivable key: v2 key not injected yet (startup race or desktop key missing)");
+    }
+    return seal(getLegacyKey(), plainSecret);
+  }
   return V2_PREFIX + seal(key, plainSecret);
 }
 

@@ -1,7 +1,7 @@
 import { getEffectiveLumeConfig, updateWebSearchConfig } from '@/lib/desktop-api/lume-config'
 import { testSearchBackend } from '@/lib/desktop-api/system'
 import * as React from 'react'
-import { Check, Eye, EyeOff, Loader2, Save, Search, X } from 'lucide-react'
+import { Check, Eye, EyeOff, Loader2, Save, X } from 'lucide-react'
 import { toast } from 'sonner'
 import type {
   LumeConfigWebSearchSection,
@@ -24,36 +24,6 @@ interface ProviderMeta {
   linkLabel: string
   badge?: string
 }
-
-const GUANLAN_PROVIDER: ProviderMeta = {
-  id: 'guanlan',
-  label: '观澜 / Guanlan',
-  description: '基于第三方开源项目「观澜 Guanlan」，Alice 启动时自动安装，无需配置。',
-  needsApiKey: false,
-  link: 'https://github.com/shenyangs/Guanlan',
-  linkLabel: 'github.com/shenyangs/Guanlan →',
-  badge: '第三方',
-}
-
-const GUANLAN_BADGES = ['第三方', '免费', '无需 Key']
-const GUANLAN_CAPABILITIES = [
-  {
-    name: 'guanlan_search',
-    description: '中文搜索 — Baidu/Bing/DDG 多后端聚合，信源路由与分类',
-  },
-  {
-    name: 'guanlan_read',
-    description: '网页阅读 — Jina Reader + 直连 HTML 降级链，中文网页质量检测',
-  },
-  {
-    name: 'guanlan_hotnews',
-    description: '中文热榜 — 百度/微博/B站/IT之家/V2EX 多源聚合',
-  },
-  {
-    name: 'guanlan_research',
-    description: '研究证据包 — 自动路由信源、拆分查询、多角色搜索',
-  },
-]
 
 const SEARCH_PROVIDERS: ProviderMeta[] = [
   {
@@ -113,7 +83,7 @@ const SEARCH_PROVIDERS: ProviderMeta[] = [
   },
 ]
 
-const PROVIDERS: ProviderMeta[] = [GUANLAN_PROVIDER, ...SEARCH_PROVIDERS]
+const PROVIDERS: ProviderMeta[] = SEARCH_PROVIDERS
 
 type TestStatus = 'idle' | 'testing' | 'ok' | 'fail' | 'empty'
 
@@ -456,84 +426,6 @@ export function WebSearchSettings() {
           </div>
         </div>
       </SettingsCard>
-
-      <SettingsCard title="中文互联网搜索增强" description={GUANLAN_PROVIDER.description}>
-        {(() => {
-          const meta = GUANLAN_PROVIDER
-          const draft = drafts[meta.id]
-
-          return (
-            <div
-              className={cn(
-                'lume-subpanel p-5 transition-opacity',
-                draft.enabled ? '' : 'opacity-50'
-              )}
-            >
-              <div className="flex items-start gap-4">
-                <div className="mt-1 hidden h-8 w-8 shrink-0 items-center justify-center rounded-[10px] bg-[color-mix(in_oklab,var(--brand)_16%,var(--surface-1))] text-[var(--brand)] sm:flex">
-                  <Search size={16} />
-                </div>
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex min-w-0 flex-wrap items-center gap-3">
-                      <p className="text-[15px] font-semibold text-[var(--text-1)]">{meta.label}</p>
-                      {GUANLAN_BADGES.map((badge) => (
-                        <span
-                          key={badge}
-                          className={cn(
-                            'rounded-[6px] px-2 py-0.5 text-[12px] font-semibold',
-                            badge === '第三方'
-                              ? 'bg-orange-500/10 text-orange-500'
-                              : badge === '免费'
-                                ? 'bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] text-[var(--lume-success)]'
-                                : 'bg-[color-mix(in_oklab,var(--brand)_12%,var(--surface-1))] text-[var(--brand)]'
-                          )}
-                        >
-                          {badge}
-                        </span>
-                      ))}
-                    </div>
-                    <Switch
-                      checked={draft.enabled}
-                      onCheckedChange={(checked) => void handleToggleProvider(meta.id, checked)}
-                      className="mt-0.5 shrink-0"
-                    />
-                  </div>
-                  <p className="mt-2 text-[13px] leading-6 text-[var(--text-3)]">
-                    观澜是一个开源的中文互联网研究工具（MIT License），让 AI Agent 看懂中文互联网。Alice 内置了以下能力：
-                  </p>
-                  <ul className="mt-3 space-y-2 text-[13px] leading-5 text-[var(--text-3)]">
-                    {GUANLAN_CAPABILITIES.map((item) => (
-                      <li key={item.name} className="flex gap-3">
-                        <span className="mt-[8px] h-1.5 w-1.5 shrink-0 rounded-full bg-[var(--text-2)]" />
-                        <span>
-                          <code className="rounded-[4px] bg-[color-mix(in_oklab,var(--brand)_8%,transparent)] px-1 py-0.5 font-mono text-[13px] text-[var(--text-1)]">
-                            {item.name}
-                          </code>
-                          <span className="ml-2">{item.description}</span>
-                        </span>
-                      </li>
-                    ))}
-                  </ul>
-                  <div className="mt-4 flex flex-wrap items-center gap-3 border-t border-[var(--border)] pt-3">
-                    <a
-                      href={meta.link}
-                      className="font-mono text-[13px] text-[var(--text-1)] hover:text-[var(--brand)] hover:underline"
-                      onClick={(e) => {
-                        e.preventDefault()
-                        window.open(meta.link, '_blank')
-                      }}
-                    >
-                      {meta.linkLabel}
-                    </a>
-                    <span className="text-[13px] text-[var(--text-3)]">MIT License</span>
-                  </div>
-                </div>
-              </div>
-            </div>
-          )
-        })()}
-      </SettingsCard>
     </div>
   )
 }
@@ -591,7 +483,7 @@ function SettingsCard({ title, description, children }: { title: string; descrip
 function buildInitialDrafts(): DraftMap {
   const drafts: Partial<DraftMap> = {}
   for (const meta of PROVIDERS) {
-    const enabledByDefault = meta.id === 'guanlan' ? false : !meta.needsApiKey
+    const enabledByDefault = !meta.needsApiKey
     drafts[meta.id] = { enabled: enabledByDefault, apiKey: '', hasExistingKey: false }
   }
   return drafts as DraftMap
@@ -610,7 +502,7 @@ function applyConfig(
     const next: Partial<DraftMap> = {}
     for (const meta of PROVIDERS) {
       const entry = section?.providers?.[meta.id]
-      const enabledByDefault = meta.id === 'guanlan' ? false : !meta.needsApiKey
+      const enabledByDefault = !meta.needsApiKey
       next[meta.id] = {
         enabled: entry?.enabled ?? enabledByDefault,
         apiKey: '',
