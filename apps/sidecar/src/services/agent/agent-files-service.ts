@@ -494,13 +494,44 @@ function validateNewName(newName: string): string {
   return trimmed;
 }
 
-function movePathWithFallback(sourcePath: string, targetPath: string): void {
+// #552:Windows 杀毒/索引器对刚写入文件的瞬时句柄占用表现为 EPERM/EBUSY,
+// renameSync 直接硬失败且 copy+delete 同样会被占用拖死。短退避重试吸收瞬态,
+// 仍占用再降级(降级路径对可读文件即可成功)。
+const MOVE_BUSY_RETRY_DELAYS_MS = [50, 250];
+
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+/**
+ * #552 导出仅供测试:重试与降级策略需要注入 rename 失败序列验证。
+ */
+export function movePathWithFallback(
+  sourcePath: string,
+  targetPath: string,
+  rename: typeof renameSync = renameSync
+): void {
+  let needsFallback = false;
   try {
-    renameSync(sourcePath, targetPath);
+    rename(sourcePath, targetPath);
     return;
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EXDEV") {
+    if (code === "EXDEV") {
+      needsFallback = true;
+    } else if (code === "EPERM" || code === "EBUSY") {
+      for (const delay of MOVE_BUSY_RETRY_DELAYS_MS) {
+        sleepSync(delay);
+        try {
+          rename(sourcePath, targetPath);
+          return;
+        } catch (retryError) {
+          const retryCode = (retryError as NodeJS.ErrnoException).code;
+          if (retryCode !== "EPERM" && retryCode !== "EBUSY") throw retryError;
+        }
+      }
+      needsFallback = true;
+    } else {
       throw error;
     }
   }
