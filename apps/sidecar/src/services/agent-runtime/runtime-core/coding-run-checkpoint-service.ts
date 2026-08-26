@@ -266,9 +266,9 @@ function readBaselineContent(
     probe?.gitRoots.set(resolve(absolutePath), gitRoot);
   }
   if (!gitRoot) return null;
-  // #594 收口:git toplevel 返回真实路径(macOS /var→/private/var),absolutePath
-  // 可能是词法路径——归属判定与 relative() 必须同侧规范化,否则会把同仓文件误判
-  // 为仓外、或产出 ../.. 形态让 git show 恒败,基线恢复整条失效
+  // #728:git toplevel 返回真实路径(macOS /var→/private/var),absolutePath 可能是
+  // 词法路径——归属判定与 relative() 必须同侧规范化,否则会把同仓文件误判为仓外、
+  // 或产出 ../.. 形态的仓库外相对路径让 git show 恒败,基线恢复整条失效
   const canonicalRoot = canonicalizeExistingPath(gitRoot);
   const canonicalPath = canonicalizeExistingPath(absolutePath);
   if (!isPathInside(canonicalRoot, canonicalPath)) return null;

@@ -32,6 +32,7 @@ export type RuntimeEventType =
   | "permission.resolved"
   | "ask_user.requested"
   | "memory.context.used"
+  | "runtime.warning"
   | "memory.changed"
   | "memory.job.progress"
   | "memory.job.completed"
@@ -210,8 +211,8 @@ export interface ToolPermissionResolvedRuntimeEvent extends RuntimeEventBase {
   toolCallId?: string;
   requestId: string;
   toolName?: string;
-  decision: "allow_once" | "allow_always" | "deny";
-  source: "ui" | "im";
+  decision: "allow_once" | "allow_always" | "deny" | "cancelled";
+  source: "ui" | "im" | "system";
 }
 
 export interface PlanPreviewRuntimeEvent extends RuntimeEventBase {
@@ -836,6 +837,13 @@ export interface MemoryContextUsedRuntimeEvent extends RuntimeEventBase {
   hidden?: boolean;
 }
 
+/** 运行环境级警告（#560）：MCP 连接失败等原本只进 system prompt/日志的可见性投影 */
+export interface RuntimeWarningRuntimeEvent extends RuntimeEventBase {
+  type: "runtime.warning";
+  message: string;
+  source?: string;
+}
+
 export interface MemoryChangedRuntimeEvent extends RuntimeEventBase {
   type: "memory.changed";
   actor: "main_agent" | "background_extract" | "consolidation" | "user" | "migration";
@@ -1042,6 +1050,7 @@ export type LumeRuntimeEvent =
   | RunFailedRuntimeEvent
   | RunCancelledRuntimeEvent
   | MemoryContextUsedRuntimeEvent
+  | RuntimeWarningRuntimeEvent
   | MemoryChangedRuntimeEvent
   | MemoryJobProgressRuntimeEvent
   | MemoryJobCompletedRuntimeEvent

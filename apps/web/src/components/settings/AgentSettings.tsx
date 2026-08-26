@@ -1468,11 +1468,19 @@ function ProviderListItem({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-semibold leading-5">{row.label}</span>
-          <span className="block truncate text-[11px] leading-4 text-[var(--text-3)]">
-            {row.channel ? `${row.channel.models?.length ?? 0} 模型` : '未配置'}
+          <span
+            className="block truncate text-[11px] leading-4 text-[var(--text-3)]"
+            title={unavailable ? row.channel?.healthMessage : undefined}
+          >
+            {unavailable && row.channel?.healthMessage
+              ? row.channel.healthMessage
+              : row.channel ? `${row.channel.models?.length ?? 0} 模型` : '未配置'}
           </span>
         </span>
-        <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]">
+        <span
+          className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]"
+          title={unavailable ? row.channel?.healthMessage : undefined}
+        >
           <span className={cn(
             'size-1.5 rounded-full',
             unavailable

@@ -43,7 +43,7 @@ describe('RuntimeEvent UI boundary', () => {
     const content = source('apps/web/src/hooks/useGlobalAgentListeners.ts')
 
     expect(content).toContain("event.type === 'permission.resolved'")
-    expect(content).toContain('removePendingToolPermissionEverywhere(prev, event.requestId)')
+    expect(content).toContain('removePendingToolPermissionEverywhere(prev, event.requestId, threadId)')
   })
 
   test('agent message projection has no legacy run-event projector', () => {

@@ -148,10 +148,16 @@ export function removePendingToolPermission(
 export function removePendingToolPermissionEverywhere(
   prev: Record<string, AgentPendingInteractiveState>,
   requestId: string,
+  /** 二轮 review(安全 F4):限定归属线程,防 provider 顺序 id 跨线程互摘横幅 */
+  expectedThreadId?: string,
 ): Record<string, AgentPendingInteractiveState> {
   let changed = false
   const next: Record<string, AgentPendingInteractiveState> = {}
   for (const [threadId, state] of Object.entries(prev)) {
+    if (expectedThreadId && threadId !== expectedThreadId) {
+      next[threadId] = state
+      continue
+    }
     const currentPermissions = state.toolPermissions ?? []
     const toolPermissions = currentPermissions.filter((item) => item.requestId !== requestId)
     changed ||= toolPermissions.length !== currentPermissions.length
