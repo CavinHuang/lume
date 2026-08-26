@@ -22,7 +22,7 @@ import {
   writeLogRecord
 } from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
-import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
+import { createProcessRpcTransport, MAX_RPC_MESSAGE_UNITS } from "./rpc/process-transport";
 import { browserRpcErrorFromPayload, classifyBrowserRequestTimeout, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
@@ -198,7 +198,7 @@ function envAutostartEnabled(key: string, defaultEnabled: boolean): boolean {
 
 async function handleRpcLine(line: string): Promise<void> {
   // 统一 chokepoint：超限消息不进 JSON.parse（防解析期超量内存分配）
-  if (line.length > MAX_RPC_MESSAGE_BYTES) {
+  if (line.length > MAX_RPC_MESSAGE_UNITS) {
     writeResponse({
       error: { code: "E_MESSAGE_TOO_LARGE", message: "RPC message exceeds size limit." }
     });
