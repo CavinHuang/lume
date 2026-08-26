@@ -1591,9 +1591,8 @@ describe("Agent session message uuid realignment (#363)", () => {
   })
 
   test("live push path persists the whitelisted _meta shape (#725 review R9)", async () => {
-    // MetaTool 须留在 eager 池：默认 tst 模式会把它延迟进 ToolSearch，引擎直调即 Unknown tool
-    const previousToolSearchMode = process.env.ENABLE_TOOL_SEARCH
-    process.env.ENABLE_TOOL_SEARCH = "standard"
+    // MetaTool 须留在 eager 池：默认 tst 模式会把它延迟进 ToolSearch，引擎直调即 Unknown tool。
+    // 用显式 toolSearchMode 选项替代 env 操控（#725 review S5 根治项）。
     const metaTool: ToolDefinition = {
       name: "MetaTool",
       description: "emits private _meta",
@@ -1616,6 +1615,7 @@ describe("Agent session message uuid realignment (#363)", () => {
       tools: [metaTool],
       provider: new ToolUseOnceProvider(),
       canUseTool: async () => ({ behavior: "allow" }),
+      toolSearchMode: "standard",
     })
 
     try {
@@ -1637,8 +1637,6 @@ describe("Agent session message uuid realignment (#363)", () => {
       })
     } finally {
       await agent.close()
-      if (previousToolSearchMode === undefined) delete process.env.ENABLE_TOOL_SEARCH
-      else process.env.ENABLE_TOOL_SEARCH = previousToolSearchMode
     }
   })
 
