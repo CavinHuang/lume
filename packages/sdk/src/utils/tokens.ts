@@ -2,9 +2,10 @@
  * Token Estimation & Counting
  *
  * Provides rough token estimation (character-based) and native counting when
- * available. Native counts are exact for inputs ≤8KB; larger inputs are
- * counted in chunks (see countTokensNativeChunked) and become close
- * approximations — consumed only by thresholds/display, never billing.
+ * available. Native counts use the o200k_base encoding (GPT-4o family), are
+ * exact for inputs ≤8K UTF-16 code units, and become chunked approximations
+ * beyond that (see countTokensNativeChunked below) — consumed only by
+ * thresholds/display, never billing.
  */
 
 import { countStringTokens } from '@lume/natives'
@@ -53,10 +54,12 @@ export function estimateTokens(text: string): number {
 /**
  * 原生计数入口的分块保护（#736）：tiktoken 对「单 regex piece 内无换行的长
  * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。定长
- * 硬切把单次 encode 规模压回线性安全区——8KB 下 1MiB 单行实测 ~2.4s，且
- * 漂移仅 +0.009%（曾试过换行优先切块：空白密集 markdown 反而 +6~10%，
- * 因空行游程被人工打断丢失 BPE 合并；定长硬切两项全优故弃之）。
- * 近似只服务阈值/展示估算，恒保守多计无资源越界风险。
+ * 硬切把单次 encode 规模压回线性安全区——8K code units 下 1MiB 单行实测
+ * ~2.4s，漂移仅 +0.009%（曾试过换行优先切块：空白密集 markdown 反而
+ * +6~10%，因空行游程被人工打断丢失 BPE 合并；定长硬切两项全优故弃之）。
+ * LIMIT 按 JS string 的 UTF-16 code unit 计（非字节）：CJK 文本同长度下
+ * 实际字节数更高，只会更早进入分块，方向安全。近似只服务阈值/展示估算，
+ * 恒保守多计无资源越界风险。
  */
 const TOKEN_NATIVE_PIECE_LIMIT = 8 * 1024
 
