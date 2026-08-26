@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { rename as renamePromise, unlink as unlinkPromise, writeFile as writeFilePromise } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainEvent } from "electron"
 import {
@@ -5043,6 +5044,13 @@ class BrowserOperationJournal {
   private entries: JournalEntry[] = []
   private readonly path: string | null
   private readonly encryption?: BrowserRuntimeOptions["journalEncryption"]
+  // #612:变更型动作每次 write/complete 都在主进程热路径同步全量重写 500 条加密
+  // 数组(加密+writeFileSync+renameSync),动作密集时卡 UI 事件循环。改单飞异步
+  // 落盘:内存态即时生效,磁盘滞后一个微批;journal 仅审计消费(无读取方),
+  // 进程退出丢最后一帧可接受,exit 钩子同步兜底一次。
+  private flushing = false
+  private dirtyEpoch = 0
+  private flushedEpoch = 0
   constructor(configDir: () => string, encryption?: BrowserRuntimeOptions["journalEncryption"]) {
     this.encryption = encryption
     if (!encryption?.available || !encryption.encrypt) { this.path = null; return }
@@ -5058,15 +5066,40 @@ class BrowserOperationJournal {
   write(entry: JournalEntry): void {
     if (!this.path || !this.encryption) return
     this.entries = [...this.entries.filter((item) => item.operationId !== entry.operationId), entry].slice(-500)
-    const temporary = `${this.path}.${process.pid}.tmp`
-    writeFileSync(temporary, JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") }), "utf8")
-    try { renameSync(temporary, this.path) } catch { try { unlinkSync(temporary) } catch { /* best effort cleanup */ } }
+    this.scheduleFlush()
   }
   complete(operationId: string): void {
     if (!this.path || !this.encryption) return
     this.entries = this.entries.filter((entry) => entry.operationId !== operationId)
-    writeFileSync(this.path + ".tmp", JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") }), "utf8")
-    try { renameSync(this.path + ".tmp", this.path) } catch { try { unlinkSync(this.path + ".tmp") } catch { /* best effort cleanup */ } }
+    this.scheduleFlush()
+  }
+  private scheduleFlush(): void {
+    this.dirtyEpoch += 1
+    if (this.flushScheduled) return
+    this.flushScheduled = true
+    queueMicrotask(() => { void this.flushNow() })
+  }
+  private flushing = false
+  private flushedEpoch = 0
+  private async flushNow(): Promise<void> {
+    this.flushing = true
+    try {
+      const epochAtSnapshot = this.dirtyEpoch
+      if (!this.path || !this.encryption?.encrypt) return
+      const payload = JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") })
+      const temporary = `${this.path}.${process.pid}.tmp`
+      await writeFilePromise(temporary, payload, "utf8")
+      try { await renamePromise(temporary, this.path) } catch { await unlinkPromise(temporary).catch(() => {}) }
+      this.flushedEpoch = epochAtSnapshot
+    } finally {
+      this.flushing = false
+      // 落盘期间又有新写入:再排一轮把最新内存态带走;否则解除排程标记
+      if (this.flushedEpoch !== this.dirtyEpoch) {
+        queueMicrotask(() => { void this.flushNow() })
+      } else {
+        this.flushScheduled = false
+      }
+    }
   }
 }
 
