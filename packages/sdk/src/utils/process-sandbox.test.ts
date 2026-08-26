@@ -71,9 +71,9 @@ describe("OS process sandbox", () => {
     expect(existsSync(recoverable)).toBeTrue();
   });
 
-  test("proves allowed read/write and denied-root enforcement when MXC is supported", async () => {
-    if (!getProcessSandboxSupport().available) return;
-    if (!seatbeltUsable) return;
+  // 可见 skip(bun:test 不认 options.skip 对象,须用 skipIf):macOS 26+ 上本
+  // 断言会长期跳过,CI 报表须能区分 skipped 与 passed
+  test.skipIf(!getProcessSandboxSupport().available || !seatbeltUsable)("proves allowed read/write and denied-root enforcement when MXC is supported", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-process-sandbox-test-"));
     roots.push(root);
     const allowed = join(root, "allowed");

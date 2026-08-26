@@ -681,7 +681,8 @@ describe("file tools", () => {
     expect(pageResult._meta?.read).toMatchObject({ kind: "pdf", pages: [1] });
   });
 
-  test("writes through a symlink to its target instead of replacing the link (#367)", { skip: !symlinksSupported }, async () => {
+  // bun:test 不认 options.skip 对象(静默执行),须用 skipIf 才能真正跳过
+  test.skipIf(!symlinksSupported)("writes through a symlink to its target instead of replacing the link (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const cache = new FileStateCache();
@@ -696,7 +697,7 @@ describe("file tools", () => {
     expect(await readFile(join(root, "target.txt"), "utf8")).toBe("after\n");
   });
 
-  test("edits through a symlink while keeping the link intact (#367)", { skip: !symlinksSupported }, async () => {
+  test.skipIf(!symlinksSupported)("edits through a symlink while keeping the link intact (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const cache = new FileStateCache();

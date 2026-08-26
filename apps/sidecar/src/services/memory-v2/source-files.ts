@@ -72,12 +72,18 @@ function listScope(scope: "workspace" | "global", workspaceSlug?: string): Memor
 }
 
 function walkSourceTarget(target: string, root: string, scopeId: string): MemorySourceFile[] {
+  let canonical: string;
+  try {
+    canonical = realpathSync(target);
+  } catch {
+    // 竞态删除窗口：单条目标消失只跳过自身，不让整次 listing 失败
+    return [];
+  }
   if (!existsSync(target)) return [];
   const stat = lstatSync(target);
   if (stat.isSymbolicLink()) return [];
-  const canonical = realpathSync(target);
   if (canonical !== root && !canonical.startsWith(`${root}${sep}`)) return [];
-  if (stat.isFile()) return [toSourceFile(target, root, scopeId, stat.size, stat.mtime.toISOString())];
+  if (stat.isFile()) return [toSourceFile(canonical, root, scopeId, stat.size, stat.mtime.toISOString())];
   if (!stat.isDirectory()) return [];
   return readdirSync(target, { withFileTypes: true }).flatMap((entry) => {
     const child = `${target}${sep}${entry.name}`;
@@ -86,11 +92,11 @@ function walkSourceTarget(target: string, root: string, scopeId: string): Memory
   });
 }
 
-function toSourceFile(path: string, root: string, scopeId: string, size: number, modifiedAt: string): MemorySourceFile {
-  // root 经 realpath 规范化而 path 仍是探测时的词法形态（macOS tmpdir
-  // /var→/private/var）：relative 前必须同侧规范化，否则产出 ../.. 爬出目录的
-  // 相对路径，ref 与 memoryFileRefForPath 的口径分裂。
-  const relativePath = relative(root, realpathSync(path)).split(sep).join("/");
+function toSourceFile(canonicalPath: string, root: string, scopeId: string, size: number, modifiedAt: string): MemorySourceFile {
+  // 入参即 walkSourceTarget 已做过归属校验的 canonical 路径（root 同侧
+  // realpath 规范化）：直接取 relative，避免对词法 path 二次 realpath 的
+  // 冗余 syscall 与竞态下产出未复核路径的窗口。
+  const relativePath = relative(root, canonicalPath).split(sep).join("/");
   return {
     ref: {
       source: "memory",
