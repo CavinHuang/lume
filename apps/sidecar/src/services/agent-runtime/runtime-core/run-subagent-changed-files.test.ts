@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { appendSubagentChangedFiles, composeSidecarRunOutput } from "./run-subagent";
 
 describe("appendSubagentChangedFiles", () => {
@@ -69,5 +71,20 @@ describe("composeSidecarRunOutput 接线管线（#729 review P1）", () => {
   test("漏传 codingReport 时输出无清单段——接线断点在此显形", () => {
     const output = composeSidecarRunOutput({ ...wiringInput, codingReport: undefined });
     expect(output).toBe("done");
+  });
+
+  // 源码契约钉（#729 review 测试完备 P2，先例 run.delegate.test task_ref 接线）：
+  // runSidecarSubagent 本体不可行级 mock，调用点字面实参在此钉死——删键静默
+  // 编译通过（无 exactOptionalPropertyTypes），唯一防线是源码文本。
+  test("runSidecarSubagent 调用点必须把 runtimeResult.codingReport 传入组装管线", () => {
+    const source = readFileSync(join(import.meta.dir, "run-subagent.ts"), "utf8");
+    const fnStart = source.indexOf("const output = composeSidecarRunOutput({");
+    expect(fnStart).toBeGreaterThanOrEqual(0);
+    const rest = source.slice(fnStart);
+    const close = rest.indexOf("});", 1);
+    const body = close === -1 ? rest : rest.slice(0, close);
+    expect(body).toContain("codingReport: runtimeResult.codingReport");
+    expect(body).toContain("status: subagentStatus");
+    expect(body).toContain("baseOutput: finalized.output");
   });
 });

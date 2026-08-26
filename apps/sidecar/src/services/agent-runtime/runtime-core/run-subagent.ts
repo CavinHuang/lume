@@ -398,6 +398,11 @@ export async function runSidecarSubagent(input: {
 /** touched-files 回传上限：防巨型重构把父级上下文撑爆。 */
 const MAX_REPORTED_CHANGED_FILES = 20;
 
+/** 单行折断：模型可控字符串进结果注记前统一封换行/制表（#729 review 安全方向）。 */
+function sanitizeSingleLine(value: string): string {
+  return value.replace(/[\r\n\t]+/g, " ");
+}
+
 /**
  * 结果输出组装的完整管线：权限钳制注记在前、touched-files 清单收尾。
  * 抽出为独立导出是接线级测试面——runSidecarSubagent 本体直调不可行级 mock
@@ -413,7 +418,7 @@ export function composeSidecarRunOutput(input: {
 }): string {
   const withModeNote =
     input.permissionModeAdjusted && input.childPermissionMode
-      ? `${input.baseOutput}\n\n[子代理权限模式: ${input.requestedPermissionMode} → ${input.childPermissionMode}（不得超过父线程权限）]`
+      ? `${input.baseOutput}\n\n[子代理权限模式: ${sanitizeSingleLine(String(input.requestedPermissionMode))} → ${sanitizeSingleLine(String(input.childPermissionMode))}（不得超过父线程权限）]`
       : input.baseOutput;
   return appendSubagentChangedFiles(withModeNote, input.status, input.codingReport);
 }
@@ -433,7 +438,7 @@ export function appendSubagentChangedFiles(
     (path) => typeof path === "string" && path.trim(),
   ).map((path) =>
     // 换行/控制字符会折断单行清单格式甚至伪造追加行（#729 review 安全方向）
-    path.replace(/[\r\n\t]+/g, " "),
+    sanitizeSingleLine(path),
   );
   if (changedFiles.length === 0) return output;
   const listed = changedFiles.slice(0, MAX_REPORTED_CHANGED_FILES);
