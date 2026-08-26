@@ -12,7 +12,7 @@ interface ConnectorToolConfig {
   /** 注入的动作名;缺省注入全部。 */
   enabledActions?: readonly string[];
   readOnlyActions: ReadonlySet<string>;
-  /** 排除的动作(如依赖 transitFiles 的附件下载)。 */
+  /** 排除的动作(缺省注入全部时的黑名单模式)。 */
   excludedActions?: readonly string[];
 }
 
@@ -49,8 +49,6 @@ export const CONNECTOR_TOOL_CONFIGS: readonly ConnectorToolConfig[] = [
   },
   {
     service: "qq_mail",
-    // download_attachment 依赖 transit 文件存储,首版不暴露
-    excludedActions: ["download_attachment"],
     readOnlyActions: MAIL_READ_ONLY,
   },
 ];

@@ -9,7 +9,6 @@ export type MailActionName =
   | "list_folders"
   | "search_emails"
   | "get_email"
-  | "download_attachment"
   | "mark_email_read"
   | "mark_email_unread"
   | "move_email"
@@ -74,14 +73,6 @@ export function createMailActions<const TService extends string>(
     outgoingAttachmentSchema,
     { minItems: 1, maxItems: 10 },
   );
-
-  const transitFileSchema = s.requiredObject("A file uploaded to local transit file storage.", {
-    fileId: nonEmptyStringSchema("The local transit file identifier."),
-    downloadUrl: s.url("The local transit URL for downloading the file."),
-    name: nonEmptyStringSchema("The file name used in transit storage."),
-    mimeType: nonEmptyStringSchema("The file MIME type."),
-    sizeBytes: s.integer("The stored file size in bytes.", { minimum: 0 }),
-  });
 
   const messageSummarySchema = s.requiredObject(mailText("A lightweight Mail Service message summary."), {
     uid: uidSchema,
@@ -208,28 +199,6 @@ export function createMailActions<const TService extends string>(
       html: nullableStringSchema("The parsed HTML body within the fetch budget."),
       truncated: s.boolean("Whether returned body content was truncated or omitted by budget."),
       attachments: s.array("Attachment metadata parsed from the message.", attachmentSchema),
-    }),
-  });
-
-  const downloadAttachmentAction: ProviderActionDefinition<"download_attachment"> = defineProviderAction(service, {
-    name: "download_attachment",
-    description: mailText("Download one Mail Service attachment by IMAP body part identifier."),
-    requiredScopes: [],
-    inputSchema: s.object(
-      mailText("The input payload for downloading one Mail Service attachment."),
-      {
-        folder: folderSchema,
-        uid: uidSchema,
-        attachmentId: attachmentIdSchema,
-      },
-      { optional: ["folder"] },
-    ),
-    outputSchema: s.requiredObject(mailText("The response returned when downloading one Mail Service attachment."), {
-      folder: nonEmptyStringSchema("The IMAP folder path that contained the message."),
-      uid: uidSchema,
-      attachmentId: attachmentIdSchema,
-      size: nullableIntegerSchema("The attachment size in bytes when available."),
-      file: transitFileSchema,
     }),
   });
 
@@ -394,7 +363,6 @@ export function createMailActions<const TService extends string>(
     listFoldersAction,
     searchEmailsAction,
     getEmailAction,
-    downloadAttachmentAction,
     markEmailReadAction,
     markEmailUnreadAction,
     moveEmailAction,

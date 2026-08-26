@@ -4,14 +4,13 @@ import type {
   ExecutionContext,
   ProviderExecutors,
   RuntimeLogger,
-  TransitFileWriter,
 } from "../core/types";
 import type { MailActionName } from "./actions";
 import type { MailCredential, MailFetchedMessage, MailProtocol, MailSendInput } from "./protocol";
 
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -57,7 +56,6 @@ export interface MailActionContext {
   fetcher: typeof fetch;
   protocol: MailProtocol;
   config: MailRuntimeConfig;
-  transitFiles?: TransitFileWriter;
   signal?: AbortSignal;
 }
 
@@ -77,9 +75,6 @@ function createMailActionHandlers(): Record<MailActionName, MailActionHandler> {
     },
     get_email(input, context) {
       return executeMailAction("get_email", input, context);
-    },
-    download_attachment(input, context) {
-      return executeMailAction("download_attachment", input, context);
     },
     mark_email_read(input, context) {
       return executeMailAction("mark_email_read", input, context);
@@ -141,9 +136,6 @@ export function createMailProviderRuntime(config: MailRuntimeConfig): MailProvid
         config,
         signal: context.signal,
       };
-      if (context.transitFiles) {
-        providerContext.transitFiles = context.transitFiles;
-      }
       return providerContext;
     },
   });
@@ -358,44 +350,6 @@ export async function executeMailAction(
           truncated: message.truncated,
           attachments: message.attachments,
         };
-      }
-      case "download_attachment": {
-        const downloadInput = input as {
-          folder?: string;
-          uid: number;
-          attachmentId: string;
-        };
-        const folder = downloadInput.folder ?? defaultFolder;
-        const attachment = await protocol.downloadAttachment(
-          credential,
-          folder,
-          downloadInput.uid,
-          downloadInput.attachmentId,
-        );
-        try {
-          const transitFiles = requireTransitFiles(context);
-          const name =
-            attachment.filename ?? `${context.config.attachmentFallbackPrefix}-attachment-${attachment.attachmentId}`;
-          const mimeType = attachment.contentType ?? "application/octet-stream";
-          const upload = await transitFiles.create(
-            new File([await readFile(attachment.filePath)], name, { type: mimeType }),
-          );
-          return {
-            folder,
-            uid: downloadInput.uid,
-            attachmentId: attachment.attachmentId,
-            size: attachment.size,
-            file: {
-              fileId: upload.fileId,
-              downloadUrl: upload.downloadUrl,
-              name,
-              mimeType,
-              sizeBytes: upload.sizeBytes,
-            },
-          };
-        } finally {
-          await attachment.cleanup();
-        }
       }
       case "mark_email_read": {
         const markInput = input as { folder?: string; uid: number };
@@ -723,13 +677,6 @@ async function cleanupAll(cleanups: Array<() => Promise<void>>) {
 
 function noop() {
   return Promise.resolve();
-}
-
-function requireTransitFiles(context: MailActionContext) {
-  if (!context.transitFiles) {
-    throw new ProviderRequestError(400, "Transit file storage is not enabled.");
-  }
-  return context.transitFiles;
 }
 
 function inferReplyRecipients(credential: MailCredential, original: MailFetchedMessage, replyAll: boolean) {

@@ -16,7 +16,7 @@ import { pipeline } from "node:stream/promises";
 import nodemailer from "nodemailer";
 import { resolveGuardedEgressTarget } from "../core/guarded-fetch";
 import { isIpAddress } from "../core/request";
-import { mailAttachmentDownloadByteLimit, mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
+import { mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
 import { MailProtocolError } from "./errors";
 import { sanitizeTempFileName } from "./temp-files";
 
@@ -127,15 +127,6 @@ export interface MailAttachment {
   contentId: string | null;
 }
 
-export interface MailDownloadedAttachment {
-  attachmentId: string;
-  filename: string | null;
-  contentType: string | null;
-  size: number | null;
-  filePath: string;
-  cleanup(): Promise<void>;
-}
-
 export interface MailFolderStatus {
   folder: string;
   messages: number | null;
@@ -181,12 +172,6 @@ export interface MailProtocol {
     uid: number,
     options: { peek: true; maxBytes: number; skipAttachmentBodies: true },
   ): Promise<MailFetchedMessage>;
-  downloadAttachment(
-    credential: MailCredential,
-    folder: string,
-    uid: number,
-    attachmentId: string,
-  ): Promise<MailDownloadedAttachment>;
   markSeen(credential: MailCredential, folder: string, uid: number): Promise<void>;
   markUnseen(credential: MailCredential, folder: string, uid: number): Promise<void>;
   moveMessage(credential: MailCredential, folder: string, uid: number, targetFolder: string): Promise<void>;
@@ -238,18 +223,6 @@ type RuntimeImapClient = MailImapClient & {
       uidValidity: true;
     },
   ): Promise<unknown>;
-  download(
-    uid: number,
-    attachmentId: string,
-    options: { uid: true; maxBytes: number },
-  ): Promise<{
-    meta: {
-      expectedSize?: number;
-      contentType?: string;
-      filename?: string;
-    };
-    content: AsyncIterable<unknown>;
-  }>;
 };
 
 interface BodyPart {
@@ -387,27 +360,6 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
         };
       });
     },
-    async downloadAttachment(credential, folder, uid, attachmentId) {
-      return await withMailbox(config, deps, credential, folder, true, async (client) => {
-        const downloaded = await downloadAttachmentPart(client, uid, attachmentId);
-        const expectedSize = readInteger(downloaded.meta.expectedSize);
-        const filename =
-          readString(downloaded.meta.filename) ?? `${config.attachmentFallbackPrefix}-attachment-${attachmentId}`;
-        const { filePath, cleanup } = await writeAsyncIterableToTempFile(
-          downloaded.content,
-          filename,
-          `oomol-connect-${config.attachmentFallbackPrefix}-download-`,
-        );
-        return {
-          attachmentId,
-          filename,
-          contentType: readString(downloaded.meta.contentType),
-          size: expectedSize,
-          filePath,
-          cleanup,
-        };
-      });
-    },
     async markSeen(credential, folder, uid) {
       await withMailbox(config, deps, credential, folder, false, async (client) => {
         await requireMessageExists(client, uid);
@@ -466,20 +418,6 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
       });
     },
   };
-}
-
-async function downloadAttachmentPart(client: RuntimeImapClient, uid: number, attachmentId: string) {
-  try {
-    return await client.download(uid, attachmentId, {
-      uid: true,
-      maxBytes: mailAttachmentDownloadByteLimit,
-    });
-  } catch (error) {
-    if (isFolderMissingError(error)) {
-      throw new MailProtocolError("uid_not_found", "Mail message UID does not exist in the selected folder.");
-    }
-    throw error;
-  }
 }
 
 /**
@@ -895,25 +833,6 @@ function collectAttachmentMetadata(bodyStructure: unknown): MailAttachment[] {
       contentId: readString(record.id),
     },
   ];
-}
-
-async function writeAsyncIterableToTempFile(content: AsyncIterable<unknown>, name: string, prefix: string) {
-  const directory = await mkdtemp(join(tmpdir(), prefix));
-  const filePath = join(directory, `${randomUUID()}-${sanitizeTempFileName(name)}`);
-
-  try {
-    await pipeline(Readable.from(content), createWriteStream(filePath));
-  } catch (error) {
-    await rm(directory, { recursive: true, force: true }).catch(() => {});
-    throw error;
-  }
-
-  return {
-    filePath,
-    cleanup: async () => {
-      await rm(directory, { recursive: true, force: true }).catch(() => {});
-    },
-  };
 }
 
 function isAttachment(record: Record<string, unknown>) {
