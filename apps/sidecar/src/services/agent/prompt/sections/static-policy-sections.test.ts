@@ -31,4 +31,12 @@ describe("static policy sections", () => {
     expect(CLAUDE_PLAN_MODE_SECTION).toContain("不要轮询其输出");
     expect(CLAUDE_PLAN_MODE_SECTION).toContain("绝不作为编码收尾自动 commit、push、reset、clean 或删除分支");
   });
+
+  // #574：PR#276 删掉的四条语义回迁——完工查 diff / 不发明验证命令 /
+  // 失败同 Run 内修复。与 coding-verification 的选令逻辑口径一致。
+  test("coding loop restores the deleted teaching semantics (#574)", () => {
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("宣布完成前先查看最终 Diff");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("没有可靠脚本时不要发明验证命令，如实说明未验证即可");
+    expect(CLAUDE_PLAN_MODE_SECTION).toContain("验证失败就在同一 Run 内修复后重验");
+  });
 });

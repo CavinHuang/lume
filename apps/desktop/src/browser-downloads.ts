@@ -49,9 +49,17 @@ export function removePartialDownload(download: PreparedDownload): void {
 }
 
 export class AgentDownloadQuota {
+  // 回合桶以 `${session}:${turn}` 为 key 只增不清(#673),长驻主进程缓慢泄漏;
+  // LRU 上限淘汰最老的空闲桶,活跃桶(active.size>0)不淘汰。
+  private static readonly MAX_SESSIONS = 64
   private readonly sessions = new Map<string, { completedBytes: number; completedFiles: number; active: Map<string, number> }>()
 
   begin(sessionId: string, declaredBytes: number): string | null {
+    while (this.sessions.size >= AgentDownloadQuota.MAX_SESSIONS) {
+      const evictable = [...this.sessions].find(([, state]) => state.active.size === 0)
+      if (!evictable) break
+      this.sessions.delete(evictable[0])
+    }
     const state = this.sessions.get(sessionId) ?? { completedBytes: 0, completedFiles: 0, active: new Map() }
     this.sessions.set(sessionId, state)
     if (state.active.size >= AGENT_DOWNLOAD_LIMITS.maxConcurrent || state.completedFiles + state.active.size >= AGENT_DOWNLOAD_LIMITS.maxFiles) return null

@@ -124,11 +124,14 @@ function formatNativeResult(
 ): { data: string; _meta?: Record<string, unknown> } {
   if (!result || result.matches.length === 0) {
     return {
-      data: `No matches found for pattern "${pattern}"`,
+      data: buildNoMatchText(pattern),
       _meta: { search: { engine, offset, limit: headLimit, total: 0, truncated: false, appliedOffset: offset, appliedLimit: headLimit } },
     }
   }
 
+  // 纯文本输出（#565）：JSON envelope 在 files_with_matches/count 上吃掉
+  // ~20%+ 输出 token，结构化信号（engine/total/truncated/分页）已由
+  // _meta.search 承载，正文不再重复包装。
   const entries = outputMode === 'files_with_matches'
     ? [...new Set(result.matches.map((match) => match.path))]
     : outputMode === 'count'
@@ -146,7 +149,7 @@ function formatNativeResult(
   const truncated = result.limit_reached === true || (headLimit > 0 && offset + entries.length < total)
   const matches = headLimit > 0 ? entries.slice(0, headLimit) : entries
   return {
-    data: JSON.stringify({ pattern, path: searchPath, output_mode: outputMode, matches, total_matches: total }, null, 2),
+    data: formatSearchEntries(matches),
     _meta: {
       search: {
         engine,
@@ -198,28 +201,76 @@ async function runFallbackSearch({
     return { data: `Error: grep failed${processResult.stderr ? `: ${processResult.stderr.trim()}` : ''}`, is_error: true }
   }
 
-  const allEntries = processResult.stdout.trim()
+  let allEntries = processResult.stdout.trim()
     ? processResult.stdout.trim().split(/\r?\n/).filter(Boolean)
     : []
+  // grep 回退通道没有 rg --max-columns 等价物：minified 超长行会整行进上下文，
+  // 与输出税叠加放大（#565）。对齐 rg 通道的 500 列预览口径做截断。
+  if (engine === 'grep' && outputMode === 'content') {
+    allEntries = allEntries.map((line) => line.length > MAX_COLUMNS ? `${line.slice(0, MAX_COLUMNS)}…` : line)
+  }
   if (allEntries.length === 0) {
     return {
-      data: `No matches found for pattern "${input.pattern}"`,
-      _meta: { search: { engine, ripgrepSource: engine === 'rg' ? ripgrep.source : undefined, offset, limit: headLimit, total: 0, truncated: false, appliedOffset: offset, appliedLimit: headLimit } },
+      data: buildNoMatchText(input.pattern) + (engine === 'grep' && usesNonBreSyntax(input.pattern) ? buildBreDialectNote() : ''),
+      _meta: { search: { engine, ripgrepSource: engine === 'rg' ? ripgrep.source : undefined, ...(engine === 'grep' && usesNonBreSyntax(input.pattern) ? { engineDialect: 'bre' as const } : {}), offset, limit: headLimit, total: 0, truncated: false, appliedOffset: offset, appliedLimit: headLimit } },
     }
   }
   const total = allEntries.length
   const matches = headLimit > 0 ? allEntries.slice(offset, offset + headLimit) : allEntries.slice(offset)
   const truncated = processResult.earlyStopped === true || offset + matches.length < total
+  const breNote = engine === 'grep' && usesNonBreSyntax(input.pattern) ? buildBreDialectNote() : ''
   return {
-    data: JSON.stringify({
-      pattern: input.pattern,
-      path: searchPath,
-      output_mode: outputMode,
-      matches,
-      total_matches: total,
-    }, null, 2),
-    _meta: { search: { engine, ripgrepSource: engine === 'rg' ? ripgrep.source : undefined, offset, limit: headLimit, total, truncated, appliedOffset: offset, appliedLimit: headLimit } },
+    data: formatSearchEntries(matches, breNote),
+    _meta: { search: { engine, ripgrepSource: engine === 'rg' ? ripgrep.source : undefined, ...(breNote ? { engineDialect: 'bre' as const } : {}), offset, limit: headLimit, total, truncated, appliedOffset: offset, appliedLimit: headLimit } },
   }
+}
+
+function buildNoMatchText(pattern: string): string {
+  return `No matches found for pattern "${pattern}"`
+}
+
+/**
+ * 纯文本条目流（#565）：正文不再包 JSON envelope，结构化信号由 _meta.search
+ * 承载。breNote 非空时追加在尾部。
+ */
+function formatSearchEntries(entries: string[], breNote = ''): string {
+  const body = entries.join('\n')
+  return breNote ? `${body}\n${breNote}` : body
+}
+
+/**
+ * BRE 方言哨兵（#565）：rg/Rust-regex 惯用的 ERE/PCRE 结构在 POSIX BRE 下
+ * 退化为字面量，静默搜空比报错更危险。只检测高信号构造；裸 `+`/`?` 不检——
+ * "C++" 这类字面检索太常见，误报成本高于收益。不做自动改写（加 -E 会把用户
+ * 本意的字面 `( ) |` 反转成语义，误伤面更大），只让模型知道方言存在。
+ */
+export function usesNonBreSyntax(pattern: string): boolean {
+  if (/\(\?/.test(pattern)) return true
+  if (/\\[dD]/.test(pattern)) return true
+  if (/\\[pP]\{/.test(pattern)) return true
+  // 裸交替 |：跳过转义与字符类内部（[|] 是合法 BRE 字面检索，#720 review）
+  let inCharacterClass = false
+  for (let i = 0; i < pattern.length; i += 1) {
+    const ch = pattern[i]!
+    if (ch === '\\') {
+      i += 1
+      continue
+    }
+    if (ch === '[') {
+      inCharacterClass = true
+      continue
+    }
+    if (ch === ']' && inCharacterClass) {
+      inCharacterClass = false
+      continue
+    }
+    if (ch === '|' && !inCharacterClass) return true
+  }
+  return false
+}
+
+function buildBreDialectNote(): string {
+  return '\n\nNote: this result came from the POSIX BRE fallback grep engine. The pattern uses ERE/PCRE constructs (alternation "|", "(?:" groups, "\\d" classes) that BRE treats as literal characters, so an empty or odd result may be a dialect mismatch rather than a true absence of matches. Rewrite with basic regex (e.g. [[:digit:]], escaped alternation) and retry.'
 }
 
 function isCommandNotFound(error?: Error): boolean {

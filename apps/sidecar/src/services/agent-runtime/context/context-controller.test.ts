@@ -190,3 +190,28 @@ describe("Kernel context controller", () => {
     });
   });
 });
+
+describe("microCompactKernelMessages array-form tool_result (#567 item 4)", () => {
+  test("oversized image blocks degrade to placeholders, small ones survive", () => {
+    const big = "x".repeat(60_000);
+    const messages = [{
+      role: "user" as const,
+      content: [{
+        type: "tool_result",
+        tool_use_id: "t1",
+        content: [
+          { type: "image", source: { type: "base64", data: big } },
+          { type: "image", source: { type: "base64", data: "aGk=" } },
+          { type: "text", text: big }
+        ]
+      }]
+    }];
+    const out = microCompactKernelMessages(messages as any);
+    const blocks = (out[0]!.content as any[])[0]!.content as any[];
+    expect(blocks[0]!.type).toBe("text");
+    expect(blocks[0]!.text).toContain("image omitted by micro-compaction");
+    // 小图必须原样到达模型（#364）
+    expect(blocks[1]!.type).toBe("image");
+    expect((blocks[2]!.text as string).length).toBeLessThan(big.length);
+  });
+});

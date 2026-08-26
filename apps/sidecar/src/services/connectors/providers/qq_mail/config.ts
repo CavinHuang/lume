@@ -7,6 +7,9 @@ export const qqMailRuntimeConfig: MailRuntimeConfig = {
   service: "qq_mail",
   displayName: "QQ Mail",
   attachmentFallbackPrefix: "qq-mail",
+  // host 硬编码为集成的一部分(imap.qq.com/smtp.qq.com),显式豁免连接期
+  // 解析筛查;用户可配 host 的 provider 必须保持默认启用(#696)
+  enforceHostNetworkPolicy: false,
   connectAuthMessage:
     "Verify that QQ Mail POP3/IMAP/SMTP service is enabled and use the 16-character authorization code instead of the web login password.",
   readCredential(values): MailCredential {

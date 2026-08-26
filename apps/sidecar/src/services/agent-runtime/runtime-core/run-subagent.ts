@@ -172,7 +172,8 @@ export function buildSidecarSubagentExecutionInput(input: {
   return {
     ...input.forwardedToolInput,
     run_in_background: input.runInBackground,
-    isolation: undefined,
+    // isolation 剥离已随 Agent schema 删参一并移除（#575）：schema 不再声明
+    // 该字段，历史剥离点只是死代码；模型幻觉出的未知字段按普通透传处理。
     ...(input.modelOverride.resolvedModelId
       ? { model: input.modelOverride.resolvedModelId }
       : {}),
@@ -367,15 +368,20 @@ export async function runSidecarSubagent(input: {
     errorMessage: subagentErrorMessage,
     status: subagentStatus,
   });
-  // 钳制/归一发生时向模型声明实际生效的模式，避免其误以为拿到了更高权限而重试
-  const outputWithModeNote =
-    permissionModeAdjusted && childPermissionMode
-      ? `${finalized.output}\n\n[子代理权限模式: ${requestedPermissionMode} → ${childPermissionMode}（不得超过父线程权限）]`
-      : finalized.output;
+  // 钳制/归一发生时向模型声明实际生效的模式，避免其误以为拿到了更高权限而重试；
+  // 组装逻辑抽入 composeSidecarRunOutput 以便接线级测试（#729 review）
+  const output = composeSidecarRunOutput({
+    baseOutput: finalized.output,
+    status: subagentStatus,
+    codingReport: runtimeResult.codingReport,
+    permissionModeAdjusted,
+    requestedPermissionMode,
+    childPermissionMode,
+  });
 
   return {
     status: subagentStatus,
-    output: outputWithModeNote,
+    output,
     ...(finalized.lastAssistantMessage
       ? { completionSummary: finalized.lastAssistantMessage }
       : {}),
@@ -383,10 +389,68 @@ export async function runSidecarSubagent(input: {
     result: {
       type: "tool_result",
       tool_use_id: "",
-      content: outputWithModeNote,
+      content: output,
       ...(subagentStatus !== "completed" ? { is_error: true } : {}),
     },
   };
+}
+
+/** touched-files 回传上限：防巨型重构把父级上下文撑爆。 */
+const MAX_REPORTED_CHANGED_FILES = 20;
+
+/** 单行折断：模型可控字符串进结果注记前统一封换行/制表（#729 review 安全方向）。 */
+function sanitizeSingleLine(value: string): string {
+  return value.replace(/[\r\n\t]+/g, " ");
+}
+
+/**
+ * 结果输出组装的完整管线：权限钳制注记在前、touched-files 清单收尾。
+ * 全部键必选——可空以 `| undefined` 表达，调用点删任一实参由 typecheck
+ * TS2741 拦截（#729 终局审查：类型契约取代源码文本钉）。
+ */
+export function composeSidecarRunOutput(input: {
+  baseOutput: string;
+  status: "completed" | "errored" | "aborted" | "timed_out";
+  codingReport: { changedFiles?: string[] } | undefined;
+  permissionModeAdjusted: boolean;
+  requestedPermissionMode: string | undefined;
+  childPermissionMode: string | undefined;
+}): string {
+  const withModeNote =
+    input.permissionModeAdjusted && input.childPermissionMode
+      ? `${input.baseOutput}\n\n[子代理权限模式: ${modeLabel(input.requestedPermissionMode)} → ${modeLabel(input.childPermissionMode)}（不得超过父线程权限）]`
+      : input.baseOutput;
+  return appendSubagentChangedFiles(withModeNote, input.status, input.codingReport);
+}
+
+/** 注记内的模型可控串：单行折断 + 长度上限（#729 终局审查）。 */
+function modeLabel(value: string | undefined): string {
+  return sanitizeSingleLine(value ?? "").slice(0, 48);
+}
+
+/**
+ * 子代理变更文件清单随结果回传（#575 残余收口）：tracker 数据闭锁在子线程
+ * run 内部，经 AgentRuntimeRunResult.codingReport 既有通道带出，父级无需新
+ * 订阅链路。仅成功运行附列——失败/中止的半成品清单只会误导父级。
+ */
+export function appendSubagentChangedFiles(
+  output: string,
+  status: "completed" | "errored" | "aborted" | "timed_out",
+  report: { changedFiles?: string[] } | undefined,
+): string {
+  if (status !== "completed") return output;
+  const changedFiles = (report?.changedFiles ?? []).filter(
+    (path) => typeof path === "string" && path.trim(),
+  ).map((path) =>
+    // 换行/控制字符会折断单行清单格式甚至伪造追加行（#729 review 安全方向）
+    sanitizeSingleLine(path),
+  );
+  if (changedFiles.length === 0) return output;
+  const listed = changedFiles.slice(0, MAX_REPORTED_CHANGED_FILES);
+  const overflow = changedFiles.length > MAX_REPORTED_CHANGED_FILES
+    ? `, +${changedFiles.length - MAX_REPORTED_CHANGED_FILES} more`
+    : "";
+  return `${output}\n\n[Changed files: ${listed.join(", ")}${overflow}]`;
 }
 
 export async function runForegroundSubagentWithTimeout(input: {
@@ -423,7 +487,9 @@ export async function runForegroundSubagentWithTimeout(input: {
       const stopped = await input.stopSubagent(input.childThreadId).catch(() => false);
       // 取消未确认时必须如实披露：子会话可能仍在运行，调用方据此提示用户
       const cancelNote = stopped ? "" : " Automatic cancellation was not confirmed; the child session may still be running.";
-      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.${cancelNote}`;
+      // 超时文案必须指路后台模式（#575）：前台默认 10 分钟强杀，重型任务
+      // 不指路 run_in_background 会让模型反复重试同一注定超时的调用。
+      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.${cancelNote} For long-running work, relaunch with run_in_background: true and collect the result via WaitForDelegations instead of blocking the foreground.`;
       resolve({
         status: "timed_out",
         output: error,
@@ -499,7 +565,6 @@ export function assertTaskRefDiscriminant(
     "expected_artifacts",
     "subagent_id",
     "team_name",
-    "isolation",
   ];
   const present = forbidden.filter((name) => toolInput[name] !== undefined);
   if (present.length > 0)

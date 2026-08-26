@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AGENT_IPC_CHANNELS, type AgentSendInput, type AgentToolPermissionResponseInput } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, type AgentSendInput, type AgentToolPermissionResponseInput, type CodingRunRevertResult } from "@lume/shared";
 import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import { updateLumeConfigSection } from "../system/lume-config-service";
 import { createImAgentStreamEmitter, routeInboundImMessage } from "./im-message-router";
@@ -797,5 +797,83 @@ describe("im-message-router", () => {
     expect(second).toEqual({ threadId: "thread-dedup" });
 
     expect(sent.map((item) => item.userMessage)).toEqual(["original", "next"]);
+  });
+
+  test("/revert 权限模型与 IM 审批对齐：白名单外拒绝、白名单内执行(#714)", async () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      threadId: "thread-revert",
+      contextToken: "ctx-r1"
+    });
+    const sent: string[] = [];
+    let revertCalls = 0;
+    const baseDeps = {
+      getThreadMeta: () => ({ id: "thread-revert" }) as never,
+      sendBoundTextMessage(input: { text: string }): Promise<{ ok: true }> {
+        sent.push(input.text);
+        return Promise.resolve({ ok: true });
+      },
+      revertRun: async (): Promise<CodingRunRevertResult> => {
+        revertCalls += 1;
+        return {
+          status: "restored",
+          filesChanged: ["a.ts"],
+          conflicts: [],
+          committedPaths: [],
+          failedFiles: [],
+          nonRewindableFiles: []
+        };
+      }
+    };
+
+    // 默认安全姿态：approverPeerIds 为空 → 拒绝且不执行
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      text: "/revert run-1"
+    }, baseDeps);
+    expect(sent.at(-1)).toContain("没有权限");
+    expect(revertCalls).toBe(0);
+
+    // 白名单命中 → 执行并回复桶计数摘要
+    updateLumeConfigSection({
+      source: "user",
+      path: "permissions.approvals",
+      value: {
+        im: {
+          enabled: true,
+          allowTextApprove: true,
+          accounts: {
+            "account-revert": { approverPeerIds: ["user-revert"] }
+          }
+        }
+      }
+    });
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      text: "/revert run-1"
+    }, baseDeps);
+    expect(revertCalls).toBe(1);
+    expect(sent.at(-1)).toContain("/revert run-1");
+    expect(sent.at(-1)).toContain("已还原 1 个文件");
+
+    // 缺 runId 参数 → 用法提示，不执行
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      text: "/revert"
+    }, baseDeps);
+    expect(sent.at(-1)).toContain("用法");
+    expect(revertCalls).toBe(1);
   });
 });
