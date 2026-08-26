@@ -1205,10 +1205,15 @@ export interface AgentPluginSensitiveRequest {
   capabilityKey: string
 }
 
+/** 「始终允许」的真实作用域档位（#558）：缺省 exact 保持逐字节比对 */
+export type AgentToolPermissionAllowScope = 'exact' | 'command' | 'tool'
+
 export interface AgentToolPermissionResponseInput {
   threadId: string
   requestId: string
   decision: AgentToolPermissionDecision
+  /** allow_always 时的指纹作用域档位；缺省 exact（仅逐字节相同输入免审批）。 */
+  allowAlwaysScope?: AgentToolPermissionAllowScope
   /** 将当前审批会话切到对应权限模式；目前仅支持本线程全部允许。 */
   threadPermissionMode?: 'bypassPermissions'
 }

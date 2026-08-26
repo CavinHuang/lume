@@ -1,4 +1,5 @@
 import type {
+  AgentToolPermissionAllowScope,
   AgentToolPermissionDecision,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput
@@ -36,10 +37,14 @@ function resolveTimeoutMs(): number {
   return Math.max(15_000, Math.min(60 * 60 * 1000, Math.floor(parsed)));
 }
 
-export function markToolFingerprintAllowed(threadId: string, fingerprint?: string): void {
+export function markToolFingerprintAllowed(
+  threadId: string,
+  fingerprint?: string,
+  scope: AgentToolPermissionAllowScope = "exact"
+): void {
   const normalized = fingerprint?.trim();
   if (!normalized) return;
-  runtimePermissionSessionStore.grantFingerprint(threadId, normalized);
+  runtimePermissionSessionStore.grantFingerprintWithScope(threadId, normalized, scope);
 }
 
 export function markToolPermissionSessionBypassed(...threadIds: Array<string | undefined>): void {
@@ -176,7 +181,8 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
     if (handled && input.decision === "allow_always" && persisted?.grantSuggestion?.fingerprint) {
       markToolFingerprintAllowed(
         persisted.originThreadId ?? persisted.threadId,
-        persisted.grantSuggestion.fingerprint
+        persisted.grantSuggestion.fingerprint,
+        input.allowAlwaysScope
       );
     }
     return handled;
@@ -192,6 +198,14 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
   }
   if (shouldBypassThread) {
     markToolPermissionSessionBypassed(input.threadId, pending.threadId, pending.request.originThreadId);
+  }
+  if (input.decision === "allow_always") {
+    // #558:按用户选择的档位写宽指纹（缺省 exact 保持逐字节）
+    markToolFingerprintAllowed(
+      pending.request.originThreadId ?? pending.threadId,
+      pending.request.grantSuggestion?.fingerprint,
+      input.allowAlwaysScope
+    );
   }
   void pending.resolve(input.decision);
   return true;

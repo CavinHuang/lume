@@ -1,11 +1,12 @@
 import { useEffect, useState } from 'react'
 import type { ReactNode } from 'react'
 import { useSetAtom } from 'jotai'
+import { toast } from 'sonner'
 import { Bot, Check, ChevronRight, ShieldOff, TerminalSquare, Wrench } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { agentPendingInteractiveAtom, agentThreadPermissionModesAtom } from '@/atoms'
 import { sidecarCall } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, type AgentToolPermissionDecision, type AgentToolPermissionRequest, type AgentToolPermissionResponseInput } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, type AgentToolPermissionAllowScope, type AgentToolPermissionDecision, type AgentToolPermissionRequest, type AgentToolPermissionResponseInput } from '@lume/shared'
 import { removePendingToolPermissionEverywhere } from '@/hooks/pending-interactive-state'
 import { getSubagentDisplayLabel } from './subagent-label'
 import { InteractiveOverlayFrame, shouldSubmitInteractiveOverlayOnEnter } from './InteractiveOverlayFrame'
@@ -21,11 +22,15 @@ export function buildToolPermissionSubmission(input: {
   requestId: string
   decision: AgentToolPermissionDecision
   allowAllInThread: boolean
+  allowAlwaysScope?: AgentToolPermissionAllowScope
 }): AgentToolPermissionResponseInput {
   return {
     threadId: input.threadId,
     requestId: input.requestId,
     decision: input.decision,
+    ...(input.decision === 'allow_always' && input.allowAlwaysScope && input.allowAlwaysScope !== 'exact'
+      ? { allowAlwaysScope: input.allowAlwaysScope }
+      : {}),
     ...(input.allowAllInThread && input.decision !== 'deny' ? { threadPermissionMode: 'bypassPermissions' as const } : {}),
   }
 }
@@ -34,6 +39,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
   const setThreadPermissionModes = useSetAtom(agentThreadPermissionModesAtom)
   const [choice, setChoice] = useState<AgentToolPermissionDecision>('allow_once')
+  const [allowScope, setAllowScope] = useState<AgentToolPermissionAllowScope>('exact')
   const [allowAllInThread, setAllowAllInThread] = useState(false)
   const [hidden, setHidden] = useState(false)
   const [busy, setBusy] = useState(false)
@@ -41,6 +47,15 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
   const classification = request.classification
   const grantLabel = request.grantSuggestion?.label
   const canAllowAlways = request.canAllowAlways !== false
+  // command 档仅对带命令/文本输入的工具有意义（#558）
+  const hasCommandInput = ['command', 'cmd', 'prompt', 'query'].some(
+    (key) => typeof request.input?.[key] === 'string' && (request.input[key] as string).trim(),
+  )
+  const allowScopeHint: Record<AgentToolPermissionAllowScope, string> = {
+    exact: '仅逐字节相同的调用',
+    command: hasCommandInput ? '相同命令（参数可变）' : '相同路径的调用',
+    tool: `所有 ${request.toolName} 调用`,
+  }
   const subagentDisplayLabel = getSubagentDisplayLabel(request)
   const sourceLabel = subagentDisplayLabel || '主 Agent'
   const invocationLabel = getInvocationLabel(request.toolName)
@@ -48,6 +63,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
 
   useEffect(() => {
     setChoice('allow_once')
+    setAllowScope('exact')
     setAllowAllInThread(false)
     setHidden(false)
     setBusy(false)
@@ -72,10 +88,15 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
         requestId: request.requestId,
         decision: choice,
         allowAllInThread,
+        allowAlwaysScope: allowScope,
       })
       await sidecarCall(AGENT_IPC_CHANNELS.SUBMIT_TOOL_PERMISSION, payload)
       if (payload.threadPermissionMode === 'bypassPermissions') {
         setThreadPermissionModes((prev) => ({ ...prev, [threadId]: 'bypassPermissions' }))
+      }
+      // 作用域回执（#558）：明确告知「始终允许」的真实生效范围，本线程内有效
+      if (choice === 'allow_always') {
+        toast.success(`已允许本线程内${allowScopeHint[allowScope]}的 ${request.toolName} 调用`)
       }
       setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId))
     } catch (err) {
@@ -192,7 +213,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
               <PermissionChoice
                 index={2}
                 label="始终允许"
-                hint={grantLabel || '此类操作'}
+                hint={allowScopeHint[allowScope]}
                 selected={choice === 'allow_always'}
                 onClick={() => setChoice('allow_always')}
               />
@@ -210,6 +231,33 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
             />
           </div>
         </div>
+        {canAllowAlways && choice === 'allow_always' && (
+          <div role="radiogroup" aria-label="始终允许的范围" className="ml-2 space-y-1">
+            {([
+              { value: 'exact', label: '仅此调用', hint: '逐字节相同才免审批' },
+              ...(hasCommandInput ? [{ value: 'command', label: '相同命令', hint: '同一命令、参数可变' }] : []),
+              { value: 'tool', label: `整个 ${request.toolName} 工具`, hint: '该工具全部调用都放行' },
+            ] as Array<{ value: AgentToolPermissionAllowScope; label: string; hint: string }>).map((option) => (
+              <button
+                key={option.value}
+                type="button"
+                role="radio"
+                aria-checked={allowScope === option.value}
+                onClick={() => setAllowScope(option.value)}
+                className={cn(
+                  'flex w-full items-center gap-1.5 rounded-[8px] border px-2 py-1 text-left text-[12px] transition-colors',
+                  allowScope === option.value
+                    ? 'border-white/[0.14] bg-white/[0.08] text-[#f0f0f0]'
+                    : 'border-transparent text-[#9b9b9b] hover:bg-white/[0.04]',
+                )}
+              >
+                <Check size={12} className={cn('shrink-0', allowScope === option.value ? 'opacity-100' : 'opacity-0')} />
+                <span className="font-semibold">{option.label}</span>
+                <span className="text-[#898989]">{option.hint}</span>
+              </button>
+            ))}
+          </div>
+        )}
         {canAllowAlways && (
           <Button
                 variant="ghost"

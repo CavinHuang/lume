@@ -20,6 +20,8 @@ describe("tool-permission-session", () => {
   afterEach(() => {
     runtimePermissionSessionStore.clear("s2");
     runtimePermissionSessionStore.clear("s2-fingerprint");
+    runtimePermissionSessionStore.clear("s-scope-cmd");
+    runtimePermissionSessionStore.clear("s-scope-tool");
     runtimePermissionSessionStore.clear("parent-session");
     runtimePermissionSessionStore.clear("child-session");
     runtimePermissionSessionStore.clear("cold-continuation-thread");
@@ -148,6 +150,22 @@ describe("tool-permission-session", () => {
 
     expect(runtimePermissionSessionStore.isFingerprintGranted("s2-fingerprint", "bash:ls")).toBeTrue();
     expect(runtimePermissionSessionStore.isFingerprintGranted("s2-fingerprint", "bash:rm -rf /tmp/nope")).toBeFalse();
+  });
+
+  test("#558 command 档：同命令不同参数免审批，词边界不误伤", () => {
+    markToolFingerprintAllowed("s-scope-cmd", "bash:git status", "command");
+    // 同命令 + 新参数：放行（词边界）
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-cmd", "bash:git status --short")).toBeTrue();
+    // 词边界保护：前缀重叠的不同命令不放行
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-cmd", "bash:git statusx")).toBeFalse();
+    // 不同命令不放行
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-cmd", "bash:rm -rf /")).toBeFalse();
+  });
+
+  test("#558 tool 档：同工具任意调用放行，其他工具不受影响", () => {
+    markToolFingerprintAllowed("s-scope-tool", "bash:git push --force", "tool");
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-tool", "bash:anything")).toBeTrue();
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s-scope-tool", "write:/etc/hosts")).toBeFalse();
   });
 
   test("allow_always 应遵守请求级审批策略", async () => {
