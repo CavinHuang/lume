@@ -82,6 +82,19 @@ describe('summarizeValue', () => {
     expect(out.chunk).toEqual({ type: 'Buffer', byteLength: 5 })
     expect(out.name).toBe('a')
   })
+  test('Map/Set/无自有属性 class 实例输出骨架而非误导性空对象（#757）', () => {
+    expect(summarizeValue(new Map([['k', 1], ['k2', 2]]))).toEqual({ type: 'Map', size: 2 })
+    expect(summarizeValue(new Set([1, 2, 3]))).toEqual({ type: 'Set', size: 3 })
+    class Opaque {
+      describe(): string { return 'opaque' }
+    }
+    expect(summarizeValue(new Opaque())).toEqual({ type: 'Opaque' })
+    class WithOwn { public visible = 1 }
+    expect(summarizeValue(new WithOwn())).toEqual({ visible: 1 })
+    // 落盘路径（normalizeLogValue）同语义
+    const normalized = normalizeLogValue({ bag: new Set(['a']) }) as Record<string, unknown>
+    expect(normalized.bag).toEqual({ type: 'Set', size: 1 })
+  })
 })
 
 describe('常量', () => {
@@ -115,10 +128,16 @@ describe('extractCorrelationIds', () => {
     expect(extractCorrelationIds({ threadId: 42 })).toEqual({})
     expect(extractCorrelationIds({ threadId: `${'a'.repeat(200)}` })).toEqual({})
   })
-  test('深度超过一层不再下钻；数组与非对象直接返回空', () => {
-    expect(extractCorrelationIds({ a: { b: { threadId: 'deep-1' } } })).toEqual({})
+  test('深度超过两层不再下钻；数组与非对象直接返回空', () => {
+    expect(extractCorrelationIds({ a: { b: { c: { threadId: 'deep-1' } } } })).toEqual({})
     expect(extractCorrelationIds([1, 2])).toEqual({})
     expect(extractCorrelationIds('text')).toEqual({})
+  })
+  test('子层枚举可达深度 2（#757：{input:{traceContext:{traceId}}}）', () => {
+    expect(extractCorrelationIds({ input: { traceContext: { traceId: 'tr-1' } } })).toEqual({ traceId: 'tr-1' })
+    expect(extractCorrelationIds({ input: { runId: 'run-2' } })).toEqual({ runId: 'run-2' })
+    // 深度 2 节点自身查关联键后不再继续下钻
+    expect(extractCorrelationIds({ a: { b: { c: { threadId: 'too-deep' } } } })).toEqual({})
   })
 })
 
