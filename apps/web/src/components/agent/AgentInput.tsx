@@ -444,8 +444,10 @@ export function AgentInput({
       autoSelectedPlanModeRef.current = next.autoSelectedPlan
       return next.permissionMode
     })
+    // 显式重置而非仅 truthy 分支赋值:config 被其他面板清空(schema 允许 null)时,
+    // ref 不复位会让后续发送继续携带旧档(#715 review M4)
+    configThinkingLevelRef.current = config.agent?.thinkingLevel
     if (config.agent?.thinkingLevel) {
-      configThinkingLevelRef.current = config.agent.thinkingLevel
       setThinkingLevel(config.agent.thinkingLevel)
     }
     setFollowUpQueueMode(config.agent?.followUpQueueMode ?? 'queue')
