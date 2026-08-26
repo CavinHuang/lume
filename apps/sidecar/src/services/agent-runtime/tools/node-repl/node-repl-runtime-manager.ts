@@ -3,6 +3,8 @@ import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { delimiter, dirname, join } from "node:path";
 import { spawnWithProcessSandbox, type SandboxSettings } from "@lume/agent-sdk";
+import { normalizeHostLevel, parseLumeLogLine, type LumeHostLogLine } from "@lume/shared";
+import { writeLogRecord } from "../../../infra/logger";
 import type {
   JsExecInput,
   NodeReplBrowserAuthRequest,
@@ -93,6 +95,42 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
   private pending = new Map<string, PendingCall>();
   private activeExecs = new Map<string, ActiveExec>();
   private stderr = "";
+  private stderrLineBuffer = "";
+
+  // 每次 spawn 新一代宿主时调用：旧代残留的半行 LUMELOG 若拼进新一代输出，
+  // 最坏会被解析成新进程的结构化日志（错源归属），并污染退出诊断消息。
+  private resetStderrBuffers(): void {
+    this.stderr = "";
+    this.stderrLineBuffer = "";
+  }
+
+  // LUMELOG 行转结构化日志；其余行维持旧行为：进 this.stderr，失败诊断时可见。
+  private ingestStderrChunk(chunk: string): void {
+    this.stderrLineBuffer += chunk;
+    // 无换行洪水的兜底：与 supervisor 同款，超限保留末尾 64KB。
+    if (this.stderrLineBuffer.length > 1024 * 1024) {
+      this.stderrLineBuffer = this.stderrLineBuffer.slice(-64 * 1024);
+    }
+    const lines = this.stderrLineBuffer.split("\n");
+    this.stderrLineBuffer = lines.pop() ?? "";
+    for (const raw of lines) {
+      const line = raw.trimEnd();
+      if (!line) continue;
+      const parsed = parseLumeLogLine(line);
+      if (!parsed) {
+        // 非前缀/坏 JSON/非对象/缺核心字段一律回退诊断缓冲。
+        this.stderr = truncate(`${this.stderr}${line}\n`, MAX_STDERR_CHARS);
+        continue;
+      }
+      writeLogRecord({
+        level: normalizeHostLevel(parsed.level),
+        context: parsed.context,
+        event: parsed.event,
+        message: parsed.message,
+        ...(parsed.data ? { data: parsed.data } : {}),
+      });
+    }
+  }
 
   constructor(private readonly options: JsonlNodeReplRuntimeClientOptions) {}
 
@@ -191,6 +229,9 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       stdio: ["pipe", "pipe", "pipe"]
     }, extendNodeReplSandbox(this.options));
     this.child = child;
+    // 新一代进程必须从空缓冲开始：旧宿主崩溃残留的半行 LUMELOG 会与新宿主输出拼接，
+    // 最坏拼成合法 JSON 被记成新进程的结构化日志（错源归属），并污染退出诊断消息。
+    this.resetStderrBuffers();
 
     if (!child.stdin || !child.stdout || !child.stderr) {
       child.kill();
@@ -201,15 +242,25 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       this.handleLine(line);
     });
     child.stderr.on("data", (chunk) => {
-      this.stderr = truncate(`${this.stderr}${chunk.toString("utf8")}`, MAX_STDERR_CHARS);
+      this.ingestStderrChunk(chunk.toString("utf8"));
     });
     child.once("error", (error) => {
       if (this.child === child) this.child = null;
       this.rejectAll(error);
     });
+    let exited = false;
     child.once("exit", (code, signal) => {
+      exited = true;
       if (this.child === child) this.child = null;
+      // 冲刷残尾：宿主死在半行输出时，退出诊断前先处理缓冲里的最后一行。
+      this.ingestStderrChunk("\n");
       this.rejectAll(new Error(`node_repl runtime exited: code=${code ?? "null"} signal=${signal ?? "null"}${this.stderr ? `\n${this.stderr}` : ""}`));
+    });
+    // Node 不保证末尾 stdio data 先于 exit 排空——close 才是流排空的确定时点，兜住迟到的尾随字节。
+    // 仅在「本代已退出且尚无新一代 spawn」时补冲刷：this.child 已被新一代占用则旧代
+    // 迟到的 '\n' 会截断新代缓冲中的半行，必须跳过（旧代残尾随之丢弃，有界取舍）。
+    child.once("close", () => {
+      if (exited && this.child === null) this.ingestStderrChunk("\n");
     });
   }
 
@@ -475,3 +526,4 @@ function callTimeoutMs(timeoutMs: number | undefined): number {
 function truncate(value: string, maxChars: number): string {
   return value.length > maxChars ? value.slice(-maxChars) : value;
 }
+
