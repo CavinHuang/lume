@@ -92,12 +92,16 @@ export const GlobTool = defineTool({
 
       // @ts-ignore - glob is available in Node 22+
       if (typeof glob === 'function') {
+        // pattern 显式点名点段（.env*、**\/.github\/**）时豁免隐藏过滤——
+        // 模型明确要找的就是隐藏文件（#711 follow-up）
+        const wantsHidden = pattern.split(/[\\/]/).some((segment: string) =>
+          segment.startsWith('.') && segment.length > 1)
         const matches: string[] = []
         let truncated = false
         // @ts-ignore
         for await (const entry of glob(pattern, { cwd: searchDir, signal: context.abortSignal })) {
-          // 与 native 对齐：跳过隐藏文件/目录（#538）
-          if (entry.split(/[\\/]/).some((segment: string) => segment.startsWith('.'))) continue
+          // 与 native 对齐：默认跳过隐藏文件/目录（#538）
+          if (!wantsHidden && entry.split(/[\\/]/).some((segment: string) => segment.startsWith('.'))) continue
           matches.push(entry)
           if (matches.length > 500) {
             truncated = true
