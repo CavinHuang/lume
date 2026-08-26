@@ -2,7 +2,28 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { spawnSync } from "node:child_process";
 import { buildCommandLine, buildSandboxEnvironment, getProcessSandboxSupport, probeProcessSandbox, pruneMissingMxcDaclRecoveryEntries, spawnWithProcessSandbox } from "./process-sandbox";
+
+// macOS 26+ 收紧了 sandbox-exec：deny file-write* 下 allow subpath 的写入直接
+// Operation not permitted，而 mxc-sdk 仅探测二进制存在即声称 seatbelt 可用——
+// available 守卫不再足以代表"沙箱真的能执行"。先实测一次最小写探针（同
+// file-tools.test.ts 的 symlink 探针先例），本机不可用则跳过执行类断言。
+const seatbeltUsable = (() => {
+  if (process.platform !== "darwin") return true;
+  try {
+    const probeDir = mkdtempSync(join(tmpdir(), "lume-seatbelt-probe-"));
+    const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* (subpath "${probeDir}"))`;
+    const result = spawnSync("/usr/bin/sandbox-exec", ["-p", profile, "/usr/bin/touch", join(probeDir, "probe")], {
+      encoding: "utf8",
+      timeout: 10_000,
+    });
+    rmSync(probeDir, { recursive: true, force: true });
+    return result.status === 0;
+  } catch {
+    return false;
+  }
+})();
 
 const roots: string[] = [];
 afterEach(() => {
@@ -50,8 +71,9 @@ describe("OS process sandbox", () => {
     expect(existsSync(recoverable)).toBeTrue();
   });
 
-  test("proves allowed read/write and denied-root enforcement when MXC is supported", async () => {
-    if (!getProcessSandboxSupport().available) return;
+  // 可见 skip(bun:test 不认 options.skip 对象,须用 skipIf):macOS 26+ 上本
+  // 断言会长期跳过,CI 报表须能区分 skipped 与 passed
+  test.skipIf(!getProcessSandboxSupport().available || !seatbeltUsable)("proves allowed read/write and denied-root enforcement when MXC is supported", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-process-sandbox-test-"));
     roots.push(root);
     const allowed = join(root, "allowed");

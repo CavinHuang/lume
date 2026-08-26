@@ -1,19 +1,21 @@
 import { randomUUID } from "node:crypto"
 import { withRepeatGuardState } from "@lume/agent-sdk"
 import type { ToolDefinition, ToolInputSchema, ToolResult } from "@lume/agent-sdk"
-import type { BrowserBackendDescriptor, BrowserTabDescriptor } from "@lume/shared"
-import { BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared"
+import {
+  BROWSER_MCP_SERVER_ID,
+  BROWSER_TOOL_NAME_PREFIX,
+  type BrowserBackendDescriptor,
+  type BrowserTabDescriptor,
+} from "@lume/shared"
+import { BROWSER_HANDLER_WAIT_CAP_MS, stableSerialize } from "@lume/shared"
+// #601 维护性 review：工具名唯一真源在 @lume/shared（LUME_BROWSER_TOOL_NAMES）——
+// 新增工具时 shared 一处登记，web 映射哨兵测试自动盯住
+import { LUME_BROWSER_TOOL_NAMES as BROWSER_TOOL_NAMES } from "@lume/shared"
 import type { BrowserBroker } from "../../../browser/browser-broker"
 import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder"
 import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "./browser-tool-session"
 
-export const BROWSER_MCP_SERVER_ID = "browser"
-const WRAPPER_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`
-export const BROWSER_TOOL_NAMES = [
-  "list_tabs", "open", "switch_tab", "navigate", "back", "forward", "reload", "snapshot",
-  "click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll",
-  "screenshot", "upload", "download", "list_secrets", "fill_secret", "dialog", "handle_dialog", "run_script",
-] as const
+const WRAPPER_PREFIX = BROWSER_TOOL_NAME_PREFIX
 export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
 type BrowserToolBroker = Pick<BrowserBroker, "dispatch" | "listBackends">
@@ -70,6 +72,30 @@ export function createBrowserMcpTools(input: {
       async call(rawArgs, context) {
         const operationId = context.toolUseId || randomUUID()
         const args = asRecord(rawArgs)
+        // #603:executed_unknown(传输超时,动作可能已执行)后同代际同参重试在发起
+        // 前拦截——盲目重试即双击/双下载。页面代际已变(动作触发了导航)视为新语境
+        // 放行;连续两次拦截后尊重模型意志不再阻止。
+        const unknownOutcomeKey = isActionTool(name)
+          ? `${name}:${stableSerialize(args)}`
+          : undefined
+        if (unknownOutcomeKey && session.unknownOutcomeActions) {
+          const pending = session.unknownOutcomeActions.get(unknownOutcomeKey)
+          if (pending) {
+            if ((session.snapshot?.generation ?? pending.generation) !== pending.generation || pending.attempts >= 2) {
+              session.unknownOutcomeActions.delete(unknownOutcomeKey)
+            } else {
+              pending.attempts += 1
+              return toolResult(operationId, {
+                ok: false,
+                operation_id: operationId,
+                active_tab_id: session.activeTabId ?? null,
+                code: "outcome_unknown_retry_blocked",
+                message: "The previous identical action timed out with an unknown outcome and may have already been applied. Take a snapshot to observe the actual state before doing anything else; only retry once you have confirmed it did not take effect.",
+                retryable: false,
+              }, true, { ok: false, tool: name, code: "outcome_unknown_retry_blocked", blocked_by: "unknown_outcome" })
+            }
+          }
+        }
         if ((isActionTool(name) || session.blockedActionLoop?.tool === name) && session.blockedActionLoop) {
           const blocked = session.blockedActionLoop
           return toolResult(operationId, {
@@ -97,12 +123,22 @@ export function createBrowserMcpTools(input: {
         } catch (error) {
           const code = browserErrorCode(error)
           if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found" || code === "user_takeover_required") session.snapshot = undefined
+          // #603:结果未知(超时,动作可能已执行)——记指纹供同代际重试闸使用;
+          // confirmation_timeout 确定未执行,不入册
+          if (code === "executed_unknown" && unknownOutcomeKey) {
+            const registry = session.unknownOutcomeActions ?? (session.unknownOutcomeActions = new Map())
+            registry.set(unknownOutcomeKey, { attempts: 0, generation: session.snapshot?.generation ?? 0 })
+          }
           const message = error instanceof Error && error.message && error.message !== code ? error.message.slice(0, 4_000) : code
           // broker 已把 desktop 富文本摧毁为裸码,navigation_timeout 的行为
           // 指导只能在此注入:页面可能仍在后台加载,先观察再决定。
+          // user_declined 同理(#601 端到端 review B1):用户否决不随参数/ref 变化,
+          // 不给指引模型会「换个姿势重试」再次弹窗骚扰。
           const hint = code === "navigation_timeout"
             ? "The page may still be loading in the background. Take a snapshot to check the actual state before deciding; do not retry navigate immediately. If it times out again, open a new tab or report this to the user instead of retrying."
-            : undefined
+            : code === "user_declined"
+              ? "The user explicitly declined this action in the confirmation dialog. Do NOT retry it with different parameters, selectors, or refs—the refusal is about the action itself, not its formulation. Ask the user how they would like to proceed."
+              : undefined
           const retryable = code === "browser_unavailable" || code === "stale_target" || code === "stale_snapshot_cursor"
           const failureKey = !retryable ? actionFailureKey(name, args, session) : undefined
           if (failureKey) {

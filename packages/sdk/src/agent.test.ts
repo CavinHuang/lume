@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -48,6 +48,27 @@ class StaticProvider implements LLMProvider {
   }
 }
 
+class ToolUseOnceProvider implements LLMProvider {
+  readonly apiType = "anthropic-messages" as const
+  calls = 0
+
+  async createMessage(_params: CreateMessageParams): Promise<CreateMessageResponse> {
+    this.calls += 1
+    if (this.calls === 1) {
+      return {
+        content: [{ type: "tool_use", id: "call-live-1", name: "MetaTool", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }
+    }
+    return {
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }
+  }
+}
+
 class ToolUseProvider implements LLMProvider {
   readonly apiType = "anthropic-messages" as const
 
@@ -84,6 +105,17 @@ const originalLumeConfigDir = process.env.LUME_CONFIG_DIR
 const originalAliceConfigDir = process.env.ALICE_CONFIG_DIR
 const originalOpenAgentSdkHome = process.env.OPEN_AGENT_SDK_HOME
 const originalToolSearch = process.env.ENABLE_TOOL_SEARCH
+
+beforeEach(() => {
+  // 全部 createAgent 用例默认隔离宿主技能/配置目录：fs-loader 运行时读 env，
+  // 未设时回落 ~/.lume/skills、~/.alice/skills——宿主真实技能会经 <available_skills>
+  // runtime 块进入 prompt，任何精确消息形状断言都会以 runtime-context 用例的
+  // 方式翻车。个别需要自定义布局的用例可在本用例内覆写。
+  const testHome = mkdtempSync(join(tmpdir(), "lume-agent-test-home-"))
+  tempDirs.push(testHome)
+  process.env.LUME_CONFIG_DIR = join(testHome, "config")
+  process.env.ALICE_CONFIG_DIR = join(testHome, "alice")
+})
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -234,7 +266,7 @@ describe("Agent runtime tool resolver", () => {
   test("rebuildToolPool keeps core tools eager and defers the rest", async () => {
     const agent = createAgent({
       persistSession: false,
-      tools: [tool("Bash"), tool("GuanlanSearch")],
+      tools: [tool("Bash"), tool("DeepSearch")],
       provider: new StaticProvider(),
       model: "host/model-a",
     })
@@ -249,7 +281,7 @@ describe("Agent runtime tool resolver", () => {
     expect(toolPool.map((t) => t.name)).toContain("ExecuteTool")
     // Core tools never land in deferred; non-core tools do.
     expect(deferredPool.map((t) => t.name)).not.toContain("Bash")
-    expect(deferredPool.map((t) => t.name)).toContain("GuanlanSearch")
+    expect(deferredPool.map((t) => t.name)).toContain("DeepSearch")
 
     await agent.close()
   })
@@ -413,20 +445,20 @@ describe("Agent runtime tool resolver", () => {
       async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
         this.requests.push(params)
         if (this.requests.length === 1) {
-          return { content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:GuanlanSearch" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
+          return { content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:DeepSearch" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
         }
         return { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }
       }
     }()
     const agent = createAgent({
       persistSession: false,
-      tools: [tool("Read"), tool("GuanlanSearch"), tool("OtherSearch")],
+      tools: [tool("Read"), tool("DeepSearch"), tool("OtherSearch")],
     })
     await agent.getInitializationResult()
     ;(agent as any).provider = provider
 
-    // Query 1: ToolSearch promotes GuanlanSearch natively (turns 1-2).
-    for await (const _event of agent.query("find guanlan")) {
+    // Query 1: ToolSearch promotes DeepSearch natively (turns 1-2).
+    for await (const _event of agent.query("find something")) {
       // drain query
     }
     // Query 2: the engine must receive the promoted tool natively, in append
@@ -437,16 +469,16 @@ describe("Agent runtime tool resolver", () => {
     }
 
     expect(provider.requests[2]?.tools.map((item) => item.name)).toEqual([
-      "Read", "ToolSearch", "ExecuteTool", "GuanlanSearch",
+      "Read", "ToolSearch", "ExecuteTool", "DeepSearch",
     ])
-    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("GuanlanSearch")
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("DeepSearch")
     expect((agent as any).deferredToolPool.map((item: ToolDefinition) => item.name)).toEqual(["OtherSearch"])
 
     // Promotions survive a pool rebuild (MCP reconnect etc.); names no longer
     // present in the pool are silently skipped.
     ;(agent as any).activatedToolNames.add("GoneTool")
     await (agent as any).rebuildToolPool()
-    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("GuanlanSearch")
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("DeepSearch")
     expect((agent as any).deferredToolPool.map((item: ToolDefinition) => item.name)).toEqual(["OtherSearch"])
     await agent.close()
   })
@@ -1181,6 +1213,10 @@ describe("Agent session persistence", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-runtime-context-"))
     tempDirs.push(tempDir)
     process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    // 隔离宿主技能目录：默认根（~/.lume/skills、~/.alice/skills）会把本机真实
+    // 技能注入 <available_skills> runtime 块，挤掉 slice(-2) 断言窗口
+    process.env.LUME_CONFIG_DIR = join(tempDir, "config")
+    process.env.ALICE_CONFIG_DIR = join(tempDir, "alice")
     const sessionId = `runtime-context-${crypto.randomUUID()}`
     let capturedMessages: CreateMessageParams["messages"] = []
     const provider: LLMProvider = {
@@ -1521,6 +1557,176 @@ describe("Agent session message uuid realignment (#363)", () => {
     // The surviving real messages keep their own uuids.
     expect(rebuilt[1]!.uuid).toBe("a-mid")
     expect(rebuilt[2]!.uuid).toBe("u-6")
+  })
+
+  test("rebuild path applies the same _meta whitelist as the live push path (#709 item 1)", () => {
+    const history = [
+      { role: "user", content: "question" },
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: "{}",
+          _meta: {
+            computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 3, app: "IDE" }, screenshotId: "s1" },
+            toolName: "mcp__cu__click",
+            error: { code: "permission_denied", retryable: false },
+          },
+        }],
+      },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history)
+
+    const toolResult = (rebuilt[1]!.content as any[])[0]!
+    // 白名单最小集合成立：非法/私有字段（error 等）不落持久轨，
+    // 台账事实被投影为校验后的形状（screenshotId 剥离）。
+    expect(toolResult._meta).toEqual({
+      computerUseAction: { actionId: "action-1", action: "click", phase: "verified", window: { id: 3, app: "IDE" } },
+      toolName: "mcp__cu__click",
+    })
+  })
+
+  test("rebuild path drops _meta entirely when nothing survives the whitelist (#709 item 1)", () => {
+    const history = [
+      {
+        role: "user",
+        content: [{
+          type: "tool_result",
+          tool_use_id: "call-1",
+          content: "ok",
+          _meta: { error: { code: "invalid_input", retryable: true }, ephemeral: "trusted_runtime" },
+        }],
+      },
+    ] as any[]
+
+    const rebuilt = sessionMessagesFromHistory(history)
+    expect((rebuilt[0]!.content as any)[0]._meta).toBeUndefined()
+  })
+
+  test("live push path persists the whitelisted _meta shape (#725 review R9)", async () => {
+    // MetaTool 须留在 eager 池：默认 tst 模式会把它延迟进 ToolSearch，引擎直调即 Unknown tool。
+    // 用显式 toolSearchMode 选项替代 env 操控（#725 review S5 根治项）。
+    const metaTool: ToolDefinition = {
+      name: "MetaTool",
+      description: "emits private _meta",
+      inputSchema: { type: "object", properties: {} },
+      async call() {
+        return {
+          type: "tool_result",
+          tool_use_id: "",
+          content: "ok",
+          _meta: {
+            computerUseAction: { actionId: "action-live", action: "click", phase: "verified", window: { id: 3, app: "IDE" }, screenshotId: "s1" },
+            error: { code: "permission_denied" },
+            ephemeral: "trusted_runtime",
+          },
+        }
+      },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [metaTool],
+      provider: new ToolUseOnceProvider(),
+      canUseTool: async () => ({ behavior: "allow" }),
+      toolSearchMode: "standard",
+    })
+
+    try {
+      for await (const _event of agent.query("hello")) {
+        // drain
+      }
+
+      const persisted = (agent as any).sessionMessages as Array<{ role: string; content: unknown }>
+      const toolResultMessage = persisted.find((message) =>
+        message.role === "user"
+        && Array.isArray(message.content)
+        && (message.content as any[]).some((block) => block?.type === "tool_result"))
+      expect(toolResultMessage).toBeDefined()
+      const block = (toolResultMessage!.content as any[]).find((b) => b?.type === "tool_result")
+      expect(block).toBeDefined()
+      // live 推送与重建路径共享同一投影：私有字段不落持久轨，台账事实验形后存活
+      expect(block._meta).toEqual({
+        computerUseAction: { actionId: "action-live", action: "click", phase: "verified", window: { id: 3, app: "IDE" } },
+      })
+    } finally {
+      await agent.close()
+    }
+  })
+
+  test("compaction breakers persist across runs on one Agent (#725 review R6/R7)", async () => {
+    // engine 每 run 新建：计数器不跨 run 线程化则熔断门结构性不可达。
+    // 第一次 run 恢复失败烧 1 次；第二次 run 必须带着累计值起步（N=2）。
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages" as const,
+      async createMessage() {
+        const error = new Error("prompt is too long") as Error & { status: number }
+        error.status = 400
+        throw error
+      },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [],
+      provider,
+      contextController: {
+        shouldAutoCompact: () => false,
+        microCompactMessages: ({ messages }) => messages,
+        async compactConversation({ messages }) {
+          return {
+            compacted: false,
+            compactedMessages: messages,
+            summary: "",
+            failureReason: "max_tokens" as const,
+          }
+        },
+      },
+    })
+
+    try {
+      // 第 4 次 run 熔断门已关（failures=3 不再尝试）：N 封顶在 3
+      for (const expectedAttempts of [1, 2, 3, 3]) {
+        let lastError = ""
+        for await (const event of agent.query(`turn ${expectedAttempts}`)) {
+          if (event.type === "result" && event.subtype === "error_during_execution") {
+            lastError = event.errors[0] ?? ""
+          }
+        }
+        expect(lastError).toContain(`auto-compaction recovery attempted ${expectedAttempts} time(s)`)
+      }
+    } finally {
+      await agent.close()
+    }
+  })
+
+  test("buildRunHistory failure clears currentEngine instead of bricking the agent (#725 derived)", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+    const spy = spyOn(agent as unknown as { buildRunHistory: () => unknown[] }, "buildRunHistory")
+      .mockImplementation(() => {
+        throw new Error("boom")
+      })
+
+    try {
+      const drained = async () => {
+        for await (const _event of agent.query("hello")) {
+          // drain
+        }
+      }
+      await expect(drained()).rejects.toThrow("boom")
+
+      // 悬挂的 currentEngine 会让 #357 互斥检查永久拒绝后续 prompt
+      expect((agent as unknown as { currentEngine: unknown }).currentEngine).toBeNull()
+
+      spy.mockRestore()
+      for await (const _event of agent.query("hello again")) {
+        // drain — 第二次 run 必须能正常发起并完成
+      }
+    } finally {
+      spy.mockRestore()
+      await agent.close()
+    }
   })
 })
 

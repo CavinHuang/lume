@@ -190,6 +190,8 @@ export function rawGitHubUrl(
 export interface PluginMarketGitHubDeps {
   requestRemote(url: string, init?: RequestInit): Promise<Response>;
   fetchText(url: string): Promise<string>;
+  /** #525-10:signal 贯穿 + 分块字节上限的 body 统一消费口 */
+  readRemoteBody(response: Response, maxBytes?: number, oversize?: () => Error): Promise<Buffer>;
 }
 
 export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
@@ -400,14 +402,14 @@ export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
     }
     await mkdir(stage, { recursive: true });
     const archive = join(stage, "source.tar.gz");
-    const arrayBuffer = await response.arrayBuffer();
-    if (arrayBuffer.byteLength > GITHUB_ARCHIVE_MAX_BYTES) {
-      throw new PluginMarketError(
-        "install_failed",
-        "GitHub 源归档超过 512 MB 限制",
-      );
-    }
-    await writeFile(archive, new Uint8Array(arrayBuffer));
+    // #525-10:分块流式落盘上限——原 arrayBuffer 后才查,chunked 无
+    // content-length 时最坏 512MB 已整体入内存
+    const bytes = await deps.readRemoteBody(
+      response,
+      GITHUB_ARCHIVE_MAX_BYTES,
+      () => new PluginMarketError("install_failed", "GitHub 源归档超过 512 MB 限制"),
+    );
+    await writeFile(archive, new Uint8Array(bytes));
     const listed = await execFileAsync("tar", ["-tzf", archive], {
       maxBuffer: 8 * 1024 * 1024,
     });

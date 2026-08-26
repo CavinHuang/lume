@@ -6,7 +6,7 @@
  * this is diagnostic-only.
  */
 
-import { LUME_LOG_SCHEMA_VERSION, type LumeLogBatch, type LumeLogEventInput } from '@lume/shared'
+import { LUME_LOG_SCHEMA_VERSION, normalizeLogValue, type LumeLogBatch, type LumeLogEventInput , asRecord } from '@lume/shared'
 import { invoke } from '@/lib/desktop-runtime/core'
 
 type LogLevel = 'trace' | 'debug' | 'info' | 'warn' | 'error' | 'fatal'
@@ -19,39 +19,6 @@ let queue: LumeLogEventInput[] = []
 let flushTimer: ReturnType<typeof setTimeout> | null = null
 let inFlight = false
 
-function normalizeValue(
-  input: unknown,
-  depth = 0,
-  seen = new WeakSet<object>(),
-): unknown {
-  if (input == null || typeof input === 'boolean' || typeof input === 'number') return input
-  if (typeof input === 'string') return input.length > 8_192 ? `${input.slice(0, 8_192)}…[truncated]` : input
-  if (typeof input === 'bigint') return input.toString()
-  if (typeof input === 'function' || typeof input === 'symbol') return `[${typeof input}]`
-  if (input instanceof Error) return { name: input.name, message: input.message, stack: input.stack }
-  if (depth >= 6) return '[MaxDepth]'
-  if (!input || typeof input !== 'object') return String(input)
-  if (seen.has(input)) return '[Circular]'
-  seen.add(input)
-  if (Array.isArray(input)) return input.slice(0, 100).map((item) => normalizeValue(item, depth + 1, seen))
-  const output: Record<string, unknown> = {}
-  const descriptors = Object.getOwnPropertyDescriptors(input)
-  for (const key of Object.keys(descriptors).slice(0, 100)) {
-    const normalizedKey = key.toLowerCase().replace(/[-_\s]/g, '')
-    if (
-      ['body', 'prompt', 'systemprompt', 'rawrequest', 'rawresponse', 'requestbody', 'responsebody', 'content', 'html', 'markdown', 'input', 'output'].includes(normalizedKey)
-      || ['token', 'secret', 'password', 'apikey', 'authorization', 'cookie'].some((part) => normalizedKey.includes(part))
-    ) {
-      output[key] = '[redacted]'
-      continue
-    }
-    const descriptor = descriptors[key]
-    output[key] = descriptor && 'value' in descriptor
-      ? normalizeValue(descriptor.value, depth + 1, seen)
-      : '[Accessor]'
-  }
-  return output
-}
 
 function scheduleFlush(): void {
   if (flushTimer || inFlight) return
@@ -97,6 +64,16 @@ export function writeWebLog(
   })
 }
 
+/** Test-only observation point for the internal fire-and-forget queue. */
+export function readRendererQueueForTest(): readonly LumeLogEventInput[] {
+  return queue
+}
+
+/** Test-only: drop all queued events so tests start from an empty queue. */
+export function clearRendererQueueForTest(): void {
+  queue = []
+}
+
 export function writeWebLogEvent(
   input: Omit<LumeLogEventInput, 'schemaVersion' | 'eventId' | 'emittedAt' | 'source'>,
 ): void {
@@ -106,7 +83,7 @@ export function writeWebLogEvent(
     emittedAt: new Date().toISOString(),
     source: 'renderer',
     ...input,
-    ...(input.data ? { data: normalizeValue(input.data) as Record<string, unknown> } : {}),
+    ...(input.data ? { data: asRecord(normalizeLogValue(input.data)) } : {}),
   }
   if (queue.length >= MAX_QUEUE_EVENTS) {
     const removable = queue.findIndex((candidate) => candidate.level === 'trace' || candidate.level === 'debug')

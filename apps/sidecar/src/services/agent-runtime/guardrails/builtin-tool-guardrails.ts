@@ -35,7 +35,9 @@ export const fileWriteBoundaryGuardrail: LumeGuardrail<RunToolInputGuardrailsInp
   mode: "blocking",
   async run(input, context) {
     const normalized = canonicalizeAgentToolName(input.toolName);
-    if (!["write", "edit", "multiedit", "notebookedit"].includes(normalized)) {
+    if (!// 新增写类工具必须同步此名单（漏加 = 静默绕过边界，无报错）——
+  // 可维护性复审标记的唯二静默漏防护点之一
+  ["write", "edit", "multiedit", "notebookedit"].includes(normalized)) {
       return { behavior: "allow" };
     }
     const cwd = input.context.cwd;

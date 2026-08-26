@@ -53,6 +53,9 @@ describe("ComputerUseActionLedger", () => {
 
     const restored = new ComputerUseActionLedger({ workspaceSlug: "demo", threadId: "thread-1" });
     expect(restored.get(entry.actionId)?.phase).toBe("verified");
+    // restore 后终态条目必须出 activeIds 集：observeWindow 不得对历史 verified
+    // 条目重复 verify（会触发非法转换 throw，#711 review）
+    expect(restored.observeWindow(entry.window, "", undefined)).toEqual([]);
   });
 
   test("rejects model-like phase promotion", () => {

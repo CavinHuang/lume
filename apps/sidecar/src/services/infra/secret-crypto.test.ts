@@ -34,7 +34,7 @@ describe("secret-crypto", () => {
   });
 
   test("legacy ciphertexts stay readable after the installed key arrives", () => {
-    // 存量密文无版本前缀，继续按 legacy 种子解；消费方重存时才滚动到 v2
+    // 存量密文无版本前缀，继续按 legacy 种子解；无自动迁移——仅重录明文才以 v2 落盘
     expect(decryptSecret(legacyCiphertext)).toBe("legacy-secret");
   });
 

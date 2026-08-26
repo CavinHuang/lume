@@ -3,9 +3,9 @@
  * 插件敏感能力审批 / AskUserQuestion 会话 / workflow hook / subagent 策略 /
  * 自动化暂停五段权限逻辑与工具输入 guardrail 网关。
  */
-import { isHardDeniedTool, type CanUseToolFn } from "@lume/agent-sdk";
+import { isHardDeniedTool, type CanUseToolFn, type ToolDefinition } from "@lume/agent-sdk";
 import { randomUUID } from "node:crypto";
-import type { AgentToolPermissionRequest } from "@lume/shared";
+import type { AgentToolPermissionPreview, AgentToolPermissionRequest } from "@lume/shared";
 import type { PluginPermissions, SensitiveCapabilityKey } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import type {
@@ -27,7 +27,63 @@ import type { AgentAskUserQuestionQuestion } from "@lume/shared";
 import { builtinToolInputGuardrails } from "../guardrails/builtin-tool-guardrails";
 import { LumeGuardrailRunner } from "../guardrails/guardrail-runner";
 import { ToolExecutionGateway } from "../tools/tool-execution-gateway";
-import { getRuntimeToolDescriptor } from "../tools/tool-descriptor-session";
+import { canonicalizeAgentToolName } from "@lume/shared";
+import { isCapability, isCategory, isRiskLevel, isSideEffects } from "../tools/tool-source";
+import { LUME_TOOL_SOURCES, type LumeToolDescriptor, type LumeToolSource } from "../tools/tool-types";
+
+// 双载体合一（#541）：descriptor 元数据随工具定义的 runtimeMetadata 携带
+// （wrapper 盖章或工厂自带，如 ToolSearch/ExecuteTool），canUseTool 拿到的
+// 就是该 definition，直接按形取回，旁路 session Map 已删。
+const KNOWN_TOOL_SOURCES = new Set<string>(LUME_TOOL_SOURCES);
+
+export function resolveRuntimeDescriptor(tool: ToolDefinition): LumeToolDescriptor | undefined {
+  const meta = (tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
+  if (!meta || typeof meta !== "object") return undefined;
+  // 净化对齐注册期 readRuntimeMetadata 的信任级别：source/字段值域枚举校验
+  // （复用 tool-source 同一套守卫，#711 review 第四轮消除双写漂移）。
+  // 四个必填维度任一缺失/非法 → 整体 fail-closed 返回 undefined：
+  // 生产路径全经 wrapper 盖章恒全字段；残缺定义走 descriptor_missing deny，
+  // 不产出类型撒谎的半残 descriptor（#711 review 类型轮）
+  if (!isCategory(meta.category) || !isCapability(meta.capability)
+    || !isRiskLevel(meta.riskLevel) || !isSideEffects(meta.sideEffects)) {
+    return undefined;
+  }
+  const rawCategory = meta.category as LumeToolDescriptor["metadata"]["category"];
+  const rawCapability = meta.capability as LumeToolDescriptor["metadata"]["capability"];
+  const rawRiskLevel = meta.riskLevel as LumeToolDescriptor["metadata"]["riskLevel"];
+  const rawSideEffects = meta.sideEffects as LumeToolDescriptor["metadata"]["sideEffects"];
+  return {
+    name: tool.name,
+    canonicalName:
+      typeof meta.canonicalName === "string" && meta.canonicalName
+        ? meta.canonicalName
+        : canonicalizeAgentToolName(tool.name),
+    source: (typeof meta.source === "string" && KNOWN_TOOL_SOURCES.has(meta.source)
+      ? meta.source
+      : "sdk") as LumeToolSource,
+    definition: tool,
+    metadata: {
+      ...(typeof meta.title === "string" ? { title: meta.title } : {}),
+      ...(typeof meta.description === "string" ? { description: meta.description } : {}),
+      category: rawCategory as LumeToolDescriptor["metadata"]["category"],
+      capability: rawCapability as LumeToolDescriptor["metadata"]["capability"],
+      riskLevel: rawRiskLevel as LumeToolDescriptor["metadata"]["riskLevel"],
+      sideEffects: rawSideEffects as LumeToolDescriptor["metadata"]["sideEffects"],
+      allowedInPlanMode: meta.allowedInPlanMode === true,
+      isReadOnly: meta.isReadOnly === true,
+      isConcurrencySafe: meta.isConcurrencySafe !== false,
+      ...(meta.requiresWorkspace === true ? { requiresWorkspace: true } : {}),
+      ...(meta.requiresNetwork === true ? { requiresNetwork: true } : {}),
+      ...(meta.requiresApprovalByDefault !== undefined
+        ? { requiresApprovalByDefault: meta.requiresApprovalByDefault === true }
+        : {}),
+      ...(isRecord(meta.payloadPolicy) ? { payloadPolicy: meta.payloadPolicy as LumeToolDescriptor["metadata"]["payloadPolicy"] } : {}),
+      ...(isRecord(meta.resultPolicy) ? { resultPolicy: meta.resultPolicy as LumeToolDescriptor["metadata"]["resultPolicy"] } : {}),
+      ...(isRecord(meta.executionPolicy) ? { executionPolicy: meta.executionPolicy as LumeToolDescriptor["metadata"]["executionPolicy"] } : {}),
+    },
+  };
+}
+
 import { type PreparedRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
@@ -77,6 +133,65 @@ function sanitizeToolInput(input: unknown): Record<string, unknown> {
     }
   }
   return copied;
+}
+
+const PERMISSION_PREVIEW_MAX_CHARS = 4_000;
+
+/**
+ * Edit/Write 类工具的审批前 diff 预览（#560）：事后 EditResult 有完整 diff、
+ * 事前审批却只有一行路径。从原始（未截断）input 提取 old/new，超长截断——
+ * 预览够看即可，完整内容仍以执行结果为准。
+ */
+function buildPermissionPreview(
+  toolName: string,
+  rawInput: Record<string, unknown>
+): AgentToolPermissionPreview | undefined {
+  const normalized = toolName.trim().toLowerCase();
+  const isEditLike =
+    normalized.includes("edit") || normalized.includes("write");
+  if (!isEditLike) return undefined;
+
+  const path = [rawInput.file_path, rawInput.path, rawInput.notebook_path].find(
+    (value) => typeof value === "string" && value.trim()
+  ) as string | undefined;
+
+  // MultiEdit：edits 数组逐对拼接；Edit 单对；Write 全文（old 侧为空）
+  const edits = Array.isArray(rawInput.edits) ? rawInput.edits : [];
+  let oldText = "";
+  let newText = "";
+  if (edits.length > 0) {
+    oldText = edits
+      .map((edit) => (isRecord(edit) && typeof edit.old_string === "string" ? edit.old_string : ""))
+      .filter(Boolean)
+      .join("\n…\n");
+    newText = edits
+      .map((edit) => (isRecord(edit) && typeof edit.new_string === "string" ? edit.new_string : ""))
+      .filter(Boolean)
+      .join("\n…\n");
+  } else {
+    oldText = typeof rawInput.old_string === "string" ? rawInput.old_string : "";
+    newText =
+      typeof rawInput.new_string === "string"
+        ? rawInput.new_string
+        : typeof rawInput.content === "string"
+          ? rawInput.content
+          : "";
+  }
+  if (!oldText && !newText) return undefined;
+  const clip = (value: string): string =>
+    value.length > PERMISSION_PREVIEW_MAX_CHARS
+      ? `${value.slice(0, PERMISSION_PREVIEW_MAX_CHARS)}\n…(预览截断)`
+      : value;
+  return {
+    kind: "diff",
+    ...(path ? { path } : {}),
+    oldText: clip(oldText),
+    newText: clip(newText)
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function toReadableString(value: unknown): string {
@@ -296,10 +411,7 @@ export function createCanUseToolHandler(
         message: buildPendingGuidanceToolMessage(pendingGuidance),
       };
     }
-    const descriptor = getRuntimeToolDescriptor(
-      params.runtime.sessionId,
-      toolName,
-    );
+    const descriptor = resolveRuntimeDescriptor(tool);
     if (!descriptor) {
       recordPermissionDenial({
         threadId: params.runtime.sessionId,
@@ -307,7 +419,8 @@ export function createCanUseToolHandler(
         rawInput: input,
         reasonCode: "descriptor_missing",
       });
-      log.debug("[Agent 工具] 完成", {
+      // 升 warn：单载体化后正常生产路径不应触达——出现即说明有新注入通道绕过了 ToolRuntime 盖章
+      log.warn("[Agent 工具] descriptor 缺失（疑似未盖章的注入通道）", {
         toolName,
         threadId: params.runtime.sessionId.slice(0, 8),
         durationMs: Date.now() - toolStartTime,
@@ -422,6 +535,23 @@ export function createCanUseToolHandler(
                 requestId: permissionRequest.requestId,
                 toolName,
                 message: `插件权限确认超时: ${toolName}`,
+              });
+            },
+            onCancelled: (permissionRequest) => {
+              emit.onRuntimeEvent?.({
+                id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:permission.cancelled`,
+                type: "permission.resolved",
+                threadId: approvalThreadId,
+                runId:
+                  requestRunId ??
+                  permissionRequest.runId ??
+                  params.runtime.sessionId,
+                createdAt: new Date().toISOString(),
+                toolCallId: permissionRequest.toolUseId,
+                requestId: permissionRequest.requestId,
+                toolName,
+                decision: "cancelled",
+                source: "system",
               });
             },
           },
@@ -743,6 +873,10 @@ export function createCanUseToolHandler(
       };
     }
 
+    const permissionPreview = buildPermissionPreview(
+      toolName,
+      isRecord(input) ? input : {}
+    );
     const request = {
       threadId: params.runtime.sessionId,
       ...(requestRunId ? { runId: requestRunId } : {}),
@@ -766,6 +900,7 @@ export function createCanUseToolHandler(
         : {}),
       canAllowAlways,
       input: sanitizeToolInput(input),
+      ...(permissionPreview ? { preview: permissionPreview } : {}),
       ...(automationExecution
         ? {
             interruptionType: "automation_approval" as const,
@@ -845,6 +980,24 @@ export function createCanUseToolHandler(
             message: `工具权限确认超时: ${toolName}`,
           });
         },
+        onCancelled: (permissionRequest) => {
+          // abort/超时时补发 resolved 事件，让 web 端按 requestId 摘掉审批横幅
+          emit.onRuntimeEvent?.({
+            id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:permission.cancelled`,
+            type: "permission.resolved",
+            threadId: approvalThreadId,
+            runId:
+              requestRunId ??
+              permissionRequest.runId ??
+              params.runtime.sessionId,
+            createdAt: new Date().toISOString(),
+            toolCallId: permissionRequest.toolUseId,
+            requestId: permissionRequest.requestId,
+            toolName,
+            decision: "cancelled",
+            source: "system",
+          });
+        },
       },
     );
     if (decision === "allow_always") {
@@ -866,6 +1019,21 @@ export function createCanUseToolHandler(
       });
       return { behavior: "allow" };
     }
+    // 二轮 review(动线 F1):decision=null 是用户点停止/请求被取消,不是拒绝——
+    // 记 user_denied 会污染后续轮次上下文(模型以为用户拒绝过该操作)。
+    if (decision === null && !permissionTimedOut) {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+        reason: "cancelled",
+      });
+      return {
+        behavior: "deny",
+        message: `已取消，未执行工具: ${toolName}`,
+      };
+    }
     log.debug("[Agent 工具] 完成", {
       toolName,
       threadId: params.runtime.sessionId.slice(0, 8),
@@ -875,7 +1043,7 @@ export function createCanUseToolHandler(
     });
     recordPermissionDenial({
       threadId: params.runtime.sessionId,
-      descriptor: getRuntimeToolDescriptor(params.runtime.sessionId, toolName),
+      descriptor,
       toolName,
       rawInput: input,
       reasonCode: permissionTimedOut ? "approval_timeout" : "user_denied",

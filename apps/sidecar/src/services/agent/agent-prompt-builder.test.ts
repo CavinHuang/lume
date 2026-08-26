@@ -194,14 +194,27 @@ describe("agent-prompt-builder", () => {
     expect(prompt).toContain("引用已关闭");
   });
 
-  test("同时具备 browser 与 web_search 时应注入 Browser-First 策略", () => {
+  test("同时具备内置浏览器工具与 web_search 时应注入 Browser-First 策略", () => {
+    // 生产池内浏览器工具实名是 mcp__browser__*，字面量 "browser" 从不出现在真实名单（#542）
     const prompt = buildSystemPromptAppend({
       sessionId: "session-browser-first",
-      availableTools: ["browser", "web_search"]
+      availableTools: ["mcp__browser__snapshot", "mcp__browser__click", "WebSearch"]
     });
     expect(prompt).toContain("## 浏览器优先工具策略（强制）");
-    expect(prompt).toContain("必须优先使用 browser 工具");
+    // 教学节正文只引用池内真实存在的工具实名（#711 review：不得指挥模型调用不存在的工具）
+    expect(prompt).toContain("mcp__browser__list_tabs");
+    expect(prompt).not.toContain("browser status");
+    expect(prompt).not.toContain("relay_status");
+    expect(prompt).not.toContain("start(mode=relay)");
     expect(prompt).toContain("仅在以下情况才回退 WebSearch");
+  });
+
+  test("仅字面量 browser 而无实名浏览器工具时不应注入 Browser-First 策略", () => {
+    const prompt = buildSystemPromptAppend({
+      sessionId: "session-browser-first-literal",
+      availableTools: ["browser", "web_search"]
+    });
+    expect(prompt).not.toContain("## 浏览器优先工具策略");
   });
 
   test("automationExecution=true 时应注入无交互模式约束", () => {
@@ -579,6 +592,41 @@ describe("agent-prompt-builder", () => {
       expect(withEmptyCwd).not.toContain("## 项目指令");
     } finally {
       rmSync(base, { recursive: true, force: true });
+    }
+  });
+
+  test("项目指令注入开关：全局关闭生效，工作区覆盖仅作用于该工作区(#670)", () => {
+    const projectDir = mkdtempSync(join(tmpdir(), "lume-proj-instr-toggle-"));
+    try {
+      writeFileSync(join(projectDir, "CLAUDE.md"), "# Toggle Proj Marker\n", "utf-8");
+      const ctx = { sessionId: "session-instr-toggle", availableTools: [], agentCwd: projectDir };
+
+      // 缺省（未配置）→ 注入
+      expect(buildSystemPromptAppend(ctx)).toContain("# Toggle Proj Marker");
+
+      // 全局关闭 → 跳过
+      const yamlPath = join(tempConfigDir, "lume.yaml");
+      writeFileSync(yamlPath, "agent:\n  projectInstructionsEnabled: false\n", "utf-8");
+      expect(buildSystemPromptAppend(ctx)).not.toContain("# Toggle Proj Marker");
+
+      // 工作区覆盖开启（全局仍关）→ 该工作区注入，其他/无 slug 保持关闭
+      writeFileSync(
+        yamlPath,
+        [
+          "agent:",
+          "  projectInstructionsEnabled: false",
+          "workspaces:",
+          "  demo:",
+          "    agent:",
+          "      projectInstructionsEnabled: true",
+        ].join("\n"),
+        "utf-8",
+      );
+      expect(buildSystemPromptAppend({ ...ctx, workspaceSlug: "demo" })).toContain("# Toggle Proj Marker");
+      expect(buildSystemPromptAppend(ctx)).not.toContain("# Toggle Proj Marker");
+      expect(buildSystemPromptAppend({ ...ctx, workspaceSlug: "other" })).not.toContain("# Toggle Proj Marker");
+    } finally {
+      rmSync(projectDir, { recursive: true, force: true });
     }
   });
 });

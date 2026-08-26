@@ -93,6 +93,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
+import { MAX_RPC_MESSAGE_BYTES } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -132,6 +133,7 @@ import {
 import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
+import { instrumentIpcCommand } from './logging/ipc-instrumentation'
 import {
   createChromeNativeHostInstallPlan,
   writeChromeNativeHostRegistration,
@@ -158,9 +160,11 @@ import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecu
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
-import type { BrowserSettings } from '@lume/shared'
+import type { BrowserSettings,
+  LumeLogLevel, LumeLogEventInput,} from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
-import { nativeEventToIntent } from '@lume/shared'
+import { nativeEventToIntent, summarizeValue, normalizeHostLevel, LUME_LOGGING_DEFAULTS } from '@lume/shared'
+import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
 import type { AgentIslandIntent, NativeAgentIslandSnapshot } from '@lume/shared'
 import {
   createAsyncSingleFlight,
@@ -203,21 +207,23 @@ export const FILE_PROTOCOL = 'lume-file'
 const APP_PROTOCOL_HOST = 'app'
 const APP_PROTOCOL_ORIGIN = `${APP_PROTOCOL}://${APP_PROTOCOL_HOST}`
 const HEALTHCHECK_TIMEOUT_MS = 45_000
+// #552:与 sidecar MAX_RPC_MESSAGE_UNITS(process-transport.ts)同值同口径
+// (UTF-16 code units)。sidecar 对超限帧静默丢弃且错误响应不带 id,pending
+// 查表必 miss,caller 只能干等 45s 超时——发送端预检让 caller 立即得明确错误。
+const SIDECAR_RPC_MESSAGE_LIMIT_UNITS = 96 * 1024 * 1024
+
+// 长等待档位：首装搜索后端 = Python 下载 120s + 解压 + pip 安装 120s（#552 动线3），
+// 通用 45s 上限必然假失败。仅白名单方法使用，不影响常规 RPC 的故障感知速度。
+const LONG_RPC_TIMEOUT_MS = 300_000
+const LONG_RPC_METHODS = new Set([
+  'general-settings:test-search-backend',
+])
 const SIDECAR_READY_METHOD = 'system.ready'
 const SIDECAR_LOG_METHOD = 'system.log'
 const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
 const SIDECAR_LOG_ACK_METHOD = 'system.log-ack'
 const SIDECAR_SETTINGS_REPLACE_METHOD = 'system.settings-replace'
-const QUIET_SIDECAR_RPC_METHODS = new Set([
-  'healthcheck',
-  'general-settings:get',
-  'agent:list-threads',
-  'agent:list-subagent-runs',
-  'agent:get-pending-interactive',
-  'agent:list-workspaces',
-  'channel:oauth-status',
-  'model-meta:get',
-])
+const SIDECAR_LOG_LEVEL_METHOD = 'system.log-level'
 const SLOW_RPC_MS = 2_000
 const RENDERER_DELIVERY_ACK_TIMEOUT_MS = 10_000
 const UPDATE_INSTALL_HANDOFF_TIMEOUT_MS = 15_000
@@ -332,6 +338,7 @@ function getLoggingService() {
     const logging = (persisted.generalSettings as { logging?: unknown } | undefined)?.logging
     loggingService = new LoggingService({
       configDir: resolveConfigDir(),
+      isDev: !app.isPackaged,
       ...(logging && typeof logging === 'object' ? { settings: logging } : {}),
     })
   }
@@ -375,7 +382,14 @@ function getDiagnosticLease(): LumeDiagnosticCaptureSettings | null {
     : lease
 }
 
-function writeMainLog(level, context, event, message, extra = {}) {
+// 显式签名：本函数是全部主进程埋点的汇入点，隐式 any 会让 schema 校验归零。
+function writeMainLog(
+  level: LumeLogLevel,
+  context: string,
+  event: string,
+  message: string,
+  extra: Partial<LumeLogEventInput> = {},
+) {
   return getLoggingService().emit({
     level,
     source: 'main',
@@ -384,6 +398,58 @@ function writeMainLog(level, context, event, message, extra = {}) {
     message,
     ...extra,
   })
+}
+
+const QUIET_IPC_COMMANDS = new Set<string>([
+  // 日志类命令走 lume:invoke 分发而非独立 handle，必须静默避免埋点自喂。
+  'write_web_log',
+  'write_web_log_batch',
+  'desktop_list_log_files',
+  'desktop_read_log_file',
+  'desktop_open_logs_dir',
+  'desktop_export_logs',
+  'desktop_delete_logs',
+  'desktop_log_live_subscribe',
+  'desktop_log_live_unsubscribe',
+  // 敏感内容通道：参数/结果摘要会把正文带进日志，超出内容键预览的授权范围。
+  'desktop_diagnostic_decrypt',
+  'read_clipboard_text',
+  'write_clipboard_text',
+  'save_text_file_dialog',
+  'save_binary_file_dialog',
+  // 启动后观察 dev 终端 command.completed 频率，把高频轮询命令加进来。
+])
+const IPC_LOG_CONTEXT = 'desktop.ipc'
+
+// 埋点自身的故障绝不能改变 IPC 调用的成功/错误语义。
+function safeLogIpcEvent(emit: () => void): void {
+  try {
+    emit()
+  } catch {
+    // ignore：日志设施不可用时静默降级。
+  }
+}
+
+async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<T> | T, origin?: string): Promise<T> {
+  return instrumentIpcCommand({
+    isQuiet: (candidate) => QUIET_IPC_COMMANDS.has(candidate),
+    emit: (e) => safeLogIpcEvent(() => writeMainLog(e.level, IPC_LOG_CONTEXT, e.event, e.message, {
+      durationMs: e.durationMs,
+      status: e.event === 'command.completed' ? 'ok' : 'error',
+      ...e.correlation,
+      ...(origin ? { origin } : {}),
+      data: {
+        command: e.name,
+        args: summarizeValue(e.args),
+        ...(e.result !== undefined ? { result: summarizeValue(e.result) } : {}),
+      },
+      ...(e.error ? { error: e.error } : {}),
+    })),
+  }, name, args, run)
+}
+
+function handleLogged(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void {
+  ipcMain.handle(channel, (event, ...args) => logIpcCommand(channel, args[0], () => handler(event, ...args)))
 }
 
 function writeRateLimitedTrayWarning(event, message, ownerWebContentsId, data = {}) {
@@ -424,6 +490,7 @@ function getTrustedWindows() {
 function resolveRendererTraceOrigin(ownerWebContentsId) {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id === ownerWebContentsId) return 'main_window'
   if (quickInputWindow && !quickInputWindow.isDestroyed() && quickInputWindow.webContents.id === ownerWebContentsId) return 'quick_input'
+  if (islandWindow && !islandWindow.isDestroyed() && islandWindow.webContents.id === ownerWebContentsId) return 'agent_island'
   throw new Error('cannot derive trace origin from untrusted renderer')
 }
 
@@ -445,7 +512,7 @@ function createSafeMessageLogSummary(value) {
   }
 }
 
-function logDesktopStartup(message, event = 'app.lifecycle', level = 'info') {
+function logDesktopStartup(message: string, event = 'app.lifecycle', level: LumeLogLevel = 'info') {
   writeMainLog(level, 'desktop.lifecycle', event, message)
   const logPath = process.env.LUME_DESKTOP_STARTUP_LOG?.trim()
   if (!logPath) return
@@ -514,6 +581,7 @@ const sidecarHost = createSidecarHost({
     }
     showDesktopProposalNotification(method, params)
     showPlanningReminderNotification(method, params)
+    showAutomationRunNotification(method, params)
     showDesktopActionHud(method, params)
     // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
     // 确保即便主窗口隐藏也能触发 intent 刷新。
@@ -663,6 +731,39 @@ function showPlanningReminderNotification(method, params) {
     } catch (error) {
       writeMainLog('error', 'desktop.notification', 'planning_reminder.show_failed', 'planning reminder notification failed', { data: { error } })
     }
+  }
+}
+
+// #566 端到端 review A2:automation 停摆/失败必须有主动通知面——无人值守场景用户
+// 不会盯着管理页；success 保持静默不打扰，failed/waiting 才是「需要人介入」的信号。
+// #649 follow-up:同 job 冷却窗——常驻失败的定时 job 按 cron 频率会无限刷 OS 通知。
+const AUTOMATION_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000
+const automationNotifyLastAt = new Map()
+
+function showAutomationRunNotification(method, params) {
+  if (method !== 'automation:run-completed' || !params || typeof params !== 'object') return
+  const run = params.run
+  if (!run || (run.status !== 'failed' && run.status !== 'waiting_for_user' && run.status !== 'waiting_for_approval')) return
+  if (!Notification.isSupported()) return
+  const jobKey = typeof run.jobId === 'string' ? run.jobId : ''
+  const lastAt = jobKey ? automationNotifyLastAt.get(jobKey) : undefined
+  const now = Date.now()
+  if (lastAt !== undefined && now - lastAt < AUTOMATION_NOTIFY_COOLDOWN_MS) {
+    writeMainLog('info', 'desktop.notification', 'automation_run.cooldown_skip', 'automation notification suppressed by per-job cooldown', { data: { jobId: jobKey, status: run.status } })
+    return
+  }
+  if (jobKey) automationNotifyLastAt.set(jobKey, now)
+  try {
+    const title = run.status === 'failed' ? `自动化任务未完成：${params.jobName ?? '未命名任务'}` : `自动化任务等待处理：${params.jobName ?? '未命名任务'}`
+    const desktopNotification = new Notification({
+      title,
+      body: typeof run.message === 'string' && run.message.trim() ? run.message : '请打开自动化页面查看详情。',
+      silent: true,
+    })
+    desktopNotification.on('click', () => { void showMainWindow() })
+    desktopNotification.show()
+  } catch (error) {
+    writeMainLog('error', 'desktop.notification', 'automation_run.show_failed', 'automation run notification failed', { data: { error } })
   }
 }
 
@@ -2405,11 +2506,29 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         data: payload.data ?? undefined,
       })
       return null
-    case 'write_web_log_batch':
+    case 'write_web_log_batch': {
+      // 多窗口（主窗/快输窗/island）各自运行 renderer 日志实例，按 sender 注入 surface 归因，
+      // 否则同源故障在日志里无法区分来自哪个窗口。
+      // 先校验形状再变异：origin 注入不能在 ingestBatch 校验之前制造 TypeError。
+      const webBatch = payload as { events?: unknown; batchId?: unknown }
+      let surfaceOrigin: string | undefined
+      try {
+        surfaceOrigin = resolveRendererTraceOrigin(context.ownerWebContentsId)
+      } catch {
+        surfaceOrigin = 'renderer_unknown'
+      }
+      if (Array.isArray(webBatch?.events)) {
+        for (const e of webBatch.events) {
+          if (e && typeof e === 'object') {
+            ;(e as Record<string, unknown>).origin ??= surfaceOrigin
+          }
+        }
+      }
       return {
-        accepted: getLoggingService().ingestBatch(payload as any, 'renderer'),
+        accepted: getLoggingService().ingestBatch(webBatch as any, 'renderer'),
         batchId: payload.batchId,
       }
+    }
     case 'desktop_list_log_files':
       return getLoggingService().listFiles()
     case 'desktop_read_log_file':
@@ -2747,6 +2866,9 @@ function createSidecarHost({ onNotification }) {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       LUME_CONFIG_DIR: configDir,
+      // sidecar 源头门槛决定 debug/trace 是否进入传输；落盘仍由主进程 fileLevel 把关。
+      LUME_LOG_FILE_LEVEL: process.env.LUME_LOG_FILE_LEVEL
+        ?? (!app.isPackaged ? 'trace' : loggingService?.getSettings().fileLevel ?? 'info'),
       // session manifest 版本清单消费(#256):sidecar 写 manifest.json 时读取
       LUME_APP_VERSION: app.getVersion(),
       LUME_DEFAULT_SKILLS_AUTOSTART: 'true',
@@ -2937,6 +3059,13 @@ function createSidecarHost({ onNotification }) {
                 data: { error },
               })
             }
+          } else {
+            // 首装失败（启动窗口内 sidecar 崩溃 / keyring 暂不可用）时
+            // secretEncryptionKey 为 null 且无其他恢复点——存量 v2 密文会在本
+            // session 内锁死、新密文静默降级 legacy（交叉复审 F1）。惰性重启
+            // 的 READY 是唯一恢复时机，fire-and-forget 重试安装；失败仍走
+            // install 内部 catch 记日志，等下一次 READY 再试。
+            void installSecretEncryptionKeyInSidecar()
           }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
@@ -2970,9 +3099,36 @@ function createSidecarHost({ onNotification }) {
         if (payload && payload.method === SIDECAR_SETTINGS_REPLACE_METHOD && payload.id === undefined) {
           const mutationId = typeof payload.params?.mutationId === 'string' ? payload.params.mutationId : null
           try {
+            // changedKeys 的对比基线必须是「上一次持久化值」而非 LoggingService 生效快照——
+            // dev 下生效值含 applyDevConsoleDefault 注入的 trace，混用会导致假变更/吞真变更。
+            const previousPersisted = (getSettingsBroker().read().generalSettings as { logging?: unknown } | undefined)?.logging
             const settings = getSettingsBroker().replace(mutationId ? payload.params.settings : payload.params)
             const logging = (settings.generalSettings as { logging?: unknown } | undefined)?.logging
-            if (logging && typeof logging === 'object') getLoggingService().updateSettings(logging)
+            if (logging && typeof logging === 'object') {
+              const incoming = logging as Record<string, unknown>
+              const previous = (previousPersisted && typeof previousPersisted === 'object'
+                ? (previousPersisted as Record<string, unknown>)
+                : {}) as Record<string, unknown>
+              const changedKeys = Object.keys(incoming)
+                .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify(previous[key]))
+                // dev trace 归一（持久化 info → 生效 trace）是既定语义而非用户变更，不计入审计。
+                .filter((key) => !(key === 'consoleLevel' && !app.isPackaged
+                  && incoming.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel))
+              getLoggingService().updateSettings(logging)
+              // 文件级别运行时下发给 sidecar（其门槛在 spawn 时冻结，热更原不生效）。
+              const sidecarFileLevel = process.env.LUME_LOG_FILE_LEVEL
+                ?? (!app.isPackaged ? 'trace' : (logging as { fileLevel?: string }).fileLevel)
+              if (typeof sidecarFileLevel === 'string') {
+                void sidecarHost.call(SIDECAR_LOG_LEVEL_METHOD, { level: sidecarFileLevel }).catch(() => {
+                  // sidecar 未就绪/调用失败不阻塞设置流程；下次设置变更会再次下发。
+                })
+              }
+              if (changedKeys.length > 0) {
+                writeMainLog('info', 'logging.config', 'logging.settings_updated', 'logging settings replaced', {
+                  data: { changedKeys, settings: summarizeValue(logging) },
+                })
+              }
+            }
             // Agent 灵动岛 §5.3：设置开关"关闭后立即生效"。settings-replace 是所有设置写入
             // （含 renderer toggle → sidecar general-settings:update）的唯一汇聚点，故在此处
             // 检测 agentIsland.enabled 翻为 false 即停整个渲染面（native host + Electron 窗）；
@@ -3171,18 +3327,31 @@ function createSidecarHost({ onNotification }) {
       params,
     })
 
+    // 对称预检（#552）：超限消息 sidecar 会静默丢弃，本地先 reject 免得 caller 干等 45s 超时
+    if (payload.length > SIDECAR_RPC_MESSAGE_LIMIT_UNITS) {
+      writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.payload_too_large', `sidecar RPC payload exceeds size limit: ${method}`, {
+        status: 'error',
+        rpcRequestId: String(requestId),
+        ...correlation,
+        data: { method },
+      })
+      // 该 message 会直达渲染层 toast，用面向用户的中文并给出限额与动作
+      throw new Error(`请求内容超过大小上限（96MB），请减小附件或内容后重试`)
+    }
+
     return new Promise((resolveCall, rejectCall) => {
+      const timeoutMs = LONG_RPC_METHODS.has(method) ? LONG_RPC_TIMEOUT_MS : HEALTHCHECK_TIMEOUT_MS
       const timeout = setTimeout(() => {
         pending.delete(requestId)
         writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.timeout', `sidecar RPC timed out: ${method}`, {
           status: 'error',
-          durationMs: HEALTHCHECK_TIMEOUT_MS,
+          durationMs: timeoutMs,
           rpcRequestId: String(requestId),
           ...correlation,
           data: { method },
         })
         rejectCall(new Error(`sidecar request timed out: ${method}`))
-      }, HEALTHCHECK_TIMEOUT_MS)
+      }, timeoutMs)
 
       pending.set(requestId, {
         resolve: resolveCall,
@@ -3310,9 +3479,21 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
       pluginAssets.revokeOwner(ownerWebContentsId)
     })
   }
-  return dispatchCommand(validateRendererInvokeCommand(command), payload, { ownerWebContentsId })
+  const commandName = validateRendererInvokeCommand(command)
+  let surfaceOrigin: string | undefined
+  try {
+    surfaceOrigin = resolveRendererTraceOrigin(ownerWebContentsId)
+  } catch {
+    surfaceOrigin = 'renderer_unknown'
+  }
+  return logIpcCommand(
+    commandName,
+    payload,
+    () => dispatchCommand(commandName, payload, { ownerWebContentsId }),
+    surfaceOrigin,
+  )
 })
-ipcMain.handle('lume:window-control', async (event, op) => {
+handleLogged('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。
   // 子窗口 close 会命中 createQuickInputWindow 的 close 拦截 → hide（除非退出中）。
   const target = [mainWindow, quickInputWindow].find(
@@ -3336,7 +3517,7 @@ ipcMain.handle('lume:window-control', async (event, op) => {
       throw new Error(`unsupported window-control op: ${String(op)}`)
   }
 })
-ipcMain.handle('lume:relaunch', async (event) => {
+handleLogged('lume:relaunch', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   setImmediate(() => {
     app.relaunch()
@@ -3344,7 +3525,7 @@ ipcMain.handle('lume:relaunch', async (event) => {
   })
   return null
 })
-ipcMain.handle('lume:update:check', async (event) => {
+handleLogged('lume:update:check', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   autoUpdater.autoDownload = false
@@ -3352,7 +3533,7 @@ ipcMain.handle('lume:update:check', async (event) => {
   const result = await autoUpdater.checkForUpdates()
   return createUpdateInfo(result?.updateInfo, app.getVersion())
 })
-ipcMain.handle('lume:update:download', async (event) => {
+handleLogged('lume:update:download', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   const sender = event.sender
@@ -3394,14 +3575,14 @@ ipcMain.handle('lume:update:download', async (event) => {
     }).catch(onError)
   })
 })
-ipcMain.handle('lume:update:download-asset', async (event, payload) => {
+handleLogged('lume:update:download-asset', async (event, payload) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (!payload || typeof payload.url !== 'string') throw new Error('缺少更新安装包地址')
   await downloadMacUpdateAsset(payload.url, event.sender)
   return null
 })
-ipcMain.handle('lume:update:install', async (event) => {
+handleLogged('lume:update:install', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (pendingMacUpdatePath) {
@@ -3443,7 +3624,7 @@ ipcMain.handle('lume:update:install', async (event) => {
   })
 })
 
-ipcMain.handle('lume:app:signature', async (event) => {
+handleLogged('lume:app:signature', async (event) => {
   validateIpcSender(event, getTrustedWindows())
   const macSignatureStable = await detectMacSignatureStable({
     platform: process.platform,
@@ -3488,6 +3669,8 @@ app.whenReady().then(async () => {
         data: { method, actor, ...(tabId ? { tabId } : {}), message },
       })
     },
+    onWorkspaceEvent: ({ level, event, message, data }) =>
+      writeMainLog(level, 'browser.workspace', event, message, { ...(data ? { data } : {}) }),
   })
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()
@@ -3594,6 +3777,16 @@ async function startDesktopHost(): Promise<DesktopHostState> {
     desktopHostSupervisor = createDesktopHostSupervisor({
       binaryPath,
       log: logDesktopStartup,
+      logEvent: ({ level, context, event, message, data }) => {
+        // LumeHostLogLine 契约下四核心字段必为 string，仅 data 可缺。
+        writeMainLog(
+          normalizeHostLevel(level),
+          context,
+          event,
+          message,
+          { source: 'desktop-host', ...(data ? { data } : {}) },
+        )
+      },
     })
     const state = await desktopHostSupervisor.start()
     logDesktopStartup(state.available ? 'desktop host started' : ('reason' in state ? state.reason : 'desktop host unavailable'))
@@ -3638,8 +3831,10 @@ function getConnectionVaultKeyPath(): string {
 }
 
 // 应用级随机密钥（safeStorage 包裹落盘，仅原机可解）：注入后 sidecar 的
-// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。safeStorage 不可用
-// （如无 keyring 的 Linux）时跳过，sidecar 自动退回 legacy 行为。
+// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。Linux 无 keyring 时
+// Electron 退 basic_text 后端，isEncryptionAvailable 仍返回 true——照样注入，
+// 包裹文件靠 loadOrCreateDesktopContextKey 的 0600 收权兜底；真正注入失败
+// （key 文件损坏等）时 catch 跳过，sidecar 自动退回 legacy 行为。
 async function installSecretEncryptionKeyInSidecar(): Promise<void> {
   let key: Buffer | null = null
   try {

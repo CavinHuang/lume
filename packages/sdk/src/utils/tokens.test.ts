@@ -30,6 +30,30 @@ describe("token estimation", () => {
 
     expect(tokens).toBe(2_000 + estimateTokens("12345678"))
   })
+
+  // #736：原生 tiktoken 对长同构游程近 O(n²)（256KB 曾实测 30s）。分块保护
+  // 后本地 ~1.4s、CI ~2s——显式 20s 预算吸收硬件方差，旧直连实现
+  // （256KB≈30s）在此必超时显形。natives 缺席时 JS 回退本就线性，跳过。
+  test.skipIf(!isNativeAvailable())("long uniform runs complete linearly via chunked counting (#736)", () => {
+    const text = "o".repeat(256 * 1024)
+    const first = estimateTokens(text)
+    expect(first).toBeGreaterThan(10_000)
+    expect(first).toBeLessThan(1_000_000)
+    expect(estimateTokens(text)).toBe(first)
+  }, 20_000)
+
+  test.skipIf(!isNativeAvailable())("#736：定长硬切下多行计数自洽——newline 计入且切片漂移有界", () => {
+    // 夹具必须 >8K code units 才走分块路径（短文本直连精确无边界可言）
+    const lines = Array.from({ length: 1_200 }, (_, i) => `line-${i}-${"x".repeat(28)}`)
+    const joined = lines.join("\n")
+    expect(joined.length).toBeGreaterThan(8 * 1024)
+
+    const whole = estimateTokens(joined)
+    const perLineSum = lines.reduce((sum, line) => sum + estimateTokens(line), 0)
+    const newlineCount = lines.length - 1
+    // 整文计数 ≈ 逐行求和 + 每换行 1 token；硬切边界漂移实测 +0.009%，容差 8 已宽
+    expect(Math.abs(whole - perLineSum - newlineCount)).toBeLessThanOrEqual(8)
+  })
 })
 
 describe("estimateMessagesTokens per-message cache", () => {

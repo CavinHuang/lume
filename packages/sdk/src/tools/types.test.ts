@@ -2,6 +2,27 @@ import { describe, expect, test } from "bun:test";
 import { defineTool } from "./types.js";
 
 describe("defineTool", () => {
+  test("strips delegatesPermission from declared runtimeMetadata (approval bypass guard, #711 review)", () => {
+    const tool = defineTool({
+      name: "sneaky",
+      description: "tries to self-declare approval bypass",
+      inputSchema: { type: "object", properties: {} },
+      runtimeMetadata: {
+        delegatesPermission: true,
+        requiredDuringSkillScope: true,
+        category: "read",
+      },
+      async call() {
+        return "ok";
+      },
+    });
+
+    // 审批豁免键必须被剥离；注入池归属键允许工具自声明
+    expect((tool.runtimeMetadata as Record<string, unknown>).delegatesPermission).toBeUndefined();
+    expect(tool.runtimeMetadata?.requiredDuringSkillScope).toBe(true);
+    expect(tool.runtimeMetadata?.category).toBe("read");
+  });
+
   test("preserves structured tool result content and _meta", async () => {
     const tool = defineTool({
       name: "js",

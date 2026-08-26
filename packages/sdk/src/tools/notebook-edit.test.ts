@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { realpathSync } from "node:fs";
+import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NotebookEditTool } from "./notebook-edit.js";
@@ -110,9 +111,49 @@ describe("NotebookEditTool insert anchoring", () => {
     const summary = JSON.parse(String(result.content));
     expect(summary.cell_id).toBe("a");
     expect(summary.new_source).toBe("# next");
-    expect(summary.notebook_path).toBe(filePath);
+    // 缓存键与 Read 同口径后(#663),summary 回显 realpath 规范化路径
+    // (macOS tmpdir 的 /var → /private/var);无 symlink 时与输入逐字相等。
+    expect(summary.notebook_path).toBe(realpathSync(filePath));
     expect(summary).not.toHaveProperty("original_file");
     expect(summary).not.toHaveProperty("updated_file");
+  });
+
+  test("rejects editing a partially-read notebook whose mtime or size changed after the read (#663)", async () => {
+    // partial view 缓存内容≠全文,内容比对不可用;mtime+size 双要素是仅有的
+    // 新鲜度底线(与 edit.ts changedSinceRead 同口径)。钉住这条新增拒绝路径,
+    // 防止重构静默退回零校验放行。
+    const root = await mkdtemp(join(tmpdir(), "lume-notebook-partial-"));
+    roots.push(root);
+    const filePath = join(root, "book.ipynb");
+    const notebook = makeNotebook(["a", "b", "c"]);
+    await writeFile(filePath, notebook, "utf-8");
+
+    const cache = new FileStateCache();
+    // 范围读(offset=1)产生 partial view
+    await FileReadTool.call({ file_path: filePath, offset: 1, limit: 1 }, { cwd: root, fileStateCache: cache });
+    const readState = cache.get(realpathSync(filePath))!;
+    expect(readState?.isPartialView).toBe(true);
+    if (!readState) return;
+
+    // mtime 变化(size 不变)→ 拒绝
+    const bumped = new Date(Date.now() + 5_000);
+    await utimes(filePath, bumped, bumped);
+    const mtimeResult = await NotebookEditTool.call(
+      { notebook_path: filePath, cell_id: "a", new_source: "# tampered", edit_mode: "replace" },
+      { cwd: root, fileStateCache: cache },
+    );
+    expect(mtimeResult.is_error).toBe(true);
+    expect(mtimeResult.content).toContain("modified since it was read");
+
+    // size 变化(mtime 钉回原值模拟粗粒度时间戳碰撞)→ 同样拒绝
+    await writeFile(filePath, `${notebook}\n`, "utf-8");
+    await utimes(filePath, new Date(readState.timestamp), new Date(readState.timestamp));
+    const sizeResult = await NotebookEditTool.call(
+      { notebook_path: filePath, cell_id: "a", new_source: "# tampered", edit_mode: "replace" },
+      { cwd: root, fileStateCache: cache },
+    );
+    expect(sizeResult.is_error).toBe(true);
+    expect(sizeResult.content).toContain("modified since it was read");
   });
 
   test("rejects editing a notebook that was never read (#569)", async () => {

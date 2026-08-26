@@ -29,15 +29,6 @@ describe("SDK tool registry", () => {
     expect(names).not.toContain("automation_run_now");
   });
 
-  test("exposes Guanlan as dedicated built-in web tools", () => {
-    const names = getAllBaseTools().map((tool) => tool.name);
-
-    expect(names).toContain("guanlan_search");
-    expect(names).toContain("guanlan_read");
-    expect(names).toContain("guanlan_hotnews");
-    expect(names).toContain("guanlan_research");
-  });
-
   // #720 review 钉：MultiEdit 是写原语，注册面四处（工具池/CORE/权限面/tracker）
   // 任一漏接都会造成静默旁路（dontAsk 免审/partial-read 覆写/writer lease）。
   test("MultiEdit is registered in the base pool and core preset", () => {

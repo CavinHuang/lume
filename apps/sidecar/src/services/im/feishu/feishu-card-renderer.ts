@@ -99,7 +99,11 @@ function footerLine(state: ImRunCardState): string | null {
 }
 
 export function renderImRunCard(state: ImRunCardState): FeishuRunCardJson {
-  const header = STATUS_HEADER[state.status];
+  const baseHeader = STATUS_HEADER[state.status];
+  // 压缩中间态（#709 第 4 项）：运行头部标题切换，让长静默的压缩窗口可感知
+  const header = state.compacting && state.status === "running"
+    ? { ...baseHeader, title: "正在压缩上下文" }
+    : baseHeader;
   const elements: FeishuCardElement[] = [];
 
   const toolBlocks = state.blocks.filter((block): block is Extract<ImRunCardBlock, { kind: "tool" }> => block.kind === "tool");
