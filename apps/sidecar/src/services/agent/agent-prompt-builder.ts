@@ -224,11 +224,11 @@ export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "
 
 export interface SystemPromptContext {
   workspaceSlug?: string;
+  /** agent 工作目录：用于向上探测项目级指令文件（CLAUDE.md/AGENTS.md） */
+  agentCwd?: string;
   sessionId: string;
   sessionType?: ThreadType;
   chatType?: "direct" | "group" | "channel";
-  /** agent 工作目录：用于向上探测项目级指令文件（CLAUDE.md/AGENTS.md） */
-  agentCwd?: string;
   availableTools?: string[];
   memoryCitationsMode?: MemoryCitationsMode;
   promptMode?: SystemPromptMode;

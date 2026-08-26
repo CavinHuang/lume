@@ -331,6 +331,9 @@ async function recordFileRead(
   result: ToolResult
 ): Promise<void> {
   if (input.descriptor.canonicalName !== "read" || result.is_error) return;
+  // unchanged 短路结果不重录：重录会把此前记录的部分视图升级成全文读（#314 同族）
+  const readMeta = result._meta?.read;
+  if (readMeta && typeof readMeta === "object" && (readMeta as Record<string, unknown>).unchanged === true) return;
   const filePath = readInputPath(rawInput);
   if (!filePath) return;
   const canonical = resolve(input.cwd, filePath);
@@ -374,9 +377,18 @@ function readInputPath(input: unknown): string | undefined {
 function isFullReadResult(result: ToolResult): boolean {
   const data = parseObjectContent(result.content);
   if (data.summarized === true) return false;
+  // #314:ranged 窗口凑满提前停读时不给 remainingLines（totalLines 只是下界），
+  // 此时绝非全文读——partial/truncated 标记优先于「缺 remainingLines 即全文」的默认
+  const readMeta = result._meta?.read;
+  if (readMeta && typeof readMeta === "object") {
+    const meta = readMeta as Record<string, unknown>;
+    if (meta.partial === true || meta.truncated === true) return false;
+  }
   if (typeof data.remainingLines === "number") {
     return (data.offset === undefined || data.offset === 0) && data.remainingLines <= 0;
   }
+  // 默认 true 服务「无 _meta.read 的旧形制/plugin/MCP read」——它们无法自证部分视图；
+  // 若未来再收窄判定，先想清楚这一默认值放宽的是谁（#314 三次补丁教训）
   return true;
 }
 

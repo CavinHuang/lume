@@ -353,7 +353,7 @@ export const DEFAULT_BROWSER_SETTINGS: BrowserSettings = {
   schemaVersion: 3,
   browserEnabled: true,
   browserUseEnabled: true,
-  browserApprovalMode: "neverAsk",
+  browserApprovalMode: "alwaysAsk",
   iabHistoryApprovalMode: "alwaysAsk",
   chromeHistoryApprovalMode: "alwaysAsk",
   agentCursorVisible: true,
@@ -376,3 +376,14 @@ export const BROWSER_IPC_CHANNELS = {
   GET_SETTINGS: "browser_settings:get",
   UPDATE_SETTINGS: "browser_settings:update",
 } as const;
+
+/**
+ * #601 维护性 review:内置浏览器工具名唯一真源。sidecar 注册表与 web 展示层
+ * 映射表（tool-summary.ts BROWSER_TOOL_LABELS）都必须从这里派生——三方字符串
+ * 契约靠哨兵测试（browser-tool-names.sentinel.test.ts）钉住一致性。
+ */
+export const LUME_BROWSER_TOOL_NAMES = [
+  "list_tabs", "open", "switch_tab", "navigate", "back", "forward", "reload", "snapshot",
+  "click", "double_click", "hover", "fill", "type", "press", "select", "check", "scroll",
+  "screenshot", "upload", "download", "list_secrets", "fill_secret", "dialog", "handle_dialog", "run_script",
+] as const

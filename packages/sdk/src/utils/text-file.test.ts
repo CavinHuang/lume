@@ -46,16 +46,34 @@ describe("readTextFileRange", () => {
     expect(ranged.content).toBe("a\nb\nc")
   })
 
-  test("a window that fills exactly at the last line still reports the conservative lower bound", async () => {
-    // "alpha\nbeta\n" is exactly two lines; the reader stops at the filled
-    // window without seeing EOF, so it must not claim exactness.
+  test("a window that fills exactly at the last line verifies EOF and reports exactness (#649 review P1-5)", async () => {
+    // "alpha\nbeta\n" is exactly two lines. The old reader bailed out at the
+    // filled window without verifying EOF, leaving large files with no read
+    // that ever unlocks Write/Edit. It now scans a few extra chunks: natural
+    // EOF with no further lines confirms full coverage.
     const filePath = await makeFile("trailing.txt", "alpha\nbeta\n")
 
     const ranged = await readTextFileRange(filePath, 0, 2)
 
-    expect(ranged.truncated).toBe(true)
+    expect(ranged.truncated).toBe(false)
     expect(ranged.totalLines).toBe(2)
-    expect(ranged.content).toBe("alpha\nbeta")
+    // 精确全视图按 #569 与磁盘原文逐字一致（含尾换行），Edit 比对才不误报 stale
+    expect(ranged.content).toBe("alpha\nbeta\n")
+  })
+
+  test("a window that fills mid-file still reports truncated even when the fill chunk held more lines", async () => {
+    // 10-line file in one chunk: the window (limit=2) fills while the same
+    // chunk has already counted lines 3-10 — the extra observed lines prove
+    // there is content beyond the window.
+    const filePath = await makeFile(
+      "big.txt",
+      Array.from({ length: 10 }, (_, i) => `line-${i}`).join("\n"),
+    )
+
+    const ranged = await readTextFileRange(filePath, 0, 5)
+
+    expect(ranged.truncated).toBe(true)
+    expect(ranged.content).toBe("line-0\nline-1\nline-2\nline-3\nline-4")
   })
 
   test("offset windows past EOF report truncated=false", async () => {

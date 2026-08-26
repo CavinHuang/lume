@@ -137,6 +137,29 @@ describe("lume-config-service", () => {
     });
   });
 
+  test("#573① review M1: agent.maxAutoTurnContinuations 经 normalize 存活且越界值被钳制", () => {
+    updateLumeConfigSection({
+      source: "user",
+      path: "agent",
+      value: { maxAutoTurnContinuations: 5, permissionMode: "dontAsk", followUpQueueMode: "steer" },
+    });    const effective = getEffectiveLumeConfig("default").agent;
+    expect(effective?.maxAutoTurnContinuations).toBe(5);
+    expect(effective?.permissionMode).toBe("dontAsk");
+    // followUpQueueMode 同族：白名单缺失曾使配置恒回落 'queue'（web AgentInput 读取点）
+    expect(effective?.followUpQueueMode).toBe("steer");
+    updateLumeConfigSection({ source: "user", path: "agent", value: { followUpQueueMode: "interrupt" } });
+    expect(getEffectiveLumeConfig("default").agent?.followUpQueueMode).toBe("interrupt");
+
+    // 越界钳到硬上限 10；非有限数值回落默认（字段被剥）
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: 99 } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBe(10);
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: Number.NaN } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBeUndefined();
+    // 非法枚举值被剥
+    updateLumeConfigSection({ source: "user", path: "agent", value: { followUpQueueMode: "bogus" } });
+    expect(getEffectiveLumeConfig("default").agent?.followUpQueueMode).toBeUndefined();
+  });
+
   test("应识别 guanlan 搜索后端并同步启用顺序到环境变量", () => {
     const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
     const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;

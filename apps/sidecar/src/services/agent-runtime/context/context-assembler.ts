@@ -126,10 +126,11 @@ export class ContextAssembler {
     const memoryRuntimeConfig = resolveMemoryRuntimeConfig();
     const systemPromptAppend = getRuntimeHostPorts().buildSystemPromptAppend({
       workspaceSlug: input.workspaceSlug,
+      // #563 review:不兜底 process.cwd()——无 cwd 的测试/脚本场景不应把本仓库文档注入 prompt
+      agentCwd: input.cwd,
       sessionId: input.threadId,
       sessionType: input.threadType,
       chatType: input.chatType,
-      agentCwd: input.cwd,
       availableTools: input.availableTools,
       memoryCitationsMode: memoryRuntimeConfig.citationsMode,
       permissionMode: input.permissionMode,

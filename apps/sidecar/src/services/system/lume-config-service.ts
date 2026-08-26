@@ -599,6 +599,18 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
         || value.agent.thinkingLevel === "high"
         || value.agent.thinkingLevel === "max"
         ? { thinkingLevel: value.agent.thinkingLevel }
+        : {}),
+      // followUpQueueMode 是白名单陷阱的预存同族受害者：web 设置页经 get-effective
+      // 读取（AgentInput.tsx:444），白名单缺失使配置恒回落默认 'queue'（#566 review）
+      ...(value.agent.followUpQueueMode === "steer"
+        || value.agent.followUpQueueMode === "queue"
+        || value.agent.followUpQueueMode === "interrupt"
+        ? { followUpQueueMode: value.agent.followUpQueueMode }
+        : {}),
+      ...(typeof value.agent.maxAutoTurnContinuations === "number"
+        && Number.isFinite(value.agent.maxAutoTurnContinuations)
+        && value.agent.maxAutoTurnContinuations >= 0
+        ? { maxAutoTurnContinuations: Math.min(Math.floor(value.agent.maxAutoTurnContinuations), 10) }
         : {})
     };
   }

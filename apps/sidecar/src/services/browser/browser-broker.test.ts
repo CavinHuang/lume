@@ -167,29 +167,33 @@ test("canonical BrowserClient commands select and normalize the requested backen
   assert.equal(extensionCalls.at(-1).params.url, "https://example.com")
 
   await broker.dispatch({ method: "playwright_locator_click", params: { browserId: "lume-iab", tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "button" }] } }, browserSessionId: "s", browserTurnId: "t" })
-  const actionCalls = mainCalls.filter((request) => request.method !== "handshake")
+  // #602:create_tab 带 url 会先插 policy:confirm/policy:consume 确认轮询，动作索引须将其滤除
+  const isPolicyChatter = (request: { method: string }) =>
+    request.method === "handshake" || request.method === "policy:confirm" || request.method === "policy:consume"
+  const actionCall = (index: number) => mainCalls.filter((request) => !isPolicyChatter(request))[index]
+  const actionCalls = mainCalls.filter((request) => !isPolicyChatter(request))
   assert.equal(actionCalls[0].method, "click")
   assert.equal(actionCalls[0].context.tabId, "tab-1")
 
   await broker.dispatch({ method: "playwright_locator_inner_text", params: { browserId: "lume-iab", tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "output" }] } }, browserSessionId: "s", browserTurnId: "t" })
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[1].method, "locator:innerText")
+  assert.equal(actionCall(1).method, "locator:innerText")
 
   await broker.dispatch({ method: "browser_snapshot", params: { browserId: "lume-iab", tabId: "tab-1", interactive_only: true, limit: 200 }, browserSessionId: "s", browserTurnId: "t" })
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[2].method, "semanticSnapshot")
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[2].params.interactiveOnly, true)
+  assert.equal(actionCall(2).method, "semanticSnapshot")
+  assert.equal(actionCall(2).params.interactiveOnly, true)
 
   await broker.dispatch({ method: "playwright_locator_evaluate", params: { browserId: "lume-iab", tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "output" }] }, expression: "(element) => element.textContent", options: { timeoutMs: 321 } }, browserSessionId: "s", browserTurnId: "t" })
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[3].method, "locator:evaluate")
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[3].params.timeoutMs, 321)
+  assert.equal(actionCall(3).method, "locator:evaluate")
+  assert.equal(actionCall(3).params.timeoutMs, 321)
 
   await broker.dispatch({ method: "playwright_locator_click", params: { browserId: "lume-iab", tabId: "tab-1", selector: "iframe#preview >> internal:control=enter-frame >> internal:role=button[name=\"Save\"s]" }, browserSessionId: "s", browserTurnId: "t" })
-  assert.deepEqual(mainCalls.filter((request) => request.method !== "handshake")[4].params.locator.steps, [
+  assert.deepEqual(actionCall(4).params.locator.steps, [
     { kind: "frame", selector: "iframe#preview" },
     { kind: "role", role: "button", name: "Save", exact: true },
   ])
 
   await broker.dispatch({ method: "cua_keypress", params: { browserId: "lume-iab", tabId: "tab-1", key: "Enter" }, browserSessionId: "s", browserTurnId: "t" })
-  assert.equal(mainCalls.filter((request) => request.method !== "handshake")[5].method, "pressActive")
+  assert.equal(actionCall(5).method, "pressActive")
 
   const screenshot = await broker.dispatch({ method: "tab_screenshot", params: { browserId: "lume-iab", tabId: "tab-1" }, browserSessionId: "s", browserTurnId: "t" })
   assert.deepEqual(screenshot, { data: "cG5n" })
