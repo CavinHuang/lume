@@ -118,9 +118,12 @@ function fileLedgerKey(input: { threadId: string; cwd: string; filePath: string 
   ].join("\0");
 }
 
-/** #649 follow-up:与 SDK FileStateCache toPathKey 同一口径——大小写不敏感平台归一
- * 小写，否则 Read("D:\Repo\Foo.ts") 后 Edit("d:\repo\foo.ts") 台账 miss 误报「必须先完整读取」。
- * 仅影响记账键；stat/hash 仍走调用方原始路径。 */
+/** #649 follow-up:大小写不敏感平台归一小写，否则 Read("D:\Repo\Foo.ts") 后
+ * Edit("d:\repo\foo.ts") 台账 miss 误报「必须先完整读取」。仅影响记账键；
+ * stat/hash 仍走调用方原始路径。
+ * 与 SDK FileStateCache 的 key 口径为独立实现、无功能耦合：SDK 侧自 #743 起
+ * 额外做 symlink 归一（canonicalizePath），本台账保持纯词法口径即可满足
+ * 本进程内 Read/Edit 配对需求；如未来需跨层对齐再统一。 */
 function normalizeLedgerPath(path: string): string {
   const resolved = resolve(path);
   return process.platform === "win32" || process.platform === "darwin" ? resolved.toLowerCase() : resolved;
