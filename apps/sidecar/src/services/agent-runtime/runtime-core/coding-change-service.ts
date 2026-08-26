@@ -1771,6 +1771,8 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
       if (stdoutBytes > MAX_GIT_COMMAND_OUTPUT_BYTES) {
         overflowed = true;
+        // 与 worker 版 diag 对称：主线程版（Node 环境）溢出同样留痕，避免与 git 故障不可区分
+        log.warn("runGitCommand stdout 超水位终止", { gitArgs: args.slice(0, 3), cwd, stdoutBytes });
         child.kill();
         return;
       }
