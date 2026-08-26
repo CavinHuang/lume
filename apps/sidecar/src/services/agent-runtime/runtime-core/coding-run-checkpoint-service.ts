@@ -245,13 +245,15 @@ function getBeforeSnapshotText(
   record: CodingRunCheckpointRecord,
   snapshot: FileSnapshot,
   absolutePath: string,
+  probe?: GitProbeCache,
 ): string {
   if (!snapshot.unsupported) return getSnapshotText(snapshot);
-  const baselineContent = readBaselineContent(record, absolutePath);
+  const baselineContent = readBaselineContent(record, absolutePath, probe);
   if (baselineContent !== null) return baselineContent;
   throw new Error("Turn 开始前的文件快照不可预览，且无法从基线提交恢复");
 }
 
+<<<<<<< HEAD
 function readBaselineContent(record: CodingRunCheckpointRecord, absolutePath: string): string | null {
   const gitRoot = findGitRootForPath(absolutePath);
   if (!gitRoot) return null;
@@ -262,6 +264,23 @@ function readBaselineContent(record: CodingRunCheckpointRecord, absolutePath: st
   const canonicalPath = canonicalizeExistingPath(absolutePath);
   if (!isPathInside(canonicalRoot, canonicalPath)) return null;
   const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot, canonicalRoot);
+=======
+function readBaselineContent(
+  record: CodingRunCheckpointRecord,
+  absolutePath: string,
+  probe?: GitProbeCache,
+): string | null {
+  // #616③:root 发现至多 2 次 spawnSync rev-parse——批量 diff 循环内逐文件裸调
+  // 会以数百次同步 spawn 冻结事件循环;经 probe 按 path 记忆化(#572 同款)
+  let gitRoot = probe?.gitRoots.get(resolve(absolutePath));
+  if (gitRoot === undefined) {
+    gitRoot = findGitRootForPath(absolutePath);
+    probe?.gitRoots.set(resolve(absolutePath), gitRoot);
+  }
+  if (!gitRoot || !isPathInside(gitRoot, absolutePath)) return null;
+  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
+    ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
+>>>>>>> upstream/main
   if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
   const gitPath = relative(canonicalRoot, canonicalPath).split(sep).join("/");
   const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
@@ -575,6 +594,7 @@ async function ensurePersistedDiffs(
 }
 
 async function createPersistedDiffs(record: CodingRunCheckpointRecord): Promise<Record<string, PersistedCodingFileDiff>> {
+  const probe = createGitProbeCache();
   const entries = Object.entries(record.afterSnapshots ?? {}).flatMap(([absolutePath, after], index) => {
     const before = Object.values(record.checkpoint.files)
       .find((snapshot) => resolve(snapshot.path) === resolve(absolutePath));
@@ -583,7 +603,7 @@ async function createPersistedDiffs(record: CodingRunCheckpointRecord): Promise<
       return [{
         id: String(index).padStart(6, "0"),
         absolutePath,
-        oldContent: getBeforeSnapshotText(record, before, absolutePath),
+        oldContent: getBeforeSnapshotText(record, before, absolutePath, probe),
         newContent: getSnapshotText(after),
       }];
     } catch {

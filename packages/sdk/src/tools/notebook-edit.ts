@@ -10,10 +10,15 @@
  */
 
 import { readFile, stat } from 'fs/promises'
-import { resolve } from 'path'
 import { defineTool } from './types.js'
 import { writeFileAtomic } from '../utils/fs-atomic.js'
-import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason, resolveInputPath, writeContainmentRoots } from '../utils/pathing.js'
+import {
+  ensurePathAllowed,
+  ensureWriteContained,
+  getUnsafeFilePathReason,
+  resolveInputPath,
+  writeContainmentRoots,
+} from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 type NotebookCell = {
@@ -44,18 +49,6 @@ function toSourceLines(source: string): string[] {
 function readCellSource(cell: NotebookCell): string {
   if (Array.isArray(cell.source)) return cell.source.join('')
   return cell.source || ''
-}
-
-// realpath 权威口径（#336/#728）：与 read.ts 同经 resolveInputPath 做 canonical 化，
-// 否则 fileStateCache 的 read 记录（canonical 键）在 symlink 前缀环境下查不到——
-// read→notebook-edit 误报 not_read，且 stale 保护永不触发
-async function resolveNotebookPath(
-  input: any,
-  cwd: string,
-  additionalDirectories: string[] = [],
-): Promise<string> {
-  const candidate = input.notebook_path || input.file_path
-  return resolveInputPath(cwd, candidate, additionalDirectories)
 }
 
 function findCellIndex(cells: NotebookCell[], cellId?: string): number {
@@ -129,15 +122,18 @@ export const NotebookEditTool = defineTool({
       return 'new_source is required for insert and replace.'
     }
   },
+  // 缓存键与 Read 同口径（#663）：resolveInputPath 做 realpath 规范化——
+  // 词法 resolve 的键在 symlink 化 notebook 下与 Read 写入的 realpath 键永不相等，
+  // 先读后改会被 not_read 永久误拦。
   getPath(input, context) {
-    return resolve(context.cwd, input.notebook_path || input.file_path)
+    return resolveInputPath(context.cwd, input.notebook_path || input.file_path, context.additionalDirectories)
   },
   async call(input, context) {
-    const notebookPath = await resolveNotebookPath(input, context.cwd, context.additionalDirectories)
     const unsafeReason = getUnsafeFilePathReason(input.notebook_path || input.file_path)
     if (unsafeReason) {
       return { data: unsafeReason, is_error: true }
     }
+    const notebookPath = await resolveInputPath(context.cwd, input.notebook_path || input.file_path, context.additionalDirectories)
     const sandboxError = ensurePathAllowed(
       notebookPath,
       'write',
@@ -159,6 +155,7 @@ export const NotebookEditTool = defineTool({
       }
       const decoded = decodeTextFile(await readFile(notebookPath))
       const originalFile = decoded.content
+      const currentStat = await stat(notebookPath)
       const previousRead = context.fileStateCache?.get(notebookPath)
       // Read-before-edit 强制（#569）：未读过的 notebook 禁止盲改。
       if (!previousRead) {
@@ -173,6 +170,19 @@ export const NotebookEditTool = defineTool({
         }
       }
       if (!previousRead.isPartialView && previousRead.content !== originalFile) {
+        return {
+          data: 'Error: Notebook has been modified since it was read. Read it again before attempting to edit it.',
+          is_error: true,
+        }
+      }
+      // partial view 的新鲜度底线(#663):范围读的缓存内容≠全文,内容比对不可用,
+      // 但不能因此零校验放行——mtime 或任一要素变了即视为读后被改过,拒绝盲改。
+      // mtime+size 双要素与 edit.ts changedSinceRead 同口径(粗粒度时间戳上
+      // 同尺寸替换可穿透单一 mtime 判定)。
+      if (
+        previousRead.isPartialView
+        && (previousRead.timestamp !== currentStat.mtimeMs || previousRead.size !== undefined && previousRead.size !== currentStat.size)
+      ) {
         return {
           data: 'Error: Notebook has been modified since it was read. Read it again before attempting to edit it.',
           is_error: true,

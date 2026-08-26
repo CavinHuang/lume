@@ -147,4 +147,41 @@ describe('right panel browser workspace', () => {
     expect(findThreadBrowserTabByUrl([match!], 'thread-1', 'https://example.com。')?.tabId).toBe('browser:new')
     expect(findThreadBrowserTabByUrl([], 'thread-1', 'not-a-url')).toBeUndefined()
   })
+
+  test('carries handoffStatus through descriptor mapping and persistence sanitize (#613)', () => {
+    const tab = browserTabFromDescriptor({
+      tabId: 'browser:handoff',
+      backend: 'iab',
+      generation: 1,
+      url: 'https://example.com/report',
+      title: 'Report',
+      visible: true,
+      surface: 'right-panel',
+      handoffStatus: 'handoff',
+    })
+    expect(tab.handoffStatus).toBe('handoff')
+
+    const seeded = openBrowserTab({ tabs: [], recentlyClosed: [] })
+    const updated = applyBrowserDescriptor(seeded, {
+      tabId: seeded.tabs[0]!.id,
+      backend: 'iab',
+      generation: 1,
+      url: 'https://example.com/x',
+      title: 'X',
+      visible: true,
+      surface: 'right-panel',
+      handoffStatus: 'deliverable',
+    })
+    expect(updated.tabs[0]?.handoffStatus).toBe('deliverable')
+
+    const restored = sanitizeThreadBrowserWorkspace({ tabs: [tab], activeTabId: tab.id, recentlyClosed: [] })
+    expect(restored.tabs[0]?.handoffStatus).toBe('handoff')
+
+    const stripped = sanitizeThreadBrowserWorkspace({
+      tabs: [{ ...tab, handoffStatus: 'bogus' as never }],
+      activeTabId: tab.id,
+      recentlyClosed: [],
+    })
+    expect(stripped.tabs[0]?.handoffStatus).toBeUndefined()
+  })
 })

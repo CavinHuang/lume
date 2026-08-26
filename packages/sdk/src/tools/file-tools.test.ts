@@ -807,6 +807,37 @@ describe("file tools", () => {
     await expect(readFile(filePath)).rejects.toThrow();
   });
 
+  // #765 review：read 25k token 闸的 PASS 侧覆盖——~80KB 真实形态 markdown
+  // （约 20k tokens，距阈值 -20% 宽边际，免疫分块近似与词表升级漂移）必须
+  // 正常读取而非误拒；同时钉住「分块计数不引入闸门级行为翻转」。
+  test("reads ~80KB markdown under the 25k-token gate without false rejection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "wide-doc.md");
+    const section = [
+      "## Section heading",
+      "",
+      "Paragraph with `inline code` and a [link](https://example.com/path) plus some prose",
+      "that wraps across a couple of physical lines to resemble real documentation.",
+      "",
+      "- list item with **bold** text",
+      "- another item mentioning `estimateTokens` and chunked counting semantics",
+      "",
+      "```ts",
+      "export function sample(input: string): number {",
+      "  return input.length * 2 + 1;",
+      "}",
+      "```",
+      "",
+    ].join("\n");
+    const content = section.repeat(Math.ceil((75 * 1024) / section.length));
+    await writeFile(filePath, content, "utf8");
+
+    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root });
+    expect(result.is_error).toBeFalsy();
+    expect(String(result.content)).not.toContain("exceeding");
+  });
+
   test("writes UTF-16LE files while preserving their BOM", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);

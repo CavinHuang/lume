@@ -8,6 +8,7 @@ import {
 import { join } from "node:path";
 import type { FileReferenceBinding, FileReferenceProtocolVersion, SDKMessage } from "@lume/shared";
 import { getAgentSessionDataDir } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { createLogger } from "../infra/logger";
 
 export interface AgentMessageVersionGroupRecord {
@@ -57,19 +58,6 @@ function writeTextAtomic(path: string, payload: string): void {
   renameSync(tmpPath, path);
 }
 
-function backupCorruptFile(filePath: string): void {
-  if (!existsSync(filePath)) {
-    return;
-  }
-  const backupPath = `${filePath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(filePath, backupPath);
-    log.warn("backed up corrupt message version file", { backupPath });
-  } catch (error) {
-    log.warn("failed to back up corrupt message version file", { error, backupPath });
-  }
-}
-
 export function getAgentMessageVersionStorePath(sessionId: string): string {
   return join(getAgentSessionDataDir(sessionId), STORE_FILENAME);
 }
@@ -115,7 +103,8 @@ export function readAgentMessageVersionStore(sessionId: string): AgentMessageVer
     return normalizeStore(sessionId, parsed);
   } catch (error) {
     log.error("failed to read message version file", { error, sessionId });
-    backupCorruptFile(path);
+    const backupPath = backupCorruptFile(path);
+    if (backupPath) log.warn("backed up corrupt message version file", { backupPath });
     return null;
   }
 }

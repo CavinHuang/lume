@@ -421,11 +421,34 @@ export function assertNativeAvailable(): NativeDiagnostics {
 
 // ── Tokens ─────────────────────────────────────────────
 
-export function countTokens(input: TokenCountInput): TokenCountResult | null {
+/**
+ * tiktoken-rs 对「单条无换行的同构字符长游程」会递归触发 Rust 栈溢出
+ * panic(#763)——进程级致命，JS try/catch 兜不住。超长输入在此定长硬切，
+ * 与 sdk 侧 #736 分块同参数（8KB 线性安全区，漂移 +0.009%），消除
+ * 「任何新消费方直调即崩」暗雷。
+ */
+const TOKEN_PIECE_LIMIT = 8 * 1024;
+
+function countTextChunked(text: string, model?: string): number {
   const native = loadNative();
-  if (!native) return null;
+  if (!native) return 0;
+  let total = 0;
+  for (let start = 0; start < text.length; start += TOKEN_PIECE_LIMIT) {
+    total += native.countTokens({ text: text.slice(start, start + TOKEN_PIECE_LIMIT), model })?.count ?? 0;
+  }
+  return total;
+}
+
+export function countTokens(input: TokenCountInput): TokenCountResult | null {
+  if (!loadNative()) return null;
   try {
-    return native.countTokens(input);
+    // string[]：逐元素走同一护栏再求和（token 计数按文本段可加），
+    // 不再整组透传 native——否则数组元素本身超长仍触雷。
+    let count = 0;
+    for (const item of Array.isArray(input.text) ? input.text : [input.text]) {
+      count += countTextChunked(item, input.model);
+    }
+    return { count };
   } catch {
     return null;
   }

@@ -151,7 +151,41 @@ export class PlanningCalendarStore {
         `SELECT * FROM planning_calendar_event${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY start_at,id LIMIT ?`,
       )
       .all(...params) as unknown as EventRow[];
-    return rows.map((row) => this.#eventFromRow(row));
+    // #593②:#eventFromRow 原对每行各发 3 次查询(group 全表查重复 N 次),默认
+    // 500 行 ≈1500+ 次同步 sqlite 查询且拉长 claimDueReminders 写锁窗口。
+    // groups/tags/reminders 三路一次批量预载,行内查表 O(1)。
+    const groupsById = new Map(this.listGroups("calendar").map((group) => [group.id, group]));
+    const eventIds = rows.map((row) => row.id);
+    const tagsByEvent = new Map<string, PlanningTag[]>();
+    const remindersByTarget = new Map<string, PlanningReminder[]>();
+    if (eventIds.length > 0) {
+      const placeholders = eventIds.map(() => "?").join(",");
+      for (const tagged of this.#db
+        .prepare(
+          `SELECT et.event_id AS __event_id, t.* FROM planning_tag t JOIN planning_calendar_event_tag et ON et.tag_id=t.id WHERE et.event_id IN (${placeholders}) ORDER BY t.name`,
+        )
+        .all(...eventIds) as unknown as Array<TagRow & { __event_id: string }>) {
+        const list = tagsByEvent.get(tagged.__event_id) ?? [];
+        list.push(tagFromRow(tagged));
+        tagsByEvent.set(tagged.__event_id, list);
+      }
+      for (const reminder of this.#db
+        .prepare(
+          `SELECT * FROM planning_reminder WHERE target_type='calendar_event' AND target_id IN (${placeholders}) ORDER BY COALESCE(snoozed_until,trigger_at)`,
+        )
+        .all(...eventIds) as unknown as ReminderRow[]) {
+        const list = remindersByTarget.get(reminder.target_id) ?? [];
+        list.push(reminderFromRow(reminder));
+        remindersByTarget.set(reminder.target_id, list);
+      }
+    }
+    return rows.map((row) =>
+      this.#eventFromRow(row, {
+        groupsById,
+        tags: tagsByEvent.get(row.id) ?? [],
+        reminders: remindersByTarget.get(row.id) ?? [],
+      }),
+    );
   }
 
   getEvent(eventId: string): PlanningCalendarEvent {
@@ -633,7 +667,14 @@ export class PlanningCalendarStore {
     this.#db.close();
   }
 
-  #eventFromRow(row: EventRow): PlanningCalendarEvent {
+  #eventFromRow(
+    row: EventRow,
+    preload?: {
+      groupsById?: Map<string, PlanningGroup>;
+      tags?: PlanningTag[];
+      reminders?: PlanningReminder[];
+    },
+  ): PlanningCalendarEvent {
     return {
       id: row.id,
       title: row.title,
@@ -644,13 +685,16 @@ export class PlanningCalendarStore {
       ...(row.group_id
         ? {
             groupId: row.group_id,
-            group: this.listGroups("calendar").find(
-              (item) => item.id === row.group_id,
-            ),
+            group: preload?.groupsById
+              ? preload.groupsById.get(row.group_id)
+              : this.listGroups("calendar").find(
+                  (item) => item.id === row.group_id,
+                ),
           }
         : {}),
-      tags: this.#eventTags(row.id),
-      reminders: this.#targetReminders("calendar_event", row.id),
+      tags: preload?.tags ?? this.#eventTags(row.id),
+      reminders:
+        preload?.reminders ?? this.#targetReminders("calendar_event", row.id),
       ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
       ...(row.todo_id ? { todoId: row.todo_id } : {}),
       revision: row.revision,
