@@ -57,15 +57,16 @@ describe("createToolDescriptorsFromDefinitions", () => {
     registry.registerMany(createToolDescriptorsFromDefinitions([tool], "sdk"));
 
     // 四必填维度兜底（#711 review）：单载体 + fail-closed descriptor 组装下，
-    // mcp/plugin 分支不再留空——推断值先兜底，显式 runtimeMetadata 仍可覆盖
+    // mcp/plugin 分支不再留空；名称启发式倾向 read/low 时 riskLevel 钳 medium、
+    // approval 恒 true——防 fail-open 权限弱化翻转
     expect(registry.get("PluginEcho")).toMatchObject({
       name: "PluginEcho",
       source: "plugin",
       metadata: {
         category: "read",
         capability: "plugin",
-        riskLevel: "low",
-        requiresApprovalByDefault: false,
+        riskLevel: "medium",
+        requiresApprovalByDefault: true,
         resultPolicy: { maxChars: 200_000 }
       }
     });

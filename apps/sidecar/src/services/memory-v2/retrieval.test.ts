@@ -633,7 +633,7 @@ describe("searchMemoryV2", () => {
     expect(results.some((item) => item.statement === suppressed.statement)).toBe(false);
   });
 
-  test("minScore filters results on every return path (#538)", async () => {
+  test("minScore filters candidates before rerank on every return path (#538)", async () => {
     await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
       candidate: {
@@ -645,23 +645,17 @@ describe("searchMemoryV2", () => {
       }
     });
 
-    const baseline = await searchMemoryV2({
-      workspaceSlug: "demo",
-      query: "memory architecture design",
-      maxResults: 5,
-      semantic: "off",
-      rerankItems: async (items) => items
-    });
-    const topScore = baseline[0]?.score ?? 0;
+    // minScore 过滤发生在候选池阶段（rerank 覆写 score 为序号之前），
+    // 因此用不可能达到的巨大阈值即可钉死「阈值作用于原始检索分」语义
+    const impossible = Number.MAX_SAFE_INTEGER;
 
-    // 高门槛滤空（无 reranker 路径）
     const filtered = await searchMemoryV2({
       workspaceSlug: "demo",
       query: "memory architecture design",
       maxResults: 5,
       semantic: "off",
       rerankItems: async (items) => items,
-      minScore: topScore + 1,
+      minScore: impossible,
     });
     expect(filtered).toEqual([]);
 
@@ -672,7 +666,7 @@ describe("searchMemoryV2", () => {
       maxResults: 5,
       semantic: "off",
       rerankItems: async () => { throw new Error("rerank down"); },
-      minScore: topScore + 1,
+      minScore: impossible,
     });
     expect(fallback).toEqual([]);
 
