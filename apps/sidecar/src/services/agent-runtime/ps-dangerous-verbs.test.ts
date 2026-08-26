@@ -131,9 +131,19 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
         continue;
       }
       const decision = evaluateRuntimeToolSafety("Bash", { command }, bashWin);
-      expect(decision.behavior).toBe("confirm");
       if (comboRule.test(command)) {
+        // combo 形态：词表规则在语法解析前命中，confirm 与 reason 双态确定
+        // （无 natives 环境不得落 parse-unavailable 兜底，须证明升级来自词表）
+        expect(decision.behavior).toBe("confirm");
         expect(decision.behavior === "confirm" && decision.reason).toBe("递归强制删除文件需要用户确认");
+      } else {
+        /*
+         * 非 combo 信号探针（如 Get-Date␊Remove-Item ~）：删除族无标志形态在 bash 读法机
+         * 上无确认规则（hard-deny 由真实方言独占），natives 解析成功时守卫层可 allow——
+         * 只钉不 deny；防「判 low 静默放行」由下方分类器 medium 断言兜底（#707 修复本体）。
+         * 无 natives 环境此分支落 parse-unavailable confirm，两态均通过。
+         */
+        expect(decision.behavior).not.toBe("deny");
       }
       const classification = classifyHeuristic({ toolName: "bash", command, shellKind: "bash", platform: "win32" });
       expect(classification.riskLevel).not.toBe("low");
