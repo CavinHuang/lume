@@ -852,6 +852,9 @@ function writeYamlAtomic(path: string, payload: string): { mtimeMs: number; size
     const stats = statSync(tempPath);
     const fingerprint = { mtimeMs: stats.mtimeMs, size: stats.size, ino: stats.ino };
     renameSync(tempPath, path);
+    // 防呆钉（#729 review 并发方向）：此处已过 rename 成功点，try 尾段任何
+    // 抛错都会把磁盘新值报成失败（幽灵失败）——sweep 自身双层 catch 永不抛，
+    // 未来改动必须维持该性质或移出 try。
     sweepStaleConfigTemps(dir);
     return fingerprint;
   } catch (error) {
