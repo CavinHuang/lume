@@ -116,6 +116,46 @@ import {
 const execFileAsync = promisify(execFile);
 const MARKETPLACE_ASSET_MAX_BYTES = 512 * 1024;
 const MIRROR_CATALOG_MAX_BYTES = 8 * 1024 * 1024;
+// #525-11/漏项:requestRemote 与 readRemoteBody 间的超时 guard 传递通道
+const REMOTE_BODY_GUARD = Symbol("plugin-market-remote-body-guard");
+/** 测试注入 guard 用(同一 symbol 实例才能命中传递通道)。 */
+export const REMOTE_BODY_GUARD_FOR_TEST = REMOTE_BODY_GUARD;
+type RemoteResponseWithGuard = Response & {
+  [REMOTE_BODY_GUARD]?: { controller: AbortController; timer: ReturnType<typeof setTimeout> };
+};
+
+/**
+ * #525-10/11:远程 body 的统一消费口——requestRemote 挂载的超时 guard 在此
+ * finally 清除(signal 贯穿整个响应周期),且分块累计字节超 maxBytes 即中止
+ * (防 chunked 无 content-length 时 content-length 前检失效、最坏数百 MB
+ * 整体入内存)。导出供测试直接验证分块上限契约。
+ */
+export async function readBoundedBody(
+  response: Response,
+  maxBytes?: number,
+  oversize: () => Error = () => new PluginMarketError("invalid_manifest", "远程响应超过大小限制"),
+): Promise<Buffer> {
+  const guard = (response as RemoteResponseWithGuard)[REMOTE_BODY_GUARD];
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) return Buffer.alloc(0);
+    const chunks: Buffer[] = [];
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (maxBytes !== undefined && total > maxBytes) {
+        void reader.cancel().catch(() => undefined);
+        throw oversize();
+      }
+      chunks.push(Buffer.from(value));
+    }
+    return Buffer.concat(chunks);
+  } finally {
+    if (guard) clearTimeout(guard.timer);
+  }
+}
 const MARKETPLACE_IMAGE_MIME_BY_EXT: Record<string, string> = {
   ".gif": "image/gif",
   ".jpg": "image/jpeg",
@@ -222,6 +262,7 @@ export class PluginMarketService {
   private readonly github = createPluginMarketGitHubAdapter({
     requestRemote: (url, init) => this.requestRemote(url, init),
     fetchText: (url) => this.fetchText(url),
+    readRemoteBody: (response, maxBytes, oversize) => this.readRemoteBody(response, maxBytes, oversize),
   });
 
   async getMarketCatalog(
@@ -1010,15 +1051,32 @@ export class PluginMarketService {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 10_000);
     try {
-      return await this.fetchImpl(url, { ...init, signal: controller.signal });
+      const response = await this.fetchImpl(url, { ...init, signal: controller.signal });
+      // #525-11/漏项:headers 到达不停表——guard 挂到 response 上,body 经
+      // readRemoteBody 消费时 signal 贯穿整个响应周期,慢速 body 不再无限挂。
+      // 未消费 body 的路径(如 !ok 早退)由定时器 10s 后自动触发空 abort 兜底。
+      (response as RemoteResponseWithGuard)[REMOTE_BODY_GUARD] = { controller, timer };
+      return response;
     } catch (error) {
+      clearTimeout(timer);
       throw new PluginMarketError(
         "network_failed",
         error instanceof Error ? error.message : "远程请求失败",
       );
-    } finally {
-      clearTimeout(timer);
     }
+  }
+
+  /**
+   * #525-10/11:远程 body 的统一消费口——signal 计时器贯穿 body 读取,且
+   * 分块累计字节超 maxBytes 即中止(防 chunked 无 content-length 时旧前检
+   * 失效、最坏数百 MB 整体入内存)。所有 requestRemote 的 body 必须经此。
+   */
+  private readRemoteBody(
+    response: Response,
+    maxBytes?: number,
+    oversize?: () => Error,
+  ): Promise<Buffer> {
+    return readBoundedBody(response, maxBytes, oversize);
   }
 
   private async fetchText(url: string): Promise<string> {
@@ -1031,7 +1089,7 @@ export class PluginMarketService {
         `读取远程文件失败: ${response.status}`,
       );
     }
-    return response.text();
+    return (await this.readRemoteBody(response)).toString("utf8");
   }
 
   private async resolveInspectSource(
@@ -1451,12 +1509,9 @@ export class PluginMarketService {
         "插件镜像目录超过大小限制",
       );
     }
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (bytes.length > MIRROR_CATALOG_MAX_BYTES)
-      throw new PluginMarketError(
-        "invalid_manifest",
-        "插件镜像目录超过大小限制",
-      );
+    // #525-10:分块读取带硬上限——chunked 无 content-length 时旧前检失效,
+    // arrayBuffer 后才查会让超限 body 已整体入内存
+    const bytes = await this.readRemoteBody(response, MIRROR_CATALOG_MAX_BYTES);
     const snapshot = JSON.parse(
       bytes.toString("utf8"),
     ) as PluginMarketMirrorSnapshot;
@@ -1599,12 +1654,13 @@ export class PluginMarketService {
     if (!response.ok) return undefined;
     const length = Number(response.headers.get("content-length") ?? 0);
     if (length > MARKETPLACE_ASSET_MAX_BYTES) return undefined;
-    const bytes = Buffer.from(await response.arrayBuffer());
-    if (
-      bytes.length > MARKETPLACE_ASSET_MAX_BYTES ||
-      !matchesImageMagic(bytes, extension)
-    )
-      return undefined;
+    let bytes: Buffer;
+    try {
+      bytes = await this.readRemoteBody(response, MARKETPLACE_ASSET_MAX_BYTES);
+    } catch {
+      return undefined; // 超限/读取失败对图标属「不可用」而非错误(#525-10)
+    }
+    if (!matchesImageMagic(bytes, extension)) return undefined;
     return `data:${mime};base64,${bytes.toString("base64")}`;
   }
 
