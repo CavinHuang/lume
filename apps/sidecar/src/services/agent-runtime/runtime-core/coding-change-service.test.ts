@@ -417,7 +417,8 @@ describe("coding-change-service", () => {
     } catch (error) {
       staleError = error;
     }
-    expect(staleError instanceof Error && staleError.message.includes("刷新 Diff")).toBe(true);
+    expect(staleError).toBeInstanceOf(Error);
+    expect((staleError as Error).message).toContain("刷新 Diff");
     expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: root, encoding: "utf8" }).trim())
       .toBe("");
   }, 30_000);
@@ -560,7 +561,8 @@ describe("coding-change-service", () => {
     } catch (error) {
       staleError = error;
     }
-    expect(staleError instanceof Error && staleError.message.includes("工作区已变化")).toBe(true);
+    expect(staleError).toBeInstanceOf(Error);
+    expect((staleError as Error).message).toContain("工作区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
@@ -575,6 +577,8 @@ describe("coding-change-service", () => {
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'newer';\n");
     execFileSync("git", ["add", "--", "src/index.ts"], { cwd: root });
 
+    // 不用 expect().rejects：bun 1.3.14 Windows 下该匹配器与这条被拒 promise
+    // 组合会挂死（try/catch 等价断言，语义不变）
     let staleError: unknown;
     try {
       await applyCodingRepositoryPublishAction(root, {
@@ -588,7 +592,8 @@ describe("coding-change-service", () => {
     } catch (error) {
       staleError = error;
     }
-    expect(staleError instanceof Error && staleError.message.includes("暂存区已变化")).toBe(true);
+    expect(staleError).toBeInstanceOf(Error);
+    expect((staleError as Error).message).toContain("暂存区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 });

@@ -43,9 +43,17 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 function appendRun(run: AutomationRun): void {
   try {
     appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
-  } catch {
+  } catch (error) {
     // 盘满/EBUSY 时放弃本条记录而非抛出（#615）：executeJob 以 void 发射且上层
     // 无 catch，reject 会变 unhandledRejection 并吞掉后续调度刷新链。
+    // 丢记录必须留痕，否则排查盘满事故时日志与事实相反（result_persisted 照发）
+    writeLogRecord({
+      level: "error",
+      context: "agent.delivery.automation",
+      event: "automation.run_persist_failed",
+      message: "automation runs.jsonl persist failed; this run record is lost",
+      data: { jobId: run.jobId, runId: run.id, error: error instanceof Error ? error.message : String(error) },
+    });
   }
 }
 
