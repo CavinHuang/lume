@@ -423,9 +423,14 @@ export function composeSidecarRunOutput(input: {
   return appendSubagentChangedFiles(withModeNote, input.status, input.codingReport);
 }
 
-/** 注记内的模型可控串：单行折断 + 长度上限（#729 终局审查）。 */
+/** 注记内的模型可控串：单行折断 + 长度上限（#729 终局审查）。
+ * 先按 96 units 粗截再展开——模型可控串无前置限长，防全长 code point
+ * 物化（96 units ≥ 48 code points 数学上限，结果等价，#773 review）。
+ * 按 code point 截断——UTF-16 直接 slice 会劈开代理对产出孤立转义。 */
 function modeLabel(value: string | undefined): string {
-  return sanitizeSingleLine(value ?? "").slice(0, 48);
+  return Array.from(sanitizeSingleLine((value ?? "").slice(0, 96)))
+    .slice(0, 48)
+    .join("");
 }
 
 /**
