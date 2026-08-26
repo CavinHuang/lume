@@ -23,7 +23,7 @@ import {
 } from "node:fs";
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { createLogger } from "../services/infra/logger";
+import { createLogger } from "../infra/logger";
 import { createHash } from "node:crypto";
 import {
   basename,
