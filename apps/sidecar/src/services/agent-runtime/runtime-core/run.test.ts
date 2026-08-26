@@ -157,6 +157,8 @@ describe("runtime-core run", () => {
       runId,
       permissionMode: "acceptEdits"
     }));
+    // 真值透传钉子（#571 第 4 项）：cfg 层必须收到原值而非折叠后的 default
+    expect((result.agent as any).baseOptions.permissionMode).toBe("acceptEdits");
     const completionGuard = (result.agent as any).baseOptions.completionGuard as () => Promise<unknown>;
 
     await expect(completionGuard()).resolves.toMatchObject({
@@ -1747,8 +1749,7 @@ describe("runtime-core run", () => {
     const background = buildSidecarSubagentExecutionInput({
       forwardedToolInput: {
         prompt: "后台执行",
-        run_in_background: true,
-        isolation: "remote"
+        run_in_background: true
       },
       modelOverride: { source: "inherit" },
       runInBackground: true
@@ -1764,7 +1765,6 @@ describe("runtime-core run", () => {
     });
 
     expect(background.run_in_background).toBe(true);
-    expect(background.isolation).toBeUndefined();
     expect(foreground.run_in_background).toBe(false);
   });
 

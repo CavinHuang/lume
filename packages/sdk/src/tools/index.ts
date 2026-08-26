@@ -13,6 +13,7 @@ import { BashTool } from './bash.js'
 import { FileReadTool } from './read.js'
 import { FileWriteTool } from './write.js'
 import { FileEditTool } from './edit.js'
+import { MultiEditTool } from './multi-edit.js'
 import { GlobTool } from './glob.js'
 import { GrepTool } from './grep.js'
 import { NotebookEditTool } from './notebook-edit.js'
@@ -57,6 +58,7 @@ const ALL_TOOLS: ToolDefinition[] = [
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  MultiEditTool,
   GlobTool,
   GrepTool,
   NotebookEditTool,
@@ -90,7 +92,7 @@ const ALL_TOOLS: ToolDefinition[] = [
 
 /** Schemas always sent to the provider when deferred tool loading is enabled. */
 export const CORE_TOOL_NAMES = new Set([
-  'Bash', 'Read', 'Write', 'Edit', 'Glob', 'Grep', 'NotebookEdit',
+  'Bash', 'Read', 'Write', 'Edit', 'MultiEdit', 'Glob', 'Grep', 'NotebookEdit',
   'WebFetch', 'WebSearch', 'Agent', 'Delegate', 'WaitForDelegations',
   'AskUserQuestion', 'Skill',
   'ProcessOutput', 'ProcessStop', 'TaskStop', 'TaskCreate', 'TaskGet', 'TaskList', 'TaskUpdate',
@@ -149,6 +151,7 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  MultiEditTool,
   GlobTool,
   GrepTool,
   NotebookEditTool,

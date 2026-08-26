@@ -156,11 +156,13 @@ export async function withRetry<T>(
  * Check if an error is a "prompt too long" error.
  */
 export function isPromptTooLongError(err: any): boolean {
-  if (err?.status === 400) {
-    const message = err?.error?.error?.message || err?.message || ''
-    return message.includes('prompt is too long') ||
-      message.includes('max_tokens') ||
-      message.includes('context length')
-  }
-  return false
+  // 413 is unambiguous. For 400, structured OpenAI-style codes take priority and
+  // the message match stays a fallback — OpenAI-compat gateways rephrase the
+  // Anthropic wording freely (#567 item 1).
+  if (err?.status === 413) return true
+  if (err?.status !== 400) return false
+  const code = String(err?.error?.error?.code || err?.error?.code || '')
+  if (code.includes('context_length_exceeded')) return true
+  const message = err?.error?.error?.message || err?.error?.message || err?.message || ''
+  return /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large/i.test(String(message))
 }

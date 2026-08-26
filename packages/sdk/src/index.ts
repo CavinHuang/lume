@@ -49,6 +49,7 @@ export type { RepeatGuardMeta } from './repeat-guard.js'
 export { resolveShellInvocation, shellKindWithoutDiscovery, shellKindConservative, resetWindowsBashDiscoveryForTests } from './utils/shell-invocation.js'
 export { analyzeBashCommand, normalizeExecutable } from './utils/bash-command-analysis.js'
 export type { BashCommandAnalysis, BashCommandSegment, BashParseStatus } from './utils/bash-command-analysis.js'
+export { isReadOnlyShellInput, isReadOnlyPowerShell } from './utils/shell-read-only.js'
 export {
   spawnWithProcessSandbox,
 } from './utils/process-sandbox.js'
@@ -89,6 +90,7 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  MultiEditTool,
   GlobTool,
   GrepTool,
   NotebookEditTool,
@@ -251,6 +253,7 @@ export type {
 // --------------------------------------------------------------------------
 
 export {
+  DEFAULT_CONTEXT_WINDOW,
   estimateTokens,
   estimateMessagesTokens,
 } from './utils/tokens.js'
@@ -264,6 +267,7 @@ export {
   shouldAutoCompact,
   compactConversation,
   microCompactMessages,
+  compactToolResultContent,
 } from './utils/compact.js'
 export type {
   AutoCompactState,

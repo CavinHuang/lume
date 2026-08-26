@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, statSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readFileSync, readdirSync, renameSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import type {
   AutomationCreateJobInput,
@@ -39,21 +39,29 @@ function backupCorruptIndex(indexPath: string): void {
   const dir = dirname(indexPath);
   const prefix = `${basename(indexPath)}.corrupt-`;
   const files = existsSync(dir) ? readdirSync(dir) : [];
-  const currentMtime = statSync(indexPath).mtimeMs;
-  // 同代备份（mtime 不早于当前损坏文件）已存在则跳过——防重启堆积副本；
-  // 旧代备份不抑制新一代备份，避免按"删除"指引恢复时丢失代间新建的任务
+  let currentContent: string;
+  try {
+    currentContent = readFileSync(indexPath, "utf-8");
+  } catch {
+    return;
+  }
+  // #686：同代备份（内容与当前损坏文件相同）已存在则跳过——防重启堆积副本；
+  // 判代用内容比对而非 mtime：CI 文件系统 mtime 粒度可达 4ms，同毫秒落盘的
+  // 旧备份会被误判为当前代而抑制新备份。旧代备份不抑制新一代备份，避免按
+  // "删除"指引恢复时丢失代间新建的任务
   const hasCurrentGenBackup = files.some((name) => {
     if (!name.startsWith(prefix)) return false;
     try {
-      return statSync(join(dir, name)).mtimeMs >= currentMtime;
+      return readFileSync(join(dir, name), "utf-8") === currentContent;
     } catch {
       return false;
     }
   });
   if (hasCurrentGenBackup) return;
-  // 快速 runner 上两代损坏可能落在同一毫秒——Date.now() 同名会互相覆盖致代间备份丢失
-  // （Linux CI 确定性复现）。附 hrtime 尾数保证唯一。
-  const backupPath = `${indexPath}.corrupt-${Date.now()}-${process.hrtime.bigint()}`;
+  // 备份名带随机后缀：裸 Date.now() 在同毫秒内创建两代备份时文件名碰撞，
+  // 后写覆盖先写、第一代唯一数据副本静默丢失（#686 回归钉在 CI 实证；本 PR 曾以
+  // hrtime.bigint() 独立修复同一问题，合并取 main 的 randomUUID 形态保单源）。
+  const backupPath = `${indexPath}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
   try {
     copyFileSync(indexPath, backupPath);
     log.warn("backed up corrupt automation index", { backupPath });

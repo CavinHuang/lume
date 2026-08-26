@@ -2,6 +2,7 @@ import type { ReactNode } from 'react'
 import { BashResult } from './bash-result'
 import { ReadResult } from './read-result'
 import { EditResult } from './edit-result'
+import { MultiEditResult } from './multi-edit-result'
 import { WriteResult } from './write-result'
 import { GrepResult } from './grep-result'
 import { GlobResult } from './glob-result'
@@ -30,6 +31,7 @@ export function ToolResultRenderer({ toolName, input, result, imagePresentation 
     case 'Bash': return <BashResult input={input} result={result} />
     case 'Read': return <ReadResult input={input} result={result} />
     case 'Edit': return <EditResult input={input} result={result} />
+    case 'MultiEdit': return <MultiEditResult input={input} result={result} />
     case 'Write': return <WriteResult input={input} result={result} />
     case 'Grep': return <GrepResult input={input} result={result} />
     case 'Glob': return <GlobResult input={input} result={result} />

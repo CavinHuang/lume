@@ -3038,7 +3038,16 @@ function createSidecarHost({ onNotification }) {
           const requestSequence = payload.browserRpc?.sequence
           if (typeof requestSequence !== 'number'
             || requestSequence !== browserRpcInboundSequence + 1
-            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) return
+            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) {
+            // #611：畸形/失序/坏 MAC 的请求也须回一条错误响应，否则 sidecar 干等超时后
+            // 误报 executed_unknown（「可能已执行」——实际包根本没被接受）。语义归
+            // browser_unavailable（传输面故障、可重试），不含校验细节不构成 oracle；
+            // 响应 MAC 由 desktop 正常签名。
+            const sequence = ++browserRpcOutboundSequence
+            const body = { ok: false, error: 'browser_unavailable' }
+            runningChild.postMessage(JSON.stringify({ id: payload.id, error: { code: 'browser_unavailable' }, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, String(payload.id), body) } }))
+            return
+          }
           browserRpcInboundSequence = requestSequence
           void dispatchCommand('browser_runtime', payload.params ?? {}, {})
             .then((result) => {

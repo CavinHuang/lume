@@ -23,7 +23,7 @@ export function isToolInGroup(toolName: string, groupId: string): boolean {
     case 'file-read':
       return ['read', 'find', 'ls'].includes(toolName)
     case 'file-write':
-      return ['write', 'edit', 'notebook_edit'].includes(toolName)
+      return ['write', 'edit', 'multi-edit', 'notebook_edit'].includes(toolName)
     case 'search':
       return ['find', 'grep', 'ls'].includes(toolName)
     case 'web':

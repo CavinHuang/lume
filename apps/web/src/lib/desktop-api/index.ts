@@ -16,6 +16,7 @@ export * from './reading'
 export * from './planning-todo'
 export * from './persona'
 export * from './browser'
+export * from './connector'
 export * from './suggestion'
 export { sidecarCall } from './system'
 export type {

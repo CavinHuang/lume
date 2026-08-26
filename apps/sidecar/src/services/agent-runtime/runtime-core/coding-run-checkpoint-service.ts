@@ -15,6 +15,9 @@ import {
   type CodingDiffLine,
   type CodingFileDiffResult,
 } from "./coding-change-service";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("coding-run-checkpoint-service");
 
 const CHECKPOINT_FILE_PREFIX = "coding-checkpoint-";
 const MAX_DIFF_SNAPSHOT_BYTES = 10 * 1024 * 1024;
@@ -635,7 +638,11 @@ export async function revertCodingRun(input: {
 }): Promise<{
   filesChanged: string[];
   conflicts: string[];
+  /** 已提交边界文件（与 conflicts/skipped/failed 不相交；nonRewindableFiles 为四者并集） */
+  committedPaths: string[];
   nonRewindableFiles: string[];
+  /** 还原时抛错的文件（#714）：逐文件容错折桶，不因单个 IO 失败整批 reject */
+  failedFiles: string[];
   status: "restored" | "conflict" | "committed_boundary";
 }> {
   const record = await loadCodingRunCheckpoint(input);
@@ -649,7 +656,8 @@ export async function revertCodingRun(input: {
   const paths = Object.keys(checkpoint.files)
     .filter((path) => !requestedPaths || requestedPaths.has(resolve(path)));
   if (paths.length === 0) throw new Error("当前 Coding Run 没有工作区内的文件检查点");
-  const committedPaths = paths.filter((path) => hasCommitBoundaryForPath(record, path));
+  const gitProbe = createGitProbeCache();
+  const committedPaths = paths.filter((path) => hasCommitBoundaryForPath(record, path, gitProbe));
   const rewindablePaths = paths.filter((path) => !committedPaths.includes(path));
   const alreadyRestored = await findAlreadyRestoredFiles(record, rewindablePaths);
   const conflicts = (await findFingerprintConflicts(record, rewindablePaths))
@@ -658,10 +666,25 @@ export async function revertCodingRun(input: {
   const safePaths = rewindablePaths.filter((path) => !conflicts.includes(path) && !alreadyRestored.includes(path));
   const filesChanged = [...alreadyRestored];
   const skippedFiles: string[] = [];
+  const failedFiles: string[] = [];
   for (const path of safePaths) {
     const snapshot = checkpoint.files[path]!;
-    const result = await rewindCheckpoint({ ...checkpoint, files: { [path]: snapshot } });
-    if (!result.canRewind) throw new Error(result.error ?? `无法撤销 Coding 文件: ${path}`);
+    let result: Awaited<ReturnType<typeof rewindCheckpoint>>;
+    try {
+      result = await rewindCheckpoint({ ...checkpoint, files: { [path]: snapshot } });
+    } catch (error) {
+      // 失败桶语义（#714）：单文件 IO 失败折桶随结果返回，其余文件继续还原，
+      // 不再整批 reject 丢掉已成功的还原。onFileRestored 回调错误不折桶：
+      // journal 中断须暴露且可重入恢复（见 resumable-rewind 测试钉）。
+      failedFiles.push(path);
+      log.warn("revert 还原单个文件失败", { path, error: error instanceof Error ? error.message : String(error) });
+      continue;
+    }
+    if (!result.canRewind) {
+      failedFiles.push(path);
+      log.warn("revert 还原单个文件失败", { path, error: result.error ?? "无法撤销 Coding 文件" });
+      continue;
+    }
     if (result.skippedFiles?.includes(path)) {
       skippedFiles.push(path);
       continue;
@@ -672,10 +695,15 @@ export async function revertCodingRun(input: {
   return {
     filesChanged,
     conflicts,
-    nonRewindableFiles: [...committedPaths, ...conflicts, ...skippedFiles],
+    // 三桶不相交拆分（#572 review）：UI 摘要按类计数，合并并集会把同一文件
+    // 既算「外部修改跳过」又算「已提交不可回退」。nonRewindableFiles 保留并集
+    // 兼容既有消费方。
+    committedPaths,
+    failedFiles,
+    nonRewindableFiles: [...committedPaths, ...conflicts, ...skippedFiles, ...failedFiles],
     status: committedPaths.length > 0
       ? "committed_boundary"
-      : conflicts.length > 0 || skippedFiles.length > 0 ? "conflict" : "restored"
+      : conflicts.length > 0 || skippedFiles.length > 0 || failedFiles.length > 0 ? "conflict" : "restored"
   };
 }
 
@@ -767,18 +795,43 @@ async function assertNoSymlinkPathForRoots(roots: string[], path: string): Promi
   await assertNoSymlinkPath(root, path);
 }
 
-function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: string): boolean {
-  const gitRoot = findGitRootForPath(path);
+/**
+ * 单次 revert 的 git 探测缓存（#572 review P1）：hasCommitBoundaryForPath 对
+ * 每路径原本各跑 findGitRootForPath（2 次 spawnSync）+ rev-parse HEAD（1 次），
+ * 数百文件的 checkpoint 会以同步 spawn 冻结事件循环数秒。gitRoot 按 path→root
+ * 记忆化、HEAD 按根去重后整次 revert 每仓库只探一次。
+ */
+interface GitProbeCache {
+  gitRoots: Map<string, string | null>;
+  headByRoot: Map<string, string>;
+}
+
+function createGitProbeCache(): GitProbeCache {
+  return { gitRoots: new Map(), headByRoot: new Map() };
+}
+
+function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: string, probe?: GitProbeCache): boolean {
+  const cacheKey = resolve(path);
+  let gitRoot = probe?.gitRoots.get(cacheKey);
+  if (gitRoot === undefined) {
+    gitRoot = findGitRootForPath(path);
+    probe?.gitRoots.set(cacheKey, gitRoot);
+  }
   if (!gitRoot) return false;
-  const baselineCommit = record.baselineCommits?.[resolve(gitRoot)]
+  const rootKey = resolve(gitRoot);
+  const baselineCommit = record.baselineCommits?.[rootKey]
     ?? (isPathInside(gitRoot, record.cwd) ? record.baselineCommit : undefined);
   if (!baselineCommit) return false;
-  const result = spawnSync("git", ["rev-parse", "HEAD"], {
-    cwd: gitRoot,
-    encoding: "utf8",
-    windowsHide: true,
-  });
-  const currentCommit = result.status === 0 ? result.stdout.trim() : "";
+  let currentCommit = probe?.headByRoot.get(rootKey);
+  if (currentCommit === undefined) {
+    const result = spawnSync("git", ["rev-parse", "HEAD"], {
+      cwd: gitRoot,
+      encoding: "utf8",
+      windowsHide: true,
+    });
+    currentCommit = result.status === 0 ? result.stdout.trim() : "";
+    probe?.headByRoot.set(rootKey, currentCommit);
+  }
   return Boolean(currentCommit && currentCommit !== baselineCommit);
 }
 

@@ -90,9 +90,28 @@ describe("runtime-tool-safety", () => {
     expect(evaluateRuntimeToolSafety("Bash", { command: "echo $(whoami)" })).toMatchObject({
       behavior: "confirm"
     });
-    expect(evaluateRuntimeToolSafety("Bash", { command: "powershell -Command Get-ChildItem" })).toMatchObject({
+  });
+
+  test("relieves PowerShell-dialect unparseable commands only through the conservative read-only subset (#571)", () => {
+    // 显式前缀的良性命令：此前恒 confirm 且不持久化（「始终允许」也压不住），
+    // 现经保守只读子集证明放行；POSIX 平台同口径——内容证明与方言门控无关
+    expect(evaluateRuntimeToolSafety("Bash", { command: "powershell -Command Get-ChildItem" }, POSIX_BASH_SHELL)).toEqual({
+      behavior: "allow"
+    });
+    expect(evaluateRuntimeToolSafety("Bash", { command: "pwsh -NoProfile -Command Get-Process" }, POSIX_BASH_SHELL)).toEqual({
+      behavior: "allow"
+    });
+
+    // 前缀内的危险动词不在子集内：维持 fail-closed 确认
+    expect(evaluateRuntimeToolSafety("Bash", { command: "powershell -Command Get-Process | Stop-Process" }, POSIX_BASH_SHELL)).toMatchObject({
       behavior: "confirm"
     });
+    // 脚本块构造无法静态证明：维持确认（PS 默认 shell 的机器）
+    expect(evaluateRuntimeToolSafety(
+      "Bash",
+      { command: "Get-Process | Where-Object { $_.CPU -gt 10 }" },
+      POWERSHELL_SHELL
+    )).toMatchObject({ behavior: "confirm" });
   });
 
   test("does not apply bash rules to non-bash tools", () => {

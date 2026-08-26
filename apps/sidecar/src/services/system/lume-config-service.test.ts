@@ -35,13 +35,13 @@ describe("lume-config-service", () => {
   test("应在缺失时生成默认 lume.yaml 并返回有效配置", () => {
     const effective = getEffectiveLumeConfig("default");
 
-    expect(effective.version).toBe(1);
+    expect(effective.version).toBe(2);
     expect(effective.workspaceSlug).toBe("default");
     expect(effective.sourcePath).toBe(getLumeConfigYamlPath());
     expect(existsSync(getLumeConfigYamlPath())).toBeTrue();
 
     const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
-    expect(file.version).toBe(1);
+    expect(file.version).toBe(2);
     expect(file.skills?.enabled).toEqual([]);
     expect(file.plugins?.global?.enabled).toEqual([]);
     expect(file.plugins?.global?.disabled).toEqual([]);
@@ -56,7 +56,8 @@ describe("lume-config-service", () => {
       mirrorUrl: "https://lume-plugin.mrhuang.site"
     }]);
     expect(file.permissions?.rules).toEqual([]);
-    expect(file.permissions?.classifier?.enabled).toBe(false);
+    // #571 第 1 项：分类器新默认开启（少打扰档从出厂即可达）
+    expect(file.permissions?.classifier?.enabled).toBe(true);
     expect(file.permissions?.privateWriteRoots).toEqual([]);
     expect(file.models?.embedding?.defaultModelRef).toBe(MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF);
     expect(file.workspaces).toEqual({});
@@ -650,11 +651,57 @@ describe("lume-config-service", () => {
     writeFileSync(getLumeConfigYamlPath(), "version: [", "utf-8");
     const effective = getEffectiveLumeConfig("default");
 
-    expect(effective.version).toBe(1);
+    expect(effective.version).toBe(2);
     expect(effective.agent).toEqual({});
     expect(effective.providers).toEqual({});
     expect(effective.mcp).toEqual({});
     expect(effective.skills?.enabled).toEqual([]);
     expect(effective.permissions?.toolPolicy?.allow).toEqual([]);
+  });
+
+  test("v1 存量配置的 classifier.enabled=false 一次性迁移为新默认 true 并落盘 version:2", () => {
+    // v1 规范化器把 enabled:false 写穿到每份落盘配置且 UI 从未露出该开关，
+    // 存量 false 是默认值残留而非用户选择（#571 第 1 项）
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      permissions: {
+        classifier: { enabled: false },
+        rules: []
+      }
+    }), "utf-8");
+
+    const effective = getEffectiveLumeConfig("default");
+    expect(effective.permissions?.classifier?.enabled).toBe(true);
+
+    const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
+    expect(file.version).toBe(2);
+    expect(file.permissions?.classifier?.enabled).toBe(true);
+
+    // 迁移后用户显式改回 false 不再被触碰
+    file.permissions!.classifier!.enabled = false;
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify(file), "utf-8");
+    const reaffirmed = getEffectiveLumeConfig("default");
+    expect(reaffirmed.permissions?.classifier?.enabled).toBe(false);
+  });
+
+  test("无 classifier 段的 v1 存量配置经兜底语义获得启用，workspace overlay 显式 false 不迁移", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      workspaces: {
+        default: {
+          permissions: {
+            classifier: { enabled: false }
+          }
+        }
+      }
+    }), "utf-8");
+
+    // 顶层无显式值 → 规范化合并落新默认 true（v2 createDefault），等效于启用
+    const topLevel = getEffectiveLumeConfig();
+    expect(topLevel.permissions?.classifier?.enabled).toBe(true);
+
+    // workspace overlay 是显式配置，不参与迁移，合并后覆盖生效
+    const overlay = getEffectiveLumeConfig("default");
+    expect(overlay.permissions?.classifier?.enabled).toBe(false);
   });
 });

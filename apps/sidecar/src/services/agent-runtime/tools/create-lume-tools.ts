@@ -10,6 +10,7 @@ import { createAutomationListTools } from "./cron/automation-list-tools";
 import { createAutomationTemplateTools } from "./cron/automation-template-tools";
 import { createSdkImTools } from "./im/create-im-tools";
 import { createSdkImCliTools } from "./im-cli/create-im-cli-tools";
+import { createSdkConnectorTools } from "./connectors/create-connector-tools";
 import { dingtalkCliConfig } from "./im-cli/providers/dingtalk";
 import { larkCliConfig } from "./im-cli/providers/feishu";
 import { wecomCliConfig } from "./im-cli/providers/wecom";
@@ -30,7 +31,7 @@ import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
 import { createBrowserMcpTools } from "./browser/create-browser-tools";
 
-const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
+const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
   "automation_read",
   "automation_set",
@@ -181,6 +182,7 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...automationTemplateTools,
     ...imTools,
     ...imCliTools,
+    ...createSdkConnectorTools(),
     ...readingTools,
     ...uiTools,
     ...routineTools,

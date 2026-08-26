@@ -158,6 +158,57 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     });
   });
 
+  // #720 review：MultiEdit 与 Edit 同族，必须同走 file-ledger 完整读覆写闸
+  test("MultiEdit cannot overwrite without a full fresh read", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "note.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const ledger = createFileAccessLedger();
+    const readTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Read", {
+        name: "Read",
+        description: "read",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return {
+            type: "tool_result",
+            tool_use_id: "",
+            content: JSON.stringify({ remainingLines: 0 })
+          };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+    const multiEditTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("MultiEdit", {
+        name: "MultiEdit",
+        description: "multi-edit",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "edited" };
+        }
+      }),
+      threadId: "thread-1",
+      cwd: root,
+      fileLedger: ledger
+    });
+
+    await expect(multiEditTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      is_error: true,
+      tool_use_id: "",
+      content: "写入已有文件前必须先完整读取该文件。"
+    });
+
+    await readTool.call({ file_path: filePath }, { cwd: root });
+
+    await expect(multiEditTool.call({ file_path: filePath }, { cwd: root })).resolves.toMatchObject({
+      content: "edited"
+    });
+  });
+
   test("#314 同族:unchanged 短路结果不重录，不把部分视图升级成全文读", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
@@ -614,7 +665,7 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     expect(calls).toBe(0);
   });
 
-  test("blocks remote isolation when background execution is disallowed", async () => {
+  test("isolation alias no longer counts as background execution (#575)", async () => {
     const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
     await mkdir(root, { recursive: true });
     const ledger = createFileAccessLedger();
@@ -638,12 +689,13 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       fileLedger: ledger
     });
 
+    // isolation 别名已随 Agent schema 删参退役：携带该字段的输入不再被当作
+    // 后台请求拦截，只有 run_in_background === true 触发后台策略。
     await expect(
       tool.call({ prompt: "go", isolation: "remote" }, { cwd: root, toolUseId: "tool-remote" })
     ).resolves.toMatchObject({
-      is_error: true,
-      tool_use_id: "tool-remote",
-      content: "Agent 不允许后台执行"
+      type: "tool_result",
+      content: "started"
     });
   });
 

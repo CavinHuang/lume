@@ -64,6 +64,11 @@ export function getConnectionCredentialsPath(): string {
   return join(getConfigDir(), "connection-credentials.json");
 }
 
+/** 连接器(open-connector 迁移)凭证存储:OAuth client 配置 + token。 */
+export function getConnectorCredentialsPath(): string {
+  return join(getConfigDir(), "connector-credentials.json");
+}
+
 export function getImConfigPath(): string {
   return join(getConfigDir(), "im.json");
 }
