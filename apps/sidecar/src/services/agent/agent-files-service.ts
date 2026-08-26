@@ -475,13 +475,18 @@ function validateNewName(newName: string): string {
 }
 
 function movePathWithFallback(sourcePath: string, targetPath: string): void {
-  try {
-    renameSync(sourcePath, targetPath);
-    return;
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EXDEV") {
-      throw error;
+  // Windows 杀毒/索引器瞬时占用会抛 EPERM/EBUSY：短退避重试后仍失败，
+  // 与 EXDEV 同走 copy+delete 降级，避免文件面板日常移动硬失败（#552）。
+  const transientCodes = new Set(["EXDEV", "EPERM", "EBUSY"]);
+  for (const delayMs of [0, 50, 150]) {
+    try {
+      if (delayMs > 0) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, delayMs);
+      renameSync(sourcePath, targetPath);
+      return;
+    } catch (error) {
+      if (!transientCodes.has((error as NodeJS.ErrnoException).code ?? "")) {
+        throw error;
+      }
     }
   }
   try {

@@ -92,7 +92,7 @@ import { pasteTextAtCurrentCursor } from './text-insertion-service'
 import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice-dictation-window'
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
-import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
+import { MAX_RPC_MESSAGE_BYTES, VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -3199,6 +3199,18 @@ function createSidecarHost({ onNotification }) {
       method,
       params,
     })
+
+    // #552:与 sidecar 接收侧对称的发送前预检。超限请求 sidecar 会静默丢弃
+    // （parentPort 分支不回错误帧），不过预检就得干等 45s HEALTHCHECK 超时。
+    if (payload.length > MAX_RPC_MESSAGE_BYTES) {
+      writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.too_large', `sidecar RPC payload exceeds size limit: ${method}`, {
+        status: 'error',
+        rpcRequestId: String(requestId),
+        ...correlation,
+        data: { method, bytes: payload.length },
+      })
+      throw new Error(`sidecar request payload too large: ${method}`)
+    }
 
     return new Promise((resolveCall, rejectCall) => {
       const timeout = setTimeout(() => {

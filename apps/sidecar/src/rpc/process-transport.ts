@@ -1,13 +1,12 @@
 import { stdin, stdout } from "node:process";
+import { MAX_RPC_MESSAGE_BYTES } from "@lume/shared";
 import { createLogger } from "../services/infra/logger";
 
 const log = createLogger("process-rpc-transport");
 
-/**
- * 单条 RPC 消息上限。合法最大 payload = 批量附件 50MB 原始 → ~66.7MB base64 + JSON 壳 ≈ 68MB，
- * 取 96MB 留余量；防畸形渲染层用超大行在 JSON.parse 前打爆内存（OOM 崩进程，全部会话随进程丢失）。
- */
-export const MAX_RPC_MESSAGE_BYTES = 96 * 1024 * 1024;
+// 上限常量单源在 @lume/shared（desktop 发送侧预检与 sidecar 接收侧同值），
+// 此处 re-export 保持既有导入面。
+export { MAX_RPC_MESSAGE_BYTES };
 
 interface ElectronParentPort {
   on(event: "message", listener: (event: { data?: unknown }) => void): void;

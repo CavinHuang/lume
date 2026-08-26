@@ -26,3 +26,11 @@ export interface HealthcheckResult {
 
 /** 当前 IPC 协议版本，前后端必须一致 */
 export const IPC_PROTOCOL_VERSION = 1;
+
+/**
+ * 单条进程间 RPC 消息上限（desktop↔sidecar 单源）。
+ * 合法最大 payload = 批量附件 50MB 原始 → ~66.7MB base64 + JSON 壳 ≈ 68MB，取 96MB 留余量；
+ * 防畸形超大行在 JSON.parse 前打爆内存。以 UTF-16 code unit 计——两侧均与
+ * `payload.length`/`line.length` 对称比较，故非字节数不影响判定一致性。
+ */
+export const MAX_RPC_MESSAGE_BYTES = 96 * 1024 * 1024;
