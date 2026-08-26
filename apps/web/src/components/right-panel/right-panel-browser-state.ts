@@ -16,6 +16,7 @@ export interface RightPanelBrowserTab {
   isLoading?: boolean
   mediaState?: BrowserTabDescriptor['mediaState']
   lifecycle?: BrowserTabDescriptor['lifecycle']
+  handoffStatus?: BrowserTabDescriptor['handoffStatus']
   createdAt: string
   lastOpenedAt: string
   zoomFactor: number
@@ -95,6 +96,7 @@ export function applyBrowserDescriptor(
     isLoading: descriptor.isLoading,
     mediaState: descriptor.mediaState,
     lifecycle: descriptor.lifecycle,
+    handoffStatus: descriptor.handoffStatus,
     lastOpenedAt: descriptor.lastOpenedAt ?? new Date().toISOString(),
     zoomFactor: descriptor.zoomFactor ?? 1,
     viewport: descriptor.viewport,
@@ -115,6 +117,7 @@ export function browserTabFromDescriptor(descriptor: BrowserTabDescriptor): Righ
     ...(descriptor.isLoading !== undefined ? { isLoading: descriptor.isLoading } : {}),
     ...(descriptor.mediaState ? { mediaState: descriptor.mediaState } : {}),
     ...(descriptor.lifecycle ? { lifecycle: descriptor.lifecycle } : {}),
+    ...(descriptor.handoffStatus ? { handoffStatus: descriptor.handoffStatus } : {}),
     createdAt: now,
     lastOpenedAt: descriptor.lastOpenedAt ?? now,
     zoomFactor: descriptor.zoomFactor ?? 1,
@@ -206,6 +209,7 @@ function sanitizeBrowserTab(value: unknown): RightPanelBrowserTab | null {
     ...(Array.isArray(value.navigationEntries) ? { navigationEntries: value.navigationEntries.filter((entry): entry is string => typeof entry === 'string').slice(-200) } : {}),
     ...(typeof value.navigationIndex === 'number' && Number.isInteger(value.navigationIndex) ? { navigationIndex: value.navigationIndex } : {}),
     ...(isScrollPosition(value.scrollPosition) ? { scrollPosition: value.scrollPosition } : {}),
+    ...(value.handoffStatus === 'handoff' || value.handoffStatus === 'deliverable' ? { handoffStatus: value.handoffStatus } : {}),
   }
 }
 
