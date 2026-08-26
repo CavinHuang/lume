@@ -66,12 +66,9 @@ export class FilePluginStateStore {
       }
       // #596③：损坏文件改名保留现场后重建，install/uninstall/审批门不再被
       // 一个坏文件永久锁死（backupCorruptFile 共享收口）
+      // 改名失败已由 backupCorruptFile 统一告警，此处只记成功分支
       const backupPath = backupCorruptFile(this.path);
-      if (backupPath) {
-        log.warn("plugins-state file was corrupt; backed up and rebuilt", { backupPath });
-      } else {
-        log.warn("plugins-state file was corrupt but could not be backed up; rebuilding in place");
-      }
+      if (backupPath) log.warn("plugins-state file was corrupt; backed up and rebuilt", { backupPath });
       return { plugins: {} };
     }
   }

@@ -39,7 +39,6 @@ describe("backupCorruptFile", () => {
       const names = readdirSync(dir);
       expect(names).toHaveLength(2);
       // 两代内容都在：纯 Date.now() 命名下同毫秒第二次 rename 会覆盖第一次
-      expect(names.filter((name) => name.includes("{gen-1") || readFileSync(join(dir, name), "utf-8") === "{gen-1").length).toBe(1);
       expect(names.map((name) => readFileSync(join(dir, name), "utf-8")).sort()).toEqual(["{gen-1", "{gen-2"]);
     } finally {
       rmSync(dir, { recursive: true, force: true });

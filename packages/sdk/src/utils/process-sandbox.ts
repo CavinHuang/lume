@@ -387,21 +387,23 @@ export function buildSandboxEnvironment(
 }
 
 function mapPlatformSupport(support: PlatformSupport): ProcessSandboxSupport {
-  const seatbeltUsable = process.platform === 'darwin'
-    ? isDarwinSeatbeltUsable()
-    : true
   const baseAvailable = support.isSupported && (
     process.platform !== 'win32'
     || support.availableMethods.includes('processcontainer')
   )
+  // 仅 darwin 且基础可用时才写探针：mxc 已报不支持的平台上再测无意义
+  const seatbeltUsable = baseAvailable && process.platform === 'darwin'
+    ? isDarwinSeatbeltUsable()
+    : true
   const available = baseAvailable && seatbeltUsable
   return {
     available,
     reason: !available
-      ? (support.reason
-        || (!seatbeltUsable
-          ? 'sandbox-exec write probe failed: this macOS version restricts seatbelt profiles'
-          : (support.isSupported ? '' : 'MXC reports this platform as unsupported')))
+      ? (!seatbeltUsable
+        // 探针失败是最具体的失败原因，优先于 mxc 泛化 reason
+        ? 'sandbox-exec write probe failed: this macOS version restricts seatbelt profiles'
+        : (support.reason
+          || (support.isSupported ? '' : 'MXC reports this platform as unsupported')))
       : '',
     ...(support.isolationTier ? { isolationTier: support.isolationTier } : {}),
     warnings: support.isolationWarnings ?? [],
