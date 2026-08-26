@@ -274,7 +274,11 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       respondPage(false, "授权已失效(流程已终止),请回到 Lume 重新发起。");
       return;
     }
-    await validateAndStoreCredential(service, credential);
+    if (!(await validateAndStoreCredential(service, credential, pending))) {
+      // 流在校验器在途窗口内被终止:done 已随终止路径 reject,此处只补失效页,不得再报成功
+      respondPage(false, "授权已失效(流程已终止),请回到 Lume 重新发起。");
+      return;
+    }
     logger.info("connector oauth flow completed", { service });
     pending.resolve(credential);
     respondPage(true, "授权成功,可以关闭此页面回到 Lume。");
@@ -328,7 +332,12 @@ function configRequestedScopes(service: string, auth: OAuth2AuthDefinition): str
 }
 
 /** 跑凭证验证器补全 profile(邮箱等),落盘 vault。 */
-async function validateAndStoreCredential(service: string, credential: ResolvedCredential & { authType: "oauth2" }): Promise<void> {
+async function validateAndStoreCredential(
+  service: string,
+  credential: ResolvedCredential & { authType: "oauth2" },
+  /** 发起校验时的授权流身份:校验器在途期间流被终止时,迟到结果不得写盘复活(#689)。 */
+  pending: PendingAuthorization,
+): Promise<boolean> {
   const provider = getConnector(service);
   let stored = credential;
   try {
@@ -347,7 +356,11 @@ async function validateAndStoreCredential(service: string, credential: ResolvedC
     // 验证失败不阻断授权:token 本身已兑换成功;但 profile 会落默认值,留痕供排查
     logger.warn("connector oauth2 validator failed", { service, error: error instanceof Error ? error.message : String(error) });
   }
+  // 兑换后 map 检查与本次写盘之间隔着校验器网络 await:断开/超时/被新授权顶掉
+  // 都会把本流摘出 map,此处失配即弃;检查与同步写同处一个 microtask,无再入窗口
+  if (pendingAuthorizations.get(service) !== pending) return false;
   setConnectorOAuthCredential(service, stored);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
