@@ -42,7 +42,7 @@ export interface AutomationLease {
 }
 
 const OWNER_ID = `${process.pid}:${randomUUID()}`;
-const STALE_LEASE_MS = 30_000;
+export const STALE_LEASE_MS = 30_000;
 
 export function tryAcquireAutomationLease(input: {
   jobId: string;

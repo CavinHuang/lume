@@ -19,6 +19,7 @@ import { getLostAutomationRuns, recordLostAutomationRun } from "./automation-los
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
 import { readRoutine } from "../routine/routine-store";
 import {
+  STALE_LEASE_MS,
   consumeLatestAutomationTrigger,
   finishAutomationLease,
   heartbeatAutomationLease,
@@ -348,7 +349,8 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   }
   if (run.status !== "waiting_for_user" && run.status !== "waiting_for_approval" && job.schedule.type !== "once") {
     const pendingScheduledAt = consumeLatestAutomationTrigger(job.id);
-    if (pendingScheduledAt !== undefined) {
+    // runnerStarted 门控：stop 后的关停窗口孵化新 run 只会被 process.exit 中途杀死（round12 生命周期 review）
+    if (pendingScheduledAt !== undefined && runnerStarted) {
       const latest = listAutomationJobs().find((item) => item.id === job.id);
       if (latest?.enabled) void executeJob(latest, "schedule", pendingScheduledAt).catch((error) => {
       writeLogRecord({
@@ -385,8 +387,12 @@ function scheduleJob(job: AutomationJob): void {
 function scheduleJobInner(job: AutomationJob): void {
   if (!job.enabled) return;
   const runtimeState = readAutomationRuntimeState(job.id);
+  // running 态若心跳已超阈（快速重启 <30s 后 fresh lease 不触发启动期 recover），
+  // 放行调度使 tryAcquire 的 stale 自愈得以触达——否则任务静默停摆至下一次完整重启（round12 生命周期 review）
+  const runningLeaseStale = runtimeState?.status === "running"
+    && Boolean(runtimeState.lease && Date.now() - runtimeState.lease.heartbeatAt > STALE_LEASE_MS);
   if (runningJobs.has(job.id)
-    || runtimeState?.status === "running"
+    || (runtimeState?.status === "running" && !runningLeaseStale)
     || runtimeState?.status === "waiting_for_user"
     || runtimeState?.status === "waiting_for_approval") {
     return;
@@ -497,7 +503,8 @@ export function resumeAutomationAfterInteraction(threadId: string): void {
   });
   const pendingScheduledAt = consumeLatestAutomationTrigger(state.jobId);
   const latest = listAutomationJobs().find((job) => job.id === state.jobId);
-  if (pendingScheduledAt !== undefined && latest?.enabled && latest.schedule.type !== "once") {
+  // runnerStarted 门控：关停窗口不得孵化新 run（round12 生命周期 review）
+  if (pendingScheduledAt !== undefined && latest?.enabled && latest.schedule.type !== "once" && runnerStarted) {
     void executeJob(latest, "schedule", pendingScheduledAt).catch((error) => {
       writeLogRecord({
         level: "error",

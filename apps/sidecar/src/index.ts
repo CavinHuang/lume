@@ -536,16 +536,28 @@ async function boot(): Promise<void> {
     return stopping;
   };
   process.once("exit", () => { void stopWatcher(); });
-  process.once("SIGINT", async () => {
-    void getNodeReplRuntimeRegistry().shutdownAll?.();
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
+  // 清理阶段任一同步抛错（盘满下 fs 操作真实可现）不得吞掉退出——
+  // 否则信号被完全忽略，desktop 仅等 3s 无 SIGKILL 升级，sidecar 变僵尸进程
+  const gracefulExit = async () => {
+    try {
+      void getNodeReplRuntimeRegistry().shutdownAll?.();
+      await Promise.race([
+        stopWatcher(),
+        new Promise((resolve) => setTimeout(resolve, 60_000))
+      ]);
+    } catch (error) {
+      writeLogRecord({
+        level: "error",
+        context: "sidecar.lifecycle",
+        event: "sidecar.shutdown_cleanup_failed",
+        message: "关停清理阶段异常，强制退出",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
+    }
     process.exit(0);
-  });
-  process.once("SIGTERM", async () => {
-    void getNodeReplRuntimeRegistry().shutdownAll?.();
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
-    process.exit(0);
-  });
+  };
+  process.once("SIGINT", gracefulExit);
+  process.once("SIGTERM", gracefulExit);
 
 }
 
