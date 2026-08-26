@@ -129,6 +129,7 @@ class SessionStateManager {
    */
   delete(sessionId: string): void {
     this.states.delete(sessionId);
+    this.saveToDisk();
     log.debug("删除会话状态", { sessionId: sessionId.slice(0, 8) });
   }
 
@@ -155,6 +156,9 @@ class SessionStateManager {
     }
 
     if (cleaned > 0) {
+      // #615②:清理结果落盘——否则每次重启全量读回历史条目再"清理"一遍,
+      // 磁盘文件与启动加载成本随历史会话数单调增长永不收敛。
+      this.saveToDisk();
       log.info("清理过期会话状态", { count: cleaned });
     }
 
