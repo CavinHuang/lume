@@ -45,7 +45,8 @@ const credential: MailCredential = {
   smtpHost: "smtp.qq.com",
 };
 
-const config = { displayName: "QQ 邮箱", attachmentFallbackPrefix: "attachment" };
+// 纯 UID 语义测试与连接期 host-pinning 无关:显式豁免避免默认 pinning 触发真实 DNS
+const config = { displayName: "QQ 邮箱", attachmentFallbackPrefix: "attachment", enforceHostNetworkPolicy: false };
 
 describe("mail mutation actions probe uid existence first", () => {
   it("rejects delete on a missing uid even though the library reports success", async () => {

@@ -45,7 +45,8 @@ export interface MailRuntimeConfig {
   connectAuthMessage: string;
   /**
    * Screen the resolved IP addresses of the mailbox hosts before connecting.
-   * Only needed by providers whose hosts come from user input.
+   * Enabled by default; providers whose hosts are hardcoded as part of the
+   * integration may opt out explicitly.
    */
   enforceHostNetworkPolicy?: boolean;
   readCredential(values: Record<string, string>): MailCredential;

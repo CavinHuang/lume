@@ -37,11 +37,11 @@ export interface MailProtocolConfig {
   attachmentFallbackPrefix: string;
   /**
    * Screen the resolved IP addresses of the mailbox hosts before connecting.
-   *
-   * Providers whose hosts are hardcoded do not need this: their hostnames are
-   * part of the integration. It is meant for providers whose hosts come from
-   * user input, where a save-time hostname check alone can be defeated by a DNS
-   * record that only points at an internal address once the connection is made.
+   * Enabled by default (#696): a save-time hostname check alone is defeated by
+   * a DNS record that only points at an internal address once the connection
+   * is made, so resolution and connection are pinned to the validated set.
+   * Providers whose hosts are hardcoded as part of the integration may opt out
+   * explicitly.
    */
   enforceHostNetworkPolicy?: boolean;
 }
@@ -486,7 +486,8 @@ async function pinMailHost(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
 ): Promise<MailHostTarget> {
-  if (!config.enforceHostNetworkPolicy) {
+  // 默认启用(#696):仅硬编码 host 的内置 provider 显式豁免
+  if (config.enforceHostNetworkPolicy === false) {
     return { host };
   }
 
