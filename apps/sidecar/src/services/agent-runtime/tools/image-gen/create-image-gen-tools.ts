@@ -11,6 +11,11 @@ export interface CreateImageGenToolsInput {
 }
 
 export function createImageGenTools(input: CreateImageGenToolsInput): ToolDefinition[] {
+  // 未配置图像生成模型时整族不注入：模型搜到调用也只会得到配置错误（#539）
+  const config = input.workspaceSlug ? getEffectiveLumeConfig(input.workspaceSlug) : undefined;
+  const hasImageModels = (config?.models?.imageGeneration?.priorityModelRefs?.length ?? 0) > 0;
+  if (!hasImageModels) return [];
+
   return [
     createSdkJsonResultTool({
       name: "image_gen",

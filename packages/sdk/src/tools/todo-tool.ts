@@ -141,6 +141,9 @@ export function createTodoTool(opts: {
       },
     },
     isConcurrencySafe: false,
+    // 教学面（todo-section 无条件注入 + 完成前 nudge 强制回写）承诺 TodoWrite 全程可直接调用，
+    // 必须恒留 core 注入池而非 deferred 池，否则未经 ToolSearch 提升直接调用报 Unknown tool（#542）
+    runtimeMetadata: { requiredDuringSkillScope: true },
     prompt: PROMPT,
     async call(input: { todos?: unknown }) {
       // Array.isArray narrows input.todos to any[]; treat elements as unknown.
@@ -148,7 +151,8 @@ export function createTodoTool(opts: {
 
       const oldTodos = store.getAll()
       const next: TodoItem[] = []
-      let allDone = incoming.length > 0
+      // 空列表是合法的 reset-to-empty 语义；非空时任何未完成项都会翻转为 false
+      let allDone = true
 
       for (const t of incoming) {
         if (!isRecord(t)) {

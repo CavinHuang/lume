@@ -255,7 +255,7 @@ describe("Agent runtime tool resolver", () => {
   test("rebuildToolPool keeps core tools eager and defers the rest", async () => {
     const agent = createAgent({
       persistSession: false,
-      tools: [tool("Bash"), tool("GuanlanSearch")],
+      tools: [tool("Bash"), tool("DeepSearch")],
       provider: new StaticProvider(),
       model: "host/model-a",
     })
@@ -270,7 +270,7 @@ describe("Agent runtime tool resolver", () => {
     expect(toolPool.map((t) => t.name)).toContain("ExecuteTool")
     // Core tools never land in deferred; non-core tools do.
     expect(deferredPool.map((t) => t.name)).not.toContain("Bash")
-    expect(deferredPool.map((t) => t.name)).toContain("GuanlanSearch")
+    expect(deferredPool.map((t) => t.name)).toContain("DeepSearch")
 
     await agent.close()
   })
@@ -434,20 +434,20 @@ describe("Agent runtime tool resolver", () => {
       async createMessage(params: CreateMessageParams): Promise<CreateMessageResponse> {
         this.requests.push(params)
         if (this.requests.length === 1) {
-          return { content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:GuanlanSearch" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
+          return { content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:DeepSearch" } }], stopReason: "tool_use", usage: { input_tokens: 1, output_tokens: 1 } }
         }
         return { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } }
       }
     }()
     const agent = createAgent({
       persistSession: false,
-      tools: [tool("Read"), tool("GuanlanSearch"), tool("OtherSearch")],
+      tools: [tool("Read"), tool("DeepSearch"), tool("OtherSearch")],
     })
     await agent.getInitializationResult()
     ;(agent as any).provider = provider
 
-    // Query 1: ToolSearch promotes GuanlanSearch natively (turns 1-2).
-    for await (const _event of agent.query("find guanlan")) {
+    // Query 1: ToolSearch promotes DeepSearch natively (turns 1-2).
+    for await (const _event of agent.query("find something")) {
       // drain query
     }
     // Query 2: the engine must receive the promoted tool natively, in append
@@ -458,16 +458,16 @@ describe("Agent runtime tool resolver", () => {
     }
 
     expect(provider.requests[2]?.tools.map((item) => item.name)).toEqual([
-      "Read", "ToolSearch", "ExecuteTool", "GuanlanSearch",
+      "Read", "ToolSearch", "ExecuteTool", "DeepSearch",
     ])
-    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("GuanlanSearch")
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("DeepSearch")
     expect((agent as any).deferredToolPool.map((item: ToolDefinition) => item.name)).toEqual(["OtherSearch"])
 
     // Promotions survive a pool rebuild (MCP reconnect etc.); names no longer
     // present in the pool are silently skipped.
     ;(agent as any).activatedToolNames.add("GoneTool")
     await (agent as any).rebuildToolPool()
-    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("GuanlanSearch")
+    expect((agent as any).toolPool.map((item: ToolDefinition) => item.name)).toContain("DeepSearch")
     expect((agent as any).deferredToolPool.map((item: ToolDefinition) => item.name)).toEqual(["OtherSearch"])
     await agent.close()
   })

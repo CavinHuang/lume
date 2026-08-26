@@ -10,8 +10,13 @@ import { dirname, join } from "node:path";
 import { getAgentThreadFilesPath } from "../../../infra/config-paths";
 import { createLogger } from "../../../infra/logger";
 
+/** 容量上限（#539）：长寿命线程的 jsonl 无轮转，内存 Map 与 restore 重放都须有界 */
+const MAX_LEDGER_ENTRIES = 500;
+
 export class ComputerUseActionLedger {
   readonly #entries = new Map<string, DesktopActionLedgerEntry>();
+  /** 处于 dispatched/observed 活跃相的 actionId——observeWindow 只需扫这一小撮，而非全表 */
+  readonly #activeIds = new Set<string>();
   readonly #expectedText = new Map<string, string>();
   readonly #baselineFingerprint = new Map<string, string>();
   readonly #requiresStateChange = new Set<string>();
@@ -64,6 +69,7 @@ export class ComputerUseActionLedger {
       this.#baselineFingerprint.set(entry.actionId, input.baselineFingerprint);
     }
     if (input.requiresStateChange) this.#requiresStateChange.add(entry.actionId);
+    this.#prune();
     this.#append(entry);
     this.#log.info("action phase", ledgerLogFields(entry));
     return entry;
@@ -91,8 +97,10 @@ export class ComputerUseActionLedger {
   ): DesktopActionLedgerEntry[] {
     const observed: DesktopActionLedgerEntry[] = [];
     const text = accessibilityText(accessibility);
-    for (const current of [...this.#entries.values()]) {
-      if (current.phase !== "dispatched" && current.phase !== "observed") continue;
+    // 只遍历活跃相条目：历史终态动作不再参与观察匹配（#539，原为全表扫描）
+    for (const actionId of [...this.#activeIds]) {
+      const current = this.#entries.get(actionId);
+      if (!current) continue;
       if (current.window.id !== window.id || current.window.app !== window.app) continue;
       if (current.phase === "dispatched") this.observe(current.actionId);
       const expected = this.#expectedText.get(current.actionId);
@@ -146,8 +154,28 @@ export class ComputerUseActionLedger {
       ...(failureReason ? { failureReason } : {}),
     };
     this.#entries.set(actionId, next);
+    if (phase === "dispatched" || phase === "observed") this.#activeIds.add(actionId);
+    else this.#activeIds.delete(actionId);
     this.#append(next);
     this.#log.info("action phase", ledgerLogFields(next));
+  }
+
+  /** 终态条目超限时淘汰最旧者：不再参与观察匹配，仅 get 查询历史会落空 */
+  #prune(): void {
+    if (this.#entries.size <= MAX_LEDGER_ENTRIES) return;
+    const removable = [...this.#entries.values()]
+      .filter((entry) => entry.phase === "verified" || entry.phase === "failed")
+      .sort((left, right) => left.updatedAt - right.updatedAt);
+    let excess = this.#entries.size - MAX_LEDGER_ENTRIES;
+    for (const entry of removable) {
+      if (excess <= 0) break;
+      this.#entries.delete(entry.actionId);
+      this.#forgetPrivateVerificationState(entry.actionId);
+      excess--;
+    }
+    if (excess < this.#entries.size - MAX_LEDGER_ENTRIES) {
+      this.#log.info("action ledger pruned", { pruned: this.#entries.size - MAX_LEDGER_ENTRIES - excess, remaining: this.#entries.size });
+    }
   }
 
   #append(entry: DesktopActionLedgerEntry): void {
@@ -164,9 +192,13 @@ export class ComputerUseActionLedger {
         const entry = JSON.parse(line) as DesktopActionLedgerEntry;
         if (entry.threadId === this.#threadId && typeof entry.actionId === "string") {
           this.#entries.set(entry.actionId, entry);
+          // 同一 actionId 的终态行必须出集：重放是乱序追加流，后写终态覆盖前态；
+          // 漏删会让 observeWindow 对历史条目重复 verify 触发非法转换 throw（#711 review）
+          if (entry.phase === "dispatched" || entry.phase === "observed") this.#activeIds.add(entry.actionId);
+          else this.#activeIds.delete(entry.actionId);
         }
       }
-    } catch {
+      this.#prune();    } catch {
       this.#log.warn("ignored unreadable action ledger", { path: this.#path });
     }
   }

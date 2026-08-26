@@ -539,7 +539,9 @@ export class WorkspaceMcpManager {
         reason: status.error?.message ?? `MCP server ${status.serverId} is not connected.`
       }));
 
-    const includeManagement = options.includeManagementTools ?? true;
+    // 管理三件套仅在存在启用中的 MCP 配置时注入；零配置安装不再白占工具位（#539）
+    const includeManagement = (options.includeManagementTools ?? true)
+      && statuses.some((status) => status.enabled);
 
     return {
       tools: [

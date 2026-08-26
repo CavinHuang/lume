@@ -20,7 +20,7 @@
     "test": "bun test ./src/browser-cdp-input.test.ts ./scripts/desktop-package.test.mjs ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./scripts/plugin-native-host-installer.test.mjs ./scripts/tray-window-runtime.test.mjs ./scripts/tray-manager.test.mjs ./scripts/logging-service.test.mjs ./scripts/log-digest-policy.test.mjs ./scripts/diagnostic-content-store.test.mjs ./scripts/settings-broker.test.mjs ./scripts/electron-runtime.test.mjs ./scripts/electron-security.test.mjs ./scripts/browser-audit.test.mjs ./scripts/browser-credentials.test.mjs ./scripts/browser-cursor.test.mjs ./scripts/browser-downloads.test.mjs ./scripts/browser-import.test.mjs ./scripts/browser-network-guard.test.mjs ./scripts/browser-reference-grants.test.mjs ./scripts/browser-runtime-policy.test.mjs ./scripts/browser-sharing-policy.test.mjs ./scripts/desktop-signature.test.mjs ./src/desktop-host-supervisor.test.ts ./src/browser-workspace-store.test.ts ./src/agent-island-service.test.ts ./src/browser-annotation-session.test.ts ./src/browser-annotation-manager.test.ts ./src/voice-asr-service.test.ts ./src/voice-dictation-settings-service.test.ts ./src/desktop-core.voice-mic.test.ts && node --experimental-vm-modules --test ./scripts/node-repl-worker.test.mjs",
     "test:node-repl-worker": "node --experimental-vm-modules --test ./scripts/node-repl-worker.test.mjs",
     "test:unit": "bun run test",
-    "test:smoke": "bun test ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./src/desktop-host-supervisor.test.ts ./src/browser-workspace-store.test.ts ./src/agent-island-service.test.ts ./src/browser-annotation-session.test.ts ./src/browser-annotation-manager.test.ts ./src/voice-asr-service.test.ts ./src/voice-dictation-settings-service.test.ts ./src/desktop-core.voice-mic.test.ts",
+    "test:smoke": "bun test ./scripts/desktop-context-key.test.mjs ./scripts/desktop-package.test.mjs && node --experimental-vm-modules --test ./scripts/node-repl-worker.test.mjs && bun test ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./src/desktop-host-supervisor.test.ts ./src/browser-workspace-store.test.ts ./src/agent-island-service.test.ts ./src/browser-annotation-session.test.ts ./src/browser-annotation-manager.test.ts ./src/voice-asr-service.test.ts ./src/voice-dictation-settings-service.test.ts ./src/desktop-core.voice-mic.test.ts",
     "test:browser-e2e": "bun ./scripts/browser-runtime.e2e.mjs",
     "test:browser-extension-smoke": "bun ./scripts/browser-extension-smoke.mjs",
     "test:browser-import-live-smoke": "node ./scripts/browser-import-live-smoke.mjs",
@@ -67,16 +67,16 @@
         "to": "tray-icon.png"
       },
       {
+        "from": "../../templates/workspace",
+        "to": "templates/workspace"
+      },
+      {
         "from": "resources/default-skills.tar",
         "to": "default-skills.tar"
       },
       {
         "from": "../sidecar/bundled-plugins",
         "to": "bundled-plugins"
-      },
-      {
-        "from": "../../templates/workspace",
-        "to": "templates/workspace"
       },
       {
         "from": "resources/sidecar",
@@ -117,17 +117,19 @@
       "hardenedRuntime": true,
       "entitlements": "assets/entitlements.mac.plist",
       "entitlementsInherit": "assets/entitlements.mac.plist",
-      "extendInfo": {
-        "NSMicrophoneUsageDescription": "语音输入功能需要使用麦克风将您说的话转写为文字。音频仅在您主动使用听写时采集。"
-      },
       "notarize": false,
       "extraResources": [
         {
           "from": "resources/agent-island",
           "to": "agent-island",
-          "filter": ["**/*"]
+          "filter": [
+            "**/*"
+          ]
         }
-      ]
+      ],
+      "extendInfo": {
+        "NSMicrophoneUsageDescription": "语音输入功能需要使用麦克风将您说的话转写为文字。音频仅在您主动使用听写时采集。"
+      }
     },
     "dmg": {
       "contents": [

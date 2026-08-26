@@ -7,8 +7,10 @@ let installedKey: Buffer | undefined;
 
 /**
  * 主进程经 RPC 注入的应用级随机密钥（safeStorage 包裹落盘，仅原机可解）。
- * 注入后新密文脱离可推导种子（#617）；存量旧密文仍按 legacy 种子读取，
- * 消费方重存配置时自然升级为 v2。
+ * 注入后新密文脱离可推导种子（#617）；存量旧密文仍按 legacy 种子读取。
+ * 注意：没有自动迁移——仅当消费方以明文重写该密钥（如用户重设
+ * token/apiKey）时才以 v2 落盘；channel 的 legacy apiKey 经 connection-vault
+ * 迁移后原字段清空，不经 v2。
  */
 export function installSecretEncryptionKey(value: unknown): void {
   if (typeof value !== "string") throw new Error("secret_encryption_key_invalid");

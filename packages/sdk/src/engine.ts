@@ -503,10 +503,15 @@ export class QueryEngine {
     return this.config.contextWindow ?? getContextWindowSize(this.config.model)
   }
 
+  /** 组装 provider 请求与 token 预算共用的启用集:isEnabled 为假的工具不占 prompt 预算(#700)。 */
+  private enabledTools(): ToolDefinition[] {
+    return this.config.tools.filter((tool) => !tool.isEnabled || tool.isEnabled())
+  }
+
   private estimateToolSchemaTokens(): number {
     // 与 tool-search 的 getDeferredToolTokenCount 同一口径：name + description +
     // inputSchema 全算（#389）。此前漏 inputSchema 导致 contextUsage 低估工具占比。
-    return getDeferredToolTokenCount(this.config.tools)
+    return getDeferredToolTokenCount(this.enabledTools())
   }
 
   private createContextUsage(): ContextUsageSnapshot {
@@ -1119,7 +1124,9 @@ export class QueryEngine {
 
       this.turnCount++
       turnsRemaining--
-      const tools = this.config.tools.map(toProviderTool)
+      // 未启用的工具不进 provider 请求:未连接连接器等场景下 24 个工具的
+      // name+schema 是常驻死预算(#700);调用时点的 isEnabled 检查保留作兜底
+      const tools = this.enabledTools().map(toProviderTool)
 
       // Make API call with retry via provider
       let response: CreateMessageResponse
@@ -1640,6 +1647,7 @@ export class QueryEngine {
         this.workingDirectory = resolve(cwd)
       },
       additionalDirectories: this.config.additionalDirectories,
+      privateWriteRoots: this.config.privateWriteRoots,
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
       fileStateCache: this.fileStateCache,
@@ -2343,7 +2351,7 @@ export class QueryEngine {
       source: 'runtime',
       tokens: Math.ceil((skill.name.length + skill.description.length) / 4),
     }))
-    const systemTools = this.config.tools
+    const systemTools = this.enabledTools()
       .filter((tool) => !tool.name.startsWith('mcp__'))
       .map((tool) => ({
         name: tool.name,

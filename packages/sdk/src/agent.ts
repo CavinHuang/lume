@@ -921,6 +921,7 @@ export class Agent {
       permissionMode: opts.permissionMode,
       promptSuggestions: opts.promptSuggestions,
       additionalDirectories: opts.additionalDirectories,
+      privateWriteRoots: opts.privateWriteRoots,
       skillRegistry: this.skillRegistry,
       initialization: {
         slashCommands: this.getInitializationCommands().map((command) => command.name),

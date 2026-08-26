@@ -30,7 +30,7 @@ export type FileCheckpointState = Record<string, FileCheckpoint>
 const workspaceScanCache = new WeakMap<FileCheckpointState, { key: string; paths: string[] }>()
 
 const WORKSPACE_CHECKPOINT_EXCLUDED_DIRECTORIES = new Set([
-  '.git', 'node_modules', '.next', '.turbo', '.cache', 'dist', 'build', 'coverage', 'out', 'artifacts', 'files', 'plans', '.context'
+  '.git', 'node_modules', '.next', '.turbo', '.cache', 'dist', 'build', 'coverage', 'out', 'artifacts', 'files', 'plans', '.context', '.lume'
 ])
 
 export async function captureWorkspaceFileSnapshots(

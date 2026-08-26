@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, createPreviewAccumulator, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
+import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearProcessJobs, ProcessOutputTool } from "./process-job-registry";
 import {
@@ -919,4 +919,54 @@ describe("BashTool output streaming snapshots", () => {
       clearInterval(keepAlive);
     }
   }, 20_000);
+});
+
+describe("#573④ extractFailureDigest", () => {
+  test("抽取多家族测试框架的失败行并去重", () => {
+    const output = [
+      "RUN v3.2.1",
+      "✗ src/a.test.ts > adds numbers",
+      "  → expected 1 to be 2",
+      "✓ src/ok.test.ts > works",
+      "● renders list › handles empty",
+      "--- FAIL: TestSub (0.00s)",
+      "error[E0308]: mismatched types",
+      "✗ src/a.test.ts > adds numbers",
+    ].join("\n");
+    const digest = extractFailureDigest(output);
+    // 重复的 ✗ 行去重后共 4 条
+    expect(digest.length).toBe(4);
+    expect(digest.some((line) => line.includes("adds numbers"))).toBe(true);
+    expect(digest.some((line) => line.includes("TestSub"))).toBe(true);
+    expect(digest.some((line) => line.includes("E0308"))).toBe(true);
+    // ✓ 通过行不进摘要
+    expect(digest.some((line) => line.includes("works"))).toBe(false);
+  });
+
+  test("行数上限与超长行过滤", () => {
+    // #649 review P1-7:超长行必须放进摘要窗口内——旧版把它放在第 41 行而窗口只取
+    // 前 20 行,断言恒真,删掉实现里的长度过滤测试照样绿(零覆盖)
+    const longLine = `x`.repeat(400);
+    const output = Array.from({ length: 5 }, (_, i) => `✗ fail ${i}`).concat([`✗ too-long ${longLine}`]).join("\n");
+    const digest = extractFailureDigest(output, 20);
+    // 5 条短行入摘要;长行被长度过滤丢弃而非靠窗口截断侥幸不在结果里
+    expect(digest.length).toBe(5);
+    // 长行被长度过滤丢弃,而非靠窗口截断侥幸不在结果里
+    expect(digest.some((line) => line.startsWith("too-long"))).toBe(false);
+  });
+
+  test("#649 review P2: 全绿汇总行的「0 failed」不进失败摘要", () => {
+    const output = [
+      "running 42 tests",
+      "test result: ok. 42 passed; 0 failed; 0 ignored",
+      "test result: FAILED. 3 passed; 2 failed; 0 ignored", // 真失败数仍要抓
+    ].join("\n");
+    const digest = extractFailureDigest(output);
+    expect(digest.some((line) => line.includes("0 failed"))).toBe(false);
+    expect(digest.some((line) => /2 failed/.test(line))).toBe(true);
+  });
+
+  test("正常输出返回空数组", () => {
+    expect(extractFailureDigest("all tests passed\n42 passing")).toEqual([]);
+  });
 });

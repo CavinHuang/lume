@@ -1,15 +1,19 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
 
-export type LumeToolSource =
-  | "sdk"
-  | "lume"
-  | "memory"
-  | "automation"
-  | "plan"
-  | "task"
-  | "mcp"
-  | "skill"
-  | "plugin";
+/** 工具来源枚举的运行时值清单：校验/枚举场景统一从此派生，防双写漂移（#711 review） */
+export const LUME_TOOL_SOURCES = [
+  "sdk",
+  "lume",
+  "memory",
+  "automation",
+  "plan",
+  "task",
+  "mcp",
+  "skill",
+  "plugin",
+] as const;
+
+export type LumeToolSource = (typeof LUME_TOOL_SOURCES)[number];
 
 export type LumeToolCategory = "read" | "write" | "execute" | "control" | "network";
 
@@ -34,7 +38,8 @@ export type LumeToolSideEffects =
   | "local_write"
   | "network"
   | "process"
-  | "external";
+  | "external"
+  | "desktop";
 
 export interface LumeToolMetadata {
   title?: string;
@@ -58,6 +63,11 @@ export interface LumeToolMetadata {
   executionPolicy?: {
     maxCallsPerTurn?: number;
     allowBackground?: boolean;
+    /** 单次调用看门狗（#538）：超时后向引擎返回 is_error 结果而非无限等待；
+     * 底层调用仍会在后台自然结束。缺省不启用。
+     * 勿用于写类工具：超时返回会提前释放 workspace writer lease，而底层
+     * mutation 可能仍在写文件；只配给只读/外部查询类工具。 */
+    toolTimeoutMs?: number;
   };
 }
 

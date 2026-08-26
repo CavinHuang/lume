@@ -10,11 +10,13 @@ import {
   type AgentToolPermissionRequest,
   type AgentToolPermissionResponseInput,
   type Channel,
+  type CodingRunRevertResult,
   type ImMessageContent,
   type ImThreadBinding,
   type ImPeerKind,
   type ImProvider,
   type LumeRuntimeEvent,
+  formatCodingRevertSummary,
   IM_PROVIDER_LABELS
 } from "@lume/shared";
 import { randomUUID } from "node:crypto";
@@ -23,6 +25,9 @@ import { createAgentThread, getAgentThreadMeta, updateAgentThreadMeta } from "..
 import { appendAgentMessage, stopAgent, submitAgentToolPermission } from "../agent/agent-service";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 import { saveFilesToAgentSession } from "../agent/agent-files-service";
+import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
+import { getRuntimeCoreSessionDir } from "../agent-runtime/runtime-core/session-store";
+import { revertCodingRun } from "../agent-runtime/runtime-core/coding-run-checkpoint-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger, writeLogRecord } from "../infra/logger";
 import { getImAccount, getImRuntimeAccount } from "./im-config-manager";
@@ -96,6 +101,8 @@ export interface ImMessageRouterDeps {
   resolveQuotedMessage?: (
     message: InboundImRouteMessage
   ) => Promise<{ senderId?: string; text: string } | null>;
+  /** /revert 快照还原执行器（#714）；默认走 runtime-core checkpoint 服务 */
+  revertRun?: (input: { threadId: string; runId: string }) => Promise<CodingRunRevertResult>;
 }
 
 type ImAgentStreamEmitter = {
@@ -681,6 +688,61 @@ async function routeImChatCommand(
           ...(meta?.workspaceId ? { workspaceId: meta.workspaceId } : {})
         })
       );
+      rememberCommand();
+      break;
+    }
+    case "revert": {
+      const runId = command.args[0]?.trim();
+      if (!runId || command.args.length > 1) {
+        await reply("用法：/revert <runId>。按快照还原该轮写过的文件（不可逆）。");
+        rememberCommand();
+        break;
+      }
+      // 权限模型与 IM 审批对齐（#714）：仅 approverPeerIds 白名单内的单聊可执行，
+      // 否则任何能私聊到机器人的陌生人都能回滚本机文件
+      const revertPolicy = resolveImApprovalPolicy(binding);
+      if (binding.peerKind === "group") {
+        await reply("群聊不支持 /revert，请在 Lume 桌面端处理。");
+        rememberCommand();
+        break;
+      }
+      if (!revertPolicy.enabled || !canBindingApproveViaIm(binding, revertPolicy)) {
+        await reply("当前会话没有权限执行快照还原，请在 Lume 桌面端处理。");
+        rememberCommand();
+        break;
+      }
+      const revertThreadId = existing?.threadId ?? "";
+      if (!revertThreadId) {
+        await reply("请先发送任意消息建立会话，再使用 /revert。");
+        rememberCommand();
+        break;
+      }
+      if (isAgentRuntimeSessionActive(revertThreadId)) {
+        await reply("任务仍在进行中，请先 /stop 或等待结束后再还原。");
+        rememberCommand();
+        break;
+      }
+      try {
+        const result = await (deps.revertRun ?? ((input: { threadId: string; runId: string }) =>
+          revertCodingRun({ sessionDir: getRuntimeCoreSessionDir(input.threadId), runId: input.runId })))({
+          threadId: revertThreadId,
+          runId
+        });
+        log.info("IM 命令快照还原", { threadId: revertThreadId, runId, restored: result.filesChanged.length });
+        writeLogRecord({
+          level: "info",
+          context: "im-router",
+          event: "coding.revert.im",
+          message: `/revert ${runId} via IM`,
+          threadId: revertThreadId,
+          runId,
+          data: { filesChanged: result.filesChanged.length, failedFiles: result.failedFiles.length }
+        });
+        await reply(`已执行 /revert ${runId}：${formatCodingRevertSummary(result)}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await reply(`/revert ${runId} 处理失败：${message}`);
+      }
       rememberCommand();
       break;
     }

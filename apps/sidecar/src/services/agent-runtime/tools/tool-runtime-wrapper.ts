@@ -21,11 +21,22 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
   let calls = 0;
   const log = createLogger("tool-runtime", input.threadId);
 
+  const declaredRuntimeMetadata = {
+    ...((tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata ?? {})
+  };
+  // 审批豁免键不得随定义自声明穿透 wrapper：插件 manifest 的 metadata 字段
+  // 是第三方可控输入，整体透传会让一个字段换来免审免拦。合法豁免（如
+  // ExecuteTool）不经 wrapper，不受此剥离影响（#711 review 安全轮）
+  delete declaredRuntimeMetadata.delegatesPermission;
+
   return {
     ...tool,
     runtimeMetadata: {
-      ...(tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata,
+      ...declaredRuntimeMetadata,
       source: descriptor.source,
+      // canUseTool 从盖章数据组装 descriptor（单载体），分类器与权限指纹依赖这两字段
+      description: descriptor.metadata.description ?? tool.description,
+      canonicalName: descriptor.canonicalName,
       category: descriptor.metadata.category,
       capability: descriptor.metadata.capability,
       riskLevel: descriptor.metadata.riskLevel,
@@ -42,6 +53,8 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
     async call(rawInput, context) {
       const startedAt = Date.now();
       const computerUseTool = descriptor.name.startsWith("mcp__computer_use__");
+      // 单次摘要两处复用（#539）：diagnostic 版脱敏最全（含 JWT/凭据路径检测），
+      // 日志与事件共用，不再各算一遍深克隆+stringify
       const inputSummary = computerUseTool
         ? summarizeToolInput(rawInput, true)
         : createDiagnosticLogSummary(rawInput);
@@ -124,7 +137,7 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         risk_level: descriptor.metadata.riskLevel,
         tool_name: tool.name,
         tool_use_id: context.toolUseId ?? "",
-        input_summary: computerUseTool ? inputSummary : summarizeToolInput(rawInput),
+        input_summary: inputSummary,
         session_id: context.sessionId ?? input.threadId
       } as any);
 
@@ -132,13 +145,17 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       const backgroundLease = lease && descriptor.canonicalName === "bash"
         ? releaseLease
         : undefined;
+      const toolTimeoutMs = descriptor.metadata.executionPolicy?.toolTimeoutMs;
       try {
-        result = await tool.call(
+        const callPromise = tool.call(
           rawInput,
           backgroundLease
             ? { ...context, onBackgroundTaskCompleted: backgroundLease }
             : context
         );
+        result = toolTimeoutMs
+          ? await raceWithToolTimeout(callPromise, toolTimeoutMs, tool.name)
+          : await callPromise;
       } catch (error) {
         log.error("tool call threw", {
           threadId: input.threadId,
@@ -192,6 +209,28 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
       return governed.result;
     }
   };
+}
+
+// 每工具看门狗（#538）：不响应 abortSignal 的挂死工具不再冻结整轮 run——
+// 超时后向引擎返回 is_error 结果，底层调用留在后台自然结束（其结果被丢弃）
+function raceWithToolTimeout(call: Promise<ToolResult>, timeoutMs: number, toolName: string): Promise<ToolResult> {
+  return new Promise<ToolResult>((resolve) => {
+    const timer = setTimeout(
+      () => resolve(errorResult(undefined, `${toolName} 执行超过 ${timeoutMs}ms 未完成，已跳过等待（调用仍在后台运行）`)),
+      timeoutMs
+    );
+    timer.unref?.();
+    call.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        resolve(errorResult(undefined, `${toolName} 执行失败：${normalizeErrorMessage(error)}`));
+      }
+    );
+  });
 }
 
 function enforceExecutionPolicy(
@@ -331,6 +370,9 @@ async function recordFileRead(
   result: ToolResult
 ): Promise<void> {
   if (input.descriptor.canonicalName !== "read" || result.is_error) return;
+  // unchanged 短路结果不重录：重录会把此前记录的部分视图升级成全文读（#314 同族）
+  const readMeta = result._meta?.read;
+  if (readMeta && typeof readMeta === "object" && (readMeta as Record<string, unknown>).unchanged === true) return;
   const filePath = readInputPath(rawInput);
   if (!filePath) return;
   const canonical = resolve(input.cwd, filePath);
@@ -345,7 +387,7 @@ async function recordFileRead(
     mtimeMs: fileStat.mtimeMs,
     contentHash,
     fullRead,
-    readRange: getReadRange(result)
+    ...(getReadRange(rawInput, result) ? { readRange: getReadRange(rawInput, result) } : {})
   });
 }
 
@@ -371,40 +413,33 @@ function readInputPath(input: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+// Read 完整读判定走 _meta.read 结构化字段（partial/truncated/summarized，
+// #314 与 #535 同源）。默认 true 服务「无 _meta.read 的旧形制/plugin/MCP
+// read」——它们无法自证部分视图；若未来再收窄判定，先想清楚这一默认值放宽的是谁。
+// 不做 content 文本嗅探：对抗轮实证零行视图/unchanged 短路会被绕过（#711 review）
 function isFullReadResult(result: ToolResult): boolean {
-  const data = parseObjectContent(result.content);
-  if (data.summarized === true) return false;
-  if (typeof data.remainingLines === "number") {
-    return (data.offset === undefined || data.offset === 0) && data.remainingLines <= 0;
-  }
-  return true;
+  const readMeta = result._meta?.read;
+  if (!readMeta || typeof readMeta !== "object") return true;
+  const meta = readMeta as Record<string, unknown>;
+  return meta.partial !== true && meta.summarized !== true;
 }
 
-function getReadRange(result: ToolResult): { offset: number; limit: number; totalLines?: number } | undefined {
-  const data = parseObjectContent(result.content);
-  if (typeof data.offset !== "number" || typeof data.limit !== "number") return undefined;
+function getReadRange(
+  rawInput: unknown,
+  result: ToolResult
+): { offset: number; limit?: number; totalLines?: number } | undefined {
+  if (!rawInput || typeof rawInput !== "object") return undefined;
+  const record = rawInput as Record<string, unknown>;
+  const offset = typeof record.offset === "number" ? record.offset : undefined;
+  const limit = typeof record.limit === "number" ? record.limit : undefined;
+  if (offset === undefined && limit === undefined) return undefined;
+  const meta = result._meta as { read?: { totalLines?: unknown } } | undefined;
+  const totalLines = meta?.read?.totalLines;
   return {
-    offset: data.offset,
-    limit: data.limit,
-    ...(typeof data.totalLines === "number" ? { totalLines: data.totalLines } : {})
+    offset: offset ?? 0,
+    ...(limit !== undefined ? { limit } : {}),
+    ...(typeof totalLines === "number" ? { totalLines } : {})
   };
-}
-
-function parseObjectContent(content: ToolResult["content"]): Record<string, unknown> {
-  if (content && typeof content === "object" && !Array.isArray(content)) {
-    return content as Record<string, unknown>;
-  }
-  if (typeof content === "string") {
-    try {
-      const parsed = JSON.parse(content);
-      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : {};
-    } catch {
-      return {};
-    }
-  }
-  return {};
 }
 
 export interface GovernedToolResult {

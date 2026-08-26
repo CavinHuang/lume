@@ -42,7 +42,10 @@ describe("shell read-only proof — security vectors (#684 review)", () => {
       "git log --output=pwned.txt -5",
       "git show --output=m.txt HEAD",
       "git log -p --ext-diff",
-      "git show --ext-diff HEAD~1"
+      "git show --ext-diff HEAD~1",
+      // #685 裁定：显式 --textconv 触发仓库配置的转换命令，fail-closed
+      "git log -p --textconv",
+      "git diff --textconv HEAD~1"
     ]) {
       expect(isReadOnlyShellInput({ command })).toBeFalse();
     }
@@ -54,6 +57,8 @@ describe("shell read-only proof — security vectors (#684 review)", () => {
     // PS 前缀剥离后的 git 白名单分支同样纯正则可判，双态确定
     expect(isReadOnlyShellInput({ command: "powershell -Command git show --output=x HEAD" })).toBeFalse();
     expect(isReadOnlyPowerShell("git show --ext-diff HEAD")).toBeFalse();
+    // #685：PS 文本层同口径拒显式 textconv
+    expect(isReadOnlyPowerShell("git log --textconv -p")).toBeFalse();
     expect(isReadOnlyPowerShell("git show HEAD")).toBeTrue();
   });
 
