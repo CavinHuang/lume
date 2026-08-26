@@ -841,6 +841,11 @@ export class BrowserRuntime {
     }
     if (method === "focus") return this.focus(String(params.tabId ?? context.tabId ?? ""))
     if (method === "settings:get") return this.getSettings()
+    // #602 review:审批档/外开链接是用户专属决策面,agent 通道(actor!=="user")不得触达,
+    // 否则可静默把 browserApprovalMode 翻回 neverAsk 拆掉人工关口
+    if (method === "settings:update" || method === "openExternal") {
+      if (context.actor !== "user") throw browserError("action_denied")
+    }
     if (method === "settings:update") return this.updateSettings(params as Partial<BrowserSettings>)
     if (method === "openExternal") return this.openExternal(String(params.url ?? ""))
     if (method === "openPopup") return this.openPopup(String(params.activationToken ?? ""), context)
@@ -4322,8 +4327,24 @@ export class BrowserRuntime {
     if (approvalMode === "neverAsk") return this.issuePolicyToken(bindingHash)
     const win = this.options.getWindow()
     if (!win || win.isDestroyed()) throw browserError("confirmation_unavailable")
-    const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${category}。批准仅对当前标签页的这一次操作有效。` })
-    if (result.response !== 0) return { approved: false }
+    const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["允许一次", "取消"], defaultId: 1, cancelId: 1, title: "确认浏览器操作", message: preview, detail: `类别：${BROWSER_ACTION_CATEGORY_LABELS[category] ?? category}。批准仅对当前标签页的这一次操作有效。` })
+    if (result.response !== 0) {
+      // 可观测性 review F5/F6:「取消」必须以 deny 进审计并与动作类别关联——
+      // 否则 ndjson 里「允许」与「取消」同貌,且无法关联到具体浏览器动作
+      this.audit.record({
+        correlationId: randomUUID(),
+        actor: context.actor ?? "agent",
+        ...(context.threadId ? { threadId: context.threadId } : {}),
+        browserSessionId: context.browserSessionId ?? "",
+        backend,
+        generation: this.backendGeneration,
+        action: `policy:confirm:${category}`,
+        decision: "deny",
+        status: "failed",
+        errorCode: "user_declined",
+      })
+      return { approved: false }
+    }
     return this.issuePolicyToken(bindingHash)
   }
 
@@ -4533,6 +4554,13 @@ function browserError(code: BrowserErrorCode): Error & { code: BrowserErrorCode 
   const error = new Error(code) as Error & { code: BrowserErrorCode }
   error.code = code
   return error
+}
+
+/** #602:确认弹窗 detail 用中文类别名,不直出内部英文枚举 */
+const BROWSER_ACTION_CATEGORY_LABELS: Record<string, string> = {
+  browse: "浏览网站", submit: "提交表单", send: "发送消息", delete: "删除内容",
+  purchase: "购买下单", authorize: "授权操作", file: "文件传输", clipboard: "剪贴板",
+  credential: "填写凭证", history: "读取历史", payment: "支付确认", captcha: "人机验证", mfa: "多因素验证"
 }
 
 function closeWebContentsSafely(contents: Electron.WebContents): void {

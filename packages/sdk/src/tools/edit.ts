@@ -5,7 +5,7 @@
 import { readFile, stat } from 'fs/promises'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
-import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
+import { ensurePathAllowed, ensureWriteContained, writeContainmentRoots, makeWriteInstantRecheck, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
@@ -13,10 +13,9 @@ import { writeFileAtomic } from '../utils/fs-atomic.js'
 
 // writeFileAtomic 检出 symlink 后的写入瞬间复检：containment 不以沙箱启用为
 // 前提（#546），sandbox 启用时再叠加 deny/allow 规则。MultiEdit 复用同一
-// 写入闸（#570）。
-export const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): string | null =>
-  ensureWriteContained(resolvedPath, context.cwd, context.additionalDirectories)
-  ?? ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
+// 写入闸（#570）；与 write 共享单一实现（可维护性复审），根集含
+// privateWriteRoots（#639 拆分通道）。
+export const assertWriteAllowed = makeWriteInstantRecheck
 
 /**
  * Read-before-edit 硬校验（#333/#569）：无读取记录禁止盲改；已读但 mtime/
@@ -99,7 +98,7 @@ export const FileEditTool = defineTool({
     const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
     const { old_string, new_string, replace_all } = input
     // containment 复核不以沙箱启用为前提（#546）：junction/symlink 可穿越词法边界
-    const containmentError = ensureWriteContained(filePath, context.cwd, context.additionalDirectories)
+    const containmentError = ensureWriteContained(filePath, context.cwd, writeContainmentRoots(context))
     if (containmentError) {
       return { data: containmentError, is_error: true }
     }

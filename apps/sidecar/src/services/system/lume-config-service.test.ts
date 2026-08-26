@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
   type LumeConfigFile
@@ -135,6 +135,29 @@ describe("lume-config-service", () => {
       skyModelRefs: ["openai/gpt-5"],
       visionModelRefs: ["google/gemini-2.5-flash"],
     });
+  });
+
+  test("#573① review M1: agent.maxAutoTurnContinuations 经 normalize 存活且越界值被钳制", () => {
+    updateLumeConfigSection({
+      source: "user",
+      path: "agent",
+      value: { maxAutoTurnContinuations: 5, permissionMode: "dontAsk", followUpQueueMode: "steer" },
+    });    const effective = getEffectiveLumeConfig("default").agent;
+    expect(effective?.maxAutoTurnContinuations).toBe(5);
+    expect(effective?.permissionMode).toBe("dontAsk");
+    // followUpQueueMode 同族：白名单缺失曾使配置恒回落 'queue'（web AgentInput 读取点）
+    expect(effective?.followUpQueueMode).toBe("steer");
+    updateLumeConfigSection({ source: "user", path: "agent", value: { followUpQueueMode: "interrupt" } });
+    expect(getEffectiveLumeConfig("default").agent?.followUpQueueMode).toBe("interrupt");
+
+    // 越界钳到硬上限 10；非有限数值回落默认（字段被剥）
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: 99 } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBe(10);
+    updateLumeConfigSection({ source: "user", path: "agent", value: { maxAutoTurnContinuations: Number.NaN } });
+    expect(getEffectiveLumeConfig("default").agent?.maxAutoTurnContinuations).toBeUndefined();
+    // 非法枚举值被剥
+    updateLumeConfigSection({ source: "user", path: "agent", value: { followUpQueueMode: "bogus" } });
+    expect(getEffectiveLumeConfig("default").agent?.followUpQueueMode).toBeUndefined();
   });
 
   test("应识别 guanlan 搜索后端并同步启用顺序到环境变量", () => {
@@ -681,4 +704,103 @@ describe("lume-config-service", () => {
     const overlay = getEffectiveLumeConfig("default");
     expect(overlay.permissions?.classifier?.enabled).toBe(false);
   });
+
+  // ─── #706：writeYamlAtomic 并发交错收口 ───
+
+  test("#706：连续两次写入不碰撞、不留孤儿 tmp、终值正确", () => {
+    updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/a" });
+    updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/b" });
+
+    const leftovers = readdirSync(dirname(getLumeConfigYamlPath()))
+      .filter((name) => name.startsWith("lume.yaml.tmp."));
+    expect(leftovers).toEqual([]);
+    expect(getEffectiveLumeConfig().models?.title?.defaultModelRef).toBe("openai/b");
+  });
+
+  test("#706：崩溃遗留的过期 tmp 被清扫、新鲜 tmp 不误删", () => {
+    const dir = dirname(getLumeConfigYamlPath());
+    const stalePath = join(dir, `lume.yaml.tmp.999.${"a".repeat(8)}`);
+    writeFileSync(stalePath, "junk", "utf-8");
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(stalePath, twoHoursAgo, twoHoursAgo);
+    const freshPath = join(dir, `lume.yaml.tmp.${process.pid}.fresh000`);
+    writeFileSync(freshPath, "junk", "utf-8");
+
+    try {
+      updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/c" });
+      expect(existsSync(stalePath)).toBeFalse();
+      expect(existsSync(freshPath)).toBeTrue();
+    } finally {
+      rmSync(freshPath, { force: true });
+    }
+  });
+
+  test("#706：v2 迁移审计移到写盘成功后——恰好一条且重复读取不再追加", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      permissions: {
+        classifier: { enabled: false },
+        rules: []
+      }
+    }), "utf-8");
+
+    getEffectiveLumeConfig();
+    getEffectiveLumeConfig();
+
+    const migrationEntries = readFileSync(getLumeConfigAuditPath(), "utf-8")
+      .split("\n")
+      .filter((line) => line.includes("permissions.classifier.enabled"));
+    expect(migrationEntries).toHaveLength(1);
+  });
+
+  // #727 review 并发方向 P2：classifier 段缺失/非对象时 normalize 走兜底合并
+  // 而非「false→true」翻转，审计不得虚记。
+  test("#706：v1 无 classifier 段的文件不产生假迁移审计", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      permissions: { rules: [] }
+    }), "utf-8");
+
+    getEffectiveLumeConfig();
+
+    const migrationEntries = existsSync(getLumeConfigAuditPath())
+      ? readFileSync(getLumeConfigAuditPath(), "utf-8").split("\n").filter((line) => line.includes("permissions.classifier.enabled"))
+      : [];
+    expect(migrationEntries).toHaveLength(0);
+  });
+
+  // #727 review 测试完备 P2：写失败必须如实上抛（update 响亮路径）且不记未发生
+  // 的迁移/用户审计，tmp 不残留；读路径（惰性迁移重写）失败则优雅回退不崩。
+  // 注入点：bak 位被目录占用时 copyFileSync 必炸。
+  test("#706：备份位被目录占用时 update 上抛、零审计、tmp 清理，读取优雅回退", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      permissions: {
+        classifier: { enabled: false },
+        rules: []
+      }
+    }), "utf-8");
+    mkdirSync(join(dirname(getLumeConfigYamlPath()), "lume.yaml.bak"));
+
+    // 读路径：迁移重写失败回退默认配置，不向 48 处热调用方抛错
+    expect(() => getEffectiveLumeConfig()).not.toThrow();
+
+    // 写路径：update 必须响亮失败
+    let threw = false;
+    try {
+      updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/x" });
+    } catch {
+      threw = true;
+    }
+    expect(threw).toBeTrue();
+
+    const dir = dirname(getLumeConfigYamlPath());
+    const leftovers = readdirSync(dir).filter((name) => name.startsWith("lume.yaml.tmp."));
+    expect(leftovers).toEqual([]);
+    if (existsSync(getLumeConfigAuditPath())) {
+      const auditLines = readFileSync(getLumeConfigAuditPath(), "utf-8").split("\n").filter((line) => line.trim());
+      expect(auditLines).toHaveLength(0);
+    }
+  });
+
 });

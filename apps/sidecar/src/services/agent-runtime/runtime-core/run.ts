@@ -1273,6 +1273,20 @@ async function createRuntimeCoreSessionImpl(
   // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
   // privateWriteRoots 白名单同源，否则 skills/plugins 等已授权写根会被新加的
   // 无条件复核误拒。
+  //
+  // 但 containment 根集与"additionalDirectories"是两个关注点（#639 复审 P2）：
+  // 后者还会流进系统提示词、checkpoint 快照扫描、相对路径解析与 coding
+  // tracker 工作区根。skills/plugins/.lume 等内部管理目录走 SDK 的
+  // privateWriteRoots 专用通道（只放行写入），不进 additionalDirectories。
+  const privateWriteRoots = resolveConfiguredPrivateWriteRoots({
+    agentCwd: input.cwd,
+    lumeWorkDir: input.lumeWorkDir,
+    filesRoot: input.filesRoot,
+    plansRoot: input.plansRoot,
+    artifactsRoot: input.artifactsRoot,
+    workspaceSlug: input.workspaceSlug,
+    configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
+  });
   const additionalDirectories = [
     ...new Set(
       [
@@ -1287,7 +1301,11 @@ async function createRuntimeCoreSessionImpl(
         }),
         ...(input.additionalDirectories ?? []),
         input.lumeWorkDir,
-        input.artifactsRoot,
+        // artifactsRoot 通常是 lumeWorkDir/artifacts：已被覆盖时跳过，免同树
+        // 双扫进 checkpoint 快照（性能复审）
+        ...(input.artifactsRoot && (!input.lumeWorkDir || !resolve(input.artifactsRoot).startsWith(resolve(input.lumeWorkDir) + "/"))
+          ? [input.artifactsRoot]
+          : []),
       ]
         .filter((directory): directory is string => Boolean(directory))
         .map((directory) => resolve(directory))
@@ -1384,6 +1402,9 @@ async function createRuntimeCoreSessionImpl(
     ...(input.userMessage?.trim() ? { completionGuard } : {}),
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
+    // 只放行写入的内部管理根（skills/plugins/.lume/plans/files），不进提示词
+    // 与快照（见上方注释）
+    privateWriteRoots,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,

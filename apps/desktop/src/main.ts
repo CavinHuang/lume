@@ -514,6 +514,7 @@ const sidecarHost = createSidecarHost({
     }
     showDesktopProposalNotification(method, params)
     showPlanningReminderNotification(method, params)
+    showAutomationRunNotification(method, params)
     showDesktopActionHud(method, params)
     // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
     // 确保即便主窗口隐藏也能触发 intent 刷新。
@@ -663,6 +664,27 @@ function showPlanningReminderNotification(method, params) {
     } catch (error) {
       writeMainLog('error', 'desktop.notification', 'planning_reminder.show_failed', 'planning reminder notification failed', { data: { error } })
     }
+  }
+}
+
+// #566 端到端 review A2:automation 停摆/失败必须有主动通知面——无人值守场景用户
+// 不会盯着管理页；success 保持静默不打扰，failed/waiting 才是「需要人介入」的信号。
+function showAutomationRunNotification(method, params) {
+  if (method !== 'automation:run-completed' || !params || typeof params !== 'object') return
+  const run = params.run
+  if (!run || (run.status !== 'failed' && run.status !== 'waiting_for_user' && run.status !== 'waiting_for_approval')) return
+  if (!Notification.isSupported()) return
+  try {
+    const title = run.status === 'failed' ? `自动化任务未完成：${params.jobName ?? '未命名任务'}` : `自动化任务等待处理：${params.jobName ?? '未命名任务'}`
+    const desktopNotification = new Notification({
+      title,
+      body: typeof run.message === 'string' && run.message.trim() ? run.message : '请打开自动化页面查看详情。',
+      silent: true,
+    })
+    desktopNotification.on('click', () => { void showMainWindow() })
+    desktopNotification.show()
+  } catch (error) {
+    writeMainLog('error', 'desktop.notification', 'automation_run.show_failed', 'automation run notification failed', { data: { error } })
   }
 }
 
@@ -2937,6 +2959,13 @@ function createSidecarHost({ onNotification }) {
                 data: { error },
               })
             }
+          } else {
+            // 首装失败（启动窗口内 sidecar 崩溃 / keyring 暂不可用）时
+            // secretEncryptionKey 为 null 且无其他恢复点——存量 v2 密文会在本
+            // session 内锁死、新密文静默降级 legacy（交叉复审 F1）。惰性重启
+            // 的 READY 是唯一恢复时机，fire-and-forget 重试安装；失败仍走
+            // install 内部 catch 记日志，等下一次 READY 再试。
+            void installSecretEncryptionKeyInSidecar()
           }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
@@ -3638,8 +3667,10 @@ function getConnectionVaultKeyPath(): string {
 }
 
 // 应用级随机密钥（safeStorage 包裹落盘，仅原机可解）：注入后 sidecar 的
-// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。safeStorage 不可用
-// （如无 keyring 的 Linux）时跳过，sidecar 自动退回 legacy 行为。
+// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。Linux 无 keyring 时
+// Electron 退 basic_text 后端，isEncryptionAvailable 仍返回 true——照样注入，
+// 包裹文件靠 loadOrCreateDesktopContextKey 的 0600 收权兜底；真正注入失败
+// （key 文件损坏等）时 catch 跳过，sidecar 自动退回 legacy 行为。
 async function installSecretEncryptionKeyInSidecar(): Promise<void> {
   let key: Buffer | null = null
   try {
