@@ -1483,7 +1483,9 @@ export function AgentInput({
     thinkingLevelTouchedRef.current = true
     configThinkingLevelRef.current = value
     setThinkingLevel(value)
-    updateAgentThinkingLevel(value).catch((error) => {
+    // 与显示值同源:config 读的是带 overlay 的有效配置,写入也须落同一作用域,
+    // 否则工作区有覆盖时 CHANGED 回流会把显示弹回 workspace 值(#715 review M6)
+    updateAgentThinkingLevel(value, configWorkspaceSlug).catch((error) => {
       console.error('[AgentInput] 保存思考等级失败:', error)
       toast.error('保存思考等级失败')
     })
