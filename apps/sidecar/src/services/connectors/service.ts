@@ -163,10 +163,16 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
   const done = new Promise<ResolvedCredential & { authType: "oauth2" }>((resolve, reject) => {
     const server = httpServerFactory((req, res) => void handleOAuthCallback(req, res, service));
 
+    // 本流注册的 pending 条目(listen 成功前为空)。finish 只允许清掉自己的条目:
+    // supersede 后旧流兑换失败二次进 finish 时,map 里已是新流条目,无条件 delete 会
+    // 误杀新流致其回调 404 悬挂至超时——与 handler 侧两道 identity 守卫同一语义
+    let entry: PendingAuthorization | undefined;
     const finish = (fn: () => void) => {
       clearTimeout(timer);
       server.close();
-      pendingAuthorizations.delete(service);
+      if (entry && pendingAuthorizations.get(service) === entry) {
+        pendingAuthorizations.delete(service);
+      }
       // listen 前失败(绑定被拒/supersede)时 url 永不产出,必须同步 settle,
       // 否则 handler 的 await authorizationUrl 挂死而真实错误丢失
       settleUrlIfPending(new ConnectorError("oauth_flow_cancelled", "授权流已终止"));
@@ -188,7 +194,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       // PKCE S256(RFC 7636):同机进程即便截获 state/授权码,没有 verifier 也换不到 token
       const codeVerifier = randomBytes(48).toString("base64url");
       const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
-      pendingAuthorizations.set(service, {
+      entry = {
         service,
         state,
         codeVerifier,
@@ -197,7 +203,8 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
         reject: (error) => finish(() => reject(error)),
         timer,
         settleUrlIfPending,
-      });
+      };
+      pendingAuthorizations.set(service, entry);
       resolveUrl(
         buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state, codeChallenge),
       );

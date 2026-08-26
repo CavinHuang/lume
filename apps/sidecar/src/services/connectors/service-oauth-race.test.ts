@@ -11,6 +11,7 @@ import type { ConnectorError } from "./service";
 // (service.test.ts 杂散请求用例成例)。全流程由显式 gate 控制,零 sleep。
 
 let releaseExchange!: (credential: Record<string, unknown>) => void;
+let failExchange!: (error: Error) => void;
 let exchangeRequestedResolve!: () => void;
 let exchangeRequested!: Promise<void>;
 let validatorEnteredResolve!: () => void;
@@ -21,9 +22,12 @@ let validatorGate!: Promise<void>;
 // mock 工厂闭包经此盒读取当前 gate:工厂只在模块求值时执行一次,须间接引用可重置句柄
 const exchangeGateRef: { current: Promise<Record<string, unknown>> } = { current: Promise.resolve({}) };
 
-function resetGates(): void {
-  exchangeGateRef.current = new Promise<Record<string, unknown>>((resolve) => {
+// 返回被换下的旧兑换 gate 失败句柄:并发双流场景需各自独立 settle 旧/新 gate
+function resetGates(): { failExchange: (error: Error) => void } {
+  const stale = { failExchange };
+  exchangeGateRef.current = new Promise<Record<string, unknown>>((resolve, reject) => {
     releaseExchange = resolve;
+    failExchange = reject;
   });
   exchangeRequested = new Promise<void>((resolve) => {
     exchangeRequestedResolve = resolve;
@@ -34,6 +38,7 @@ function resetGates(): void {
   validatorGate = new Promise<void>((resolve) => {
     resolveValidatorGate = resolve;
   });
+  return stale;
 }
 
 const raceCredential = {
@@ -167,5 +172,22 @@ describe("#689 断开与在途兑换的写回竞态", () => {
     expect(await outcome).toBe("rejected:oauth_flow_cancelled");
     // pre-fix:盲写把凭证复活进已终止流程,此处必红;post-fix:落盘前 identity 复检拦截
     expect(getConnectorOAuthCredential("race-probe")).toBeUndefined();
+  });
+
+  test("supersede 后旧流兑换失败:不得误清新流条目(finish 按身份删除)", async () => {
+    const first = await startFlowAndCallback();
+    await exchangeRequested; // 流 1 悬在旧兑换 gate 上
+    const stale = resetGates(); // 流 2 改用新 gate;旧 gate 的失败句柄留待触发
+    const second = await startFlowAndCallback(); // supersede 流 1,流 2 回调受理
+    await exchangeRequested;
+    releaseExchange(raceCredential); // 流 2 过兑换守卫,悬进 validator 窗口(条目仍在 map)
+    await validatorEntered;
+    stale.failExchange(new Error("exchange rejected late")); // 流 1 兑换失败 → catch → finish 二次运行
+    await drainQueue(); // 保证流 1 收尾(含误删分支)执行完
+    expect(await first.outcome).toBe("rejected:oauth_flow_superseded"); // 首次 settle 生效,后续 reject 为 no-op
+    resolveValidatorGate(); // 放行流 2 落盘
+    // pre-fix:流 1 的 finish 无条件 delete 已把流 2 条目摘除,validator 后守卫失配,done 悬挂至超时
+    expect(await second.outcome).toBe("resolved");
+    expect(getConnectorOAuthCredential("race-probe")?.accessToken).toBe("race-access");
   });
 });
