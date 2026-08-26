@@ -197,10 +197,30 @@ function enrichEntriesWithAttachmentMeta(
   });
 }
 
+// #616②:threadId→workspaceSlug 归属天然稳定(目录不迁移),但反查每次同步穷举
+// workspaces 根并对每个 workspace 做 existsSync(Windows 单次 stat ≈0.1-0.5ms),
+// 文件面板密集操作逐 RPC 放大。TTL 缓存:未命中也缓存(null),新线程创建后的
+// 首个 TTL 窗口内反查不到时自然过期自愈。
+const WORKSPACE_SLUG_CACHE_TTL_MS = 5_000;
+const workspaceSlugCache = new Map<string, { at: number; slug: string | null }>();
+
 export function resolveWorkspaceSlugBySessionId(
   sessionId: string,
 ): string | null {
   validatePathSegment(sessionId, "sessionId");
+  const cached = workspaceSlugCache.get(sessionId);
+  if (cached && Date.now() - cached.at < WORKSPACE_SLUG_CACHE_TTL_MS) {
+    return cached.slug;
+  }
+  const slug = resolveWorkspaceSlugBySessionIdUncached(sessionId);
+  workspaceSlugCache.set(sessionId, { at: Date.now(), slug });
+  if (workspaceSlugCache.size > 2_000) workspaceSlugCache.clear();
+  return slug;
+}
+
+function resolveWorkspaceSlugBySessionIdUncached(
+  sessionId: string,
+): string | null {
   const workspacesDir = getAgentWorkspacesDir();
   if (!existsSync(workspacesDir)) return null;
   for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
