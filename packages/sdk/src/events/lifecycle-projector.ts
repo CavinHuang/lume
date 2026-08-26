@@ -40,7 +40,7 @@ import type {
   AdvisorReviewedDetail,
   ToolOutputDetail,
 } from '@lume/shared'
-import { normalizeBackgroundTaskStatus } from '@lume/shared'
+import { humanizeRuntimeErrorMessage, normalizeBackgroundTaskStatus } from '@lume/shared'
 
 interface PendingTurn {
   turnId: string
@@ -458,12 +458,14 @@ export async function* projectLifecycle(
     // 错误本身仍由主流(tee rethrow)向 LumeRunner 传播,此处只负责投影终值。
     if (runStarted && !runEnded) {
       runEnded = true
+      // 二轮 review P2:流抛错终值是 web 上屏单源(置互斥标记后 fail() 不再补发),
+      // 必须与 fail() 出口同过人性化层,否则引擎崩溃/传输异常的内部原文直达用户
       yield emit('run', 'end', null, {
         type: 'run.end',
         stopReason: 'error',
         isError: true,
         numTurns: turnCounter,
-        result: error instanceof Error ? error.message : String(error),
+        result: humanizeRuntimeErrorMessage(error instanceof Error ? error.message : String(error)),
       })
     }
   }

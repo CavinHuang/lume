@@ -108,7 +108,7 @@ export function PermissionBanner({ threadId, request, onHiddenChange }: Permissi
           command: hasCommandInput
             ? `已允许本线程内相同的 ${request.toolName} 命令（参数可变）`
             : `已允许本线程内相同目标的 ${request.toolName} 调用`,
-          tool: `已允许本线程内所有 ${request.toolName} 调用`,
+          tool: `已允许本线程内所有 ${request.toolName} 调用${request.risk === 'high' ? '（含危险操作）' : ''}`,
         }
         toast.success(scopeCopy[allowScope])
       }
@@ -266,10 +266,18 @@ export function PermissionBanner({ threadId, request, onHiddenChange }: Permissi
             }}
           >
             {([
-              { value: 'exact', label: '仅此调用', hint: '逐字节相同才免审批' },
-              ...(hasCommandInput ? [{ value: 'command', label: '相同命令', hint: '同一命令、参数可变' }] : []),
-              { value: 'tool', label: `整个 ${request.toolName} 工具`, hint: '该工具全部调用都放行' },
-            ] as Array<{ value: AgentToolPermissionAllowScope; label: string; hint: string }>).map((option) => (
+              { value: 'exact', label: '仅此调用', hint: '逐字节相同才免审批', danger: false },
+              ...(hasCommandInput ? [{ value: 'command', label: '相同命令', hint: '同一命令、参数可变', danger: false }] : []),
+              {
+                value: 'tool',
+                label: `整个 ${request.toolName} 工具`,
+                // 安全 F3:高危工具的工具级授权明确代价,不再无差别一句提示
+                hint: request.risk === 'high'
+                  ? '危险：包括删除、推送等所有调用'
+                  : '该工具全部调用都放行',
+                danger: request.risk === 'high',
+              },
+            ] as Array<{ value: AgentToolPermissionAllowScope; label: string; hint: string; danger?: boolean }>).map((option) => (
               <button
                 key={option.value}
                 type="button"
@@ -279,13 +287,15 @@ export function PermissionBanner({ threadId, request, onHiddenChange }: Permissi
                 className={cn(
                   'flex w-full items-center gap-1.5 rounded-[8px] border px-2 py-1 text-left text-[12px] transition-colors',
                   allowScope === option.value
-                    ? 'border-white/[0.14] bg-white/[0.08] text-[#f0f0f0]'
+                    ? option.danger
+                      ? 'border-[#6e3c3c] bg-[#3b2a2a] text-[#ffc0c0]'
+                      : 'border-white/[0.14] bg-white/[0.08] text-[#f0f0f0]'
                     : 'border-transparent text-[#9b9b9b] hover:bg-white/[0.04]',
                 )}
               >
                 <Check size={12} className={cn('shrink-0', allowScope === option.value ? 'opacity-100' : 'opacity-0')} />
                 <span className="font-semibold">{option.label}</span>
-                <span className="text-[#898989]">{option.hint}</span>
+                <span className={cn(option.danger ? (allowScope === option.value ? 'text-[#ffb4b4]' : 'text-[#c98a8a]') : 'text-[#898989]')}>{option.hint}</span>
               </button>
             ))}
           </div>
