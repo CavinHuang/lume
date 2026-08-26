@@ -748,7 +748,9 @@ export async function applyCodingDiffAction(
   let args: string[] = [];
   if (input.action === "stage") {
     if (!actions.canStage) throw new Error("当前文件没有可 Stage 的变更");
-    patch = await runGitCommand(["diff", "--no-ext-diff", "--no-color", "--binary", "--unified=3", "--", safePath], gitRoot) ?? "";
+    const unstagedPatch = await runGitCommand(["diff", "--no-ext-diff", "--no-color", "--binary", "--unified=3", "--", safePath], gitRoot);
+    if (unstagedPatch === null) throw new Error("文件变更超过 16MB 补丁上限，无法生成补丁");
+    patch = unstagedPatch;
     if (!patch && current.status === "untracked" && input.scope === "file") {
       await runGitAction(["add", "--", safePath], gitRoot);
       return { ok: true };
@@ -756,7 +758,9 @@ export async function applyCodingDiffAction(
     args = ["apply", "--cached"];
   } else {
     if (!actions.canUnstage) throw new Error("当前文件没有可 Unstage 的变更");
-    patch = await runGitCommand(["diff", "--cached", "--no-ext-diff", "--no-color", "--binary", "--unified=3", "--", safePath], gitRoot) ?? "";
+    const stagedPatch = await runGitCommand(["diff", "--cached", "--no-ext-diff", "--no-color", "--binary", "--unified=3", "--", safePath], gitRoot);
+    if (stagedPatch === null) throw new Error("文件变更超过 16MB 补丁上限，无法生成补丁");
+    patch = stagedPatch;
     args = ["apply", "--cached", "--reverse"];
   }
   if (!patch) throw new Error("没有可应用的 Diff");
@@ -816,7 +820,8 @@ async function applyCodingDiffSectionAction(
     "--unified=3",
     "--",
     ...safeFiles.map((file) => file.path),
-  ], gitRoot) ?? "";
+  ], gitRoot);
+  if (patch === null) throw new Error("分区变更超过 16MB 补丁上限，无法生成补丁");
   if (!patch) throw new Error("没有可 Unstage 的 Diff");
   await runGitAction(["apply", "--cached", "--reverse", "--check", "--whitespace=nowarn", "-"], gitRoot, patch);
   await runGitAction(["apply", "--cached", "--reverse", "--whitespace=nowarn", "-"], gitRoot, patch);
@@ -912,18 +917,20 @@ export async function getCodingRepositoryPublishState(
     "--full-index",
     "--no-color",
   ], gitRoot);
-  if (!head || cachedPatch === null) {
+  if (!head) {
     return { available: false, reason: "无法读取当前 Git 仓库状态" };
+  }
+  if (cachedPatch === null) {
+    return { available: false, reason: "暂存区变更超过 16MB 补丁上限，请拆分提交" };
   }
   const [stagedPaths, unstagedPaths, untrackedPaths, worktreePatch] = await Promise.all([
     runGitCommand(["diff", "--cached", "--name-only", "-z"], gitRoot).then(parseNulPaths),
     runGitCommand(["diff", "--name-only", "-z"], gitRoot).then(parseNulPaths),
     runGitCommand(["ls-files", "--others", "--exclude-standard", "-z"], gitRoot).then(parseNulPaths),
+    // worktree patch 超限（null）不阻断发布状态：仅提交已暂存内容不依赖它，
+    // 指纹缺失时由 applyCodingRepositoryPublishAction 拦截 includeUnstagedChanges。
     runGitCommand(["diff", "HEAD", "--binary", "--full-index", "--no-color"], gitRoot),
   ]);
-  if (worktreePatch === null) {
-    return { available: false, reason: "无法读取当前 Git 工作区状态" };
-  }
   const sortedUntrackedPaths = [...untrackedPaths].sort((left, right) => left.localeCompare(right));
   const untrackedHashes = new Array<{ path: string; hash: string }>(sortedUntrackedPaths.length);
   let untrackedCursor = 0;
@@ -942,9 +949,13 @@ export async function getCodingRepositoryPublishState(
     { length: Math.min(6, sortedUntrackedPaths.length) },
     hashUntrackedFiles,
   ));
-  const worktreeHash = createHash("sha256").update(worktreePatch);
-  for (const entry of untrackedHashes) {
-    worktreeHash.update("\0").update(entry.path).update("\0").update(entry.hash);
+  let worktreeHashHex: string | undefined;
+  if (worktreePatch !== null) {
+    const worktreeHash = createHash("sha256").update(worktreePatch);
+    for (const entry of untrackedHashes) {
+      worktreeHash.update("\0").update(entry.path).update("\0").update(entry.hash);
+    }
+    worktreeHashHex = worktreeHash.digest("hex");
   }
   let ahead = 0;
   let behind = 0;
@@ -966,7 +977,7 @@ export async function getCodingRepositoryPublishState(
     ...(branch.upstream ? { upstream: branch.upstream } : {}),
     head,
     indexHash: createHash("sha256").update(cachedPatch).digest("hex"),
-    worktreeHash: worktreeHash.digest("hex"),
+    ...(worktreeHashHex ? { worktreeHash: worktreeHashHex } : {}),
     stagedCount: stagedPaths.length,
     unstagedCount: unstagedPaths.length,
     untrackedCount: untrackedPaths.length,
@@ -993,6 +1004,9 @@ export async function applyCodingRepositoryPublishAction(
   let commitHash: string | undefined;
   if (input.action !== "push") {
     if (state.indexHash !== input.expectedIndexHash) throw new Error("暂存区已变化，请刷新后重试");
+    if (input.includeUnstagedChanges && !state.worktreeHash) {
+      throw new Error("工作区变更超过 16MB 补丁上限，请分次提交");
+    }
     if (input.includeUnstagedChanges && state.worktreeHash !== input.expectedWorktreeHash) {
       throw new Error("工作区已变化，请刷新后重试");
     }
@@ -1727,6 +1741,12 @@ function normalizeLineEndings(content: string): string {
 
 function runGitCommand(args: string[], cwd: string): Promise<string | null> {
   if (SHOULD_ISOLATE_GIT_SPAWN) return runGitCommandInWorker(args, cwd);
+  return runGitCommandInline(args, cwd);
+}
+
+// 生产 sidecar 走 Electron utilityProcess.fork（Node 运行时）时 SHOULD_ISOLATE_GIT_SPAWN=false，
+// 本函数即生产路径；导出仅供测试直接覆盖主线程版水位行为。
+export function runGitCommandInline(args: string[], cwd: string): Promise<string | null> {
   return new Promise((resolveResult) => {
     let settled = false;
     const finish = (value: string | null) => {
