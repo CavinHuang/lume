@@ -217,19 +217,21 @@ export const FileReadTool = defineTool({
           : (zeroRowView
               ? `(no lines at offset ${offset}; file has ${ranged.totalLines} lines)`
               : '(empty file)')
+        // 截断标记与 summarize 忽略告知可叠加：后者无论全文/部分读都要显式提示
+        const markedContent = isPartialView
+          ? withPartialReadMarker(rangedBody, {
+              offset,
+              shownLines,
+              totalLines: ranged.totalLines,
+              totalIsLowerBound: ranged.truncated,
+            })
+          : rangedBody
         return {
           data: {
             filePath,
-            content: isPartialView
-              ? withPartialReadMarker(rangedBody, {
-                  offset,
-                  shownLines,
-                  totalLines: ranged.totalLines,
-                  totalIsLowerBound: ranged.truncated,
-                })
-              : (input.summarize === true
-                  ? `${rangedBody}\n[注意：本次按显式范围读取，summarize 参数未生效；如需全文件大纲请仅传 summarize:true]`
-                  : rangedBody),
+            content: input.summarize === true && hasExplicitRange
+              ? `${markedContent}\n[注意：本次按显式范围读取，summarize 参数未生效；如需全文件大纲请仅传 summarize:true]`
+              : markedContent,
             offset,
             limit,
             totalLines: ranged.totalLines,
