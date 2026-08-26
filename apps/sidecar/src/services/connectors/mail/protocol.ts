@@ -462,7 +462,8 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
           uidValidity: readBigIntString(status?.uidValidity),
         };
         },
-        // STATUS 对当前选中邮箱是 RFC 3501 明令禁止的;池化后借出的连接
+        // RFC 3501 §6.3.10 对向选中邮箱发 STATUS 仅是 SHOULD NOT(\Recent/
+        // unseen 口径服务器分歧大),QQ 类口径不可控,池化后借出的连接
         // 可能带着上一个动作 mailboxOpen 的选中态,必须要求非 selected
         { requireUnselected: true },
       );
@@ -756,14 +757,44 @@ export function imapAccountGateStateForTest(
   return gate ? { active: gate.active, waiting: gate.waiters.length, idle: gate.idle.length } : undefined;
 }
 
-/** 借出选项:waitSignal 只作用于排队段;requireUnselected 见 getFolderStatus。 */
+/**
+ * 借出选项:waitSignal 只作用于排队段;requireUnselected 见 getFolderStatus。
+ * 红线:callback 内严禁再调同账号协议方法——嵌套租借会占满名额自等,永久死锁。
+ */
 interface ImapLeaseOptions {
   waitSignal?: AbortSignal;
   /**
-   * RFC 3501 §6.3.11 禁止对当前选中的邮箱发 STATUS。getFolderStatus 不自备
-   * selected 前置态,必须要求一条非 selected 连接(或新建)。
+   * RFC 3501 §6.3.10 对「向当前选中的邮箱发 STATUS」仅是 SHOULD NOT(语义在
+   * \Recent/unseen 口径上服务器分歧大),非硬禁止——但 QQ 类服务器的口径不可控,
+   * 池化复用会让 STATUS 撞上上一动作 EXAMINE 过的连接,故 getFolderStatus 要求
+   * 一条非 selected 连接(或新建)。演进项:借出后 CLOSE(一次 RTT)替代驱逐重建。
    */
   requireUnselected?: boolean;
+}
+
+/**
+ * 搭车清扫:TTL/dead 判定是借出侧逻辑,沉寂账号的池内连接永远不会被
+ * 「下一次借出」触达——SELECTED 态更有 auto-IDLE 心跳近乎永生,明文授权码
+ * 与已认证服务端会话因此进程级滞留并持续占用服务端并发名额(#698 的稀缺
+ * 资源本身)。每次进入闸门前顺手扫一遍全表空闲条目,O(账号数) 摊销可忽略,
+ * 免掉后台定时器;活跃/有排队者的 gate 不动。
+ */
+function sweepStaleIdleConnections(now: () => number) {
+  for (const [account, gate] of imapAccountGates) {
+    if (gate.active > 0 || gate.waiters.length > 0 || gate.idle.length === 0) {
+      continue;
+    }
+    gate.idle = gate.idle.filter((conn) => {
+      const stale = conn.dead || now() - conn.idledAt > imapIdleReuseTtlMs;
+      if (stale) {
+        destroyPooledClient(conn.client);
+      }
+      return !stale;
+    });
+    if (gate.idle.length === 0) {
+      imapAccountGates.delete(account);
+    }
+  }
 }
 
 async function withImapClient<T>(
@@ -773,6 +804,7 @@ async function withImapClient<T>(
   callback: (client: RuntimeImapClient) => Promise<T>,
   options: ImapLeaseOptions = {},
 ) {
+  sweepStaleIdleConnections(deps.now ?? Date.now);
   return withImapConnectionLimit(
     credential.email.toLowerCase(),
     async () => {
@@ -780,9 +812,14 @@ async function withImapClient<T>(
       const conn = await acquirePooledClient(config, deps, credential, gate, options);
       try {
         const result = await callback(conn.client);
-        // 成功才复用:错误一律销毁,坏连接绝不回流池中
-        conn.idledAt = (deps.now ?? Date.now)();
-        gate.idle.push(conn);
+        // 成功才复用:错误一律销毁,坏连接绝不回流池中;
+        // callback 期间被看门狗杀死的连接(dead 置位)同样不入池
+        if (conn.dead) {
+          destroyPooledClient(conn.client);
+        } else {
+          conn.idledAt = (deps.now ?? Date.now)();
+          gate.idle.push(conn);
+        }
         return result;
       } catch (error) {
         destroyPooledClient(conn.client);
@@ -794,10 +831,11 @@ async function withImapClient<T>(
 }
 
 /**
- * 借出一条连接:优先复用池内空闲连接,否则新建。候选连接必须同时满足
- * 未死亡、host 与授权码未变、未过 TTL、(按需)非 selected 态,否则就地
- * 同步 close 销毁后新建——绝不用 fire-and-forget LOGOUT 驱逐,其 RTT 窗口
- * 会与紧随的新 LOGIN 在服务端叠加成 cap+1 会话(#698 要消灭的超限误判模式)。
+ * 借出一条连接:线性扫描池内全部候选(≤max 条),取第一条兼容者,不兼容的
+ * 就地销毁——单候选 LIFO pop 会让压在栈底的死/过期连接永无出头之日。
+ * 候选必须同时满足未死亡、host 与授权码未变、未过 TTL、(按需)非 selected 态,
+ * 否则同步 close 销毁——绝不用 fire-and-forget LOGOUT 驱逐,其 RTT 窗口会与
+ * 紧随的新 LOGIN 在服务端叠加成 cap+1 会话(#698 要消灭的超限误判模式)。
  */
 async function acquirePooledClient(
   config: MailProtocolConfig,
@@ -807,19 +845,25 @@ async function acquirePooledClient(
   options: ImapLeaseOptions,
 ): Promise<PooledImapConnection> {
   const now = deps.now ?? Date.now;
-  const pooled = gate.idle.pop();
-  if (
-    pooled &&
-    !pooled.dead &&
-    pooled.host === credential.imapHost &&
-    pooled.authCode === credential.authorizationCode &&
-    !(options.requireUnselected && hasSelectedMailbox(pooled.client)) &&
-    now() - pooled.idledAt <= imapIdleReuseTtlMs
-  ) {
-    return pooled;
+  let reusable: PooledImapConnection | undefined;
+  while (gate.idle.length > 0 && !reusable) {
+    const candidate = gate.idle.pop()!;
+    const expired = now() - candidate.idledAt > imapIdleReuseTtlMs;
+    if (
+      !candidate.dead &&
+      candidate.host === credential.imapHost &&
+      candidate.authCode === credential.authorizationCode &&
+      !(options.requireUnselected && hasSelectedMailbox(candidate.client)) &&
+      !expired
+    ) {
+      reusable = candidate;
+    } else {
+      destroyPooledClient(candidate.client);
+    }
   }
-  if (pooled) {
-    destroyPooledClient(pooled.client);
+
+  if (reusable) {
+    return reusable;
   }
 
   const fresh = await createImapClient(config, deps, credential);
@@ -829,6 +873,9 @@ async function acquirePooledClient(
     host: credential.imapHost,
     authCode: credential.authorizationCode,
   };
+  // 监听必须先于 connect 挂载:connect 未决期 imapflow 走 initialReject 不
+  // emit(error),但那是上游实现细节;先挂载把安全性变成结构保证
+  attachDeadMarker(conn);
   try {
     await fresh.connect();
   } catch (error) {
@@ -836,7 +883,6 @@ async function acquirePooledClient(
     destroyPooledClient(conn.client);
     throw mapLibraryError(error, config);
   }
-  attachDeadMarker(conn);
   return conn;
 }
 
@@ -844,11 +890,29 @@ async function acquirePooledClient(
  * imapflow 对空闲超时/socket 故障会 emit("error")(AUTHENTICATED 态无
  * auto-IDLE 保活,30s 看门狗必触发),而库内外无人监听——Node 对无监听者
  * 的 error emit 同步抛 uncaughtException(sidecar 计次 5 次自杀)。
- * 监听仅置 dead 标记,借出前淘汰;命令级失败仍由 run() 正常上抛。
+ *
+ * 监听必须在 connect() 决算前挂载:imapflow 的 connect 未决期错误走
+ * initialReject 不 emit(error),但那是库内实现细节而非结构保证;new 之后
+ * 立即挂载把安全性从「上游善意」变成「本文件结构」。监听置 dead 标记供
+ * 借出淘汰,并就地补刀 close(imapflow 自身 closeAfter 已关,幂等)防止
+ * 死 socket 在被再次借出前滞留 fd与服务端会话名额;命令级失败仍由
+ * run() 正常上抛。
  */
 function attachDeadMarker(conn: PooledImapConnection) {
-  (conn.client as unknown as { on?: (event: string, listener: () => void) => void }).on?.("error", () => {
+  const emitter = conn.client as unknown as {
+    on?: (event: string, listener: () => void) => void;
+  };
+  if (typeof emitter.on !== "function") {
+    // 缺 on 的自定义注入会让 dead 标记失效,行为无声退回
+    // 「空闲 emit error → uncaughtException」的原 P0——宁可吵闹不可静默
+    console.warn("[mail] pooled IMAP client does not support on(); dead-marking disabled");
+    return;
+  }
+  emitter.on("error", () => {
     conn.dead = true;
+    // imapflow 自身 closeAfter 已关 socket,此处补刀幂等;防止死 socket
+    // 在被再次借出前滞留 fd 与服务端会话名额
+    destroyPooledClient(conn.client);
   });
 }
 

@@ -223,7 +223,7 @@ describe("per-account IMAP connection pool (#698)", () => {
     fake.advanceClock(imapIdleReuseTtlMs + 1);
     await protocol.getFolderStatus(account, "INBOX");
 
-    // 过期连接被 graceful 回收(logout 终结计数),动作用新建连接完成
+    // 过期连接被同步 close 销毁(close 终结计数),动作用新建连接完成
     expect(fake.created).toBe(2);
     expect(fake.live).toBe(1);
   });
@@ -460,7 +460,7 @@ describe("per-account IMAP connection pool (#698)", () => {
     await protocol.searchSummaries(account, "INBOX", {}, { limit: 5, peek: true });
     expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1 });
 
-    // RFC 3501 §6.3.11:STATUS 不得发往当前选中的邮箱——必须驱逐重建
+    // RFC 3501 §6.3.10(SHOULD NOT):STATUS 不发往当前选中的邮箱——驱逐重建
     await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
     expect(fake.created).toBe(2);
   });
@@ -485,6 +485,8 @@ describe("per-account IMAP connection pool (#698)", () => {
     const abort = new AbortController();
     const queued = protocol.validateImapCredential(account, abort.signal);
     await new Promise((resolve) => setTimeout(resolve, 5));
+    // 钉死 W1 真的排过队:排队记账被删时此断言先红,而非整文件挂死
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ waiting: 1 });
     abort.abort(new Error("budget gone"));
     await expect(queued).rejects.toThrow("budget gone");
 
