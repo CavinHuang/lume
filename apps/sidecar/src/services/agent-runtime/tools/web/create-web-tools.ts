@@ -122,6 +122,11 @@ function createEnhancedWebFetch(input: CreateSdkWebToolsInput): ToolDefinition {
     name: "WebFetch",
     description: WebFetchTool.description ?? "Fetch a URL as Markdown.",
     inputSchema: WebFetchTool.inputSchema,
+    // 看门狗首个生产配置点（#538/#711 follow-up）：外部渲染+抓取链是
+    // 最典型的挂死源；只读工具，超时不涉及写租约问题
+    runtimeMetadata: {
+      executionPolicy: { toolTimeoutMs: 120_000 },
+    },
     isReadOnly: false,
     isConcurrencySafe: false,
     async call(toolInput, context) {
