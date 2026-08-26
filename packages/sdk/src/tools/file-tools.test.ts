@@ -717,7 +717,7 @@ describe("file tools", () => {
     expect(await readFile(join(root, "target.txt"), "utf8")).toBe("alpha\nupdated\n");
   });
 
-  test("rejects a dangling symlink instead of silently replacing it (#367)", { skip: !symlinksSupported }, async () => {
+  test.skipIf(!symlinksSupported)("rejects a dangling symlink instead of silently replacing it (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     await symlink(join(root, "missing-target.txt"), join(root, "dangling.txt"), "file");
@@ -733,7 +733,7 @@ describe("file tools", () => {
     expect(lstatSync(join(root, "dangling.txt")).isSymbolicLink()).toBe(true);
   });
 
-  test("re-checks the sandbox against a symlink's resolved target (#367)", { skip: !symlinksSupported }, async () => {
+  test.skipIf(!symlinksSupported)("re-checks the sandbox against a symlink's resolved target (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     await mkdir(join(root, "in"));

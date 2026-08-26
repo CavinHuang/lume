@@ -13,7 +13,7 @@ import { readFile, stat } from 'fs/promises'
 import { resolve } from 'path'
 import { defineTool } from './types.js'
 import { writeFileAtomic } from '../utils/fs-atomic.js'
-import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason, writeContainmentRoots } from '../utils/pathing.js'
+import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason, resolveInputPath, writeContainmentRoots } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 type NotebookCell = {
@@ -46,9 +46,16 @@ function readCellSource(cell: NotebookCell): string {
   return cell.source || ''
 }
 
-function resolveNotebookPath(input: any, cwd: string): string {
+// realpath 权威口径（#336/#728）：与 read.ts 同经 resolveInputPath 做 canonical 化，
+// 否则 fileStateCache 的 read 记录（canonical 键）在 symlink 前缀环境下查不到——
+// read→notebook-edit 误报 not_read，且 stale 保护永不触发
+async function resolveNotebookPath(
+  input: any,
+  cwd: string,
+  additionalDirectories: string[] = [],
+): Promise<string> {
   const candidate = input.notebook_path || input.file_path
-  return resolve(cwd, candidate)
+  return resolveInputPath(cwd, candidate, additionalDirectories)
 }
 
 function findCellIndex(cells: NotebookCell[], cellId?: string): number {
@@ -126,7 +133,7 @@ export const NotebookEditTool = defineTool({
     return resolve(context.cwd, input.notebook_path || input.file_path)
   },
   async call(input, context) {
-    const notebookPath = resolveNotebookPath(input, context.cwd)
+    const notebookPath = await resolveNotebookPath(input, context.cwd, context.additionalDirectories)
     const unsafeReason = getUnsafeFilePathReason(input.notebook_path || input.file_path)
     if (unsafeReason) {
       return { data: unsafeReason, is_error: true }
