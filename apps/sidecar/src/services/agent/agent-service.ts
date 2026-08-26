@@ -29,7 +29,7 @@ import type {
   LumeRuntimeEvent,
   RuntimeCodingReport
 } from "@lume/shared";
-import { AGENT_IPC_CHANNELS, buildConnectionModelRef, FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, buildConnectionModelRef, FILE_REFERENCE_PROTOCOL_VERSION, type LumeEffectiveConfig } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
@@ -854,8 +854,9 @@ const DEFAULT_MAX_AUTO_TURN_CONTINUATIONS = 3;
 /** 配置上限护栏:防止配置笔误把无人值守成本放大到失控 */
 const HARD_MAX_AUTO_TURN_CONTINUATIONS = 10;
 
-function resolveMaxAutoTurnContinuations(): number {
-  const configured = getEffectiveLumeConfig().agent?.maxAutoTurnContinuations;
+/** #649 follow-up:接受已解析配置以支持 workspace overlay——同段兄弟字段均 workspace-aware,续跑预算不得例外。 */
+function resolveMaxAutoTurnContinuations(config?: LumeEffectiveConfig): number {
+  const configured = (config ?? getEffectiveLumeConfig()).agent?.maxAutoTurnContinuations;
   if (typeof configured !== "number" || !Number.isFinite(configured)) return DEFAULT_MAX_AUTO_TURN_CONTINUATIONS;
   return Math.max(0, Math.min(Math.floor(configured), HARD_MAX_AUTO_TURN_CONTINUATIONS));
 }
@@ -907,12 +908,15 @@ export async function sendAgentMessage(
   }
   directRunThreads.add(threadId);
   try {
-    // 配置只解析一次贯穿全链（review 建议级：外层日志与 gate 判定不得各 resolve 各的）
-    const resolvedMaxContinuations = resolveMaxAutoTurnContinuations();
+    // #649 follow-up:maxContinuations 由 runSendAgentMessage 内按 workspace-aware 配置解析
+    // (prepare 阶段已拿到 effectiveWorkspace),随 outcome 带回供后续轮复用同一判定口径;
+    // 外层不再各自全局解析(同段兄弟字段均 workspace-aware,续跑预算不得例外)
+    let resolvedMaxContinuations: number | undefined;
     // #649 review P1-2:首轮提取一次原始任务贯穿全链——续跑轮 input.userMessage 是裸合成
     // 指令,不显式携带则下一轮恢复上下文把合成指令本身当「原始任务」
     const continuationOriginalTask = extractOriginalTaskText(input.userMessage);
-    let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0, maxContinuations: resolvedMaxContinuations });
+    let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0 });
+    resolvedMaxContinuations = outcome?.maxContinuations ?? resolvedMaxContinuations;
     let continuationCount = 0;
     while (outcome?.autoContinue) {
       continuationCount += 1;
@@ -932,7 +936,7 @@ export async function sendAgentMessage(
         messageMetadata: { ...continuationMetadata, hiddenFromChat: true }
       };
       try {
-        outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: continuationCount, maxContinuations: resolvedMaxContinuations, continuationOriginalTask });
+        outcome = await runSendAgentMessage(input, emit, { ...(resolvedMaxContinuations !== undefined ? { maxContinuations: resolvedMaxContinuations } : {}), ...options, autoContinuationCount: continuationCount, continuationOriginalTask });
       } catch (error) {
         // 首轮已正常收尾，续跑失败不应把整条发送标成错误;但上一轮终态已被抑制,须补发防悬挂
         log.warn("[Agent 会话] 自动续跑失败，保留已有进度", {
@@ -1482,7 +1486,7 @@ async function runSendAgentMessage(
   input: AgentSendInput,
   emit: AgentStreamEmitter,
   options: AgentSendOptions = {}
-): Promise<{ runtimeResult: AgentRuntimeRunResult; autoContinue: boolean } | undefined> {
+): Promise<{ runtimeResult: AgentRuntimeRunResult; autoContinue: boolean; maxContinuations?: number } | undefined> {
   const { threadId, userMessage } = input;
   const completeIfAborted = () => {
     if (!options.abortSignal?.aborted) return false;
@@ -1630,7 +1634,8 @@ async function runSendAgentMessage(
     abortSignalled: options.abortSignal?.aborted ?? false,
     queuedCount,
     callerBoundsTurns: input.messageMetadata?.maxTurns !== undefined || input.messageMetadata?.automationJobId !== undefined,
-    maxContinuations: options.maxContinuations ?? resolveMaxAutoTurnContinuations()
+    // #649 follow-up:fallback 走 prepare 已解析的 workspace-aware 配置,与同段字段口径一致
+    maxContinuations: options.maxContinuations ?? resolveMaxAutoTurnContinuations(prepared.effectiveLumeConfig)
   };
   const autoContinue = shouldAutoContinueTurnLimited(runtimeResult, autoContinueDecision);
   // #566 可观测性 review F1:四种否决分支(上限/repeat_guard/中止/排队/调用方限定)必须可区分
@@ -1662,7 +1667,7 @@ async function runSendAgentMessage(
     emit,
     terminalEventsSuppressed: autoContinue
   });
-  return { runtimeResult, autoContinue };
+  return { runtimeResult, autoContinue, maxContinuations: autoContinueDecision.maxContinuations };
 }
 
 export function appendAgentMessage(

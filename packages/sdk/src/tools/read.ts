@@ -92,7 +92,7 @@ export const FileReadTool = defineTool({
       },
       summarize: {
         type: 'boolean',
-        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them.',
+        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them. Mutually exclusive with offset/limit: an explicit range always wins and summarize is ignored (a note is appended to the response when that happens).',
       },
       pages: {
         type: 'string',
@@ -195,7 +195,8 @@ export const FileReadTool = defineTool({
         // 守卫「请完整读取后再写入」成为不可满足指令。
         // 零行视图（越界 offset / limit=0）与非零 offset 续读到尾都不得视作全文：
         // 前者什么都没读到，后者只看了片段——缓存与账本都必须保持 partial，
-        // 否则 Edit 用片段比对磁盘全文必失配（#711 review 对抗轮实证）。
+        // 否则 Edit 用片段比对磁盘全文必失配（#711 review 对抗轮实证；
+        // 尾窗读误标全文的永久假性 stale 由 #733 round3 独立实证）。
         const shownLines = ranged.content
           ? ranged.content.replace(/\n$/, '').split('\n').length
           : 0
@@ -211,8 +212,8 @@ export const FileReadTool = defineTool({
           limit,
           isPartialView,
         })
-        const numberedContent = ranged.content
-          ? ranged.content.split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
+        const rangedBody = ranged.content
+          ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
           : (zeroRowView
               ? `(no lines at offset ${offset}; file has ${ranged.totalLines} lines)`
               : '(empty file)')
@@ -220,13 +221,15 @@ export const FileReadTool = defineTool({
           data: {
             filePath,
             content: isPartialView
-              ? withPartialReadMarker(numberedContent, {
+              ? withPartialReadMarker(rangedBody, {
                   offset,
                   shownLines,
                   totalLines: ranged.totalLines,
                   totalIsLowerBound: ranged.truncated,
                 })
-              : numberedContent,
+              : (input.summarize === true
+                  ? `${rangedBody}\n[注意：本次按显式范围读取，summarize 参数未生效；如需全文件大纲请仅传 summarize:true]`
+                  : rangedBody),
             offset,
             limit,
             totalLines: ranged.totalLines,

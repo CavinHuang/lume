@@ -273,6 +273,10 @@ function PermissionChoice({
   )
 }
 
+/** #649 follow-up:兜底展示跳过敏感值键——fill/type 的 text 等明文(密码/表单值)
+ * 不得经「第一个字符串值」旁路进 DOM(title 属性同屏),防泄漏防线不被兜底绕过 */
+const SENSITIVE_INPUT_KEYS = new Set(['text', 'value', 'content', 'secret', 'password', 'token'])
+
 function formatToolInput(input: Record<string, unknown>): string {
   const preferred = ['command', 'cmd', 'path', 'file_path', 'url']
   for (const key of preferred) {
@@ -280,8 +284,10 @@ function formatToolInput(input: Record<string, unknown>): string {
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
 
-  const firstValue = Object.values(input).find((value) => typeof value === 'string' && value.trim())
-  if (typeof firstValue === 'string') return firstValue.trim()
+  const firstValue = Object.entries(input).find(([key, value]) => (
+    typeof value === 'string' && value.trim() && !SENSITIVE_INPUT_KEYS.has(key.toLowerCase())
+  ))
+  if (firstValue && typeof firstValue[1] === 'string') return firstValue[1].trim()
   return '查看工具参数'
 }
 

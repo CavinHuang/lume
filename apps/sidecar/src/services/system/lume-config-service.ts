@@ -496,6 +496,17 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     return {};
   }
   const next: LumeConfigSectionSet = {};
+  const knownSections = new Set(KNOWN_LUME_SECTION_KEYS);
+  const droppedTopKeys = Object.keys(value).filter((key) => !knownSections.has(key));
+  const droppedAgentKeys = isPlainObject(value.agent)
+    ? Object.keys(value.agent).filter((key) => !KNOWN_AGENT_KEYS.has(key))
+    : [];
+  if (droppedTopKeys.length > 0 || droppedAgentKeys.length > 0) {
+    log.warn("lume.yaml 含未识别配置键，规范化时已移除（升级 sidecar 或修正拼写）", {
+      ...(droppedTopKeys.length > 0 ? { unknownSections: droppedTopKeys } : {}),
+      ...(droppedAgentKeys.length > 0 ? { unknownAgentKeys: droppedAgentKeys } : {})
+    });
+  }
 
   if (isPlainObject(value.models)) {
     const chat = isPlainObject(value.models.chat) ? value.models.chat : {};
