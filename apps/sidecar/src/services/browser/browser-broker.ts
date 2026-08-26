@@ -281,7 +281,11 @@ export class BrowserBroker {
     }
     if (WAIT_COMMANDS.has(input.method)) return execute().catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
     const current = previous.then(execute)
-    this.queues.set(queueKey, current.catch(() => undefined))
+    const tail = current.catch(() => undefined)
+    this.queues.set(queueKey, tail)
+    // settle 后回收队列槽，长寿命进程中每 tab 条目只增不减（#615）；
+    // 队尾已被新请求替换时不删，保持串行语义
+    void tail.finally(() => { if (this.queues.get(queueKey) === tail) this.queues.delete(queueKey) })
     return current.catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
   }
   // agentBrowserUseEnabled=false(设置「允许 Browser Use」关)时返回空:isEnabled

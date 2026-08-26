@@ -41,7 +41,12 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 }
 
 function appendRun(run: AutomationRun): void {
-  appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
+  try {
+    appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
+  } catch {
+    // 盘满/EBUSY 时放弃本条记录而非抛出（#615）：executeJob 以 void 发射且上层
+    // 无 catch，reject 会变 unhandledRejection 并吞掉后续调度刷新链。
+  }
 }
 
 function clearSchedules(): void {

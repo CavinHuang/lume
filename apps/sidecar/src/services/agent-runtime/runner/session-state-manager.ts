@@ -155,6 +155,8 @@ class SessionStateManager {
     }
 
     if (cleaned > 0) {
+      // 清理结果必须落盘，否则重启后全量加载回已删条目，磁盘占用永不收敛（#615）
+      this.saveToDisk();
       log.info("清理过期会话状态", { count: cleaned });
     }
 
