@@ -41,16 +41,23 @@ export function memoryFileRefForPath(input: {
   const paths = getMemoryV2ScopePaths({ scope: input.scope, workspaceSlug: input.workspaceSlug });
   const root = realpathSync(paths.root);
   const withoutLines = input.path.replace(/#L\d+(?:-L?\d+)?$/i, "");
-  const candidate = resolve(isAbsolute(withoutLines) ? withoutLines : resolve(root, withoutLines));
-  if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) return undefined;
+  let candidate = resolve(isAbsolute(withoutLines) ? withoutLines : resolve(root, withoutLines));
+  // 入参可能是词法路径而 root 已 realpath 化（macOS tmpdir /var→/private/var）：
+  // 归属判定前先把 candidate 规范化到同一口径，否则合法文件被误判为 scope 外
   if (!existsSync(candidate)) return undefined;
+  candidate = realpathSync(candidate);
+  if (candidate !== root && !candidate.startsWith(`${root}${sep}`)) return undefined;
 
   let cursor = root;
   for (const part of relative(root, candidate).split(sep).filter(Boolean)) {
     cursor = resolve(cursor, part);
     if (lstatSync(cursor).isSymbolicLink()) return undefined;
   }
-  const canonical = realpathSync(candidate);
+  // 语义备案(#728 review):candidate 已 realpath 化,「scope 内 symlink → scope 内
+  // 目标」的**直接路径访问**在此放行——内容仍被锁定在 scope 内,与 listing 侧
+  // walkSourceTarget 跳过 symlink 不冲突(列表不展示、直达可读)。逐段 lstat 只拦
+  // 相对路径中间段出现的 symlink;若需收紧为全拒,删掉上面的 realpath 归一即可。
+  const canonical = candidate;
   if (canonical !== root && !canonical.startsWith(`${root}${sep}`)) return undefined;
   if (!lstatSync(canonical).isFile()) return undefined;
   return {
@@ -69,12 +76,18 @@ function listScope(scope: "workspace" | "global", workspaceSlug?: string): Memor
 }
 
 function walkSourceTarget(target: string, root: string, scopeId: string): MemorySourceFile[] {
+  let canonical: string;
+  try {
+    canonical = realpathSync(target);
+  } catch {
+    // 竞态删除窗口：单条目标消失只跳过自身，不让整次 listing 失败
+    return [];
+  }
   if (!existsSync(target)) return [];
   const stat = lstatSync(target);
   if (stat.isSymbolicLink()) return [];
-  const canonical = realpathSync(target);
   if (canonical !== root && !canonical.startsWith(`${root}${sep}`)) return [];
-  if (stat.isFile()) return [toSourceFile(target, root, scopeId, stat.size, stat.mtime.toISOString())];
+  if (stat.isFile()) return [toSourceFile(canonical, root, scopeId, stat.size, stat.mtime.toISOString())];
   if (!stat.isDirectory()) return [];
   return readdirSync(target, { withFileTypes: true }).flatMap((entry) => {
     const child = `${target}${sep}${entry.name}`;
@@ -83,12 +96,16 @@ function walkSourceTarget(target: string, root: string, scopeId: string): Memory
   });
 }
 
-function toSourceFile(path: string, root: string, scopeId: string, size: number, modifiedAt: string): MemorySourceFile {
+function toSourceFile(canonicalPath: string, root: string, scopeId: string, size: number, modifiedAt: string): MemorySourceFile {
+  // 入参即 walkSourceTarget 已做过归属校验的 canonical 路径（root 同侧
+  // realpath 规范化）：直接取 relative，避免对词法 path 二次 realpath 的
+  // 冗余 syscall 与竞态下产出未复核路径的窗口。
+  const relativePath = relative(root, canonicalPath).split(sep).join("/");
   return {
     ref: {
       source: "memory",
       scopeId,
-      relativePath: relative(root, path).split(sep).join("/"),
+      relativePath,
     },
     size,
     modifiedAt,

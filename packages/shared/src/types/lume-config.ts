@@ -4,6 +4,23 @@ export type LumeConfigPermissionMode = "default" | "acceptEdits" | "bypassPermis
 
 export type LumeConfigThinkingLevel = "off" | "low" | "medium" | "high" | "max"
 
+export interface LumeConfigAgentSection {
+  permissionMode?: LumeConfigPermissionMode
+  /**
+   * 思考档位。作用域：仅主编码链路（经 engine 的会话请求）。未配置时按 "medium"
+   * 执行（UI 与实际行为一致，不设「未配置」假档）。后台辅助消费方（advisor、
+   * memory-v2 各服务、suggest/analyst、划词编辑、技能进化、vision router 等）
+   * 不经 engine 直连 provider，恒按 medium 出网，不受此档位控制——豁免清单见
+   * sidecar pi-ai-provider.ts resolveStreamThinkingOptions 注释。
+   */
+  thinkingLevel?: LumeConfigThinkingLevel
+  followUpQueueMode?: AgentFollowUpMode
+  /** #566:turn_limited 自动续跑轮数上限（默认 3；0 = 关闭自动续跑） */
+  maxAutoTurnContinuations?: number
+  /** 项目指令文件（CLAUDE.md/AGENTS.md）自动注入开关；缺省视为 true。 */
+  projectInstructionsEnabled?: boolean
+}
+
 export interface LumeConfigAgentDefaultStrategy {
   defaultChannelId?: string
   defaultModelRef?: string
@@ -38,14 +55,6 @@ export interface LumeConfigComputerUseStrategy {
   agentSurface?: ComputerUseAgentSurface
   skyModelRefs?: string[]
   visionModelRefs?: string[]
-}
-
-export interface LumeConfigAgentSection {
-  permissionMode?: LumeConfigPermissionMode
-  thinkingLevel?: LumeConfigThinkingLevel
-  followUpQueueMode?: AgentFollowUpMode
-  /** #566:turn_limited 自动续跑轮数上限（默认 3；0 = 关闭自动续跑） */
-  maxAutoTurnContinuations?: number
 }
 
 export interface LumeConfigSkillsSection {
