@@ -577,7 +577,8 @@ describe("coding-change-service", () => {
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 'before';\n");
     mkdirSync(join(root, "assets"), { recursive: true });
-    // 12MB 随机二进制：--binary base85 编码后 ≈15MB，低于 16MiB 水位
+    // 12MB 随机二进制：base85 编码后实测 ≈16.21MB（精确翻车输入点 ≈13MiB），
+    // 对 16MiB 水位余量 ~3.4%，跨 zlib 压缩级别漂移仅 0.02%——钉的是下界存活而非水位精确值
     writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(12 * 1024 * 1024));
     execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
 
@@ -601,14 +602,15 @@ describe("coding-change-service", () => {
       scope: "section",
       action: "unstage",
       files: [{ path: diff.path, expectedDiffHash: diff.diffHash }],
-    })).rejects.toThrow("16MB");
+    })).rejects.toThrow("分区变更超过");
   }, 30_000);
 
   test("staged 超大可读文本的 diff 读取报文件过大而非静默空内容", async () => {
     const root = makeTempDir("lume-coding-huge-text-");
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 'before';\n");
-    // base64 无 \0：git 视为文本，走 readGitTextSource；>16MiB 使 git show 触发水位
+    // base64 无 \0：git 视为文本走 readGitTextSource；抛错来自新增的 cat-file -s
+    // 10MB blob 预检（非 git show 水位），见 readGitTextSource 内注释
     writeFileSync(join(root, "src", "huge.txt"), randomBytes(20 * 1024 * 1024).toString("base64"));
     execFileSync("git", ["add", "src/huge.txt"], { cwd: root });
 
