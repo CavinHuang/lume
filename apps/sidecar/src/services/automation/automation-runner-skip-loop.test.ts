@@ -15,19 +15,25 @@ import { join } from "node:path";
  * 点燃回路，断言 skip 条目有界（旧代码会瞬间产生数百条）。
  */
 
+// 展开真实模块再定点覆写（runner-service.test 同款）：mock.module 是整模块替换，
+// 手工枚举导出会在上游新增导出时套件级抛错，且跨文件泄漏会破坏真调用 createChannel 的测试
+const agentServiceActual = await import("../agent/agent-service");
 mock.module("../agent/agent-service", () => ({
+  ...agentServiceActual,
   // 永不 resolve：executeJob 停在 await dispatchAgentRun，job 留在 runningJobs
   dispatchAgentRun: () => new Promise<void>(() => {}),
-  // #587 起 runner 还导入此导出；mock 工厂须枚举全量被导出（bun 缺具名导出即抛）
-  onAgentInteractionResolved: () => () => {}
 }));
 
+const channelManagerActual = await import("../channel/channel-manager");
 mock.module("../channel/channel-manager", () => ({
-  resolveChannelModelBinding: () => ({ channel: { id: "c1" }, modelId: "m1", family: "anthropic" })
+  ...channelManagerActual,
+  resolveChannelModelBinding: () => ({ channel: { id: "c1" }, modelId: "m1", family: "anthropic" }),
 }));
 
+const lumeConfigActual = await import("../system/lume-config-service");
 mock.module("../system/lume-config-service", () => ({
-  getEffectiveLumeConfig: () => ({ models: { agent: { defaultModelRef: "test:p1" } } })
+  ...lumeConfigActual,
+  getEffectiveLumeConfig: () => ({ models: { agent: { defaultModelRef: "test:p1" } } }),
 }));
 
 const { createAutomationJob } = await import("./automation-manager");

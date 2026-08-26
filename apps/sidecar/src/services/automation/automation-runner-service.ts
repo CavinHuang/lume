@@ -30,6 +30,7 @@ import {
   consumeLatestAutomationTrigger,
   finishAutomationLease,
   heartbeatAutomationLease,
+  isStaleRunningLease,
   mergeLatestAutomationTrigger,
   readAutomationRuntimeState,
   recoverAutomationRuntimeStates,
@@ -432,16 +433,20 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     // runnerStarted 门控：stop 后的关停窗口孵化新 run 只会被 process.exit 中途杀死（round12 生命周期 review）
     if (pendingScheduledAt !== undefined && runnerStarted) {
       const latest = listAutomationJobs().find((item) => item.id === job.id);
-      if (latest?.enabled) void executeJob(latest, "schedule", pendingScheduledAt).catch((error) => {
-      writeLogRecord({
-        level: "error",
-        context: "automation.runner",
-        event: "automation.execute_rejected",
-        message: "自动化任务执行链异常终止",
-        status: "error",
-        data: { automationJobId: latest.id, error: error instanceof Error ? error.message : String(error) }
-      });
-    });
+      // 二轮 review P3:void 递归不在任何外层 catch 链上,尾部失败须就地日志化
+      if (latest?.enabled) {
+        void executeJob(latest, "schedule", pendingScheduledAt).catch((error: unknown) => {
+          writeLogRecord({
+            level: "error",
+            context: "automation.runner",
+            event: "automation.reschedule_background_failed",
+            message: `合并触发补跑的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+            status: "error",
+            data: { automationJobId: latest.id }
+          });
+        });
+      }
+
     }
   }
   return run;
@@ -501,20 +506,23 @@ function scheduleJobInner(job: AutomationJob): void {
       void refreshAutomationRunnerJobs();
       return;
     }
-    void executeJob(latest, "schedule", scheduledAt)
-      .then((run) => {
-        if (run.status !== "skipped") void refreshAutomationRunnerJobs();
-      })
-      .catch((error) => {
-        writeLogRecord({
-          level: "error",
-          context: "automation.runner",
-          event: "automation.execute_rejected",
-          message: "自动化任务执行链异常终止",
-          status: "error",
-          data: { automationJobId: latest.id, error: error instanceof Error ? error.message : String(error) }
-        });
+    // 二轮 review P3:executeJob 尾部(appendRun/重调度链)不在内部 try 内,
+    // schedule 入口与递归补跑同样需要日志化 catch,否则 unhandledRejection
+    // 进进程止损计数(累计 5 次退出)。
+    const logScheduleTailFailure = (error: unknown): void => {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.schedule_background_failed",
+        message: `调度执行的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+        status: "error",
+        data: { automationJobId: latest.id }
       });
+    };
+    void executeJob(latest, "schedule", scheduledAt).then((run) => {
+      if (run.status !== "skipped") void refreshAutomationRunnerJobs();
+    }, logScheduleTailFailure);
+
   }, delay);
   jobDisposers.set(job.id, () => clearTimeout(timer));
 }
@@ -555,7 +563,45 @@ export async function runAutomationJobNow(input: AutomationRunNowInput): Promise
   if (!job.enabled) {
     throw new Error("任务已禁用，无法执行");
   }
-  return executeJob(job, "manual");
+  // review P2:连点防护——上一轮未结束时二次触发会写 skipped 记录并在首轮
+  // 完成后隐含一次 schedule 补跑,对用户表现为假成功 toast,入口即拒绝。
+  // 二轮 review P1:仅「新鲜」running 态才拒绝——崩溃+30s 内重启留下的
+  // running 孤儿(心跳冻结)必须放行,executeJob 的 tryAcquire 会偷锁自愈;
+  // 无脑读盘拒绝会把「重试即自愈」通道堵死,任务永久砖化。waiting_* 心跳
+  // 停摆是设计内(#587),维持拒绝由交互解决路径收尾。
+  const runtimeState = readAutomationRuntimeState(input.id);
+  const runtimeRunningLive =
+    runtimeState?.status === "running" && !isStaleRunningLease(runtimeState);
+  if (runningJobs.has(input.id) || runtimeRunningLive
+    || runtimeState?.status === "waiting_for_user" || runtimeState?.status === "waiting_for_approval") {
+    throw new Error("任务正在执行中，请等待完成后再试");
+  }
+  // #586:受理即返回回执，不同步等待回合完成——真实任务普遍超 desktop 45s RPC
+  // 超时，同步等待必然报 timed out 而任务实际在跑；完成经既有
+  // automation:run-completed 推送（useAutomationListeners 收到后自动刷新）。
+  // review P2:.catch 必须日志化——executeJob 尾部的 appendRun/通知/重调度链
+  // 不在内部 try 内（Windows rename EBUSY 高发），零痕迹吞掉会让失败不可诊断。
+  void executeJob(job, "manual").catch((error: unknown) => {
+    writeLogRecord({
+      level: "error",
+      context: "automation.runner",
+      event: "automation.run_now_background_failed",
+      message: `立即执行的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+      status: "error",
+      data: { automationJobId: job.id }
+    });
+  });
+  const now = Date.now();
+  return {
+    id: `run-now:${job.id}:${now}`,
+    jobId: job.id,
+    jobName: job.name,
+    trigger: "manual",
+    status: "running",
+    message: "已受理，正在后台执行",
+    startedAt: now,
+    finishedAt: now
+  };
 }
 
 export function resumeAutomationAfterInteraction(threadId: string): void {

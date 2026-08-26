@@ -253,7 +253,8 @@ function recoverSingleState(entry: { name: string }, states: AutomationRuntimeSt
 
 // 注：不能用 `state is AutomationRuntimeState` 类型谓词——state 非联合类型时
 // else-if 的反向收窄会产生 never；调用处沿用既有 `state!` 断言。
-function isStaleRunningLease(state: AutomationRuntimeState | null): boolean {
+export function isStaleRunningLease(state: AutomationRuntimeState | null): boolean {
+
   return Boolean(
     state?.status === "running"
     && state.lease

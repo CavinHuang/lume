@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
+import { toast } from 'sonner'
 import { acknowledgeRendererDelivery, onSidecarEvent, onSuggestionsChanged, sidecarCall } from '@/lib/desktop-api'
 import {
   agentStreamingStatesAtom,
@@ -221,20 +222,27 @@ export function useGlobalAgentListeners() {
               }, 1_600)
             }
           }
+          if (event.type === 'tool.permission_timeout') {
+            // 安全 F4:限定归属线程,防 provider 顺序 id 跨线程互摘横幅
+            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId, threadId))
+          }
+          // 线程删除触发 cancel 时 sidecar 以 deny("用户拒绝执行工具") 收口（#519），
+          // 跨线程展示的横幅同样需要摘除，否则残留至刷新（合并：F4 限域 + deny 条件）
           if (
-            event.type === 'tool.permission_timeout' ||
-            (event.type === 'tool.failed' && (
+            event.type === 'tool.failed' && (
               event.error.message.includes('工具权限确认超时')
-              // 线程删除触发 cancel 时 sidecar 以 deny("用户拒绝执行工具") 收口（#519），
-              // 跨线程展示的横幅同样需要摘除，否则残留至刷新
               || event.error.message.includes('用户拒绝执行工具')
-            ))
+            )
           ) {
-            const requestId = event.type === 'tool.permission_timeout' ? event.requestId : event.toolCallId
-            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, requestId))
+            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.toolCallId, threadId))
+          }
+          // #560:MCP 连接失败等运行环境警告投影——原本只进 system prompt 用户不可见。
+          // review P2:以事件 id 作 sonner 聚合键,常驻坏 server 不每 run 刷屏
+          if (event.type === 'runtime.warning') {
+            toast.warning(event.message, { id: event.id })
           }
           if (event.type === 'permission.resolved') {
-            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId))
+            setPendingInteractive((prev) => removePendingToolPermissionEverywhere(prev, event.requestId, threadId))
           }
           if (
             event.type === 'assistant.delta' ||

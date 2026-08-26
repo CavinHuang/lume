@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";

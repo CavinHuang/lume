@@ -42,7 +42,7 @@ describe("prepareRuntimeCoreAttempt", () => {
       },
     })).resolves.toEqual({
       status: "errored",
-      errorMessage: "runtime-core 未找到可用渠道。",
+      errorMessage: "未找到可用渠道。请到设置 → 连接配置检查渠道是否启用、模型是否可用。",
     });
   });
 
@@ -66,7 +66,7 @@ describe("prepareRuntimeCoreAttempt", () => {
       },
     })).resolves.toEqual({
       status: "errored",
-      errorMessage: "runtime-core 当前连接没有已启用的对话模型。",
+      errorMessage: "当前渠道没有已启用的对话模型。请到设置 → 连接配置启用至少一个对话模型。",
     });
   });
 });

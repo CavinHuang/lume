@@ -358,7 +358,13 @@ export function AutomationManagementView() {
                 setSelectedJobId(null)
               }}
               onRun={async () => {
-                await runAutomationJobNow(selectedJob.id)
+                // #586:受理即返回，完成靠 automation:run-completed 推送刷新
+                try {
+                  await runAutomationJobNow(selectedJob.id)
+                  toast.success('已在后台执行，可在运行历史中查看结果')
+                } catch (error) {
+                  toast.error(`触发失败：${error instanceof Error ? error.message : String(error)}`)
+                }
               }}
               onSave={async (draft) => {
                 const updated = await updateAutomationJob({
@@ -638,7 +644,13 @@ function AutomationJobGroup({
                   setJobs((prev) => prev.filter((j) => j.id !== job.id))
                 }}
                 onRun={async () => {
-                  await runAutomationJobNow(job.id)
+                  // #586:受理即返回，完成靠 automation:run-completed 推送刷新
+                  try {
+                    await runAutomationJobNow(job.id)
+                    toast.success('已在后台执行，可在运行历史中查看结果')
+                  } catch (error) {
+                    toast.error(`触发失败：${error instanceof Error ? error.message : String(error)}`)
+                  }
                 }}
               />
             )
