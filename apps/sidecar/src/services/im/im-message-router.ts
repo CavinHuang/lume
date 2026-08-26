@@ -941,6 +941,8 @@ export async function routeInboundImMessage(
   // 路由对不存在线程抛错——WS 渠道静默丢消息，微信渠道 cursor 不推进陷入
   // 每秒重投死循环；归档线程则更隐蔽——消息照常回答但桌面列表里看不到(#588)
   let existing = getImThreadBindingByPeer(message);
+  // 二轮 review(动线 F7):换绑发生时向 IM 用户补发告知——上下文清零不该无人知道
+  let staleRebind = false;
   const existingMeta = existing ? (deps.getThreadMeta ?? getAgentThreadMeta)(existing.threadId) : null;
   // status 缺省视为活跃（存量数据/部分 meta 无该字段），仅明确归档/回收站才换绑
   if (existing
@@ -955,6 +957,7 @@ export async function routeInboundImMessage(
     });
     deleteImThreadBindingByPeer(message);
     existing = null;
+    staleRebind = true;
   }
   const approvalCommand = parseImApprovalCommand(message.text);
   if (existing && approvalCommand.type !== "none") {
@@ -985,6 +988,20 @@ export async function routeInboundImMessage(
     threadId: thread.id,
     contextToken: message.contextToken
   });
+
+  if (staleRebind) {
+    // 尽力补发,失败不影响消息路由主链路
+    const notify = deps.sendBoundTextMessage ?? sendBoundImTextMessage;
+    void notify({
+      binding,
+      text: "原会话已被桌面端删除或归档，已为你新建会话（上下文从头开始）。"
+    }).catch((error) => {
+      log.warn("换绑告知发送失败", {
+        threadId: binding.threadId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }
 
   await updateThreadSourceMeta(binding.threadId, message, deps);
 

@@ -252,6 +252,7 @@ describe("im-message-router", () => {
 
     const createdThreads: string[] = [];
     const sent: AgentSendInput[] = [];
+    const notices: string[] = [];
     await routeInboundImMessage({
       provider: "weixin",
       accountId: "account-1",
@@ -268,11 +269,17 @@ describe("im-message-router", () => {
       },
       sendMessage(input) {
         sent.push(input);
+      },
+      sendBoundTextMessage: async (input) => {
+        notices.push(input.text);
+        return { ok: true };
       }
     });
 
     expect(createdThreads).toEqual(["thread-new-1"]);
     expect(sent.map((item) => item.threadId)).toEqual(["thread-new-1"]);
+    // 动线 F7 钉:换绑时向 IM 用户告知上下文已清零
+    expect(notices.some((text) => text.includes("新建会话"))).toBeTrue();
     // 换绑后旧绑定不再指向归档线程
     const rebound = getImThreadBindingByPeer({
       provider: "weixin",

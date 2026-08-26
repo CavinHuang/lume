@@ -16,6 +16,8 @@ import { Button } from '@/components/ui/button'
 interface PermissionBannerProps {
   threadId: string
   request: AgentToolPermissionRequest
+  /** 收起态上浮(动线 F3):父级据此放行被遮蔽的输入框 */
+  onHiddenChange?: (hidden: boolean) => void
 }
 
 export function buildToolPermissionSubmission(input: {
@@ -36,7 +38,7 @@ export function buildToolPermissionSubmission(input: {
   }
 }
 
-export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
+export function PermissionBanner({ threadId, request, onHiddenChange }: PermissionBannerProps) {
   const setPending = useSetAtom(agentPendingInteractiveAtom)
   const setThreadPermissionModes = useSetAtom(agentThreadPermissionModesAtom)
   const [choice, setChoice] = useState<AgentToolPermissionDecision>('allow_once')
@@ -69,6 +71,10 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
     setBusy(false)
     setError(null)
   }, [threadId, request.requestId])
+
+  useEffect(() => {
+    onHiddenChange?.(hidden)
+  }, [hidden, onHiddenChange])
 
   useEffect(() => {
     if (!canAllowAlways && choice === 'allow_always') {
@@ -106,7 +112,7 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
         }
         toast.success(scopeCopy[allowScope])
       }
-      setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId))
+      setPending((prev) => removePendingToolPermissionEverywhere(prev, request.requestId, threadId))
     } catch (err) {
       // Release 构建无 DevTools，把提交失败直接显示在卡片上，便于定位（会话不匹配 / 请求已失效等）。
       console.error('[PermissionBanner] submit failed', err)
@@ -243,7 +249,22 @@ export function PermissionBanner({ threadId, request }: PermissionBannerProps) {
           </div>
         </div>
         {canAllowAlways && choice === 'allow_always' && (
-          <div role="radiogroup" aria-label="始终允许的范围" className="ml-2 space-y-1">
+          <div
+            role="radiogroup"
+            aria-label="始终允许的范围"
+            className="ml-2 space-y-1"
+            onKeyDown={(event) => {
+              // 动线 F10:radio 惯例——上下方向键在档位间移动
+              if (event.key !== 'ArrowDown' && event.key !== 'ArrowUp') return
+              event.preventDefault()
+              const group = event.currentTarget
+              const options = Array.from(group.querySelectorAll<HTMLButtonElement>('[role="radio"]'))
+              const index = options.indexOf(document.activeElement as HTMLButtonElement)
+              const next = options[(index + (event.key === 'ArrowDown' ? 1 : options.length - 1)) % options.length]
+              next?.focus()
+              next?.click()
+            }}
+          >
             {([
               { value: 'exact', label: '仅此调用', hint: '逐字节相同才免审批' },
               ...(hasCommandInput ? [{ value: 'command', label: '相同命令', hint: '同一命令、参数可变' }] : []),

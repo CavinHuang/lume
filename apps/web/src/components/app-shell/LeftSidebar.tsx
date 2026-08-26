@@ -211,12 +211,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   }
 
   const openSettings = () => {
-    const settingsId = '__settings__'
-    setActiveTabId(settingsId)
-
-    if (!tabs.find((tab) => tab.id === settingsId)) {
-      setTabs((previous) => [...previous, { id: settingsId, type: 'settings', title: '设置' }])
-    }
+    openSettingsTab(setTabs, setActiveTabId)
   }
 
   useEffect(() => {
@@ -578,6 +573,18 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
       />
     </>
   )
+}
+
+/** 打开设置 tab(动线 F6):供 ErrorBanner 等组件复用「一键到设置」 */
+export function openSettingsTab(
+  setTabs: (update: (tabs: Tab[]) => Tab[]) => void,
+  setActiveTabId: (id: string) => void,
+): void {
+  const settingsId = '__settings__'
+  setActiveTabId(settingsId)
+  setTabs((previous) => previous.some((tab) => tab.id === settingsId)
+    ? previous
+    : [...previous, { id: settingsId, type: 'settings' as const, title: '设置' }])
 }
 
 export function upsertWelcomeTab(tabs: Tab[], currentWorkspaceId: string | null): Tab[] {

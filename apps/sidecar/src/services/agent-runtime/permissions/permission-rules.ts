@@ -18,13 +18,25 @@ export function extractPermissionPath(input: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+export function extractPermissionUrl(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  const value = record.url ?? record.baseUrl;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 export function buildPermissionFingerprint(input: {
   descriptor: LumeToolDescriptor;
   rawInput: unknown;
 }): string {
   const command = extractPermissionCommand(input.rawInput);
   const path = extractPermissionPath(input.rawInput);
-  const key = command ?? path ?? stableStringify(input.rawInput);
+  const url = extractPermissionUrl(input.rawInput);
+  const base = command ?? path ?? stableStringify(input.rawInput);
+  // 二轮 review(安全 F2):url 不入指纹会让 prompt 键控工具(web_fetch 类)
+  // 按相同文本放行任意主机(SSRF/外带)。url 与主键不同时并入;不同 URL 的
+  // 指纹互不为前缀,command 档词边界天然收紧。
+  const key = url && url !== base ? `${base}|${url}` : base;
   return `${input.descriptor.canonicalName}:${key}`;
 }
 

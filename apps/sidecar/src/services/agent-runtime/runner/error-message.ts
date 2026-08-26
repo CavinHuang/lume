@@ -24,7 +24,8 @@ const RULES: ErrorCopyRule[] = [
     render: () => "渠道没有可用的 API Key。请到设置 → 连接配置补全后重试。",
   },
   {
-    match: (raw) => raw.startsWith("connection_oauth_credential_unavailable"),
+    // 冒号/空白/结尾为界——兼容 #595 降级消息的「码: 细节」形态,不误伤连字符标识
+    match: (raw) => /^connection_oauth_credential_unavailable(?::|\s|$)/u.test(raw),
     render: () => "订阅账号凭据不可用（可能已过期或被吊销）。请到设置 → 连接配置重新登录授权。",
   },
   {

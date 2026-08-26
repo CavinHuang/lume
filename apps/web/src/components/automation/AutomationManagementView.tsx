@@ -1082,7 +1082,7 @@ function AutomationJobDetail({
                     <div
                       key={run.id}
                       onClick={clickable ? () => handleOpenRunReplay(run) : undefined}
-                      title={clickable ? '查看会话回放' : '无可查看的会话'}
+                      title={[run.message, clickable ? '查看会话回放' : '无可查看的会话'].filter(Boolean).join(' · ')}
                       className={`flex items-center gap-2.5 rounded-[6px] px-1.5 py-1 ${
                         clickable ? 'cursor-pointer transition-colors hover:bg-[var(--surface-2)]' : ''
                       }`}
