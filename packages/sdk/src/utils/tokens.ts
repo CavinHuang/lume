@@ -21,7 +21,7 @@ let messageTokenCache = new WeakMap<object, number>()
 /**
  * Rough token estimation.
  *
- * Prefers native tiktoken counting (exact ≤8KB; chunked approximation for
+ * Prefers native tiktoken counting (exact ≤8K UTF-16 code units; chunked approximation for
  * larger inputs, see countTokensNativeChunked). Falls back to a character
  * heuristic when natives are unavailable: ASCII-heavy text is roughly
  * 4 chars/token, while CJK and emoji-like codepoints are closer to 1
@@ -57,9 +57,10 @@ export function estimateTokens(text: string): number {
  * 硬切把单次 encode 规模压回线性安全区——8K code units 下 1MiB 单行实测
  * ~2.4s，漂移仅 +0.009%（曾试过换行优先切块：空白密集 markdown 反而
  * +6~10%，因空行游程被人工打断丢失 BPE 合并；定长硬切两项全优故弃之）。
- * LIMIT 按 JS string 的 UTF-16 code unit 计（非字节）：CJK 文本同长度下
- * 实际字节数更高，只会更早进入分块，方向安全。近似只服务阈值/展示估算，
- * 恒保守多计无资源越界风险。
+ * LIMIT 按 JS string 的 UTF-16 code unit 计（非字节）：CJK 文本同单位数下
+ * 实际字节数至多 3×，单次 encode 规模上限实为 ~24KB 字节而非 8KB；该余量
+ * 仍远低于病态区，且更大切块减少 BPE 打断、漂移只减不增，方向安全。
+ * 近似只服务阈值/展示估算，恒保守多计无资源越界风险。
  */
 const TOKEN_NATIVE_PIECE_LIMIT = 8 * 1024
 
