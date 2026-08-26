@@ -1198,6 +1198,8 @@ const lumeConfigPermissionRuleSchema = z
     commandPattern: z.string().optional(),
     pathPattern: z.string().optional(),
     action: z.enum(["allow", "ask", "deny"]),
+    // scope 字段已从类型层删除（#519，判定逻辑从不读取）：schema 暂保留 optional
+    // 以兼容旧渲染层 bundle 发来的含 scope payload（strict 下同步删除会拒收），过渡期后可移除
     scope: z.enum(["session", "workspace", "global"]).optional(),
   })
   .strict();

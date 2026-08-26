@@ -22,9 +22,11 @@ import { getEffectiveSystemConfig } from "../system/system-config-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getNextAutomationRunAt } from "./automation-schedule";
 import { writeLogRecord } from "../infra/logger";
+import { getLostAutomationRuns, recordLostAutomationRun } from "./automation-lost-runs";
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
 import { readRoutine } from "../routine/routine-store";
 import {
+  STALE_LEASE_MS,
   consumeLatestAutomationTrigger,
   finishAutomationLease,
   heartbeatAutomationLease,
@@ -49,22 +51,21 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 }
 
 function appendRun(run: AutomationRun): void {
+  // runs.jsonl 写失败（盘满/Windows EBUSY）不得让 fire-and-forget 的 executeJob 变成
+  // unhandledRejection 断掉后续调度链（#615）：降级记日志+影子记录，放弃本次 run 记录
   const runsPath = getAutomationRunsPath();
   try {
     appendFileSync(runsPath, `${JSON.stringify(run)}\n`, "utf-8");
     rotateAutomationRunsIfBloated(runsPath);
   } catch (error) {
-    // #615①:runs.jsonl 写失败(盘满/EBUSY)不得让 executeJob promise reject——
-    // 三处调用方全是 void 发射无 catch,reject 即 unhandledRejection 且 then 链
-    // (refreshAutomationRunnerJobs/合并触发器)断裂。降级仅记日志。
+    recordLostAutomationRun(run);
     writeLogRecord({
-      level: "warn",
-      kind: "trace",
-      context: "agent.delivery.automation",
-      event: "automation.run_persist_failed",
-      message: "failed to persist automation run record",
+      level: "error",
+      context: "automation.runner",
+      event: "automation.run_append_failed",
+      message: "自动化运行记录落盘失败，已跳过（不影响任务状态推进）",
       status: "error",
-      data: { automationJobId: run.jobId, runId: run.id, trigger: run.trigger, error: error instanceof Error ? error.message : String(error) }
+      data: { automationJobId: run.jobId, runId: run.id, error: error instanceof Error ? error.message : String(error) }
     });
   }
 }
@@ -185,7 +186,19 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   const runId = randomUUID();
   const lease = tryAcquireAutomationLease({ jobId: job.id, scheduledAt, runId });
   if (!lease || runningJobs.has(job.id)) {
-    mergeLatestAutomationTrigger(job.id, scheduledAt);
+    try {
+      mergeLatestAutomationTrigger(job.id, scheduledAt);
+    } catch (error) {
+      // 盘满等写失败不得让 fire-and-forget 的 executeJob reject 断掉调度链（#615 review round5）
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.trigger_merge_failed",
+        message: "合并待执行触发落盘失败",
+        status: "error",
+        data: { automationJobId: job.id, error: error instanceof Error ? error.message : String(error) }
+      });
+    }
     const skipped: AutomationRun = {
       id: runId,
       jobId: job.id,
@@ -202,7 +215,19 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
 
   runningJobs.add(job.id);
   const heartbeat = setInterval(() => {
-    heartbeatAutomationLease(lease, threadId);
+    // 定时器回调抛错即 uncaughtException 直通五击止损（盘满场景 5s 内必现），必须就地兜底
+    try {
+      heartbeatAutomationLease(lease, threadId);
+    } catch (error) {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.heartbeat_failed",
+        message: "自动化任务心跳续期失败（lease 可能被 stale 自愈回收）",
+        status: "error",
+        data: { automationJobId: job.id, error: error instanceof Error ? error.message : String(error) }
+      });
+    }
   }, 5_000);
   heartbeat.unref?.();
   let threadId: string | undefined;
@@ -405,7 +430,8 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   }
   if (run.status !== "waiting_for_user" && run.status !== "waiting_for_approval" && job.schedule.type !== "once") {
     const pendingScheduledAt = consumeLatestAutomationTrigger(job.id);
-    if (pendingScheduledAt !== undefined) {
+    // runnerStarted 门控：stop 后的关停窗口孵化新 run 只会被 process.exit 中途杀死（round12 生命周期 review）
+    if (pendingScheduledAt !== undefined && runnerStarted) {
       const latest = listAutomationJobs().find((item) => item.id === job.id);
       // 二轮 review P3:void 递归不在任何外层 catch 链上,尾部失败须就地日志化
       if (latest?.enabled) {
@@ -445,8 +471,12 @@ function scheduleJob(job: AutomationJob): void {
 function scheduleJobInner(job: AutomationJob): void {
   if (!job.enabled) return;
   const runtimeState = readAutomationRuntimeState(job.id);
+  // running 态若心跳已超阈（快速重启 <30s 后 fresh lease 不触发启动期 recover），
+  // 放行调度使 tryAcquire 的 stale 自愈得以触达——否则任务静默停摆至下一次完整重启（round12 生命周期 review）
+  const runningLeaseStale = runtimeState?.status === "running"
+    && Boolean(runtimeState.lease && Date.now() - runtimeState.lease.heartbeatAt > STALE_LEASE_MS);
   if (runningJobs.has(job.id)
-    || runtimeState?.status === "running"
+    || (runtimeState?.status === "running" && !runningLeaseStale)
     || runtimeState?.status === "waiting_for_user"
     || runtimeState?.status === "waiting_for_approval") {
     return;
@@ -597,8 +627,18 @@ export function resumeAutomationAfterInteraction(threadId: string): void {
   });
   const pendingScheduledAt = consumeLatestAutomationTrigger(state.jobId);
   const latest = listAutomationJobs().find((job) => job.id === state.jobId);
-  if (pendingScheduledAt !== undefined && latest?.enabled && latest.schedule.type !== "once") {
-    void executeJob(latest, "schedule", pendingScheduledAt);
+  // runnerStarted 门控：关停窗口不得孵化新 run（round12 生命周期 review）
+  if (pendingScheduledAt !== undefined && latest?.enabled && latest.schedule.type !== "once" && runnerStarted) {
+    void executeJob(latest, "schedule", pendingScheduledAt).catch((error) => {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.execute_rejected",
+        message: "自动化任务执行链异常终止",
+        status: "error",
+        data: { automationJobId: state.jobId, error: error instanceof Error ? error.message : String(error) }
+      });
+    });
   } else {
     void refreshAutomationRunnerJobs();
   }
@@ -616,16 +656,17 @@ function parseRunLine(line: string): AutomationRun | null {
 }
 
 export function listAutomationRuns(input: AutomationListRunsInput = {}): AutomationRun[] {
-  const path = getAutomationRunsPath();
-  if (!existsSync(path)) return [];
   const limit = Math.max(1, Math.min(input.limit ?? 50, 200));
-  const lines = readFileSync(path, "utf-8").split("\n");
-  const runs: AutomationRun[] = [];
-  for (const line of lines) {
-    const run = parseRunLine(line);
-    if (!run) continue;
-    if (input.jobId && run.jobId !== input.jobId) continue;
-    runs.push(run);
+  const runs: AutomationRun[] = [...getLostAutomationRuns()];
+  const path = getAutomationRunsPath();
+  if (existsSync(path)) {
+    const lines = readFileSync(path, "utf-8").split("\n");
+    for (const line of lines) {
+      const run = parseRunLine(line);
+      if (!run) continue;
+      runs.push(run);
+    }
   }
-  return runs.sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
+  const filtered = input.jobId ? runs.filter((run) => run.jobId === input.jobId) : runs;
+  return filtered.sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
 }

@@ -512,6 +512,8 @@ export function stopPersistedWorker(job: ProcessJob): boolean {
       stdio: 'ignore',
       windowsHide: true,
     })
+    // 无监听的 error 事件计入 sidecar uncaughtException 五击止损（#548 同类）
+    child.once('error', () => {})
     child.unref()
     return true
   }

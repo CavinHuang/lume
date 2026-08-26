@@ -1374,7 +1374,10 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
           )}
           {publishState && !publishState.available && (
             <div className="mx-3 mb-3 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-3 py-3 text-[12px] text-[var(--lume-text-secondary)]">
-              {publishState.reason}
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">{publishState.reason}</span>
+                {!publishBusy && <Button variant="ghost" size="xs" onClick={() => void loadPublishState()}>重试</Button>}
+              </div>
             </div>
           )}
           {publishState?.available && (

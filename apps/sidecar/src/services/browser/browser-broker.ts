@@ -289,6 +289,7 @@ export class BrowserBroker {
     void settled.finally(() => {
       if (this.queues.get(queueKey) === settled) this.queues.delete(queueKey)
     })
+
     return current.catch((error) => { throw new Error(stableBrowserErrorCode(error)) })
   }
   // agentBrowserUseEnabled=false(设置「允许 Browser Use」关)时返回空:isEnabled
