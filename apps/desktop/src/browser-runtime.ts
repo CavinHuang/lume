@@ -611,40 +611,14 @@ export class BrowserRuntime {
 
   resetAgentCursor(): void { this.hideAgentCursor() }
 
-  // 用户接管是会话级暂停：同 session 任意 tab 处于 paused_by_user 时，
-  // Agent 不得开新 Tab 或认领其他 Tab 绕开暂停继续操作。
-  private hasPausedTakeoverTab(browserSessionId: string): boolean {
-    for (const tab of this.tabs.values()) {
-      if (tab.agentLease?.browserSessionId === browserSessionId && tab.agentControlState === "paused_by_user") return true
-    }
-    return false
-  }
-
-  // 共同操作模式：用户输入不再触发接管暂停，paused_by_user 仅保留为协议兼容状态（当前无置入路径）。
-  private resumeAgentControl(tabId: string, context: BrowserRequestContext): BrowserTabDescriptor {
-    if (context.actor !== "user") throw browserError("action_denied")
-    const tab = this.tabs.get(tabId)
-    if (!tab || tab.agentControlState !== "paused_by_user" || !tab.agentLease) throw browserError("invalid_browser_request")
-    tab.agentControlState = "active"
-    if (tab.handoff?.reason === "user_takeover") tab.handoff = undefined
-    tab.generation += 1
-    tab.inputSequence += 1
-    tab.agentLease = { ...tab.agentLease, generation: tab.generation }
-    this.inputLedger.clear(tab.tabId)
-    this.options.emit({ method: "browser:agent-control-resumed", params: { tabId: tab.tabId, generation: tab.generation } })
-    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
-    this.rememberTab(tab)
-    return publicTab(tab)
-  }
-
   private expectedAgentInputSender(tab: BrowserTab, sender: BrowserCdpCommandSender): BrowserCdpCommandSender {
     if (!tab.agentDispatching) return sender
     return {
       sendCommand: async (method, params = {}) => {
-        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
+        // #610:paused_by_user 无置入路径(共同操作模式下用户输入不再触发接管),
+        // 接管期中断检查已死——epoch 仲裁由输入队列在动作入队时完成
         this.inputLedger.expectCommand(tab.tabId, method, params)
         const result = await sender.sendCommand(method, params)
-        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
         return result
       },
     }
@@ -668,7 +642,6 @@ export class BrowserRuntime {
     const deadline = Date.now() + 300
     let idlePolls = 0
     do {
-      if (agent && agentControlPaused(tab)) throw browserError("user_takeover_required")
       // #605：hover 等无效果动作原实现固定 50ms 轮询烧满 deadline；首个效果的检出延迟不变（首轮仍
       // 50ms），连续空轮拉长间隔以减少空转 CDP 往返。
       await delay(idlePolls < 2 ? 50 : 125)
@@ -796,7 +769,6 @@ export class BrowserRuntime {
     }
     if (method.startsWith("workspace:")) return this.dispatchWorkspace(method, params, context)
     if (method === "ensure") {
-      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
       return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
     }
     if (method === "mount:prepare") return this.prepareGuestMount(String(params.tabId ?? context.tabId ?? ""), context)
@@ -813,15 +785,9 @@ export class BrowserRuntime {
     if (method === "share") return this.shareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "unshare") return this.unshareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "claim") {
-      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
       return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
     }
     if (method === "close") {
-      // 被用户接管的 Tab 所有权已转移，Agent 不得关闭用户正在查看的页面
-      if (context.actor === "agent") {
-        const closeTarget = this.tabs.get(String(params.tabId ?? context.tabId ?? ""))
-        if (closeTarget?.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
-      }
       return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
     }
     if (method === "bounds") return this.updateBounds(String(params.tabId ?? context.tabId ?? ""), params)
@@ -912,10 +878,9 @@ export class BrowserRuntime {
       if (context.actor !== "user") throw browserError("action_denied")
       return this.annotations.migrate(params.sessions)
     }
-    if (method === "agentControl:resume") return this.resumeAgentControl(String(params.tabId ?? context.tabId ?? ""), context)
-
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
-    if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+    // #610:paused_by_user 相关接管检查已随置入路径移除——该状态自共同操作模式
+    // (PR#488)后无任何写入方,字段仅保留协议兼容且恒为 active
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
@@ -930,7 +895,6 @@ export class BrowserRuntime {
       return this.actionQueue.run(queueKey, async () => {
         if (this.tabs.get(tab.tabId) !== tab) throw browserError("tab_not_found")
         if (tab.generation !== queuedGeneration) throw browserError("stale_target")
-        if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
         if (context.actor === "agent" && !canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation)) throw browserError("action_denied")
         const operationId = request.idempotencyKey || request.requestId || randomUUID()
         this.journal.write({
@@ -951,7 +915,6 @@ export class BrowserRuntime {
         }
         try {
           const result = await this.dispatchAction(tab, method, params, context)
-          if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
           this.journal.write({
             operationId,
             method,
@@ -4542,8 +4505,6 @@ function claimSnapshotKey(context: BrowserRequestContext, tabId: string): string
 function canContextUseTab(tab: BrowserTab, context: BrowserRequestContext): boolean {
   return context.actor === "user" || (canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation) && (!context.tabId || context.tabId === tab.tabId))
 }
-
-function agentControlPaused(tab: BrowserTab): boolean { return tab.agentControlState === "paused_by_user" }
 
 function annotationThreadId(tab: BrowserTab, params: Record<string, unknown>): string {
   const value = typeof params.threadId === "string" ? params.threadId.trim() : (tab.ownerThreadId ?? "")
