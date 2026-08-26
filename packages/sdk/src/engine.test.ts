@@ -1785,7 +1785,38 @@ describe("QueryEngine context controller", () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: "result",
       subtype: "error_during_execution",
-      is_error: true
+      is_error: true,
+      errors: [expect.stringContaining("auto-compaction recovery attempted 1 time(s)")]
+    }));
+  });
+
+  test("non-prompt-too-long errors carry no recovery suffix (#725 review R9)", async () => {
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        const error = new Error("invalid api key") as Error & { status: number };
+        error.status = 401;
+        throw error;
+      }
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    const events = await collectEvents(engine, "current task");
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "result",
+      subtype: "error_during_execution",
+      errors: ["invalid api key"]
     }));
   });
 
