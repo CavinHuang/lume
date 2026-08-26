@@ -120,7 +120,9 @@ describe("coding diagnostics", () => {
       expect(outcome).not.toBeNull();
       const probeMatch = /PROBE:(\{.*\})/.exec(outcome?.stderrTail ?? "");
       expect(probeMatch).not.toBeNull();
-      const probe = JSON.parse(probeMatch![1]) as { asNode: boolean; prettyInArgv: boolean };
+      const probeJson = probeMatch![1];
+      if (!probeJson) throw new Error("probe payload missing");
+      const probe = JSON.parse(probeJson) as { asNode: boolean; prettyInArgv: boolean };
       expect(probe.asNode).toBe(true);
       expect(probe.prettyInArgv).toBe(true);
     } finally {
