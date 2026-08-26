@@ -308,7 +308,7 @@ export function PermissionSettings() {
           </div>
           <Switch
             checked={projectInstructionsEnabled}
-            disabled={saving === 'projectInstructions'}
+            disabled={saving !== null}
             onCheckedChange={(checked) => void handleProjectInstructionsEnabledChange(checked)}
           />
         </div>

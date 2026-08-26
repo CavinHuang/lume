@@ -15,6 +15,8 @@ export interface LumeConfigAgentSection {
    */
   thinkingLevel?: LumeConfigThinkingLevel
   followUpQueueMode?: AgentFollowUpMode
+  /** #566:turn_limited 自动续跑轮数上限（默认 3；0 = 关闭自动续跑） */
+  maxAutoTurnContinuations?: number
   /** 项目指令文件（CLAUDE.md/AGENTS.md）自动注入开关；缺省视为 true。 */
   projectInstructionsEnabled?: boolean
 }
@@ -53,14 +55,6 @@ export interface LumeConfigComputerUseStrategy {
   agentSurface?: ComputerUseAgentSurface
   skyModelRefs?: string[]
   visionModelRefs?: string[]
-}
-
-export interface LumeConfigAgentSection {
-  permissionMode?: LumeConfigPermissionMode
-  thinkingLevel?: LumeConfigThinkingLevel
-  followUpQueueMode?: AgentFollowUpMode
-  /** #566:turn_limited 自动续跑轮数上限（默认 3；0 = 关闭自动续跑） */
-  maxAutoTurnContinuations?: number
 }
 
 export interface LumeConfigSkillsSection {

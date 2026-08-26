@@ -143,8 +143,10 @@ export function WelcomeView({
     getEffectiveLumeConfig(configWorkspaceSlug)
       .then((config) => {
         if (!cancelled) {
+          // M4 无条件复位：未配置的工作区必须清掉上一工作区残留的档位，
+          // 否则「未配置不携带」语义在欢迎页入口面失效（#670 review F2）
+          configThinkingLevelRef.current = config.agent?.thinkingLevel
           if (config.agent?.thinkingLevel) {
-            configThinkingLevelRef.current = config.agent.thinkingLevel
             setThinkingLevel(config.agent.thinkingLevel)
           }
           if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
@@ -161,8 +163,8 @@ export function WelcomeView({
       getEffectiveLumeConfig(configWorkspaceSlug)
         .then((config) => {
           if (!cancelled) {
+            configThinkingLevelRef.current = config.agent?.thinkingLevel
             if (config.agent?.thinkingLevel) {
-              configThinkingLevelRef.current = config.agent.thinkingLevel
               setThinkingLevel(config.agent.thinkingLevel)
             }
             if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
@@ -631,7 +633,8 @@ export function WelcomeView({
     configThinkingLevelRef.current = value
     setThinkingLevel(value)
     try {
-      await updateAgentThinkingLevel(value)
+      // M6 同族：显示读工作区有效值，保存也须落同一层，否则 CHANGED 回流弹回 override
+      await updateAgentThinkingLevel(value, configWorkspaceSlug)
     } catch (error) {
       console.error('[WelcomeView] 保存思考等级失败:', error)
       toast.error('保存思考等级失败')
