@@ -107,7 +107,9 @@ describe("FileStateCache canonical path identity", () => {
     expect(clone.get(filePath)).toBeDefined()
   })
 
-  test("case folding composes with symlink canonicalization", async () => {
+  // 大小写折叠 × symlink 叠加仅在大小写不敏感文件系统(darwin/win32)成立:
+  // Linux 敏感盘上大写拼写本就不指向同一文件,不命中是正确行为(CI Ubuntu 实证)
+  test.skipIf(process.platform === "linux")("case folding composes with symlink canonicalization", async () => {
     // macOS/Windows 不敏感盘:toPathKey 折叠大小写,camelize 目录经 symlink
     // 访问时两种拼写、两种大小写必须全部命中同一条目
     const root = await mkdtemp(join(tmpdir(), "lume-filecache-case-"))
