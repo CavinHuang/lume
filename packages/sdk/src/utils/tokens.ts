@@ -20,9 +20,12 @@ let messageTokenCache = new WeakMap<object, number>()
 /**
  * Rough token estimation.
  *
- * ASCII-heavy text is roughly 4 chars/token, while CJK and emoji-like
- * codepoints are closer to 1 char/token. This keeps live context estimates from
- * badly undercounting Chinese/Japanese/Korean prompts.
+ * Prefers native tiktoken counting (exact ≤8KB; chunked approximation for
+ * larger inputs, see countTokensNativeChunked). Falls back to a character
+ * heuristic when natives are unavailable: ASCII-heavy text is roughly
+ * 4 chars/token, while CJK and emoji-like codepoints are closer to 1
+ * char/token — keeps live context estimates from badly undercounting
+ * Chinese/Japanese/Korean prompts.
  */
 export function estimateTokens(text: string): number {
   if (!text) return 0
@@ -53,7 +56,8 @@ export function estimateTokens(text: string): number {
  * 换行切块、单块超限再定长硬切；块内二次分量使总成本 ∝ N×LIMIT——8KB 时
  * 1MiB 单行实测从 ~10min 冻结降到 ~2.4s（napi 单调用开销仅 ~1.5µs，调小近乎免费）。
  * 近似口径（#738 review 实测）：跨块边界丢失 BPE 合并致恒保守多计——多行
- * 散文约 +1~3%（每边界 ≤1），极端纯换行串因逐分隔符成块可放大数倍；本
+ * 散文 +0~3%（每边界 ≤1）、空白密集 markdown 实测 ~+6%，极端纯换行串因
+ * 逐分隔符成块可放大一个数量级（16× 实测）；方向恒保守多计。本
  * 计数只服务阈值/展示估算，保守方向无资源越界风险。
  */
 const TOKEN_NATIVE_PIECE_LIMIT = 8 * 1024
