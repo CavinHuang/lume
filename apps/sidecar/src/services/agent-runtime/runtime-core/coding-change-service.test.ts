@@ -36,6 +36,21 @@ function createGitWorkspace(root: string, content: string): void {
   execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
 }
 
+// bun 1.3.14 Windows：expect().rejects 匹配器与部分被拒 promise 组合会无限挂死；
+// 此助手为 rejects.toThrow 的等价实现（未拒绝/消息不符均必败且输出实际错误）
+async function expectReject(promise: Promise<unknown>, messagePart?: string): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  if (messagePart !== undefined) {
+    expect((caught as Error).message).toContain(messagePart);
+  }
+}
+
 afterEach(() => {
   for (const directory of tempDirs.splice(0)) rmSync(directory, { recursive: true, force: true });
 });
@@ -333,13 +348,13 @@ describe("coding-change-service", () => {
     expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: root, encoding: "utf8" }).trim())
       .toBe("src/index.ts");
 
-    await expect(applyCodingDiffAction(root, {
+    await expectReject(applyCodingDiffAction(root, {
       threadId: "thread-test",
       path: "src/index.ts",
       scope: "file",
       action: "unstage",
       expectedDiffHash: unstaged.diffHash,
-    })).rejects.toThrow("刷新 Diff");
+    }), "刷新 Diff");
 
     const staged = await getCodingFileDiff(root, "src/index.ts");
     if (staged.kind !== "text") throw new Error("expected text diff");
@@ -406,12 +421,12 @@ describe("coding-change-service", () => {
     ]);
     writeFileSync(join(root, "src", "second.ts"), "export const second = 'newer';\n");
 
-    await expect(applyCodingDiffAction(root, {
+    await expectReject(applyCodingDiffAction(root, {
       threadId: "thread-test",
       scope: "section",
       action: "stage",
       files: diffs.map((file) => ({ path: file.path, expectedDiffHash: file.diffHash })),
-    })).rejects.toThrow("刷新 Diff");
+    }), "刷新 Diff");
     expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: root, encoding: "utf8" }).trim())
       .toBe("");
   }, 30_000);
@@ -457,7 +472,7 @@ describe("coding-change-service", () => {
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 1;\n");
 
-    await expect(getCodingFileOpenTargets(root, "../outside.ts")).rejects.toThrow("超出项目目录");
+    await expectReject(getCodingFileOpenTargets(root, "../outside.ts"), "超出项目目录");
   }, 30_000);
 
   test("仅提交已暂存内容并将当前分支推送到 upstream", async () => {
@@ -537,7 +552,7 @@ describe("coding-change-service", () => {
     if (!state.available) throw new Error(state.reason);
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'newer';\n");
 
-    await expect(applyCodingRepositoryPublishAction(root, {
+    await expectReject(applyCodingRepositoryPublishAction(root, {
       threadId: "thread-test",
       action: "commit",
       message: "test: stale worktree",
@@ -546,7 +561,7 @@ describe("coding-change-service", () => {
       expectedIndexHash: state.indexHash,
       includeUnstagedChanges: true,
       expectedWorktreeHash: state.worktreeHash,
-    })).rejects.toThrow("工作区已变化");
+    }), "工作区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
@@ -561,14 +576,14 @@ describe("coding-change-service", () => {
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'newer';\n");
     execFileSync("git", ["add", "--", "src/index.ts"], { cwd: root });
 
-    await expect(applyCodingRepositoryPublishAction(root, {
+    await expectReject(applyCodingRepositoryPublishAction(root, {
       threadId: "thread-test",
       action: "commit",
       message: "test: stale commit",
       expectedBranch: state.branch,
       expectedHead: state.head,
       expectedIndexHash: state.indexHash,
-    })).rejects.toThrow("暂存区已变化");
+    }), "暂存区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
@@ -617,7 +632,7 @@ describe("coding-change-service", () => {
     expect(execFileSync("git", ["show", "HEAD:src/index.ts"], { cwd: root, encoding: "utf8" })).toContain("'staged change'");
 
     // 包含未暂存变更时被显式拦截（schema 层要求 expectedWorktreeHash，service 层兜底）
-    await expect(applyCodingRepositoryPublishAction(root, {
+    await expectReject(applyCodingRepositoryPublishAction(root, {
       threadId: "thread-test",
       action: "commit",
       message: "test: include unstaged",
@@ -626,7 +641,7 @@ describe("coding-change-service", () => {
       expectedIndexHash: state.indexHash,
       includeUnstagedChanges: true,
       expectedWorktreeHash: state.worktreeHash,
-    })).rejects.toThrow();
+    }));
   }, 30_000);
 
   test("单文件 diff 超限时 stage/unstage 报变更过大而非没有可应用的 Diff", async () => {
@@ -639,26 +654,26 @@ describe("coding-change-service", () => {
 
     const staged = await getCodingFileDiff(root, "assets/bundle.bin", { reviewSource: { kind: "staged" } });
     if (staged.kind !== "binary") throw new Error("expected binary diff");
-    await expect(applyCodingDiffAction(root, {
+    await expectReject(applyCodingDiffAction(root, {
       threadId: "thread-test",
       path: "assets/bundle.bin",
       scope: "file",
       action: "unstage",
       expectedDiffHash: staged.diffHash,
-    })).rejects.toThrow("16MB");
+    }), "16MB");
 
     // 已跟踪文件的超大未暂存修改（stage 场景走 worktree diff，同样超限）
     writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
     const unstaged = await getCodingFileDiff(root, "assets/bundle.bin", { reviewSource: { kind: "unstaged" } });
     if (unstaged.kind !== "binary") throw new Error("expected binary diff");
-    await expect(applyCodingDiffAction(root, {
+    await expectReject(applyCodingDiffAction(root, {
       threadId: "thread-test",
       path: "assets/bundle.bin",
       scope: "file",
       stageFilter: "unstaged",
       action: "stage",
       expectedDiffHash: unstaged.diffHash,
-    })).rejects.toThrow("16MB");
+    }), "16MB");
   }, 60_000);
 
   test("主线程版 runGitCommandInline 同样受字节水位保护且不影响正常输出", async () => {

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
 import { Worker } from "node:worker_threads";
+import { createLogger } from "../../infra/logger";
 import type {
   CodingBinaryDiffPayload,
   CodingBlameResult,
@@ -31,6 +32,7 @@ const GIT_PUBLISH_TIMEOUT_MS = 120_000;
 const MAX_REVIEW_SEARCH_OUTPUT_BYTES = 16 * 1024 * 1024;
 // 字符串版 runGitCommand 同款水位：超限 kill 返回 null，防 binary diff 场景内存暴涨（#594）
 const MAX_GIT_COMMAND_OUTPUT_BYTES = 16 * 1024 * 1024;
+const log = createLogger("coding-change-git");
 const MAX_BLAME_CACHE_ENTRIES = 128;
 const blameCache = new Map<string, CodingBlameResult>();
 const SHOULD_ISOLATE_GIT_SPAWN = "bun" in process.versions;
