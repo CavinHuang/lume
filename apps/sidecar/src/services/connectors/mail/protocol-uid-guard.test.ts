@@ -129,4 +129,13 @@ describe("mutation actions verify UIDVALIDITY before writing (#690)", () => {
     await protocol.searchSummaries(credential, "INBOX", {}, { limit: 5, peek: true });
     await expect(protocol.deleteMessage(credential, "INBOX", 1)).resolves.toBe("Trash");
   });
+
+  it("shares the uid-validity ledger across letter-case variants of one address", async () => {
+    const fake = makeFakeClient(true, { uidValidity: 100n });
+    const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
+
+    // 大小写变体建立基准后,另一变体的写动作不得因「无基准」被误拒(#735 审查)
+    await protocol.searchSummaries({ ...credential, email: "User@QQ.com" }, "INBOX", {}, { limit: 5, peek: true });
+    await expect(protocol.markSeen(credential, "INBOX", 1)).resolves.toBeUndefined();
+  });
 });
