@@ -110,6 +110,11 @@ function shouldEmit(level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[minLevel];
 }
 
+/** 供埋点侧前置判定：该级别是否会写盘（含 kind=trace 免杀语义由 emit 内部处理）。 */
+export function shouldEmitLog(level: LogLevel): boolean {
+  return shouldEmit(level);
+}
+
 function isProtected(event: LumeLogEventInput): boolean {
   return LEVEL_ORDER[event.level] >= LEVEL_ORDER.warn
     || event.event === "agent.run.completed"
@@ -213,8 +218,6 @@ function armAckTimeout(batch: LumeLogBatch, attempts: number): ReturnType<typeof
   }, ACK_TIMEOUT_MS);
 }
 
-// batchWriter 回调不得同步调用 acknowledgeLogBatch——inFlight 尚未赋值会导致 ack 早退、
-// stale inFlight 阻塞后续 flush；生产 ack 经 RPC 异步到达不受影响。
 function trySendBatch(): void {
   if (flushTimer) {
     clearTimeout(flushTimer);
@@ -223,10 +226,14 @@ function trySendBatch(): void {
   if (!batchWriter || inFlight) return;
   const batch = createBatch();
   if (!batch) return;
+  // #755: inFlight 先于 batchWriter 赋值——writer 内同步 ack 不再早退/stale 阻塞。
+  inFlight = { batch, attempts: 1, timeout: null as unknown as ReturnType<typeof setTimeout> };
   try {
     batchWriter(batch);
-    inFlight = { batch, attempts: 1, timeout: armAckTimeout(batch, 1) };
+    inFlight.timeout = armAckTimeout(batch, 1);
   } catch (error) {
+    clearTimeout(inFlight.timeout);
+    inFlight = null;
     for (const event of batch.events.reverse()) {
       queue.unshift(event);
       queueBytes += byteLength(event);

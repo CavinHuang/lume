@@ -594,7 +594,9 @@ export class LoggingService {
   }
 
   private isProtected(event: LumeLogEventV2): boolean {
-    return LEVEL_ORDER[event.level] >= LEVEL_ORDER.warn || TRACE_SPINE_EVENTS.has(event.event)
+    // #755: info 整档入保护——dev trace 洪水下驱逐只能落在 trace/debug 档，
+    // 各源 info（含终端里程碑与普通业务 info）不得成为驱逐对象。
+    return LEVEL_ORDER[event.level] >= LEVEL_ORDER.info || TRACE_SPINE_EVENTS.has(event.event)
   }
 
   private noteDropped(event: LumeLogEventV2): void {

@@ -404,6 +404,39 @@ test('flush stays paused until every concurrent snapshot op completes (#752)', a
   }
 })
 
+// #755: dev trace 洪水下，各源 info（含终端里程碑）不得被无保护驱逐。
+// 构造要点：info 必须排在前 100 条之后（躲过同步洪水触发 flush#1 的首批 splice），
+// 随后洪水把队列顶过 5000 上限，才会走到 enqueue 的驱逐路径。
+test('queue saturation protects info events from trace floods (#755)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-infoprotect-'))
+  const service = new LoggingService({
+    configDir,
+    terminal: { write: () => true },
+    now: () => new Date('2026-08-26T00:00:00.000Z'),
+    settings: { fileLevel: 'trace' },
+  })
+  try {
+    for (let i = 0; i < 200; i++) {
+      service.emit({ level: 'trace', source: 'main', context: 'agent.dispatch', event: 'provider.stream.delta', message: `warm-${i}` })
+    }
+    service.emit({ level: 'info', source: 'main', context: 'desktop.lifecycle', event: 'app.started', message: 'milestone' })
+    service.emit({ level: 'info', source: 'sidecar', context: 'sidecar.lifecycle', event: 'sidecar.ready', message: 'ready' })
+    service.emit({ level: 'info', source: 'main', context: 'agent.dispatch', event: 'log.message', message: 'ordinary-info' })
+    for (let i = 0; i < 5_200; i++) {
+      service.emit({ level: 'trace', source: 'main', context: 'agent.dispatch', event: 'provider.stream.delta', message: `noise-${i}` })
+    }
+    const drained = []
+    service.subscribe((events) => { drained.push(...events) })
+    await service.close()
+    const drainedEvents = drained.map((e) => `${e.level}:${e.event}`)
+    assert.ok(drainedEvents.includes('info:app.started'), '终端里程碑 info 不得被驱逐')
+    assert.ok(drainedEvents.includes('info:sidecar.ready'), 'sidecar.ready 不得被驱逐')
+    assert.ok(drainedEvents.includes('info:log.message'), '普通 info 不得被 dev trace 洪水驱逐 (#755)')
+  } finally {
+    await rmRetry(configDir)
+  }
+})
+
 // 三轮评审 F1：close() 首遍 flush 的 await 期间入队的事件须被尾窗补偿冲刷。
 test('close drains events enqueued during the final flush', async () => {
   const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-closedrain-'))
