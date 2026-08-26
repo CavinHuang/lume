@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { ToolDefinition } from "@lume/agent-sdk";
 import { createToolDescriptorsFromDefinitions } from "./tool-source";
 import { ToolRegistry } from "./tool-registry";
+import type { LumeToolSource } from "./tool-types";
 
 function makeTool(name: string): ToolDefinition {
   return {
@@ -55,17 +56,16 @@ describe("createToolDescriptorsFromDefinitions", () => {
     const registry = new ToolRegistry();
     registry.registerMany(createToolDescriptorsFromDefinitions([tool], "sdk"));
 
+    // 四必填维度兜底（#711 review）：单载体 + fail-closed descriptor 组装下，
+    // mcp/plugin 分支不再留空；名称启发式倾向 read/low 时 riskLevel 钳 medium、
+    // approval 恒 true——防 fail-open 权限弱化翻转
     expect(registry.get("PluginEcho")).toMatchObject({
       name: "PluginEcho",
       source: "plugin",
       metadata: {
-        category: "control",
+        category: "read",
         capability: "plugin",
         riskLevel: "medium",
-        sideEffects: "external",
-        allowedInPlanMode: false,
-        isReadOnly: false,
-        isConcurrencySafe: false,
         requiresApprovalByDefault: true,
         resultPolicy: { maxChars: 200_000 }
       }
@@ -160,5 +160,24 @@ describe("createToolDescriptorsFromDefinitions", () => {
 
     const undeclaredReadOnly = createToolDescriptorsFromDefinitions([undeclared], "plugin")[0]?.metadata?.isReadOnly;
     expect(undeclaredReadOnly).toBeUndefined();
+  });
+
+  test("source prefix heuristics: pinned full set (#541)", () => {
+    // 来源退化防线：SDK rebuild 把完整 toolset 以单一 "sdk" 组重喂时，
+    // 无盖章工具的来源靠前缀启发还原。新增前缀必须在此显式登记，
+    // 否则新工具会静默获得错误权限默认值（mcp/plugin=高摩擦 vs sdk=低）。
+    const pinnedPrefixes: Array<[string, LumeToolSource]> = [
+      ["mcp__", "mcp"],
+      ["memory.", "memory"],
+      ["memory_", "memory"],
+      ["automation_", "automation"],
+      ["cron_", "automation"]
+    ];
+    for (const [prefix, expected] of pinnedPrefixes) {
+      const descriptors = createToolDescriptorsFromDefinitions([makeTool(`${prefix}probe`)], "sdk");
+      expect(descriptors[0]?.source).toBe(expected);
+    }
+    // 不带任何已登记前缀的名字回落到组标签本身（sdk）
+    expect(createToolDescriptorsFromDefinitions([makeTool("plain_tool")], "sdk")[0]?.source).toBe("sdk");
   });
 });

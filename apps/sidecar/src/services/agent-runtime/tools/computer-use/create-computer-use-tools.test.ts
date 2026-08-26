@@ -471,6 +471,64 @@ describe("createComputerUseMcpTools Window2 v3", () => {
     }
   });
 
+  test("vision unavailable degrades to textual observation instead of throwing (#538)", async () => {
+    const previous = process.env.LUME_CONFIG_DIR;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-vision-degraded-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      // 无 routeScreenshot：纯文本观察 + 降级尾注，不再零信息抛错
+      const noRouter = createComputerUseMcpTools({
+        workspaceSlug: "demo",
+        threadId: "thread-no-router",
+        invoke: async () => ({
+          window: WECHAT,
+          accessibility: null,
+          screenshots: [{
+            id: "screenshot:42:1:1",
+            width: 2,
+            height: 1,
+            zIndex: 0,
+            url: `data:image/png;base64,${Buffer.from("png").toString("base64")}`,
+          }],
+        }),
+      });
+      const degraded = await toolByName(noRouter, "get_window_state").call(
+        { window: WECHAT, include_screenshot: true },
+        { toolUseId: "shot-2" } as never,
+      );
+      expect(degraded.is_error).toBeFalsy();
+      expect(JSON.stringify(degraded.content)).toContain("vision unavailable");
+
+      // routeScreenshot 返回 vision_unavailable：截图路径保留为文本，不 throw
+      const routerFails = createComputerUseMcpTools({
+        workspaceSlug: "demo",
+        threadId: "thread-router-fails",
+        invoke: async () => ({
+          window: WECHAT,
+          accessibility: null,
+          screenshots: [{
+            id: "screenshot:42:1:2",
+            width: 2,
+            height: 1,
+            zIndex: 0,
+            url: `data:image/png;base64,${Buffer.from("png").toString("base64")}`,
+          }],
+        }),
+        routeScreenshot: async () => ({ status: "vision_unavailable" as const, observation: {} }),
+      });
+      const routedFail = await toolByName(routerFails, "get_window_state").call(
+        { window: WECHAT, include_screenshot: true },
+        { toolUseId: "shot-3" } as never,
+      );
+      expect(routedFail.is_error).toBeFalsy();
+      expect(JSON.stringify(routedFail.content)).toContain("cannot be rendered as an image");
+    } finally {
+      if (previous === undefined) delete process.env.LUME_CONFIG_DIR;
+      else process.env.LUME_CONFIG_DIR = previous;
+      rmSync(configDir, { recursive: true, force: true });
+    }
+  });
+
   test("confirms sending at action time with target and data classification", async () => {
     const calls: string[] = [];
     const requests: any[] = [];

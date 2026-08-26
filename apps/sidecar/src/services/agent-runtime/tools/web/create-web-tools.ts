@@ -1,8 +1,4 @@
 import {
-  GuanlanHotnewsTool,
-  GuanlanReadTool,
-  GuanlanResearchTool,
-  GuanlanSearchTool,
   WebFetchTool,
   WebSearchTool,
   defineTool,
@@ -21,11 +17,7 @@ import { isFakeIpRange, isPublicIpAddress } from "@lume/agent-sdk";
 
 export const WEB_TOOL_NAMES = [
   "WebSearch",
-  "WebFetch",
-  "guanlan_search",
-  "guanlan_read",
-  "guanlan_hotnews",
-  "guanlan_research"
+  "WebFetch"
 ] as const;
 
 export interface CreateSdkWebToolsInput {
@@ -120,11 +112,7 @@ function createGuardedRenderClient(client: RenderClient): RenderClient {
 export function createSdkWebTools(input: CreateSdkWebToolsInput = {}): ToolDefinition[] {
   return [
     WebSearchTool,
-    createEnhancedWebFetch(input),
-    GuanlanSearchTool,
-    GuanlanReadTool,
-    GuanlanHotnewsTool,
-    GuanlanResearchTool
+    createEnhancedWebFetch(input)
   ];
 }
 

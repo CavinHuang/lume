@@ -13,6 +13,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import {
   getEffectiveLumeConfig,
   updateAgentPermissionMode,
+  updatePermissionClassifierEnabled,
   updatePermissionsSection,
 } from '@/lib/desktop-api/lume-config'
 import {
@@ -33,6 +34,7 @@ import {
 } from './permission-settings-state'
 
 import { Input } from '@/components/ui/input'
+import { Switch } from '@/components/ui/switch'
 const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   shield: Shield,
   pencil: Pencil,
@@ -41,7 +43,7 @@ const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   map: Map,
 }
 
-type SavingTarget = null | 'mode' | 'rules'
+type SavingTarget = null | 'mode' | 'rules' | 'classifier'
 
 const RULE_ACTION_OPTIONS: Array<{
   value: LumeConfigPermissionRuleAction
@@ -151,6 +153,21 @@ export function PermissionSettings() {
     }
   }
 
+  const handleClassifierEnabledChange = async (value: boolean) => {
+    setSaving('classifier')
+    try {
+      const nextConfig = await updatePermissionClassifierEnabled(value, selectedWorkspaceSlug)
+      setConfig(nextConfig)
+      setDraft(buildPermissionSettingsDraft(nextConfig))
+      toast.success(`风险分类器设置已保存到 ${scopeLabel}`)
+    } catch (error) {
+      console.error('[PermissionSettings] save classifier FAILED:', error)
+      toast.error('保存风险分类器设置失败')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   const savePermissionSettings = async () => {
     if (!config || !draft) return
     setSaving('rules')
@@ -242,6 +259,25 @@ export function PermissionSettings() {
               </Button>
             )
           })}
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
+        title="风险分类器"
+        description="「少询问」依据内置窄正则词表判定低风险并自动放行，「默认」档不做词表驱动的放行——两档审批差异由这张词表决定。"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-body font-medium text-[var(--text-1)]">启发式风险分类</div>
+            <p className="mt-1 text-ui leading-5 text-[var(--text-3)]">
+              关闭后不再有任何词表自动放行，白名单外命令逐条确认；工具声明的低风险豁免与可证只读免审不受影响。
+            </p>
+          </div>
+          <Switch
+            checked={config?.permissions?.classifier?.enabled !== false}
+            disabled={saving !== null}
+            onCheckedChange={(checked) => void handleClassifierEnabledChange(checked)}
+          />
         </div>
       </SettingsCard>
 

@@ -22,7 +22,6 @@ import {
   type WebSearchProvider
 } from "@lume/shared";
 import { getConfigDir, getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
-import { ensureGuanlanReady } from "../infra/guanlan-runtime-service";
 import { createLogger } from "../infra/logger";
 
 interface UpdateLumeConfigSectionInput {
@@ -450,7 +449,7 @@ function normalizeHooksSection(value: unknown): NonNullable<LumeConfigSectionSet
   };
 }
 
-const WEB_SEARCH_PROVIDER_KEYS: WebSearchProvider[] = ["guanlan", "exa", "pipellm", "zhipu", "tavily", "brave", "duckduckgo", "bing"];
+const WEB_SEARCH_PROVIDER_KEYS: WebSearchProvider[] = ["exa", "pipellm", "zhipu", "tavily", "brave", "duckduckgo", "bing"];
 
 function normalizeWebSearchSection(value: unknown): LumeConfigWebSearchSection {
   if (!isPlainObject(value)) return { ...DEFAULT_LUME_WEB_SEARCH };
@@ -473,7 +472,6 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   const providers = config.providers ?? {};
   const enabledProviders = WEB_SEARCH_PROVIDER_KEYS.filter((provider) => providers[provider]?.enabled === true);
   process.env.LUME_WEB_SEARCH_PROVIDERS = enabledProviders.join(",");
-  syncGuanlanEnv(enabledProviders.includes("guanlan"));
 
   const envMap: Partial<Record<WebSearchProvider, string[]>> = {
     brave: ["BRAVE_API_KEY", "LUME_BRAVE_API_KEY"],
@@ -493,41 +491,6 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   }
 }
 
-function syncGuanlanEnv(enabled: boolean): void {
-  process.env.LUME_GUANLAN_ENABLED = enabled ? "1" : "";
-  if (!enabled) {
-    process.env.LUME_GUANLAN_PYTHON = "";
-    return;
-  }
-  const explicitPython = process.env.LUME_PYTHON?.trim();
-  if (explicitPython) {
-    process.env.LUME_GUANLAN_PYTHON = explicitPython;
-    return;
-  }
-  const runtimeRoot = join(getConfigDir(), "runtime", "python");
-  const managedPython = [
-    join(runtimeRoot, "bin", "python3"),
-    join(runtimeRoot, "python.exe")
-  ].find((candidate) => existsSync(candidate));
-  process.env.LUME_GUANLAN_PYTHON = managedPython ?? "";
-  if (!managedPython) {
-    void ensureGuanlanReady()
-      .then((status) => {
-        if (status.ok && status.pythonPath) {
-          process.env.LUME_GUANLAN_PYTHON = status.pythonPath;
-        }
-      })
-      .catch(() => {});
-  }
-}
-
-/**
- * #649 follow-up round3:normalize 是白名单制,未识别键会被静默丢弃——留 warn 防无声消失。
- * 清单必须与下方 isPlainObject(value.X) 分支及 shared LumeConfigSectionSet 十字段严格一致,
- * 且豁免顶层文件段的 version/workspaces(它们由 normalizeLumeConfigFile 另行处理);
- * 否则系统自己落盘的标准 lume.yaml 每次冷读都会刷误报,真错键被淹没。
- * 测试钉死清单与类型的一致性(lume-config-service.test.ts「剥键白名单」用例)。
- */
 export const KNOWN_LUME_SECTION_KEYS: readonly string[] = [
   "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch",
   // 顶层文件段(LumeConfigFile),normalizeLumeConfigFile 消费

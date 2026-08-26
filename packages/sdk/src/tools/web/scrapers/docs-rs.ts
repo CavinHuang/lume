@@ -391,7 +391,7 @@ export const handleDocsRs: SpecialHandler = async (
 	try {
 		const response = await getRuntimeFetch()(jsonUrl, {
 			signal: requestSignal,
-			headers: { "User-Agent": "omp-web-fetch/1.0", Accept: "application/gzip" },
+			headers: { "User-Agent": "lume-fetch/1.0", Accept: "application/gzip" },
 			redirect: "follow",
 		});
 		if (!response.ok) return null;

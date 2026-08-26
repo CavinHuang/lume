@@ -1,4 +1,5 @@
 import type { AgentBrowserAttachment, AgentBrowserDesignChangeAttachment, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentSendInput, PlanningTodo } from "@lume/shared";
+import { isBuiltinBrowserToolName } from "@lume/shared";
 import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
 import { getRuntimeHostPorts } from "../host-ports";
@@ -207,8 +208,7 @@ export class ContextAssembler {
     }
 
     const hasComputerUseTools = input.availableTools.some((name) => name.includes("computer_use"));
-    const hasBuiltInBrowserTools = input.availableTools.includes("mcp__browser__list_tabs")
-      && input.availableTools.includes("mcp__browser__snapshot")
+    const hasBuiltInBrowserTools = input.availableTools.some(isBuiltinBrowserToolName)
       && !input.browserAttachments?.length;
     const hasLegacyBrowserRuntime = input.browserRuntimeAvailable === true
       && input.availableTools.includes("mcp__node_repl__js");

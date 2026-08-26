@@ -211,6 +211,26 @@ describe("ProcessOutput blocking (#331)", () => {
     expect(payload.retrieval_status).toBe("aborted");
     expect(payload.process?.status).toBe("running");
   });
+
+  test("omitted block returns a snapshot immediately instead of waiting (#538)", async () => {
+    clearProcessJobs();
+    const job = createProcessJobRecord({ id: "task_snapshot_default", subject: "long", status: "running" });
+    const startedAt = Date.now();
+
+    const result = await ProcessOutputTool.call(
+      { task_id: job.id },
+      { cwd: tmpdir() },
+    );
+
+    // 不带 block 的默认语义是快照读：running 态立即返回 not_ready，绝不等待
+    expect(Date.now() - startedAt).toBeLessThan(1_000);
+    const payload = JSON.parse(String(result.content)) as {
+      retrieval_status?: string;
+      process?: { status?: string };
+    };
+    expect(payload.retrieval_status).toBe("not_ready");
+    expect(payload.process?.status).toBe("running");
+  });
 });
 
 describe("readProcessIdentity cache (#376)", () => {

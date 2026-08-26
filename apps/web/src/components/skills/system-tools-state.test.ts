@@ -9,7 +9,7 @@ import {
 
 describe('system-tools-state', () => {
   test('builds rows from tool policy deny groups', () => {
-    const rows = buildSystemToolRows(['group:runtime', 'group:data', 'group:reading'])
+    const rows = buildSystemToolRows(['group:runtime', 'group:reading'])
 
     expect(rows.find((row) => row.id === 'shell')).toMatchObject({
       enabled: false,
@@ -20,14 +20,6 @@ describe('system-tools-state', () => {
       enabled: true,
       locked: false,
       policyEntry: 'group:web',
-    })
-    expect(rows.find((row) => row.id === 'data')).toMatchObject({
-      label: '数据查询',
-      description: '股份行情、天气预报、IP 归属地等专业数据',
-      count: 4,
-      enabled: false,
-      locked: false,
-      policyEntry: 'group:data',
     })
     expect(rows.find((row) => row.id === 'file-read')).toMatchObject({
       enabled: true,
