@@ -405,7 +405,7 @@ Register custom skills with `registerSkill()`.
 | **Auto-compact**      | Summarizes conversation when context window fills up               |
 | **Micro-compact**     | Truncates oversized tool results                                   |
 | **Retry**             | Exponential backoff for rate limits and transient errors            |
-| **Token estimation**  | Rough token counting with pricing for Claude, GPT, DeepSeek models |
+| **Token estimation**  | Exact native tiktoken counting for typical inputs (chunked approximation above 8 KB) with pricing for Claude, GPT, DeepSeek models |
 | **File cache**        | LRU cache (100 entries, 25 MB) for file reads                      |
 | **Session storage**   | Persist / resume / fork sessions on disk                           |
 | **Context injection** | Git status + AGENT.md automatically injected into system prompt    |

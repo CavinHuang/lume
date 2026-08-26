@@ -10,7 +10,7 @@ import type {
   LumeLogStatus,
   LumeLogError,
 } from "@lume/shared";
-import { LUME_LOG_SCHEMA_VERSION } from "@lume/shared";
+import { LUME_LOG_SCHEMA_VERSION, classifyLogKey, clipLogPreview, normalizeLogValue } from "@lume/shared";
 
 export type LogLevel = LumeLogLevel;
 type LogBatchNotificationWriter = (batch: LumeLogBatch) => void;
@@ -29,21 +29,22 @@ const MAX_BATCH_EVENTS = 100;
 const MAX_BATCH_BYTES = 128 * 1024;
 const FLUSH_INTERVAL_MS = 50;
 const ACK_TIMEOUT_MS = 5_000;
-const MAX_DEPTH = 6;
-const MAX_KEYS = 100;
-const MAX_ARRAY_ITEMS = 100;
-const MAX_STRING_CHARS = 8_192;
-const SENSITIVE_KEYS = [
-  "token", "secret", "password", "apikey", "authorization", "cookie", "setcookie",
-  "accesstoken", "refreshtoken", "grant",
-];
-const SENSITIVE_PAYLOAD_KEYS = new Set([
-  "body", "prompt", "systemprompt", "rawrequest", "rawresponse", "requestbody", "responsebody",
-  "content", "html", "markdown", "input", "output"
-]);
+
+// message 字段的整体上限（与 desktop normalizeString 同语义）：normalizeLogValue 只管 data。
+function truncateMessage(value: string): string {
+  return value.length > 8_192 ? `${value.slice(0, 8_192)}…[truncated]` : value;
+}
 
 const configuredLevel = (process.env.LUME_LOG_FILE_LEVEL ?? process.env.LUME_LOG_LEVEL ?? "info") as LogLevel;
-const MIN_LEVEL = configuredLevel in LEVEL_ORDER ? configuredLevel : "info";
+let minLevel: LogLevel = configuredLevel in LEVEL_ORDER ? configuredLevel : "info";
+
+/**
+ * 运行时下发文件级别（main 经 system.log-level RPC 调用）：
+ * 此前门槛在 spawn 时冻结，打包版热更 fileLevel 对 sidecar 永不生效。
+ */
+export function setLogFileLevel(level: unknown): void {
+  if (typeof level === "string" && level in LEVEL_ORDER) minLevel = level as LogLevel;
+}
 
 let batchWriter: LogBatchNotificationWriter | null = null;
 let queue: LumeLogEventInput[] = [];
@@ -55,63 +56,9 @@ let droppedLevels = new Set<LogLevel>();
 let droppedFirstAt = "";
 let droppedLastAt = "";
 
-function normalizeKey(key: string): string {
-  return key.toLowerCase().replace(/[-_\s]/g, "");
-}
-
-function isSensitiveKey(key: string): boolean {
-  const value = normalizeKey(key);
-  return SENSITIVE_PAYLOAD_KEYS.has(value) || SENSITIVE_KEYS.some((candidate) => value.includes(candidate));
-}
-
-function truncateString(value: string): string {
-  return value.length > MAX_STRING_CHARS
-    ? `${value.slice(0, MAX_STRING_CHARS)}…[truncated]`
-    : value;
-}
-
-function normalizeValue(
-  input: unknown,
-  depth = 0,
-  state: { seen: WeakSet<object>; keys: number } = { seen: new WeakSet<object>(), keys: 0 },
-): unknown {
-  if (input == null || typeof input === "boolean" || typeof input === "number") return input;
-  if (typeof input === "string") return truncateString(input);
-  if (typeof input === "bigint") return input.toString();
-  if (typeof input === "function" || typeof input === "symbol") return `[${typeof input}]`;
-  if (input instanceof Error) {
-    return {
-      name: truncateString(input.name),
-      message: truncateString(input.message),
-      ...(input.stack ? { stack: truncateString(input.stack) } : {}),
-    };
-  }
-  if (depth >= MAX_DEPTH) return "[MaxDepth]";
-  if (!input || typeof input !== "object") return truncateString(String(input));
-  if (state.seen.has(input)) return "[Circular]";
-  state.seen.add(input);
-  if (Array.isArray(input)) {
-    return input.slice(0, MAX_ARRAY_ITEMS).map((item) => normalizeValue(item, depth + 1, state));
-  }
-  const output: Record<string, unknown> = {};
-  const descriptors = Object.getOwnPropertyDescriptors(input);
-  for (const key of Object.keys(descriptors).slice(0, MAX_KEYS)) {
-    state.keys += 1;
-    if (state.keys > MAX_KEYS) break;
-    if (isSensitiveKey(key)) {
-      output[key] = "[redacted]";
-      continue;
-    }
-    const descriptor = descriptors[key];
-    output[key] = descriptor && "value" in descriptor
-      ? normalizeValue(descriptor.value, depth + 1, state)
-      : "[Accessor]";
-  }
-  return output;
-}
 
 export function redactDiagnosticLogData(input: unknown): unknown {
-  return normalizeValue(input);
+  return normalizeLogValue(input);
 }
 
 export function createDiagnosticLogSummary(input: unknown, maxChars = 500): string {
@@ -160,7 +107,7 @@ function byteLength(value: unknown): number {
 }
 
 function shouldEmit(level: LogLevel): boolean {
-  return LEVEL_ORDER[level] >= LEVEL_ORDER[MIN_LEVEL];
+  return LEVEL_ORDER[level] >= LEVEL_ORDER[minLevel];
 }
 
 function isProtected(event: LumeLogEventInput): boolean {
@@ -266,6 +213,8 @@ function armAckTimeout(batch: LumeLogBatch, attempts: number): ReturnType<typeof
   }, ACK_TIMEOUT_MS);
 }
 
+// batchWriter 回调不得同步调用 acknowledgeLogBatch——inFlight 尚未赋值会导致 ack 早退、
+// stale inFlight 阻塞后续 flush；生产 ack 经 RPC 异步到达不受影响。
 function trySendBatch(): void {
   if (flushTimer) {
     clearTimeout(flushTimer);
@@ -337,7 +286,7 @@ function emit(
   },
 ): void {
   if (!shouldEmit(level) && options?.kind !== "trace") return;
-  const normalizedData = normalizeValue(data ?? {}) as Record<string, unknown>;
+  const normalizedData = normalizeLogValue(data ?? {}) as Record<string, unknown>;
   enqueue({
     schemaVersion: LUME_LOG_SCHEMA_VERSION,
     eventId: randomUUID(),
@@ -347,7 +296,7 @@ function emit(
     kind: options?.kind ?? "log",
     context,
     event: options?.event ?? "log.message",
-    message: truncateString(message),
+    message: truncateMessage(message),
     ...((options?.runId ?? runId) ? { runId: options?.runId ?? runId } : {}),
     ...(options?.status ? { status: options.status } : {}),
     ...(options?.durationMs != null ? { durationMs: options.durationMs } : {}),
@@ -363,7 +312,7 @@ function emit(
     ...(options?.toolCallId ? { toolCallId: options.toolCallId } : {}),
     ...(options?.subagentRunId ? { subagentRunId: options.subagentRunId } : {}),
     ...(options?.origin ? { origin: options.origin } : {}),
-    ...(options?.error ? { error: normalizeValue(options.error) as LumeLogError } : {}),
+    ...(options?.error ? { error: normalizeLogValue(options.error) as LumeLogError } : {}),
     ...(Object.keys(normalizedData).length > 0 ? { data: normalizedData } : {}),
   });
 }

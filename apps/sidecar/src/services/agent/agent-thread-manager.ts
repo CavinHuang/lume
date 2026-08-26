@@ -34,6 +34,7 @@ import {
   getAgentWorkspacePath,
   getAgentSessionsIndexPath
 } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentSubmissionStore } from "./agent-submission-store";
@@ -123,17 +124,6 @@ function writeTextAtomic(path: string, payload: string): void {
   renameSync(tmpPath, path);
 }
 
-function backupCorruptFile(filePath: string, label: string): void {
-  if (!existsSync(filePath)) return;
-  const backupPath = `${filePath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(filePath, backupPath);
-    log.warn("backed up corrupt thread file", { label, backupPath });
-  } catch (error) {
-    log.warn("failed to back up corrupt thread file", { label, backupPath, error });
-  }
-}
-
 /**
  * 线程索引读缓存：key 含 resolved path（LUME_CONFIG_DIR 可变），mtime+size 失效。
  * 返回 structuredClone 深拷贝——withThreadIndexMutation 的 fn 会原地 mutate 索引对象，
@@ -178,7 +168,8 @@ function readIndex(): AgentThreadsIndex {
     return structuredClone(index);
   } catch (error) {
     log.error("failed to read thread index", { error, indexPath });
-    backupCorruptFile(indexPath, "Agent 线程");
+    const backupPath = backupCorruptFile(indexPath);
+    if (backupPath) log.warn("backed up corrupt thread file", { label: "Agent 线程", backupPath });
     indexCache = null;
     return { version: INDEX_VERSION, threads: [] };
   }
@@ -743,6 +734,17 @@ function deleteAgentThreadLocked(id: string): void {
   getAgentSubmissionStore().deleteThread(id);
   // #517:guidance 是纯内存态,线程硬删除时同步清理防 Map 只增不减
   runGuidanceStore.discardThread(id);
+  // #613:级联回收线程名下全部 agent tab(含 handoff),防 workspace store
+  // 孤儿记录永久留存。惰性动态 import 同 node-repl 回收先例,防模块环。
+  void import("../browser/browser-broker-holder")
+    .then((module) => module.getActiveBrowserBroker()?.dispatch({
+      method: "prune_thread_tabs",
+      params: { threadId: id },
+      threadId: id,
+      browserSessionId: `browser-tools:${id}`,
+      browserTurnId: `browser-tools:${id}`
+    }).catch(() => undefined))
+    .catch(() => undefined);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {
