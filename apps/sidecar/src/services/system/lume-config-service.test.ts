@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import {
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
   type LumeConfigFile
@@ -680,5 +680,53 @@ describe("lume-config-service", () => {
     // workspace overlay 是显式配置，不参与迁移，合并后覆盖生效
     const overlay = getEffectiveLumeConfig("default");
     expect(overlay.permissions?.classifier?.enabled).toBe(false);
+  });
+
+  // ─── #706：writeYamlAtomic 并发交错收口 ───
+
+  test("#706：连续两次写入不碰撞、不留孤儿 tmp、终值正确", () => {
+    updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/a" });
+    updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/b" });
+
+    const leftovers = readdirSync(dirname(getLumeConfigYamlPath()))
+      .filter((name) => name.startsWith("lume.yaml.tmp."));
+    expect(leftovers).toEqual([]);
+    expect(getEffectiveLumeConfig().models?.title?.defaultModelRef).toBe("openai/b");
+  });
+
+  test("#706：崩溃遗留的过期 tmp 被清扫、新鲜 tmp 不误删", () => {
+    const dir = dirname(getLumeConfigYamlPath());
+    const stalePath = join(dir, `lume.yaml.tmp.999.${"a".repeat(8)}`);
+    writeFileSync(stalePath, "junk", "utf-8");
+    const twoHoursAgo = new Date(Date.now() - 2 * 60 * 60 * 1000);
+    utimesSync(stalePath, twoHoursAgo, twoHoursAgo);
+    const freshPath = join(dir, `lume.yaml.tmp.${process.pid}.fresh000`);
+    writeFileSync(freshPath, "junk", "utf-8");
+
+    try {
+      updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/c" });
+      expect(existsSync(stalePath)).toBeFalse();
+      expect(existsSync(freshPath)).toBeTrue();
+    } finally {
+      rmSync(freshPath, { force: true });
+    }
+  });
+
+  test("#706：v2 迁移审计移到写盘成功后——恰好一条且重复读取不再追加", () => {
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
+      version: 1,
+      permissions: {
+        classifier: { enabled: false },
+        rules: []
+      }
+    }), "utf-8");
+
+    getEffectiveLumeConfig();
+    getEffectiveLumeConfig();
+
+    const migrationEntries = readFileSync(getLumeConfigAuditPath(), "utf-8")
+      .split("\n")
+      .filter((line) => line.includes("permissions.classifier.enabled"));
+    expect(migrationEntries).toHaveLength(1);
   });
 });

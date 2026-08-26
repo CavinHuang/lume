@@ -1,5 +1,6 @@
-import { appendFileSync, existsSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { appendFileSync, copyFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
 import {
   DEFAULT_LUME_PERMISSION_APPROVALS,
@@ -672,12 +673,8 @@ function migrateClassifierDefault(
   if (rawVersion >= CLASSIFIER_DEFAULT_MIGRATION_VERSION) return permissions;
   if (permissions.classifier?.enabled !== false) return permissions;
   log.info("migrating legacy classifier.enabled=false to new default (enabled)");
-  appendAuditEntry({
-    at: new Date().toISOString(),
-    source: "system",
-    path: "permissions.classifier.enabled",
-    summary: "v2 迁移：存量默认值 false 翻转为新默认 true（#571）"
-  });
+  // 审计条目由 readOrCreateLumeConfig 在写盘成功后经 appendMigrationAuditAfterWrite
+  // 追加（#706）：此处追加会在写失败时记录未发生的翻转、写持续失败时逐读重复。
   return { ...permissions, classifier: { ...permissions.classifier, enabled: true } };
 }
 
@@ -829,24 +826,46 @@ function readConfigFileContent(path: string): string {
 }
 
 function writeYamlAtomic(path: string, payload: string): void {
-  const tempPath = join(dirname(path), `lume.yaml.tmp.${Date.now()}`);
-  const backupPath = join(dirname(path), "lume.yaml.bak");
-  writeFileSync(tempPath, payload, "utf-8");
-  if (existsSync(path)) {
-    rmSync(backupPath, { force: true });
-    renameSync(path, backupPath);
-  }
+  const dir = dirname(path);
+  // tmp 名带 pid+随机串（#706）：裸 Date.now() 双进程同毫秒写互相碰撞，输家
+  // 的 rename 撞 ENOENT 后被外层吞掉、调用方静默拿到出厂默认配置。
+  const tempPath = join(dir, `lume.yaml.tmp.${process.pid}.${randomUUID().slice(0, 8)}`);
+  const backupPath = join(dir, "lume.yaml.bak");
   try {
+    writeFileSync(tempPath, payload, "utf-8");
+    // 备份用复制而非先 rename（#706）：rename 会让 path 出现缺失窗口，并发
+    // 读者/写者撞 ENOENT 且不进恢复分支——真实双进程探针 40×ENOENT + 缓存
+    // 投毒面。copy+单次原子 rename 使 path 全程存在，缺失窗口整体消失；
+    // 窗口内代价仅是 .bak 可能短暂超前于最终内容。
+    if (existsSync(path)) copyFileSync(path, backupPath);
     renameSync(tempPath, path);
     rmSync(backupPath, { force: true });
   } catch (error) {
-    if (existsSync(backupPath)) {
-      renameSync(backupPath, path);
-    }
-    if (existsSync(tempPath)) {
-      rmSync(tempPath, { force: true });
-    }
+    if (existsSync(tempPath)) rmSync(tempPath, { force: true });
     throw error;
+  }
+  sweepStaleConfigTemps(dir, basename(path));
+}
+
+/** 清理崩溃写者遗留的孤儿 tmp：唯一命名后不再有同名自愈，需显式清扫（#706）。 */
+const CONFIG_TMP_PREFIX = "lume.yaml.tmp.";
+const CONFIG_TMP_MAX_AGE_MS = 60 * 60 * 1000;
+
+function sweepStaleConfigTemps(dir: string, fileName: string): void {
+  try {
+    for (const entry of readdirSync(dir)) {
+      if (!entry.startsWith(CONFIG_TMP_PREFIX)) continue;
+      const fullPath = join(dir, entry);
+      try {
+        if (Date.now() - statSync(fullPath).mtimeMs > CONFIG_TMP_MAX_AGE_MS) {
+          rmSync(fullPath, { force: true });
+        }
+      } catch {
+        // 单个条目清扫失败不阻塞主流程
+      }
+    }
+  } catch {
+    // 目录不可读时跳过清扫
   }
 }
 
@@ -888,19 +907,47 @@ function readOrCreateLumeConfig(): LumeConfigFile {
       }
     }
     const raw = readConfigFileContent(path);
-    const normalized = normalizeLumeConfigFile(YAML.parse(raw) as unknown);
+    const rawParsed = YAML.parse(raw) as unknown;
+    const normalized = normalizeLumeConfigFile(rawParsed);
     const normalizedYaml = YAML.stringify(normalized);
     // 仅当规范化结果与磁盘内容不一致时才落盘，避免重复读取触发 workspace-watcher
     // 的 lume-config:changed 事件，进而造成 get-effective ↔ 文件监听的无限回环
     if (normalizedYaml !== raw) {
       writeYamlAtomic(path, normalizedYaml);
+      appendMigrationAuditAfterWrite(rawParsed);
     }
     refreshLumeConfigCache(path, normalized);
     return normalized;
   } catch (error) {
+    // fs 瞬态与解析损坏区分（#706）：ENOENT 多为并发窗口/刚被并发写者换名，
+    // 重试一次读最新；其余按解析损坏回退默认并如实记日志。
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      log.warn("transient fs error reading lume.yaml; retrying once", { error });
+      if (existsSync(path)) return readOrCreateLumeConfig();
+    }
     log.warn("failed to parse lume.yaml; using default config", { error });
     return createDefaultLumeConfig();
   }
+}
+
+/**
+ * v1→v2 迁移审计移到写盘成功之后（#706 同单顺修）：原先在 normalize 内追加，
+ * 写失败则记录了未发生的翻转、写持续失败时每次读取重复追加。此处以 raw 文件
+ * 的触发条件复判——仅当本次读取真正完成磁盘翻转才记一条；成功后下次读取
+ * raw 已是 v2，天然防重。
+ */
+function appendMigrationAuditAfterWrite(rawFile: unknown): void {
+  if (!isPlainObject(rawFile)) return;
+  const rawVersion = typeof rawFile.version === "number" ? rawFile.version : 0;
+  if (rawVersion >= CLASSIFIER_DEFAULT_MIGRATION_VERSION) return;
+  const permissions = isPlainObject(rawFile.permissions) ? rawFile.permissions : {};
+  if (isPlainObject(permissions.classifier) && permissions.classifier.enabled !== false) return;
+  appendAuditEntry({
+    at: new Date().toISOString(),
+    source: "system",
+    path: "permissions.classifier.enabled",
+    summary: "v2 迁移：存量默认值 false 翻转为新默认 true（#571）"
+  });
 }
 
 function ensureWorkspaceSection(
