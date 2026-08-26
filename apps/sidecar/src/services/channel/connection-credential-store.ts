@@ -1,6 +1,7 @@
 import { createCipheriv, createDecipheriv, randomBytes } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getConnectionCredentialsPath } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { createLogger } from "../infra/logger";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 
@@ -74,17 +75,12 @@ function readStore(): ConnectionCredentialFile {
       version: 1,
       credentials: value.credentials && typeof value.credentials === "object" ? value.credentials : {},
     };
-  } catch (error) {
+  } catch {
     // 凭证文件损坏时备份现场后重建而非抛出：hasConnectionApiKey 在每条消息
     // 派发的必经路径上，裸 parse 抛错会打崩全部消息发送且所有写路径同样先
-    // readStore、永不自愈（#518）
-    const backupPath = `${path}.corrupt-${Date.now()}`;
-    try {
-      renameSync(path, backupPath);
-      log.warn("connection credentials file was corrupt; backed up and rebuilt", { backupPath });
-    } catch (renameError) {
-      log.warn("failed to back up corrupt connection credentials file; rebuilding in place", { backupPath, error: renameError instanceof Error ? renameError.message : String(renameError) });
-    }
+    // readStore、永不自愈（#518）。改名失败已由 backupCorruptFile 统一告警
+    const backupPath = backupCorruptFile(path);
+    if (backupPath) log.warn("connection credentials file was corrupt; backed up and rebuilt", { backupPath });
     return { version: 1, credentials: {} };
   }
 }
