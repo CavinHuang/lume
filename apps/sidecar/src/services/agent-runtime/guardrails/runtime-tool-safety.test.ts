@@ -142,7 +142,13 @@ describe("runtime-tool-safety", () => {
       "rd (~)",
       "pwsh -NoProfile -Command Remove-Item C:\\",
       // 行首空白缩进命令位（锚集去空格成员后 ^ 分支自带 \s*）
-      "  Remove-Item ~"
+      "  Remove-Item ~",
+      // 残余面收口：赋值执行位 / 引号载荷 / 复合括号与花括号环境变量
+      "$x = Remove-Item ~",
+      "pwsh -Command \"Remove-Item ~\"",
+      "Remove-Item (\"~\")",
+      "Remove-Item (($home))",
+      "Remove-Item (${env:userprofile})"
     ]) {
       expect(evaluateRuntimeToolSafety("Bash", { command }, POWERSHELL_SHELL)).toEqual({
         behavior: "deny",
