@@ -1686,6 +1686,35 @@ describe("Agent session message uuid realignment (#363)", () => {
       await agent.close()
     }
   })
+
+  test("buildRunHistory failure clears currentEngine instead of bricking the agent (#725 derived)", async () => {
+    const provider = new StaticProvider()
+    const agent = createAgent({ persistSession: false, tools: [], provider })
+    const spy = spyOn(agent as unknown as { buildRunHistory: () => unknown[] }, "buildRunHistory")
+      .mockImplementation(() => {
+        throw new Error("boom")
+      })
+
+    try {
+      const drained = async () => {
+        for await (const _event of agent.query("hello")) {
+          // drain
+        }
+      }
+      await expect(drained()).rejects.toThrow("boom")
+
+      // 悬挂的 currentEngine 会让 #357 互斥检查永久拒绝后续 prompt
+      expect((agent as unknown as { currentEngine: unknown }).currentEngine).toBeNull()
+
+      spy.mockRestore()
+      for await (const _event of agent.query("hello again")) {
+        // drain — 第二次 run 必须能正常发起并完成
+      }
+    } finally {
+      spy.mockRestore()
+      await agent.close()
+    }
+  })
 })
 
 describe("Agent lazy context usage estimation (#386)", () => {
