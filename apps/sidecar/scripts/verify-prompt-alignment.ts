@@ -53,6 +53,11 @@ if (!standardHasBan) {
   failed++;
 }
 
+// #574：编码循环回迁语义基线
+check("#574 — 完工前查最终 Diff", standardPrompt, "宣布完成前先查看最终 Diff");
+check("#574 — 不发明验证命令", standardPrompt, "没有可靠脚本时不要发明验证命令");
+check("#574 — 失败同 Run 内修复", standardPrompt, "验证失败就在同一 Run 内修复后重验");
+
 check("标准模式 — explorer 角色", standardPrompt, "explorer");
 check("标准模式 — planner 角色", standardPrompt, "planner");
 check("标准模式 — researcher 角色", standardPrompt, "researcher");

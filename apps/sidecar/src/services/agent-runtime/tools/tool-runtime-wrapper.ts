@@ -207,7 +207,9 @@ function enforceExecutionPolicy(
 function requestsBackgroundExecution(input: unknown): boolean {
   if (!input || typeof input !== "object") return false;
   const record = input as Record<string, unknown>;
-  return record.run_in_background === true || record.isolation === "remote";
+  // isolation 别名检查已删（#575）：Agent schema 不再声明 isolation，
+  // "remote" 永远到不了这里，原检查是恒假的死分支。
+  return record.run_in_background === true;
 }
 
 function summarizeToolInput(input: unknown, computerUse = false): string {
@@ -308,7 +310,7 @@ async function enforceFileAccessPolicy(
   }
   if (!(await exists(canonical))) return null;
 
-  if (name !== "write" && name !== "edit" && name !== "notebookedit") return null;
+  if (name !== "write" && name !== "edit" && name !== "multiedit" && name !== "notebookedit") return null;
 
   const check = await input.fileLedger.assertCanOverwrite({
     threadId: input.threadId,
@@ -357,6 +359,7 @@ function getExecutionTerminationReason(result: ToolResult | undefined): string |
 function isMutationTool(canonicalName: string): boolean {
   return canonicalName === "write"
     || canonicalName === "edit"
+    || canonicalName === "multiedit"
     || canonicalName === "notebookedit"
     || canonicalName === "bash";
 }

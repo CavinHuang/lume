@@ -172,7 +172,8 @@ export function buildSidecarSubagentExecutionInput(input: {
   return {
     ...input.forwardedToolInput,
     run_in_background: input.runInBackground,
-    isolation: undefined,
+    // isolation 剥离已随 Agent schema 删参一并移除（#575）：schema 不再声明
+    // 该字段，历史剥离点只是死代码；模型幻觉出的未知字段按普通透传处理。
     ...(input.modelOverride.resolvedModelId
       ? { model: input.modelOverride.resolvedModelId }
       : {}),
@@ -423,7 +424,9 @@ export async function runForegroundSubagentWithTimeout(input: {
       const stopped = await input.stopSubagent(input.childThreadId).catch(() => false);
       // 取消未确认时必须如实披露：子会话可能仍在运行，调用方据此提示用户
       const cancelNote = stopped ? "" : " Automatic cancellation was not confirmed; the child session may still be running.";
-      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.${cancelNote}`;
+      // 超时文案必须指路后台模式（#575）：前台默认 10 分钟强杀，重型任务
+      // 不指路 run_in_background 会让模型反复重试同一注定超时的调用。
+      const error = `Subagent timed out after ${input.timeoutMs}ms and was cancelled.${cancelNote} For long-running work, relaunch with run_in_background: true and collect the result via WaitForDelegations instead of blocking the foreground.`;
       resolve({
         status: "timed_out",
         output: error,
@@ -499,7 +502,6 @@ export function assertTaskRefDiscriminant(
     "expected_artifacts",
     "subagent_id",
     "team_name",
-    "isolation",
   ];
   const present = forbidden.filter((name) => toolInput[name] !== undefined);
   if (present.length > 0)

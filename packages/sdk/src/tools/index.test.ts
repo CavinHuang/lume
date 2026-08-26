@@ -38,6 +38,17 @@ describe("SDK tool registry", () => {
     expect(names).toContain("guanlan_research");
   });
 
+  // #720 review 钉：MultiEdit 是写原语，注册面四处（工具池/CORE/权限面/tracker）
+  // 任一漏接都会造成静默旁路（dontAsk 免审/partial-read 覆写/writer lease）。
+  test("MultiEdit is registered in the base pool and core preset", () => {
+    const names = getAllBaseTools().map((tool) => tool.name);
+    expect(names).toContain("MultiEdit");
+
+    const multiEdit = getAllBaseTools().find((tool) => tool.name === "MultiEdit")!;
+    expect(multiEdit.isReadOnly()).toBe(false);
+    expect(multiEdit.isConcurrencySafe()).toBe(false);
+  });
+
   test("filterTools accepts Alice-style allowed and disallowed aliases", () => {
     const tools = [tool("Read"), tool("Bash"), tool("Write")];
 

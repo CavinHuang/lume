@@ -178,6 +178,7 @@ export function collectCheckpointPaths(
   switch (toolName) {
     case 'Write':
     case 'Edit':
+    case 'MultiEdit':
     case 'NotebookEdit':
       return filePath ? [filePath] : []
     case 'Bash':

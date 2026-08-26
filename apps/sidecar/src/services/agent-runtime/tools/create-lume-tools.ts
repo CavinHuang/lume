@@ -31,7 +31,7 @@ import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
 import { createBrowserMcpTools } from "./browser/create-browser-tools";
 
-const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "Bash", "Glob", "Grep", "ls"];
+const BASE_RUNTIME_TOOL_NAMES = ["Read", "Write", "Edit", "MultiEdit", "Bash", "Glob", "Grep", "ls"];
 const AUTOMATION_TOOL_NAMES = [
   "automation_read",
   "automation_set",

@@ -58,7 +58,9 @@ function backupCorruptIndex(indexPath: string): void {
     }
   });
   if (hasCurrentGenBackup) return;
-  const backupPath = `${indexPath}.corrupt-${Date.now()}`;
+  // 备份名带随机后缀：裸 Date.now() 在同毫秒内创建两代备份时文件名碰撞，
+  // 后写覆盖先写、第一代唯一数据副本静默丢失（#686 回归钉在 CI 实证）。
+  const backupPath = `${indexPath}.corrupt-${Date.now()}-${randomUUID().slice(0, 8)}`;
   try {
     copyFileSync(indexPath, backupPath);
     log.warn("backed up corrupt automation index", { backupPath });

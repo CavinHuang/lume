@@ -153,6 +153,13 @@ registerToolMetadata({
 });
 
 registerToolMetadata({
+  name: "MultiEdit",
+  category: "write",
+  riskLevel: "medium",
+  description: "单文件多处精确替换"
+});
+
+registerToolMetadata({
   name: "bash",
   category: "execute",
   riskLevel: "high",
