@@ -186,6 +186,8 @@ export interface MailProtocolDependencies {
   createImapClient?: (config: Record<string, unknown>) => MailImapClient;
   lookup?: GuardedFetchDnsLookup;
   connectSocket?: (options: TcpNetConnectOpts) => Socket;
+  /** 时钟注入:池化连接的空闲 TTL 判定用,测试可控。 */
+  now?: () => number;
 }
 
 interface MailSmtpTransport {
@@ -633,9 +635,25 @@ export const maxImapConnectionsPerAccount = 2;
  */
 export const maxImapWaitersPerAccount = 32;
 
+/**
+ * 池化连接的最长空闲复用窗口(#698 后续:连接复用)。超过即销毁重建,
+ * 惰性判定(借出时检查),无后台定时器;60s 远小于常见服务端空闲踢线
+ * (≥5 分钟)且足够覆盖 agent 一轮突发多动作,真死了由「错误即销毁」兜底。
+ */
+export const imapIdleReuseTtlMs = 60_000;
+
+interface PooledImapConnection {
+  client: RuntimeImapClient;
+  idledAt: number;
+  /** 建连时的 IMAP host:用户更改 host 设置后旧连接不得跨 host 复用。 */
+  host: string;
+}
+
 interface ImapAccountGate {
   active: number;
   waiters: Array<() => void>;
+  /** 空闲可复用的池化连接(容量受 maxImapConnectionsPerAccount 约束)。 */
+  idle: PooledImapConnection[];
 }
 
 const imapAccountGates = new Map<string, ImapAccountGate>();
@@ -688,7 +706,7 @@ async function withImapConnectionLimit<T>(
 ): Promise<T> {
   let gate = imapAccountGates.get(account);
   if (!gate) {
-    gate = { active: 0, waiters: [] };
+    gate = { active: 0, waiters: [], idle: [] };
     imapAccountGates.set(account, gate);
   }
   if (gate.active >= maxImapConnectionsPerAccount) {
@@ -707,18 +725,20 @@ async function withImapConnectionLimit<T>(
   } finally {
     gate.active -= 1;
     gate.waiters.shift()?.();
-    // 预占模型下被放行者仍计在 active 中,active===0 蕴含无人持有此 gate,
-    // 此刻删除安全;后续到达者新建条目,不会与旧引用互撞
-    if (gate.active === 0 && gate.waiters.length === 0) {
+    // 预占模型下被放行者仍计在 active 中,active===0 蕴含无人持有此 gate。
+    // idle 池非空时保留条目:池化连接等待复用,由 TTL 惰性判定自然消化
+    if (gate.active === 0 && gate.waiters.length === 0 && gate.idle.length === 0) {
       imapAccountGates.delete(account);
     }
   }
 }
 
-/** 仅供不变式测试观察闸门生命周期:账号空闲后条目应被清理。 */
-export function imapAccountGateStateForTest(email: string): { active: number; waiting: number } | undefined {
+/** 仅供不变式测试观察闸门生命周期:idle 为当前待复用的池化连接数。 */
+export function imapAccountGateStateForTest(
+  email: string,
+): { active: number; waiting: number; idle: number } | undefined {
   const gate = imapAccountGates.get(email.toLowerCase());
-  return gate ? { active: gate.active, waiting: gate.waiters.length } : undefined;
+  return gate ? { active: gate.active, waiting: gate.waiters.length, idle: gate.idle.length } : undefined;
 }
 
 async function withImapClient<T>(
@@ -730,45 +750,77 @@ async function withImapClient<T>(
 ) {
   return withImapConnectionLimit(
     credential.email.toLowerCase(),
-    () => openAndRunImapClient(config, deps, credential, callback),
+    async () => {
+      const gate = imapAccountGates.get(credential.email.toLowerCase())!;
+      const client = await acquirePooledClient(config, deps, credential, gate);
+      try {
+        const result = await callback(client);
+        // 成功才复用:错误一律销毁,坏连接绝不回流池中
+        gate.idle.push({ client, idledAt: (deps.now ?? Date.now)(), host: credential.imapHost });
+        return result;
+      } catch (error) {
+        retirePooledClient(client, { graceful: false });
+        throw mapLibraryError(error, config);
+      }
+    },
     waitSignal,
   );
 }
 
-async function openAndRunImapClient<T>(
+/**
+ * 借出一条连接:优先复用池内未过 TTL 的空闲连接,否则新建。
+ * 过期连接就地销毁(graceful:发 LOGOUT 让服务端干净释放会话)。
+ */
+async function acquirePooledClient(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
   credential: MailCredential,
-  callback: (client: RuntimeImapClient) => Promise<T>,
-) {
-  const client = await createImapClient(config, deps, credential);
-  let connected = false;
+  gate: ImapAccountGate,
+): Promise<RuntimeImapClient> {
+  const now = deps.now ?? Date.now;
+  const pooled = gate.idle.pop();
+  if (pooled && pooled.host === credential.imapHost && now() - pooled.idledAt <= imapIdleReuseTtlMs) {
+    return pooled.client;
+  }
+  if (pooled) {
+    // TTL 过期或 host 已更改:连接不可复用,graceful 销毁让服务端干净释放
+    retirePooledClient(pooled.client, { graceful: true });
+  }
+
+  const fresh = await createImapClient(config, deps, credential);
   try {
-    await client.connect();
-    connected = true;
-    return await callback(client as RuntimeImapClient);
+    await fresh.connect();
   } catch (error) {
+    // socket 可能尚未建立或已死,不做优雅退出,直接静默关闭
+    retirePooledClient(fresh as RuntimeImapClient, { graceful: false });
     throw mapLibraryError(error, config);
-  } finally {
-    // close 是清理兜底,自身失败不得顶替业务错误(或吞掉成功返回值);
-    // socket 资源由进程回收,静默即可
-    const closeQuietly = () => {
-      try {
-        client.close?.();
-      } catch {
-        /* 清理兜底的失败无诊断价值 */
-      }
-    };
-    if (connected) {
-      try {
-        await client.logout();
-      } catch {
-        closeQuietly();
-      }
-    } else {
+  }
+  return fresh as RuntimeImapClient;
+}
+
+/**
+ * 连接终结的统一出口。close 是清理兜底,自身失败不得抛出——socket 资源
+ * 由进程回收;graceful 路径先尝试 LOGOUT 让服务端干净释放,失败退 close。
+ */
+function retirePooledClient(client: RuntimeImapClient, options: { graceful: boolean }) {
+  const closeQuietly = () => {
+    try {
+      client.close?.();
+    } catch {
+      /* 清理兜底的失败无诊断价值 */
+    }
+  };
+  if (!options.graceful) {
+    closeQuietly();
+    return;
+  }
+  void (async () => {
+    try {
+      await client.logout();
+    } catch {
       closeQuietly();
     }
-  }
+  })();
 }
 
 async function withMailbox<T>(
