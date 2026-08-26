@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -13,6 +14,7 @@ import {
   getCodingReviewSources,
   getCodingRepositoryPublishState,
   parseUnifiedDiff,
+  runGitCommandInline,
   searchCodingDiffLines,
   searchCodingReview
 } from "./coding-change-service";
@@ -570,16 +572,108 @@ describe("coding-change-service", () => {
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
-  test("publish state 在 binary diff 超过 stdout 水位时降级不可用而非内存暴涨（#594）", async () => {
-    const root = makeTempDir("lume-coding-publish-overflow-");
+  test("staged 大二进制产物使 git 输出超限时 Publish 状态降级为不可用而非全量累积", async () => {
+    const root = makeTempDir("lume-coding-publish-big-binary-");
     tempDirs.push(root);
-    createGitWorkspace(root, "export const value = 'baseline';\n");
-    // 17MB > MAX_GIT_COMMAND_OUTPUT_BYTES(16MB)：base64 后 ~23MB 字符，必触发水位 kill
-    writeFileSync(join(root, "blob.bin"), Buffer.alloc(17 * 1024 * 1024, 0x61));
-    execFileSync("git", ["add", "--", "blob.bin"], { cwd: root });
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    // 不可压缩随机数据：--binary 的 zlib 压不动，base85 编码后 diff 输出必然超 16MB 水位
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    await expect(getCodingRepositoryPublishState(root)).resolves.toMatchObject({
+      available: false,
+      reason: "暂存区变更超过 16MB 补丁上限，请拆分提交",
+    });
+  }, 30_000);
+
+  test("未暂存大变更不再阻断仅提交已暂存内容，但包含未暂存时被拦截", async () => {
+    const root = makeTempDir("lume-coding-publish-worktree-big-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    // 已 staged 的正常小文件 + 已跟踪文件的超大未暂存修改（worktree patch 超限）
+    writeFileSync(join(root, "src", "huge.ts"), "export const data = '';\n");
+    execFileSync("git", ["add", ".",], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "add huge placeholder"], { cwd: root });
+    writeFileSync(join(root, "src", "index.ts"), "export const value = 'staged change';\n");
+    execFileSync("git", ["add", "src/index.ts"], { cwd: root });
+    writeFileSync(join(root, "src", "huge.ts"), `export const data = "${randomBytes(17 * 1024 * 1024).toString("base64")}";\n`);
 
     const state = await getCodingRepositoryPublishState(root);
+    if (!state.available) throw new Error(`预期可用但降级: ${state.reason}`);
+    expect(state.canCommit).toBe(true);
+    expect(state.worktreeHash).toBeUndefined();
 
-    expect(state).toEqual({ available: false, reason: "无法读取当前 Git 仓库状态" });
+    // 仅提交已 staged 内容不受 worktree 超限影响
+    const result = await applyCodingRepositoryPublishAction(root, {
+      threadId: "thread-test",
+      action: "commit",
+      message: "test: commit staged only",
+      expectedBranch: state.branch,
+      expectedHead: state.head,
+      expectedIndexHash: state.indexHash,
+    });
+    expect(result.commitHash).toBeTruthy();
+    expect(execFileSync("git", ["show", "HEAD:src/index.ts"], { cwd: root, encoding: "utf8" })).toContain("'staged change'");
+
+    // 包含未暂存变更时被显式拦截（schema 层要求 expectedWorktreeHash，service 层兜底）
+    await expect(applyCodingRepositoryPublishAction(root, {
+      threadId: "thread-test",
+      action: "commit",
+      message: "test: include unstaged",
+      expectedBranch: state.branch,
+      expectedHead: state.head,
+      expectedIndexHash: state.indexHash,
+      includeUnstagedChanges: true,
+      expectedWorktreeHash: state.worktreeHash,
+    })).rejects.toThrow();
+  }, 30_000);
+
+  test("单文件 diff 超限时 stage/unstage 报变更过大而非没有可应用的 Diff", async () => {
+    const root = makeTempDir("lume-coding-stage-big-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const staged = await getCodingFileDiff(root, "assets/bundle.bin", { reviewSource: { kind: "staged" } });
+    if (staged.kind !== "binary") throw new Error("expected binary diff");
+    await expect(applyCodingDiffAction(root, {
+      threadId: "thread-test",
+      path: "assets/bundle.bin",
+      scope: "file",
+      action: "unstage",
+      expectedDiffHash: staged.diffHash,
+    })).rejects.toThrow("16MB");
+
+    // 已跟踪文件的超大未暂存修改（stage 场景走 worktree diff，同样超限）
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    const unstaged = await getCodingFileDiff(root, "assets/bundle.bin", { reviewSource: { kind: "unstaged" } });
+    if (unstaged.kind !== "binary") throw new Error("expected binary diff");
+    await expect(applyCodingDiffAction(root, {
+      threadId: "thread-test",
+      path: "assets/bundle.bin",
+      scope: "file",
+      stageFilter: "unstaged",
+      action: "stage",
+      expectedDiffHash: unstaged.diffHash,
+    })).rejects.toThrow("16MB");
+  }, 60_000);
+
+  test("主线程版 runGitCommandInline 同样受字节水位保护且不影响正常输出", async () => {
+    const root = makeTempDir("lume-coding-inline-watermark-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'baseline';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    // 生产路径（Electron utilityProcess.fork → Node 运行时）实际执行的主线程版实现
+    await expect(runGitCommandInline(["diff", "--cached", "--binary", "--full-index", "--no-color"], root))
+      .resolves.toBeNull();
+
+    await expect(runGitCommandInline(["rev-parse", "HEAD"], root)).resolves.toMatch(/^[0-9a-f]{40}/);
+
   }, 30_000);
 });
