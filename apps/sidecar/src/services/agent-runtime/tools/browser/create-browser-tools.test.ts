@@ -573,6 +573,78 @@ describe("createBrowserMcpTools", () => {
     expect(unchanged.observation).toBeUndefined()
     expect(changed.observation.snapshot_id).toBe("snap-2")
   })
+
+  test("blocks identical retries after executed_unknown, yields after two blocks (#603)", async () => {
+    const calls: Array<{ method: string }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return { tabs: [tab] }
+        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId)
+        if (request.method === "playwright_locator_click") {
+          throw Object.assign(new Error("executed_unknown"), { code: "executed_unknown" })
+        }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const first = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    const retryOne = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    const retryTwo = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    const retryThree = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+
+    expect(JSON.parse(String(first.content)).code).toBe("executed_unknown")
+    // 同代际同参盲目重试在发起前拦截,不触达 desktop
+    expect(JSON.parse(String(retryOne.content)).code).toBe("outcome_unknown_retry_blocked")
+    expect(JSON.parse(String(retryTwo.content)).code).toBe("outcome_unknown_retry_blocked")
+    // 连续两次拦截后尊重模型意志放行;页面代际未变,desktop 再次报 executed_unknown
+    expect(JSON.parse(String(retryThree.content)).code).toBe("executed_unknown")
+    const clickDispatches = calls.filter((request) => request.method === "playwright_locator_click")
+    expect(clickDispatches.length).toBe(2)
+  })
+
+  test("clears the unknown-outcome gate once the page generation advances", async () => {
+    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
+    const tab = agentTab("locked-tab", "thread-1")
+    let snapshotNumber = 0
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push(request)
+        if (request.method === "list_tabs") return { tabs: [{ ...tab, generation: snapshotNumber }] }
+        if (request.method === "browser_snapshot") {
+          // 每次重新观察后代际推进:重新观察到的是世界的新状态(新语境)
+          const current = ++snapshotNumber
+          return { ...semanticSnapshot(tab.tabId, `snap-${current}`), navigation_generation: current }
+        }
+        if (request.method === "playwright_locator_click") {
+          // push 已含本次:首次派发时历史数为 1
+          const priorClicks = calls.filter((entry) => entry.method === "playwright_locator_click").length
+          if (priorClicks <= 1) {
+            throw Object.assign(new Error("executed_unknown"), { code: "executed_unknown" })
+          }
+          return { ok: true, effect: { kind: "dom_changed" } }
+        }
+        throw new Error("unsupported")
+      },
+    } as any
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+
+    await call(tools, "mcp__browser__snapshot", {})
+    const first = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    expect(JSON.parse(String(first.content)).code).toBe("executed_unknown")
+
+    // 指引路径:先重新观察——观察到的是动作已生效后的新页面(代际推进),
+    // 同参重试属新语境,闸门放行直达 desktop
+    await call(tools, "mcp__browser__snapshot", {})
+    const retried = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
+    expect(JSON.parse(String(retried.content)).code).toBeUndefined()
+    expect(calls.filter((entry) => entry.method === "playwright_locator_click").length).toBe(2)
+  })
 })
 
 async function call(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {
