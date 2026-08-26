@@ -13,7 +13,7 @@ import { readFile, stat } from 'fs/promises'
 import { resolve } from 'path'
 import { defineTool } from './types.js'
 import { writeFileAtomic } from '../utils/fs-atomic.js'
-import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason } from '../utils/pathing.js'
+import { ensurePathAllowed, ensureWriteContained, getUnsafeFilePathReason, writeContainmentRoots } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 
 type NotebookCell = {
@@ -140,7 +140,7 @@ export const NotebookEditTool = defineTool({
       return { data: sandboxError, is_error: true }
     }
     // containment 复核不以沙箱启用为前提（#546）：junction/symlink 可穿越词法边界
-    const containmentError = ensureWriteContained(notebookPath, context.cwd, context.additionalDirectories)
+    const containmentError = ensureWriteContained(notebookPath, context.cwd, writeContainmentRoots(context))
     if (containmentError) {
       return { data: containmentError, is_error: true }
     }
@@ -231,7 +231,7 @@ export const NotebookEditTool = defineTool({
       let updatedFile = JSON.stringify(notebook, null, 1)
       // 写入瞬间 symlink 复检与 write/edit 同口径（#546）
       await writeFileAtomic(notebookPath, encodeTextFile(updatedFile, decoded), (resolvedPath) =>
-        ensureWriteContained(resolvedPath, context.cwd, context.additionalDirectories))
+        ensureWriteContained(resolvedPath, context.cwd, writeContainmentRoots(context)))
       const updatedStat = await stat(notebookPath)
       context.fileStateCache?.set(notebookPath, {
         content: updatedFile,

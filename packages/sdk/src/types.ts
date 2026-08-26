@@ -217,6 +217,13 @@ export interface ToolContext {
    *  only then may a tool trust host-injected fields (e.g. AskUserQuestion answers). */
   permissionUpdatedInput?: boolean
   additionalDirectories?: string[]
+  /** Write-containment-only roots: write tools allow them, but they stay out of
+   *  the system prompt, checkpoint snapshots, and relative-path resolution — and
+   *  changes inside them get no file checkpoints (not rewindable). Pass absolute
+   *  paths. If the model should see the directory, use additionalDirectories.
+   *  Accepts the final expanded root set (e.g. Lume passes derived skills/plugins
+   *  roots here), not raw host config values. Does not extend sandbox allowWrite. */
+  privateWriteRoots?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
   fileStateCache?: import('./utils/fileCache.js').FileStateCache
@@ -717,6 +724,12 @@ export interface AgentOptions {
   pluginRoots?: string[]
   /** Additional working directories */
   additionalDirectories?: string[]
+  /** Write-containment-only roots: writable by file tools but excluded from the
+   *  system prompt, checkpoint snapshots, and relative-path resolution; writes
+   *  inside them get no checkpoints. Absolute paths; use additionalDirectories
+   *  when the model should see the directory. Final expanded set, not host config
+   *  verbatim; does not extend sandbox allowWrite. */
+  privateWriteRoots?: string[]
   /** Default agent to use */
   agent?: string
   /** Debug mode */
@@ -814,6 +827,10 @@ export interface QueryEngineConfig {
   permissionMode?: PermissionMode
   promptSuggestions?: boolean
   additionalDirectories?: string[]
+  /** Write-containment-only roots passed through to ToolContext: write tools
+   *  allow them, everything else (prompt/snapshots/relative resolution) ignores
+   *  them. Absolute paths. */
+  privateWriteRoots?: string[]
   sandbox?: SandboxSettings
   toolConfig?: Record<string, unknown>
   /** Session-owned read-state shared across runs of one Agent/thread (#569).

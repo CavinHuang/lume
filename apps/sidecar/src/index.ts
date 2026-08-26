@@ -265,8 +265,36 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   if (method === "system.connection-vault-key") {
-    installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
-    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    // 与 system.secret-encryption-key 同型：畸形 key 抛错时回 error 响应，
+    // 不让 desktop 侧 await 等满超时（交叉复审发现 pre-existing 同缺陷）
+    try {
+      installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "connection_vault_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
+    return;
+  }
+
+  if (method === "system.secret-encryption-key") {
+    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 RPC 超时上限才降级
+    try {
+      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
     return;
   }
 

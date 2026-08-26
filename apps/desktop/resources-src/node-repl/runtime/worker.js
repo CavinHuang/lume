@@ -748,13 +748,38 @@ class ModuleLoader {
             return pathToFileURL(resolved.path).href;
         return resolved.specifier;
     }
+    filterBuiltinExports(resolved, trusted, namespace) {
+        if (trusted || resolved.kind !== "builtin")
+            return namespace;
+        const denylist = UNTRUSTED_BUILTIN_EXPORT_DENYLIST[resolved.specifier];
+        if (!denylist?.length || !denylist.some((name) => name in namespace))
+            return namespace;
+        return Object.fromEntries(Object.entries(namespace).filter(([name]) => !denylist.includes(name)));
+    }
+
+    // vm 的 importModuleDynamically 不接受裸对象；命中黑名单时以预 link+
+    // evaluate 的 SyntheticModule.namespace 重包装（未 link 的 Module 交给
+    // vm 处理会报 "Module status must not be unlinked or linking"）
+    async syntheticNamespaceFrom(filtered) {
+        const names = Object.getOwnPropertyNames(filtered);
+        const mod = new vm.SyntheticModule(names, function initialize() {
+            for (const name of names)
+                this.setExport(name, filtered[name]);
+        }, { context: untrustedContext });
+        await mod.link(() => undefined);
+        await mod.evaluate();
+        return mod.namespace;
+    }
     async dynamicImport(specifier, referrerIdentifier, referrerTrusted) {
         const resolved = this.resolve(specifier, referrerIdentifier);
         // #634 已知边界：bare package 经 importNative 在宿主 realm 执行（npm 包
         // 的 CJS 依赖树无法进 ESM module 图），vm 隔离对包导入面不生效——
         // 完整收编需 CJS shim 或换隔离原语，见 issue #634 跟进。
-        if (resolved.kind !== "file")
-            return this.importNative(resolved);
+        if (resolved.kind !== "file") {
+            const namespace = await this.importNative(resolved);
+            const filtered = this.filterBuiltinExports(resolved, referrerTrusted === true, namespace);
+            return filtered === namespace ? namespace : await this.syntheticNamespaceFrom(filtered);
+        }
         const trusted = referrerTrusted || await isTrustedFile(resolved.path);
         const module = await this.loadLinkedFileModule(resolved.path, trusted);
         const key = this.cacheKey(resolved.path, trusted ? "trusted" : "untrusted");
@@ -821,7 +846,7 @@ class ModuleLoader {
         let modulePromise = this.nativeModules.get(key);
         if (!modulePromise) {
             modulePromise = (async () => {
-                const namespace = await this.importNative(resolved);
+                const namespace = this.filterBuiltinExports(resolved, trusted, await this.importNative(resolved));
                 const names = Object.getOwnPropertyNames(namespace);
                 return new vm.SyntheticModule(names, function initialize() {
                     for (const name of names)
@@ -940,12 +965,17 @@ function resolvedCacheId(resolved) {
 // (e.g. Buffer) still expose cross-realm escapes.
 // Trusted referrers (bundled browser/computer-use clients) keep full builtin
 // access; their own bootstrap imports node:fs/promises.
+// Untrusted loads strip these exports even when the module itself is allowed:
+// they expose cross-process oracles without any fs/net capability.
+const UNTRUSTED_BUILTIN_EXPORT_DENYLIST = {
+    "node:os": ["getPriority", "setPriority"],
+};
 const ALLOWED_BUILTIN_MODULES = new Set([
     "node:assert", "node:assert/strict", "node:buffer", "node:crypto",
-    "node:events", "node:path", "node:path/posix", "node:path/win32",
-    "node:punycode", "node:querystring", "node:string_decoder",
-    "node:timers", "node:timers/promises", "node:url", "node:util",
-    "node:zlib",
+    "node:events", "node:os", "node:path", "node:path/posix", "node:path/win32",
+    "node:punycode", "node:querystring", "node:readline", "node:readline/promises",
+    "node:string_decoder", "node:stream", "node:timers", "node:timers/promises",
+    "node:url", "node:util", "node:zlib",
 ]);
 function isTrustedReferrer(referrerIdentifier) {
     if (options.trustAllImportedCode)

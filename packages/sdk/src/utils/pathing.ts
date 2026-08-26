@@ -175,10 +175,22 @@ export function ensurePathAllowed(
 }
 
 /**
+ * 写工具的 containment 根集：工作目录扩展 ∪ privateWriteRoots。后者只参与
+ * 写入放行——不进系统提示词、checkpoint 快照与相对路径解析（#639 复审：
+ * 合并进 additionalDirectories 会让内部管理目录暴露给模型并拖慢快照）。
+ */
+export function writeContainmentRoots(context: {
+  additionalDirectories?: string[]
+  privateWriteRoots?: string[]
+}): string[] {
+  return [...(context.additionalDirectories ?? []), ...(context.privateWriteRoots ?? [])]
+}
+
+/**
  * 写入 containment 复核，不以 sandbox.enabled 为前提（#546）：SDK 沙箱在
  * Lume 中恒未启用，ensurePathAllowed 首行即短路；junction/symlink 可穿越
- * 纯词法边界写到 workspace 外。canonicalize 后必须仍在 cwd ∪ additional
- * 目录内。sandbox 启用时的 deny/allow 规则仍由 ensurePathAllowed 叠加；
+ * 纯词法边界写到 workspace 外。canonicalize 后必须仍在 cwd ∪ 根集内。
+ * sandbox 启用时的 deny/allow 规则仍由 ensurePathAllowed 叠加；
  * 若宿主配置 allowWrite 到 containment 根集之外，以本函数为准（取严）。
  */
 export function ensureWriteContained(
@@ -186,11 +198,34 @@ export function ensureWriteContained(
   cwd: string,
   additionalDirectories: string[] = [],
 ): string | null {
+  // Win32 UNC/设备路径先词法拒绝：canonicalizePath 内的同步 realpath 对网络
+  // 路径（\\srv\share、断开映射盘）可能阻塞事件循环至 SMB 超时（跨平台复审
+  // P2）；workspace 根集本就不含 UNC，fail 方向与下方 containment 一致。
+  // 注意 `\\` 开头在 POSIX 只是普通文件名，仅在 win32 生效。
+  if (process.platform === 'win32' && /^\\\\(?:\?\\|\.\\)?/.test(path)) {
+    return `Write denied: ${path} is a UNC/device path outside the workspace`
+  }
   const canonical = canonicalizePath(path)
   const allowed = [cwd, ...additionalDirectories].some(
     (root) => isPathWithinRoot(canonical, canonicalizePath(root)),
   )
   return allowed ? null : `Write denied: ${path} resolves outside the workspace (configure permissions.privateWriteRoots to allow this directory)`
+}
+
+/**
+ * 写入瞬间复检（writeFileAtomic 检出 symlink 后调用）：containment 不以沙箱
+ * 启用为前提（#546），sandbox 启用时再叠加 deny/allow 规则。write/edit/
+ * multi-edit 共用，新增写类工具应复用本闭包而非复制实现。
+ */
+export function makeWriteInstantRecheck(context: {
+  cwd: string
+  additionalDirectories?: string[]
+  privateWriteRoots?: string[]
+  sandbox?: import('../types.js').SandboxSettings
+}): (resolvedPath: string) => string | null {
+  return (resolvedPath: string): string | null =>
+    ensureWriteContained(resolvedPath, context.cwd, writeContainmentRoots(context))
+    ?? ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
 }
 
 export function getHostnameFromUrl(url: string): string | null {
