@@ -21,6 +21,7 @@ import {
 import { getThreadEventBus } from "../events/thread-event-bus";
 import { publishRunDomainEvent } from "../events/bus-bridge";
 import { createLogger } from "../../infra/logger";
+import { humanizeRuntimeErrorMessage } from "./error-message";
 import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
@@ -683,7 +684,8 @@ export class LumeRunner {
     // 流已交付终值则跳过,避免同一 run 双终值。
     await this.publishRunEndIfMissing("error", errorMessage);
     await this.observer.flush();
-    this.emit.onError(errorMessage);
+    // #559:持久化与日志保真留原文,仅上屏/透传面走人性化层
+    this.emit.onError(humanizeRuntimeErrorMessage(errorMessage));
     return this.finalizeResult({ status: "errored", errorMessage });
   }
 

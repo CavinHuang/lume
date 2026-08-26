@@ -42,7 +42,7 @@ describe("prepareRuntimeCoreAttempt", () => {
       },
     })).resolves.toEqual({
       status: "errored",
-      errorMessage: "runtime-core 未找到可用渠道。",
+      errorMessage: "未找到可用渠道。请到设置 → 连接配置检查渠道是否启用、模型是否可用。",
     });
   });
 

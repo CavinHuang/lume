@@ -38,19 +38,19 @@ export async function prepareRuntimeCoreAttempt(
     item.id === runtime.channelId && getRuntimeHostPorts().isChannelConnectionUsable(item)
   ));
   if (!channel) {
-    return { status: "errored", errorMessage: "runtime-core 未找到可用渠道。" };
+    return { status: "errored", errorMessage: "未找到可用渠道。请到设置 → 连接配置检查渠道是否启用、模型是否可用。" };
   }
   if (channel.models.length > 0 && !channel.models.some((model) => (
     model.enabled && model.capabilities?.chat !== false
   ))) {
-    return { status: "errored", errorMessage: "runtime-core 当前连接没有已启用的对话模型。" };
+    return { status: "errored", errorMessage: "当前渠道没有已启用的对话模型。请到设置 → 连接配置启用至少一个对话模型。" };
   }
 
   let apiKey = "";
   try {
     apiKey = getRuntimeHostPorts().decryptApiKey(channel.id);
   } catch {
-    return { status: "errored", errorMessage: "runtime-core 解密 API Key 失败。" };
+    return { status: "errored", errorMessage: "渠道凭据解密失败。请到设置 → 连接配置重新保存 API Key。" };
   }
 
   let workspaceName: string | undefined;
