@@ -174,7 +174,7 @@ describe("per-account IMAP connection gate (#698)", () => {
     expect(imapAccountGateStateForTest("cleanup@qq.com")).toBeUndefined();
   });
 
-  it("aborts a queued waiter and hands its reserved slot back to the queue head", async () => {
+  it("aborts a queued waiter and returns its reserved slot without waking successors", async () => {
     let releaseHolders!: () => void;
     const hold = new Promise<void>((resolve) => (releaseHolders = resolve));
     const fake = makeTrackingFactory({ holdStatus: hold });
@@ -187,23 +187,59 @@ describe("per-account IMAP connection gate (#698)", () => {
     ];
     const abort = new AbortController();
     const queued = protocol.validateImapCredential(account, abort.signal);
+    // 后继排在被中止者身后:P1 回归位——若取消路径 shift 转交「虚」预占,
+    // 后继会立即建连使真实连接数突破上限
+    const successor = protocol.getFolderStatus(account, "INBOX");
     await new Promise((resolve) => setTimeout(resolve, 1));
-    // 排队即预占:active = 两名额持有者 + 排队者的预占
+    // 排队即预占:active = 两名额持有者 + X + Y 的预占
     expect(imapAccountGateStateForTest("abort@qq.com")).toMatchObject({
-      active: maxImapConnectionsPerAccount + 1,
-      waiting: 1,
+      active: maxImapConnectionsPerAccount + 2,
+      waiting: 2,
     });
 
     abort.abort(new Error("budget gone"));
     await expect(queued).rejects.toThrow("budget gone");
-    // 中止者退队并还原预占名额:队列清空、两个持有者计数不变
-    expect(imapAccountGateStateForTest("abort@qq.com")).toMatchObject({ active: 2, waiting: 0 });
+    // 中止者退队归还预占;后继必须仍在排队(未被提前放行),真实连接仍为 2
+    expect(imapAccountGateStateForTest("abort@qq.com")).toMatchObject({
+      active: maxImapConnectionsPerAccount + 1,
+      waiting: 1,
+    });
+    expect(fake.peak).toBe(maxImapConnectionsPerAccount);
 
     releaseHolders();
-    await Promise.all(holders);
+    await Promise.all([...holders, successor]);
     expect(imapAccountGateStateForTest("abort@qq.com")).toBeUndefined();
     // 名额记账完好:账号照常可用
     await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+  });
+
+  it("leaves the ledger untouched when called with an already-aborted signal", async () => {
+    let releaseHolders!: () => void;
+    const hold = new Promise<void>((resolve) => (releaseHolders = resolve));
+    const fake = makeTrackingFactory({ holdStatus: hold });
+    const protocol = createMailProtocol(config, fake);
+    const account = credential("preabort@qq.com");
+
+    const holders = [
+      protocol.getFolderStatus(account, "INBOX"),
+      protocol.getFolderStatus(account, "INBOX"),
+    ];
+    const queued = protocol.validateImapCredential(account, new AbortController().signal);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+
+    const aborted = new AbortController();
+    aborted.abort(new Error("already gone"));
+    await expect(protocol.validateImapCredential(account, aborted.signal)).rejects.toThrow("already gone");
+    // 预检分支不动账:正常排队者 W1 的预占不被冒领
+    expect(imapAccountGateStateForTest("preabort@qq.com")).toMatchObject({
+      active: maxImapConnectionsPerAccount + 1,
+      waiting: 1,
+    });
+
+    releaseHolders();
+    await Promise.all(holders);
+    await queued;
+    expect(imapAccountGateStateForTest("preabort@qq.com")).toBeUndefined();
   });
 
   it("fast-fails beyond the queue depth cap without breaking the slot ledger", async () => {

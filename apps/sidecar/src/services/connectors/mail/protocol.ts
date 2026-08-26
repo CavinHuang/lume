@@ -648,12 +648,16 @@ async function awaitImapSlot(gate: ImapAccountGate, waitSignal?: AbortSignal): P
   await new Promise<void>((resolve, reject) => {
     const leaveQueueWithoutSlot = () => {
       const index = gate.waiters.indexOf(wake);
-      if (index >= 0) {
-        gate.waiters.splice(index, 1);
+      if (index < 0) {
+        // 从未入队(携带已中止 signal 直达):本方未记过账,不退任何名额
+        return;
       }
+      gate.waiters.splice(index, 1);
+      // 只退自己的预占,不放行队头:排队者的名额是「虚」的——它从未建连,
+      // 退出没有释放任何服务端容量;若在此 shift 转交,后继会立即建连使真实
+      // 连接数突破上限(#698 二轮审查实测复现)。放行只属于释放路径的真实
+      // active-- 配对,FIFO 由「waiters>0 ⇒ active≥max」不变式保持。
       gate.active -= 1;
-      // 预占名额就地转交队头(而非等下一次释放),保持 R=active-waiters 守恒
-      gate.waiters.shift()?.();
     };
     const onAbort = () => {
       leaveQueueWithoutSlot();
