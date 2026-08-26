@@ -962,12 +962,19 @@ export class Agent {
     })
     this.currentEngine = engine
 
-    for (const msg of this.buildRunHistory(preRunInputCount)) {
-      engine.messages.push(msg)
-    }
+    try {
+      for (const msg of this.buildRunHistory(preRunInputCount)) {
+        engine.messages.push(msg)
+      }
 
-    for (const queued of this.drainQueuedSdkEvents()) {
-      yield queued
+      for (const queued of this.drainQueuedSdkEvents()) {
+        yield queued
+      }
+    } finally {
+      // 主 try/finally 尚未接管的窗口（buildRunHistory 抛出 / 消费者在此段
+      // break）：不清理会让 #357 的互斥检查把 Agent 永久锁死在
+      // "agent is running"（PR#725 衍生收口）。
+      if (this.currentEngine === engine) this.currentEngine = null
     }
 
     // No auth_status event: the entry check above guarantees a host-injected

@@ -165,12 +165,17 @@ async function validateMailCredential(
   }
 
   const protocol = await loadProtocol();
+  // 总预算兼任排队中止信号(#698 审查 P2):预算耗尽时若 IMAP 阶段还在闸门
+  // 排队,立即退队而非任其占坑最坏 ~90s——验证失败已定局,早退让账号名额
+  // 尽快回到正常动作。IMAP 连接建立后的阶段仍靠自身超时收尾(不可取消)。
+  const budget = new AbortController();
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     // 两阶段共享一个总预算:单阶段超时各自生效,但顺序累加可能突破 RPC 层
     // 统一上限造成状态分裂;总预算先到即按 timeout 失败,不落盘
     const phases = (async () => {
       await validateMailPhase(config, "imap", credential.imapHost, mailImapPort, logger, () =>
-        protocol.validateImapCredential(credential),
+        protocol.validateImapCredential(credential, budget.signal),
       );
       await validateMailPhase(config, "smtp", credential.smtpHost, credential.smtpPort ?? mailSmtpPort, logger, () =>
         protocol.validateSmtpCredential(credential),
@@ -178,17 +183,19 @@ async function validateMailCredential(
     })();
     // 总预算先到时底层验证仍在自行收尾:吞掉迟到的 rejection 防 unhandledRejection
     phases.catch(() => {});
-    await Promise.race([
-      phases,
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new MailProtocolError("timeout", `${config.displayName} connection test budget exceeded`)),
-          mailValidationTotalBudgetMs,
-        ),
-      ),
-    ]);
+    const budgetExhausted = new Promise<never>((_, reject) => {
+      budgetTimer = setTimeout(() => {
+        budget.abort(new MailProtocolError("timeout", `${config.displayName} connection test budget exceeded`));
+        reject(budget.signal.reason);
+      }, mailValidationTotalBudgetMs);
+    });
+    await Promise.race([phases, budgetExhausted]);
   } catch (error) {
     throw mapProtocolError(error, "connect", config);
+  } finally {
+    if (budgetTimer !== undefined) {
+      clearTimeout(budgetTimer);
+    }
   }
 
   const normalizedEmail = credential.email.toLowerCase();
@@ -806,7 +813,9 @@ export function mapProtocolError(
           ? new ProviderRequestError(400, config.connectAuthMessage)
           : new ProviderRequestError(
               401,
-              `${config.displayName} rejected the stored authorization code. Reconnect the account with a fresh ${config.displayName} authorization code.`,
+              // #698:服务器侧 "login failed" 也可能来自临时风控/频率限制而非凭证失效,
+              // 文案不得把用户径直引向重置授权码
+              `${config.displayName} rejected the login. If the stored authorization code was changed or expired, reconnect with a fresh code; otherwise the server may be throttling this account temporarily — retry shortly before reconnecting.`,
             );
       case "folder_not_found":
         return new ProviderRequestError(400, `${config.displayName} folder does not exist.`);
@@ -832,6 +841,9 @@ export function mapProtocolError(
         return new ProviderRequestError(502, error.message);
       case "provider":
         return new ProviderRequestError(502, error.message);
+      case "busy":
+        // 本地闸门快败=限流退避,不是上游故障;gmail 上游 429 同此口径
+        return new ProviderRequestError(429, error.message);
     }
   }
 
