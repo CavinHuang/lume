@@ -693,10 +693,9 @@ async function withImapConnectionLimit<T>(
   }
   if (gate.active >= maxImapConnectionsPerAccount) {
     if (gate.waiters.length >= maxImapWaitersPerAccount) {
-      throw new MailProtocolError(
-        "provider",
-        `Too many pending operations for ${account}; retry shortly.`,
-      );
+      // busy 而非 provider:请求未发往上游,是本地主动快败,模型应退避重试;
+      // message 不嵌 email——调用结果天然绑定发起上下文,且 email 不进错误面
+      throw new MailProtocolError("busy", "Too many pending operations for this account; retry shortly.");
     }
     // 中止路径在 awaitImapSlot 内部已退队并还原名额,此处直接向上抛
     await awaitImapSlot(gate, waitSignal);

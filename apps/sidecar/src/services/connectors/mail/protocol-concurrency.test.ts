@@ -260,7 +260,7 @@ describe("per-account IMAP connection gate (#698)", () => {
     await new Promise((resolve) => setTimeout(resolve, 5));
     const rejectedNow = outcomes.filter((outcome) => outcome.status === "rejected");
     expect(rejectedNow).toHaveLength(1);
-    expect((rejectedNow[0] as PromiseRejectedResult).reason).toMatchObject({ kind: "provider" });
+    expect((rejectedNow[0] as PromiseRejectedResult).reason).toMatchObject({ kind: "busy" });
 
     release();
     await Promise.all(calls);

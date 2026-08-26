@@ -841,6 +841,9 @@ export function mapProtocolError(
         return new ProviderRequestError(502, error.message);
       case "provider":
         return new ProviderRequestError(502, error.message);
+      case "busy":
+        // 本地闸门快败=限流退避,不是上游故障;gmail 上游 429 同此口径
+        return new ProviderRequestError(429, error.message);
     }
   }
 
