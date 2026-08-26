@@ -19,14 +19,25 @@ export function defineTool(config: {
   validateInput?: (input: any, context: ToolContext) => void | string | Promise<void | string>
   outputSchema?: Record<string, unknown>
   getPath?: (input: any, context: ToolContext) => string | undefined | Promise<string | undefined>
+  // 函数形态会被 tool-source 的 readDeclaredReadOnly 无参求值以提取声明意图；
+  // 依赖入参的实现必须容忍无参调用（返回 boolean 或抛错回退类别推断）
   isReadOnly?: boolean | ((input: any, context?: ToolContext) => boolean)
   isConcurrencySafe?: boolean | ((input: any, context?: ToolContext) => boolean)
   prompt?: string | ((context: ToolContext) => Promise<string>)
+  /**
+   * 工具自带的运行时元数据（注入池归属 requiredDuringSkillScope 等可由工具
+   * 自声明）。审批豁免键 delegatesPermission 在此与宿主 wrapper 两处都会被
+   * 剥离（合法豁免载体是 ExecuteTool 等不经 wrapper 的内部工厂），
+   * 第三方不得经任何通道自declare 跳过 canUseTool（#711 review）。
+   */
+  runtimeMetadata?: Record<string, unknown>
 }): ToolDefinition {
+  const { delegatesPermission: _strippedDelegatesPermission, ...declaredRuntimeMetadata } = config.runtimeMetadata ?? {}
   return {
     name: config.name,
     description: config.description,
     inputSchema: config.inputSchema,
+    ...(config.runtimeMetadata ? { runtimeMetadata: declaredRuntimeMetadata } : {}),
     ...(config.validateInput ? { validateInput: config.validateInput } : {}),
     ...(config.outputSchema ? { outputSchema: config.outputSchema } : {}),
     ...(config.getPath ? { getPath: config.getPath } : {}),

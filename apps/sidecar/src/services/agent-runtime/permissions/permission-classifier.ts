@@ -1,5 +1,5 @@
 import { shellKindConservative } from "@lume/agent-sdk";
-import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS } from "../ps-dangerous-verbs";
+import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS, hasPowerShellContentSignal } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
   PermissionClassifierInput,
@@ -73,7 +73,11 @@ export function createPermissionClassifier(
         return heuristic;
       }
 
-      const key = `${input.toolName}::${input.command ?? ""}::${input.path ?? ""}`;
+      // 缓存键纳入方言（#707）：启发式词表选择依赖 shellKind，TTL 内方言读法漂移时
+      // 同一命令文本不得跨方言共享 LLM 结果。JSON 序列化作键：分隔符拼接在 command/path
+      // 含 "::" 时存在跨条目歧义碰撞。生产引擎缺省不传 shellKind（段为 null），注入通道
+      // （测试/未来方言上下文接线）生效。
+      const key = JSON.stringify([input.toolName, input.shellKind ?? null, input.command ?? "", input.path ?? ""]);
       const cached = cache.get(key);
       if (cached && Date.now() - cached.ts < cacheTtlMs) {
         return cached.result;
@@ -117,9 +121,13 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
   const tool = input.toolName.toLowerCase();
   if (tool === "bash" || tool === "execute_command") {
     // 缺省方言用保守读法：bash 发现未决的冷启动窗口 fail-closed，与 guardrail 正则层同口径；
-    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）
+    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）。
+    // win32 叠加内容信号通道（#707）：装 POSIX bash 的 Windows 机上方言读作 bash、词表休眠，
+    // 文本呈强 PS 形态时无视方言激活；非 win32 不消费（与 guardrail 层同口径）
+    const platform = input.platform ?? process.platform;
     const powershellRulesActive =
-      (input.shellKind ?? shellKindConservative(input.platform ?? process.platform, input.env ?? process.env)) === "powershell";
+      (input.shellKind ?? shellKindConservative(platform, input.env ?? process.env)) === "powershell" ||
+      (platform === "win32" && hasPowerShellContentSignal(input.command ?? input.path ?? ""));
     const shellPatterns = powershellRulesActive ? [...MEDIUM_PATTERNS, ...POWERSHELL_MEDIUM_PATTERNS] : MEDIUM_PATTERNS;
     for (const pattern of shellPatterns) {
       if (pattern.test(value)) {
@@ -134,12 +142,14 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
     return {
       riskLevel: "low",
       reasonCode: "shell_read",
-      explanation: "Shell 命令未命中写入或高危模式",
+      // 中性理由（#707）：该文案经引擎 approval 透传直达审批卡，若陈述「无风险」
+      // 会与「请确认」同屏自相矛盾——只陈述结论，不替系统背书安全性
+      explanation: "Shell 命令不在自动放行范围内，需要用户确认",
       shouldAsk: false
     };
   }
 
-  if (tool === "write" || tool === "edit" || tool === "write_file" || tool === "edit_file") {
+  if (tool === "write" || tool === "edit" || tool === "multiedit" || tool === "write_file" || tool === "edit_file") {
     if (input.path && isDependencyManifest(input.path)) {
       return {
         riskLevel: "medium",
@@ -176,7 +186,9 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
   return {
     riskLevel: "low",
     reasonCode: "metadata_low",
-    explanation: "未命中高风险模式",
+    // 中性理由（#707 同源）：该文案经引擎 approval 透传直达审批卡（skill 等工具
+    // 未命中词表时走此 fallback），不得陈述「无风险」与「请确认」自相矛盾
+    explanation: "该操作不在自动放行范围内，需要用户确认",
     shouldAsk: false
   };
 }

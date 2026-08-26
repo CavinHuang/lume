@@ -8,6 +8,7 @@ export { MAX_RPC_MESSAGE_BYTES };
 
 interface ElectronParentPort {
   on(event: "message", listener: (event: { data?: unknown }) => void): void;
+  on(event: "disconnect", listener: () => void): void;
   postMessage(message: string): void;
 }
 
@@ -22,6 +23,8 @@ interface ProcessRpcTransportOptions {
 export interface ProcessRpcTransport {
   listen(listener: (message: string) => void): void;
   send(message: string): void;
+  /** 对端通道关闭（desktop 死亡/断连）；用于批量 reject in-flight 请求而非干等超时（#611） */
+  onClose(listener: () => void): void;
 }
 
 export function createProcessRpcTransport(
@@ -46,6 +49,9 @@ export function createProcessRpcTransport(
       },
       send(message) {
         parentPort.postMessage(message);
+      },
+      onClose(listener) {
+        parentPort.on("disconnect", listener);
       }
     };
   }
@@ -81,6 +87,13 @@ export function createProcessRpcTransport(
     },
     send(message) {
       output.write(`${message}\n`);
+    },
+    onClose(listener) {
+      const readableInput = input as unknown as {
+        on(event: "close" | "end", listener: () => void): void;
+      };
+      readableInput.on("close", listener);
+      readableInput.on("end", listener);
     }
   };
 }

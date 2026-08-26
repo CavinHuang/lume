@@ -31,40 +31,52 @@ import { validateInput } from "./validation";
 
 export function createAutomationHandlers(): Record<string, RpcHandler> {
   return {
-    [AUTOMATION_IPC_CHANNELS.LIST_JOBS]: async () => listAutomationJobs(),
+    [AUTOMATION_IPC_CHANNELS.LIST_JOBS]: async () => {
+      // 外部修复 jobs.json 后调度自愈：刷新调度（runner 未启动时为 no-op）
+      void refreshAutomationRunnerJobs().catch(() => undefined);
+      return listAutomationJobs();
+    },
     [AUTOMATION_IPC_CHANNELS.CREATE_JOB]: async (params) => {
       await startAutomationRunner();
-      const created = createAutomationJob(
-        validateInput(
+      // #647 P2-23：RPC 创建强制 source:"manual"——无人值守 bypassPermissions 只
+      // 授予 sidecar 内部调用方直写的任务，渲染进程不得经 RPC 铸造 system 通道
+      const created = createAutomationJob({
+        ...(validateInput(
           automationCreateInputSchema,
           params,
           AUTOMATION_IPC_CHANNELS.CREATE_JOB
-        ) as AutomationCreateJobInput
-      );
+        ) as AutomationCreateJobInput),
+        source: "manual",
+      });
       await refreshAutomationRunnerJobs();
       return created;
     },
     [AUTOMATION_IPC_CHANNELS.UPDATE_JOB]: async (params) => {
       await startAutomationRunner();
-      const updated = updateAutomationJob(
-        validateInput(
-          automationUpdateInputSchema,
-          params,
-          AUTOMATION_IPC_CHANNELS.UPDATE_JOB
-        ) as AutomationUpdateJobInput
-      );
+      const input = validateInput(
+        automationUpdateInputSchema,
+        params,
+        AUTOMATION_IPC_CHANNELS.UPDATE_JOB
+      ) as AutomationUpdateJobInput;
+      // system 任务（routine 映射等）的 prompt/schedule 可被整体换血后按无人值守
+      // bypass 周期执行，渲染进程不得改写（#647 P2-23 劫持面）
+      const current = listAutomationJobs().find((job) => job.id === input.id);
+      if (current?.source === "system") throw new Error("系统自动化任务不可在界面中修改");
+      const updated = updateAutomationJob(input);
       await refreshAutomationRunnerJobs();
       return updated;
     },
     [AUTOMATION_IPC_CHANNELS.DELETE_JOB]: async (params) => {
       await startAutomationRunner();
-      const result = deleteAutomationJob(
-        validateInput(
-          automationDeleteInputSchema,
-          params,
-          AUTOMATION_IPC_CHANNELS.DELETE_JOB
-        ) as AutomationDeleteJobInput
-      );
+      const input = validateInput(
+        automationDeleteInputSchema,
+        params,
+        AUTOMATION_IPC_CHANNELS.DELETE_JOB
+      ) as AutomationDeleteJobInput;
+      // 同 UPDATE/TOGGLE：system 任务不可经渲染进程删除（#647 P2-23 劫持面）
+      const current = listAutomationJobs().find((job) => job.id === input.id);
+      if (current?.source === "system") throw new Error("系统自动化任务不可在界面中删除");
+      const result = deleteAutomationJob(input);
       await refreshAutomationRunnerJobs();
       return result;
     },
@@ -97,6 +109,10 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
       const target = jobs.find((j) => j.id === input.id);
       if (!target) {
         throw new Error(`自动化任务不存在: ${input.id}`);
+      }
+      // 同 UPDATE：system 任务不可经渲染进程启停（#647 P2-23 劫持面）
+      if (target.source === "system") {
+        throw new Error("系统自动化任务不可在界面中启停");
       }
       const updated = updateAutomationJob({ id: target.id, enabled: !target.enabled });
       await refreshAutomationRunnerJobs();

@@ -3,7 +3,7 @@ import { normalizeProviderId } from "../channel/model-selection";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 
 /**
- * IM 会话内斜杠命令层：/help /new /stop /now /model（含单字母别名）。
+ * IM 会话内斜杠命令层：/help /new /stop /now /model /revert（含单字母别名）。
  *
  * 设计要点：
  * - 解析与呈现数据全部是纯函数（可测），路由器只做调度与发送；
@@ -20,6 +20,7 @@ export type ParsedImCommand =
   | { type: "new" }
   | { type: "stop" }
   | { type: "now" }
+  | { type: "revert"; args: string[] }
   | { type: "model"; args: string[] };
 
 /** 命令名单一来源（含审批命令）：管线直通白名单据此动态构建，避免双处维护漂移 */
@@ -29,6 +30,7 @@ export const IM_CONTROL_COMMAND_NAMES = [
   "new",
   "stop", "s",
   "now", "n",
+  "revert",
   "model", "m"
 ] as const;
 
@@ -40,6 +42,7 @@ const COMMAND_ALIASES: Record<string, ParsedImCommand["type"]> = {
   s: "stop",
   now: "now",
   n: "now",
+  revert: "revert",
   model: "model",
   m: "model"
 };
@@ -57,8 +60,8 @@ export function parseImCommand(text: string): ParsedImCommand {
     return { type: "none" };
   }
   const args = parts.slice(1);
-  if (kind === "model") {
-    return { type: "model", args };
+  if (kind === "model" || kind === "revert") {
+    return { type: kind, args };
   }
   if (args.length > 0 && (kind === "help" || kind === "new" || kind === "stop" || kind === "now")) {
     return {
@@ -78,6 +81,7 @@ export function formatImHelpText(): string {
     "/model 查看可用渠道",
     "/model <渠道序号> 查看该渠道的模型",
     "/model <渠道序号> <模型序号> 切换模型（仅当前会话生效）",
+    "/revert <runId> 按快照还原该轮写过的文件（不可逆）",
     "/help 显示本帮助"
   ].join("\n");
 }

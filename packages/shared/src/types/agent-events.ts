@@ -1,3 +1,5 @@
+import type { NormalizedProviderUsage } from './sdk-protocol'
+
 /**
  * Lifecycle event bus types — single vocabulary shared by SDK, sidecar and web.
  * Batch 1 scope: run + turn + assistant message lifecycle.
@@ -44,7 +46,7 @@ export interface RunEndDetail {
   errorCode?: string
   /** F3:错误终值携带的错误信息(流抛错/run 链内失败的补发终值);正常终值缺省。 */
   result?: string
-  /** Migrated from the legacy SDKResultMessage when present. */
+  /** Migrated from the legacy SDKResultMessage when present. 注意:与 MessageEndDetail.message.usage(NormalizedProviderUsage)词表不同——此处是 provider 原始 TokenUsage 弱类型透传,勿混用。 */
   usage?: Record<string, unknown>
   costUSD?: number
 }
@@ -86,7 +88,13 @@ export interface UserMessageDetail {
 
 export interface MessageEndDetail {
   type: 'message.end'
-  message: { role: 'assistant'; content: unknown[] }
+  message: {
+    role: 'assistant'
+    content: unknown[]
+    /** 本条 assistant 消息的 provider 用量（SDKAssistantMessage.usage 透传，缺省=上游未提供）。选层依据:镜像 SDKAssistantMessage 自身字段布局,故嵌在 message 内而非 detail 顶层。 */
+    usage?: NormalizedProviderUsage
+    costUSD?: number
+  }
   error?: string
 }
 

@@ -571,7 +571,7 @@ export class PlanningCalendarStore {
       () => {
         const result = this.#db
           .prepare(
-            "UPDATE planning_reminder SET snoozed_until=?,last_notified_at=NULL,origin='manual',updated_at=? WHERE id=? AND status='pending'",
+            "UPDATE planning_reminder SET snoozed_until=?,last_notified_at=NULL,updated_at=? WHERE id=? AND status='pending'",
           )
           .run(now + input.minutes * 60_000, now, input.reminderId) as {
           changes?: number;

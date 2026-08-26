@@ -82,7 +82,7 @@ describe('AskUserQuestionTool', () => {
     expect(String(result.content)).not.toContain('User declined')
   })
 
-  test('a failing handler still reports a decline, not an interruption (#330)', async () => {
+  test('a failing handler reports a pipeline failure, neither a decline nor an interruption (#538)', async () => {
     setQuestionHandler(async () => {
       throw new Error('handler exploded')
     })
@@ -90,8 +90,9 @@ describe('AskUserQuestionTool', () => {
     const result = await AskUserQuestionTool.call({ questions }, { cwd: process.cwd() })
 
     expect(result.is_error).toBe(true)
-    expect(String(result.content)).toContain('User declined')
+    expect(String(result.content)).toContain('NOT a user decline')
     expect(String(result.content)).toContain('handler exploded')
+    expect(String(result.content)).not.toContain('User declined')
     expect(String(result.content)).not.toContain('interrupted')
   })
 })

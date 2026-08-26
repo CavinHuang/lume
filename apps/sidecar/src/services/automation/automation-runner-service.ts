@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import type {
   AutomationJob,
   AutomationListRunsInput,
@@ -44,9 +51,11 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 
 function appendRun(run: AutomationRun): void {
   // runs.jsonl 写失败（盘满/Windows EBUSY）不得让 fire-and-forget 的 executeJob 变成
-  // unhandledRejection 断掉后续调度链（#615）：降级记日志，放弃本次 run 记录
+  // unhandledRejection 断掉后续调度链（#615）：降级记日志+影子记录，放弃本次 run 记录
+  const runsPath = getAutomationRunsPath();
   try {
-    appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
+    appendFileSync(runsPath, `${JSON.stringify(run)}\n`, "utf-8");
+    rotateAutomationRunsIfBloated(runsPath);
   } catch (error) {
     recordLostAutomationRun(run);
     writeLogRecord({
@@ -57,6 +66,41 @@ function appendRun(run: AutomationRun): void {
       status: "error",
       data: { automationJobId: run.jobId, runId: run.id, error: error instanceof Error ? error.message : String(error) }
     });
+  }
+}
+
+// #555:automation-runs.jsonl 只追加、无轮转,三处高频列表入口(自动化页/routine
+// 执行/cron 工具)全量读盘解析的成本随文件永久恶化。软上限触发的尾部截断使文件
+// 有界:平时零开销(stat 一次),超限才一次性原子重写保留最近窗口,频率随增长
+// 趋近于零。
+const RUNS_FILE_SOFT_CAP_BYTES = 8 * 1024 * 1024;
+const RUNS_ROTATE_KEEP_LINES = 4000;
+
+/** 导出仅供测试:截断是数据删除路径,行为需钉死。 */
+export function rotateAutomationRunsIfBloatedForTest(runsPath: string): void {
+  rotateAutomationRunsIfBloated(runsPath);
+}
+
+function rotateAutomationRunsIfBloated(runsPath: string): void {
+  try {
+    if (statSync(runsPath).size < RUNS_FILE_SOFT_CAP_BYTES) return;
+    const lines = readFileSync(runsPath, "utf-8").split("\n").filter(Boolean);
+    if (lines.length <= RUNS_ROTATE_KEEP_LINES) return;
+    const kept = lines.slice(-RUNS_ROTATE_KEEP_LINES);
+    const tmpPath = `${runsPath}.tmp`;
+    writeFileSync(tmpPath, `${kept.join("\n")}\n`, "utf-8");
+    renameSync(tmpPath, runsPath);
+    writeLogRecord({
+      level: "warn",
+      context: "automation",
+      message: "automation runs file rotated",
+      data: {
+        droppedLines: lines.length - kept.length,
+        keptLines: kept.length
+      }
+    });
+  } catch {
+    // 截断失败不阻断追加主流程:下次写入会再次尝试
   }
 }
 
@@ -104,6 +148,33 @@ function pickExecutionChannel(job: AutomationJob): { channelId: string; modelId:
     modelId: binding.modelId,
     modelRef
   };
+}
+
+/**
+ * run 收尾状态判定（纯函数，便于单测各分支）。#649 review P1-1:触顶检测挂
+ * onComplete 的 reason——T7a 后 sidecar 生产不再构造 run.turn_limited 事件
+ * （已迁事件总线 run.end{stopReason:'max_turns'}），onRuntimeEvent 检测在生产中
+ * 永不为真。触顶即停的无人值守任务必须如实记 failed，否则 desktop 通知面
+ * （只对 failed/waiting_* 弹）对半途而废的任务永不提醒。
+ */
+export function resolveAutomationRunOutcome(input: {
+  runtimeError: string | null;
+  waitingForUser: boolean;
+  waitingForApproval: boolean;
+  turnLimitedStopped: boolean;
+  threadId: string;
+}): { status: AutomationRun["status"]; message: string } {
+  if (input.runtimeError) throw new Error(input.runtimeError);
+  if (input.waitingForUser) {
+    return { status: "waiting_for_user", message: `任务暂停：需要用户处理交互或浏览器凭证，线程: ${input.threadId}` };
+  }
+  if (input.waitingForApproval) {
+    return { status: "waiting_for_approval", message: `任务暂停：等待工具权限确认，线程: ${input.threadId}` };
+  }
+  if (input.turnLimitedStopped) {
+    return { status: "failed", message: `任务达到回合上限未完成，线程: ${input.threadId}` };
+  }
+  return { status: "success", message: `任务执行完成，线程: ${input.threadId}` };
 }
 
 async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", scheduledAt = Date.now()): Promise<AutomationRun> {
@@ -165,6 +236,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   };
   let runStatus: AutomationRun["status"] = "success";
   let runMessage = "任务执行完成";
+  // #566 端到端 review:automation 通道不自动续跑(callerBoundsTurns 门)，触顶即停。
+  // 必须如实记为 failed——「任务执行完成」会掩盖半途而废的无人值守任务。
+  let turnLimitedStopped = false;
 
   try {
     const { channelId, modelId, modelRef } = pickExecutionChannel(job);
@@ -228,9 +302,10 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         modelRef,
         channelId,
         modelId,
-        // 模型自建 job（source=manual）不带无人值守 bypass：permissionMode 缺省
-        // 时由 agent-service 回落用户配置，会话内注入不再能沉淀永久免审批通道（#394）。
-        ...(job.source === "manual" ? {} : { permissionMode: "bypassPermissions" as const }),
+        // 无人值守 bypass 仅授予 sidecar 内部调用方直写的 system 任务（routine 等，
+        // #394）；manual 与缺省 source 一律回落用户权限配置——缺省视为 manual 的
+        // fail-closed 口径同时堵住 suggest 等未显式写 source 的内部创建面（#647 P2-23）。
+        ...(job.source === "system" ? { permissionMode: "bypassPermissions" as const } : {}),
         traceContext,
         messageMetadata: {
           automationJobId: job.id,
@@ -238,7 +313,15 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         }
       },
       {
-        onComplete: () => {},
+        // #649 review P1-1:触顶检测挂 onComplete 的 reason——T7a 后 sidecar 生产不再
+        // 构造 run.turn_limited 事件(已迁事件总线 run.end{stopReason:'max_turns'}),
+        // onRuntimeEvent 检测在生产中永不为真。
+        // #649 round3:max_turns 与 repeat_guard 都属「保护机制停止的半途而废」,
+        // 漏 repeat_guard 会让无人值守任务被重复执行保护停下时仍记「任务执行完成」
+        // (im-message-router 同款口径:两个 reason 都归 turn_limited)
+        onComplete: (payload) => {
+          if (payload?.reason === "max_turns" || payload?.reason === "repeat_guard") turnLimitedStopped = true;
+        },
         onError: (error) => {
           runtimeError = error;
         },
@@ -260,15 +343,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
       throw new Error(runtimeError);
     }
 
-    if (waitingForUser) {
-      runStatus = "waiting_for_user";
-      runMessage = `任务暂停：需要用户处理交互或浏览器凭证，线程: ${threadId}`;
-    } else if (waitingForApproval) {
-      runStatus = "waiting_for_approval";
-      runMessage = `任务暂停：等待工具权限确认，线程: ${threadId}`;
-    } else {
-      runMessage = `任务执行完成，线程: ${threadId}`;
-    }
+    const outcome = resolveAutomationRunOutcome({ runtimeError, waitingForUser, waitingForApproval, turnLimitedStopped, threadId });
+    runStatus = outcome.status;
+    runMessage = outcome.message;
   } catch (error) {
     runStatus = "failed";
     runMessage = error instanceof Error ? error.message : String(error);

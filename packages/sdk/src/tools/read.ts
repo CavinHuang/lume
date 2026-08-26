@@ -19,7 +19,8 @@ const SUMMARIZABLE_EXTENSIONS = new Set([
   '.json', '.yaml', '.yml', '.toml',
   '.sh', '.bash', '.md',
 ])
-const SUMMARIZE_THRESHOLD_LINES = 500
+// #564:无显式范围时的全文直读上限;超出部分截断并带尾部标记,summarize 参数才走 AST 折叠
+const WHOLE_READ_LINE_LIMIT = 2000
 const MAX_MULTIMODAL_BYTES = 20 * 1024 * 1024
 const DEFAULT_MAX_TEXT_BYTES = 1024 * 1024
 const DEFAULT_MAX_TEXT_TOKENS = 25_000
@@ -43,9 +44,37 @@ const BINARY_EXTENSIONS = new Set([
 ])
 type ReadResult = { data: unknown; is_error?: boolean; _meta?: Record<string, unknown> }
 
+// ---- 部分读截断信号（#535）----
+// Read 结果的结构化字段会被 normalizeToolCallResult 坍缩为纯文本 content，
+// 截断信号必须随 content 文本本身传递：模型侧可见，sidecar 账本按此判定完整/部分读。
+
+/** 给部分视图 content 尾部追加截断标记；空视图（无行）不标 */
+export function withPartialReadMarker(
+  content: string,
+  range: { offset: number; shownLines: number; totalLines?: number; totalIsLowerBound?: boolean },
+): string {
+  if (range.shownLines <= 0) return content
+  const start = range.offset + 1
+  const end = range.offset + range.shownLines
+  const total = range.totalLines === undefined ? '' : ` of ${range.totalLines}${range.totalIsLowerBound ? '+' : ''}`
+  return `${content}\n[showing lines ${start}-${end}${total}; use offset=${end} to continue reading]`
+}
+
+export function withSummarizedViewMarker(content: string, totalLines?: number): string {
+  const total = typeof totalLines === 'number' ? ` of ${totalLines} lines` : ''
+  return `${content}\n[summarized view${total}: structural outline only; read specific ranges with offset/limit for the full text]`
+}
+
+/** 是否为无任何部分视图/摘要标记的完整读结果 */
+export function isFullReadText(content: unknown): boolean {
+  if (typeof content !== 'string') return true
+  return !content.includes('\n[showing lines ') && !content.includes('\n[summarized view')
+}
+
+
 export const FileReadTool = defineTool({
   name: 'Read',
-  description: 'Read text, images, PDFs, and Jupyter notebooks from the filesystem. For code, prefer this basic tool over Node REPL or shell scripts. Text uses 0-based line offsets; use offset/limit for large files. PDF pages are 1-based ranges such as "1-3".',
+  description: 'Read text, images, PDFs, and Jupyter notebooks from the filesystem. For code, prefer this basic tool over Node REPL or shell scripts. Text uses 0-based line offsets; use offset/limit for explicit ranges. Line numbers prefixed to each line are NOT part of file content—never include them in Edit strings. Whole-file reads return raw source up to 2000 lines (beyond that: first 2000 lines plus a truncation marker); pass summarize=true to get a structure outline instead.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -60,6 +89,10 @@ export const FileReadTool = defineTool({
       limit: {
         type: 'number',
         description: 'Maximum number of lines to read',
+      },
+      summarize: {
+        type: 'boolean',
+        description: 'For large code files, return an outline with function bodies elided instead of raw source. Elided regions were not shown—re-read with offset/limit before editing them. Mutually exclusive with offset/limit: an explicit range always wins and summarize is ignored (a note is appended to the response when that happens).',
       },
       pages: {
         type: 'string',
@@ -141,20 +174,36 @@ export const FileReadTool = defineTool({
         }
       }
 
+      // #564:无显式范围时全文直读至上限;AST 骨架折叠降为 summarize 显式 opt-in,
+      // 避免「模型只见骨架却要 Edit elided 区域」的必然失配。
+      // 行预算可由宿主按任务类型调(readMaxLines,token 经济学 review 旋钮排序第一)
+      const wholeReadLimit = configuredPositiveNumber(context, 'readMaxLines', WHOLE_READ_LINE_LIMIT)
       const hasExplicitRange = input.offset !== undefined || input.limit !== undefined
       const offset = input.offset ?? 0
-      const limit = input.limit ?? (hasExplicitRange ? 2000 : SUMMARIZE_THRESHOLD_LINES)
-      if (isUnchangedRead(context.fileStateCache?.get(filePath), fileStat.mtimeMs, fileStat.size, offset, limit)) {
+      const limit = input.limit ?? (hasExplicitRange ? 2000 : wholeReadLimit)
+      if (isUnchangedRead(context.fileStateCache?.get(filePath), fileStat.mtimeMs, fileStat.size, offset, limit, input.summarize === true)) {
         return unchangedResult(filePath)
       }
-      const shouldReadWholeFile = !hasExplicitRange && SUMMARIZABLE_EXTENSIONS.has(ext)
-      if (!shouldReadWholeFile) {
+      if (hasExplicitRange) {
         const ranged = await readTextFileRange(filePath, offset, limit, context.abortSignal)
         const textLimitError = validateTextLimits(ranged.content, filePath, context)
         if (textLimitError) return textLimitError
         // truncated 时窗口凑满提前停读，totalLines 只是下界：
         // 强制 partial 视图，且不谎报精确的 remainingLines（#314）。
-        const isPartialView = hasExplicitRange || offset > 0 || ranged.truncated
+        // #649 review P1-5:offset=0 且未截断且窗口覆盖全部行 = 全文读——否则超
+        // WHOLE_READ_LINE_LIMIT 的文件不存在任何解锁 Write/Edit 的读法，
+        // 守卫「请完整读取后再写入」成为不可满足指令。
+        // 零行视图（越界 offset / limit=0）与非零 offset 续读到尾都不得视作全文：
+        // 前者什么都没读到，后者只看了片段——缓存与账本都必须保持 partial，
+        // 否则 Edit 用片段比对磁盘全文必失配（#711 review 对抗轮实证；
+        // 尾窗读误标全文的永久假性 stale 由 #733 round3 独立实证）。
+        const shownLines = ranged.content
+          ? ranged.content.replace(/\n$/, '').split('\n').length
+          : 0
+        const zeroRowView = shownLines === 0 && ranged.totalLines > 0
+        const isFullCoverageRead = offset === 0 && !ranged.truncated && shownLines > 0
+          && ranged.totalLines <= offset + shownLines
+        const isPartialView = !isFullCoverageRead
         context.fileStateCache?.set(filePath, {
           content: ranged.content,
           timestamp: fileStat.mtimeMs,
@@ -163,13 +212,26 @@ export const FileReadTool = defineTool({
           limit,
           isPartialView,
         })
+        const rangedBody = ranged.content
+          ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
+          : (zeroRowView
+              ? `(no lines at offset ${offset}; file has ${ranged.totalLines} lines)`
+              : '(empty file)')
+        // 截断标记与 summarize 忽略告知可叠加：后者无论全文/部分读都要显式提示
+        const markedContent = isPartialView
+          ? withPartialReadMarker(rangedBody, {
+              offset,
+              shownLines,
+              totalLines: ranged.totalLines,
+              totalIsLowerBound: ranged.truncated,
+            })
+          : rangedBody
         return {
           data: {
             filePath,
-            // 行尾换行已忠实入缓存（#569），显示前去掉以免多出幽灵空行。
-            content: ranged.content
-              ? ranged.content.replace(/\n$/, '').split('\n').map((line, i) => `${offset + i + 1}\t${line}`).join('\n')
-              : '(empty file)',
+            content: input.summarize === true && hasExplicitRange
+              ? `${markedContent}\n[注意：本次按显式范围读取，summarize 参数未生效；如需全文件大纲请仅传 summarize:true]`
+              : markedContent,
             offset,
             limit,
             totalLines: ranged.totalLines,
@@ -203,10 +265,9 @@ export const FileReadTool = defineTool({
       const content = textFile.content
       const lines = content.length === 0 ? [] : content.split('\n')
 
-      // If user specified offset/limit, always return raw content (explicit read)
+      // #564:AST 折叠仅显式 opt-in;elided 区域模型没见过，编辑前必须补读
       if (
-        !hasExplicitRange
-        && lines.length > SUMMARIZE_THRESHOLD_LINES
+        input.summarize === true
         && isNativeAvailable()
         && SUMMARIZABLE_EXTENSIONS.has(ext)
       ) {
@@ -234,6 +295,7 @@ export const FileReadTool = defineTool({
           }
 
           const summarizedContent = keptSegments.join('\n')
+            + `\n\n[outline: function bodies were elided—re-read the specific regions with offset/limit before editing them]`
           const summaryLimitError = validateTextLimits(summarizedContent, filePath, context)
           if (summaryLimitError) return summaryLimitError
 
@@ -244,12 +306,13 @@ export const FileReadTool = defineTool({
             offset,
             limit,
             isPartialView: true,
+            summarizedView: true,
           })
 
           return {
             data: {
               filePath,
-              content: summarizedContent,
+              content: withSummarizedViewMarker(summarizedContent, lines.length),
               totalLines: lines.length,
               summarized: true,
               keptLines,
@@ -262,7 +325,9 @@ export const FileReadTool = defineTool({
 
       // Default: return raw content with line numbers
       const selectedLines = lines.slice(offset, offset + limit)
-      const isPartialView = offset > 0 || offset + limit < lines.length || hasExplicitRange
+      // #711 review 对抗轮：非零 offset 续读到尾只是片段，缓存与账本都保持 partial；
+      // 此路径无显式范围（ranged 已提前 return），offset>0 即天然 partial
+      const isPartialView = offset > 0 || offset + limit < lines.length
       const textLimitError = validateTextLimits(selectedLines.join('\n'), filePath, context)
       if (textLimitError) return textLimitError
 
@@ -280,17 +345,35 @@ export const FileReadTool = defineTool({
         const lineNum = offset + i + 1
         return `${lineNum}\t${line}`
       }).join('\n')
+      const numberedContent = numbered || '(empty file)'
+
+      // #564:#535 截断信号必须在 content 里可见——超限全文读在尾部带显式标记;
+      // summarize 被请求但不可用时给显式信号,避免模型反复重试死路
+      // #564 review:ranged 分支已提前 return,此处必然无显式范围
+      const truncatedWholeRead = lines.length > wholeReadLimit
+      const summarizeUnavailable = input.summarize === true
+      // #564 review:outline 建议只对可折叠扩展名给出,.txt/.log 等提了也是死路
+      const summarizeHint = SUMMARIZABLE_EXTENSIONS.has(ext)
+        ? ', or pass summarize:true for an outline'
+        : ''
+      const truncationFooter = `${truncatedWholeRead
+        ? `\n\n[truncated: showing lines ${offset + 1}-${offset + selectedLines.length} of ${lines.length} total. Continue with offset${summarizeHint}.]`
+        : ''}${summarizeUnavailable
+        ? `\n[summarize was requested but is unavailable for this file; showing raw lines]`
+        : ''}`
 
       return {
         data: {
           filePath,
-          content: numbered || '(empty file)',
+          // main 侧 truncationFooter 已承担截断标记；withPartialReadMarker 仅
+          // 用于 ranged 路径（该路径无 footer 机制）
+          content: (numberedContent || '(empty file)') + truncationFooter,
           offset,
           limit,
           totalLines: lines.length,
           remainingLines: Math.max(0, lines.length - offset - limit),
         },
-        _meta: { read: { offset, limit, totalLines: lines.length, partial: isPartialView, summarized: false } },
+        _meta: { read: { offset, limit, totalLines: lines.length, partial: isPartialView, summarized: false, ...(truncatedWholeRead ? { truncated: true } : {}) } },
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') return { data: 'Read aborted.', is_error: true }
@@ -424,7 +507,8 @@ async function readPdf(
     }
     return {
       data: { content },
-      _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, pages: selectedPages.map((page) => page + 1), multimodal: true } },
+      // #564 follow-up:按页子集读是部分视图，口径与文本路径对齐（否则台账误记全文读）
+      _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, pages: selectedPages.map((page) => page + 1), partial: selectedPages.length < totalPages, multimodal: true } },
     }
   } finally {
     // mupdf documents/pages/pixmaps live in a WASM heap; destroy or every Read
@@ -510,17 +594,20 @@ function throwIfAborted(signal?: AbortSignal): void {
 }
 
 function isUnchangedRead(
-  state: { timestamp: number; size?: number; offset?: number; limit?: number } | undefined,
+  state: { timestamp: number; size?: number; offset?: number; limit?: number; summarizedView?: boolean } | undefined,
   timestamp: number,
   size: number,
   offset: number,
   limit: number | undefined,
+  summarizedView = false,
 ): boolean {
   return !!state
     && state.timestamp === timestamp
     && (state.size === undefined || state.size === size)
     && state.offset === offset
     && state.limit === limit
+    // #564 review:同一 offset/limit 键对应 raw 与 outline 两种视图,视图不同不算 unchanged
+    && (state.summarizedView ?? false) === summarizedView
 }
 
 function unchangedResult(filePath: string): ReadResult {
@@ -544,8 +631,9 @@ function validateTextLimits(content: string, filePath: string, context: ToolCont
   const maxTokens = configuredPositiveNumber(context, 'readMaxTokens', DEFAULT_MAX_TEXT_TOKENS)
   const tokens = estimateTokens(content)
   if (tokens > maxTokens) {
+    // #564:minified/单行文件用行范围无解，补充字节级排查建议
     return {
-      data: `Error: Read output for ${filePath} is approximately ${tokens} tokens, exceeding the ${maxTokens}-token limit. Use offset and limit to read a smaller range.`,
+      data: `Error: Read output for ${filePath} is approximately ${tokens} tokens, exceeding the ${maxTokens}-token limit. Use offset and limit to read smaller line ranges; for minified or single-line files use Bash instead (e.g. 'head -c 4000 ${filePath}' or 'cut -c1-200').`,
       is_error: true,
       _meta: { read: { filePath, truncated: false, bytes, tokens, maxTokens } },
     }

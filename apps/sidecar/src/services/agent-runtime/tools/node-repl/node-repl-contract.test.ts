@@ -111,6 +111,24 @@ describe("node_repl tool contract", () => {
     expect(js.description).toContain("JSON.stringify");
   });
 
+  // #545: plan mode promises read-only; the js runtime can reach host
+  // privileges, so no node_repl tool may pass the allowedInPlanMode gate.
+  // riskLevel/requiresApprovalByDefault are pinned so any future re-rating of
+  // the js execution surface is a deliberate decision, not a silent drift.
+  test("node_repl tools never pass the plan-mode permission gate", () => {
+    const tools = createContractTools();
+    expect(tools.length).toBeGreaterThan(0);
+    for (const tool of tools) {
+      expect(tool.runtimeMetadata?.allowedInPlanMode).toBe(false);
+    }
+    const js = tools.find((candidate) => candidate.name === "js")!;
+    expect(js.runtimeMetadata).toMatchObject({
+      category: "execute",
+      riskLevel: "high",
+      requiresApprovalByDefault: false
+    });
+  });
+
   test("persistent bindings survive js calls until reset", async () => {
     const tools = createContractTools();
     const js = tools.find((tool) => tool.name === "js")!;

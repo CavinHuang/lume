@@ -51,7 +51,6 @@ import {
 } from "../../memory-v2/conversation-summary";
 import type { LumeRunState } from "../runtime-core/run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
-import { resolveConfiguredAdditionalDirectories } from "../permissions/permission-config";
 import { getActiveBrowserBroker } from "../../browser/browser-broker-holder";
 import { getBrowserToolSessionRegistry } from "../tools/browser/browser-tool-session";
 
@@ -440,10 +439,9 @@ export class LumeRunner {
         plansRoot: prepared.plansRoot,
         artifactsRoot: prepared.artifactsRoot,
         projectRoot: prepared.projectRoot,
-        additionalDirectories: resolveConfiguredAdditionalDirectories(
-          getEffectiveLumeConfig(prepared.workspaceSlug).permissions?.privateWriteRoots,
-          prepared.agentCwd,
-        ),
+        // permissions.privateWriteRoots 不走这里：run.ts 经 SDK 的
+        // privateWriteRoots 专用通道传它（写放行），additionalDirectories 会把
+        // 这些目录带进系统提示词/checkpoint 快照/相对路径解析（#639 复审）
         fileContextId: prepared.fileContextId,
         fileReferenceBinding: runtime.fileReferenceBinding,
         agentDir: prepared.agentDir,

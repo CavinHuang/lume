@@ -11,6 +11,7 @@ import { GeneralSettings } from './GeneralSettings'
 import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
 import { AgentsSettings } from './AgentsSettings'
+import { ConnectorSettings } from './ConnectorSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
 import { PermissionSettings } from './PermissionSettings'
@@ -114,7 +115,12 @@ export function SettingsView() {
             />
           )}
           {tab === 'integrations' && <McpSettings />}
-          {tab === 'im-integrations' && <ImSettings />}
+          {tab === 'im-integrations' && (
+            <div className="space-y-4">
+              <ConnectorSettings />
+              <ImSettings />
+            </div>
+          )}
           {tab === 'web-search' && <WebSearchSettings />}
           {tab === 'voice-input' && <VoiceDictationSettings />}
           {tab === 'updates' && <VersionUpdateSettings />}

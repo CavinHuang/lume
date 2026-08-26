@@ -1,5 +1,6 @@
 import { listChannels } from '@/lib/desktop-api/channel'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { toast } from 'sonner'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   Activity,
@@ -330,7 +331,9 @@ export function AutomationManagementView() {
       setEditingJob(null)
       setTemplateDraft(null)
     } catch (error) {
+      // 检疫等后端错误的用户呈现主路径：本地吞错会使可行动指引（含文件路径）到不了用户
       console.error('[AutomationManagementView] 保存自动化失败:', error)
+      toast.error(`保存自动化失败：${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setSubmitting(false)
     }

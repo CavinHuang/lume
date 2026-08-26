@@ -1785,7 +1785,38 @@ describe("QueryEngine context controller", () => {
     expect(events).toContainEqual(expect.objectContaining({
       type: "result",
       subtype: "error_during_execution",
-      is_error: true
+      is_error: true,
+      errors: [expect.stringContaining("auto-compaction recovery attempted 1 time(s)")]
+    }));
+  });
+
+  test("non-prompt-too-long errors carry no recovery suffix (#725 review R9)", async () => {
+    const provider: LLMProvider = {
+      apiType: "anthropic-messages",
+      async createMessage() {
+        const error = new Error("invalid api key") as Error & { status: number };
+        error.status = 401;
+        throw error;
+      }
+    };
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [],
+      systemPrompt: "test",
+      maxTurns: 1,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    });
+
+    const events = await collectEvents(engine, "current task");
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "result",
+      subtype: "error_during_execution",
+      errors: ["invalid api key"]
     }));
   });
 
@@ -1918,7 +1949,7 @@ describe("QueryEngine auto compaction usage", () => {
       outputTokens: 10,
       totalTokens: 60
     });
-  });
+  }, 30_000);
 
   test("does not auto compact when only non-conversation usage is above threshold", async () => {
     const provider = new StaticProvider([{
@@ -2469,16 +2500,16 @@ describe("QueryEngine deferred tool promotion", () => {
       description: "probe",
       inputSchema: { type: "object" as const, properties: {} },
       async call(_input: unknown, context: ToolContext) {
-        promoted = context.activateTools?.(["GuanlanSearch", "GuanlanSearch", "NoSuchTool"]) ?? [];
+        promoted = context.activateTools?.(["DeepSearch", "DeepSearch", "NoSuchTool"]) ?? [];
         return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
       }
     };
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep" };
       }
     };
 
@@ -2498,11 +2529,11 @@ describe("QueryEngine deferred tool promotion", () => {
     await collectResult(engine);
 
     // Unknown names are ignored and already-promoted names are not duplicated.
-    expect(promoted).toEqual(["GuanlanSearch"]);
+    expect(promoted).toEqual(["DeepSearch"]);
     const lastRequest = provider.requests[provider.requests.length - 1];
     const names = (lastRequest.tools ?? []).map((tool) => tool.name);
-    expect(names).toContain("GuanlanSearch");
-    expect(names.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+    expect(names).toContain("DeepSearch");
+    expect(names.filter((name) => name === "DeepSearch")).toHaveLength(1);
   });
 
   test("activateTools reports promoted names through onToolsActivated", async () => {
@@ -2524,18 +2555,18 @@ describe("QueryEngine deferred tool promotion", () => {
       description: "probe",
       inputSchema: { type: "object" as const, properties: {} },
       async call(_input: unknown, context: ToolContext) {
-        context.activateTools?.(["GuanlanSearch", "NoSuchTool"]);
+        context.activateTools?.(["DeepSearch", "NoSuchTool"]);
         // Second call promotes nothing: no callback, no duplicate report.
-        context.activateTools?.(["GuanlanSearch"]);
+        context.activateTools?.(["DeepSearch"]);
         return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
       }
     };
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep" };
       }
     };
 
@@ -2555,7 +2586,7 @@ describe("QueryEngine deferred tool promotion", () => {
 
     await collectResult(engine);
 
-    expect(activations).toEqual([["GuanlanSearch"]]);
+    expect(activations).toEqual([["DeepSearch"]]);
   });
 
   test("listAvailableTools returns native plus deferred tools live", async () => {
@@ -2579,7 +2610,7 @@ describe("QueryEngine deferred tool promotion", () => {
       inputSchema: { type: "object" as const, properties: {} },
       async call(_input: unknown, context: ToolContext) {
         before = (context.listAvailableTools?.() ?? []).map((tool) => tool.name);
-        context.activateTools?.(["GuanlanSearch"]);
+        context.activateTools?.(["DeepSearch"]);
         after = (context.listAvailableTools?.() ?? []).map((tool) => tool.name);
         return { type: "tool_result" as const, tool_use_id: "", content: "probe done" };
       }
@@ -2593,11 +2624,11 @@ describe("QueryEngine deferred tool promotion", () => {
       }
     };
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan" };
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep" };
       }
     };
 
@@ -2616,20 +2647,20 @@ describe("QueryEngine deferred tool promotion", () => {
 
     await collectResult(engine);
 
-    expect(before).toEqual(["ProbeTool", "NativeTool", "GuanlanSearch"]);
+    expect(before).toEqual(["ProbeTool", "NativeTool", "DeepSearch"]);
     // After promotion the deferred tool is native, so the live catalog still lists it exactly once.
-    expect(after).toEqual(["ProbeTool", "NativeTool", "GuanlanSearch"]);
+    expect(after).toEqual(["ProbeTool", "NativeTool", "DeepSearch"]);
   });
 
   test("ToolSearch end to end: constructor rebinding, native promotion, and deferred removal", async () => {
     const provider = new StaticProvider([
       {
-        content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:GuanlanSearch" } }],
+        content: [{ type: "tool_use", id: "search-1", name: "ToolSearch", input: { query: "select:DeepSearch" } }],
         stopReason: "tool_use",
         usage: { input_tokens: 1, output_tokens: 1 }
       },
       {
-        content: [{ type: "tool_use", id: "guanlan-1", name: "GuanlanSearch", input: {} }],
+        content: [{ type: "tool_use", id: "deep-1", name: "DeepSearch", input: {} }],
         stopReason: "tool_use",
         usage: { input_tokens: 1, output_tokens: 1 }
       },
@@ -2639,14 +2670,14 @@ describe("QueryEngine deferred tool promotion", () => {
         usage: { input_tokens: 1, output_tokens: 1 }
       }
     ]);
-    let guanlanCalls = 0;
+    let deepCalls = 0;
     const deferredTool = {
-      name: "GuanlanSearch",
-      description: "search guanlan",
+      name: "DeepSearch",
+      description: "search deep",
       inputSchema: { type: "object" as const, properties: {} },
       async call() {
-        guanlanCalls += 1;
-        return { type: "tool_result" as const, tool_use_id: "", content: "guanlan result" };
+        deepCalls += 1;
+        return { type: "tool_result" as const, tool_use_id: "", content: "deep result" };
       }
     };
 
@@ -2672,14 +2703,14 @@ describe("QueryEngine deferred tool promotion", () => {
     expect(JSON.stringify(provider.requests[1]?.messages)).toContain("call them directly by name");
     // Turn 2 request exposes the promoted tool natively, exactly once.
     const turnTwoNames = (provider.requests[1]?.tools ?? []).map((tool) => tool.name);
-    expect(turnTwoNames).toContain("GuanlanSearch");
-    expect(turnTwoNames.filter((name) => name === "GuanlanSearch")).toHaveLength(1);
+    expect(turnTwoNames).toContain("DeepSearch");
+    expect(turnTwoNames.filter((name) => name === "DeepSearch")).toHaveLength(1);
     // The promoted tool executed natively and its result reached the final turn.
-    expect(guanlanCalls).toBe(1);
-    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("guanlan result");
+    expect(deepCalls).toBe(1);
+    expect(JSON.stringify(provider.requests[2]?.messages)).toContain("deep result");
     // Promotion removed the tool from the deferred pool.
     const deferredNames = ((engine as any).config.deferredTools as Array<{ name: string }>).map((tool) => tool.name);
-    expect(deferredNames).not.toContain("GuanlanSearch");
+    expect(deferredNames).not.toContain("DeepSearch");
   });
 });
 
@@ -3445,6 +3476,116 @@ describe("QueryEngine end_turn with tool_use (#568)", () => {
     })
   })
 
+  test("feeds denied tool results back and keeps looping when end_turn carries tool calls (#618)", async () => {
+    let executed = 0
+    const provider = new StaticProvider([
+      {
+        // 网关在 end_turn 上携带 tool_use，而 canUseTool 全量拒绝：
+        // deny 结果必须作为 tool_result 回灌让模型看到，循环继续而非终局。
+        content: [
+          { type: "text", text: "try it" },
+          { type: "tool_use", id: "t-deny-1", name: "Echo", input: { q: "state" } },
+        ],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "done without tools" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Echo",
+        description: "echo",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          executed += 1
+          return { type: "tool_result", tool_use_id: "", content: "should not run" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "deny", message: "blocked by policy" })
+    })
+
+    // 第二轮模型看到 deny 结果后干净收场：循环未因 end_turn+tool_use 提前断裂
+    await expect(collectResult(engine)).resolves.toMatchObject({
+      subtype: "success",
+      is_error: false
+    })
+    expect(executed).toBe(0)
+
+    // 回灌断言：deny 结果（is_error + 拒绝文案）必须出现在下一轮请求里
+    const secondRequest = provider.requests[1]
+    expect(secondRequest?.messages).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        role: "user",
+        content: expect.arrayContaining([
+          expect.objectContaining({
+            type: "tool_result",
+            tool_use_id: "t-deny-1",
+            is_error: true,
+          })
+        ])
+      })
+    ]))
+    const fedBack = JSON.stringify(secondRequest?.messages)
+    expect(fedBack).toContain("blocked by policy")
+  })
+
+  test("emits prompt_suggestions tool summary for an end_turn+tool_use turn (#618)", async () => {
+    // 旧语义下 end_turn+tool_use 在执行工具前就提前 break，tool_use_summary
+    // 对这类轮次不可达；删行后该分支必须照常产出。
+    const provider = new StaticProvider([
+      {
+        content: [
+          { type: "text", text: "checking" },
+          { type: "tool_use", id: "t-sugg-1", name: "Echo", input: { q: 1 } },
+        ],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+      {
+        content: [{ type: "text", text: "done" }],
+        stopReason: "end_turn",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [{
+        name: "Echo",
+        description: "echo",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "executed" }
+        }
+      }],
+      systemPrompt: "test",
+      maxTurns: 3,
+      maxTokens: 256,
+      includePartialMessages: false,
+      promptSuggestions: true
+    })
+
+    const events = await collectEvents(engine)
+    const summaries = events.filter((event) => (event as { type?: string }).type === "tool_use_summary")
+    expect(summaries).toHaveLength(1)
+    expect(summaries[0]).toMatchObject({
+      summary: "Used tools: Echo",
+      preceding_tool_use_ids: ["t-sugg-1"],
+    })
+  })
+
   test("bounds a gateway that always answers stop with tool calls via maxTurns", async () => {
     let calls = 0
     const stopWithToolCall = (round: number): CreateMessageResponse => ({
@@ -3660,6 +3801,91 @@ describe("QueryEngine session file-state (#569)", () => {
     } finally {
       rmSync(root, { recursive: true, force: true })
     }
+  })
+})
+
+describe("QueryEngine isEnabled injection filter (#700)", () => {
+  function makeGatedTool(enabled: () => boolean) {
+    return {
+      name: "gmail_send_email",
+      description: "send email",
+      inputSchema: { type: "object" as const, properties: {} },
+      isEnabled: enabled,
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "sent" }
+      }
+    }
+  }
+
+  function makeReadTool() {
+    return {
+      name: "Read",
+      description: "read",
+      inputSchema: { type: "object" as const, properties: {} },
+      async call() {
+        return { type: "tool_result" as const, tool_use_id: "", content: "read" }
+      }
+    }
+  }
+
+  function makeObservedProvider(responses: CreateMessageResponse[]) {
+    const observedTools: string[][] = []
+    const provider = new StaticProvider(responses)
+    const originalCreateMessage = provider.createMessage.bind(provider)
+    provider.createMessage = async (params) => {
+      observedTools.push((params.tools ?? []).map((tool) => tool.name).sort())
+      return originalCreateMessage(params)
+    }
+    return { provider, observedTools }
+  }
+
+  test("tools with isEnabled=false never reach the provider request", async () => {
+    const { provider, observedTools } = makeObservedProvider([
+      { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [makeReadTool(), makeGatedTool(() => false)],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await collectResult(engine)
+
+    // 未启用的工具不占 prompt 预算;常驻工具不受影响
+    expect(observedTools[0]).toEqual(["Read"])
+  })
+
+  test("re-evaluates isEnabled each turn: reconnecting restores injection", async () => {
+    let connected = false
+    const { provider, observedTools } = makeObservedProvider([
+      { content: [{ type: "text", text: "done" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } },
+      { content: [{ type: "text", text: "done again" }], stopReason: "end_turn", usage: { input_tokens: 1, output_tokens: 1 } },
+    ])
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider,
+      tools: [makeReadTool(), makeGatedTool(() => connected)],
+      systemPrompt: "test",
+      maxTurns: 2,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" })
+    })
+
+    await collectResult(engine)
+    expect(observedTools[0]).toEqual(["Read"])
+
+    // 同一会话中途连接凭证后,下一轮请求即恢复注入(每轮重新求值,不得缓存)
+    connected = true
+    await collectResult(engine)
+    expect(observedTools[1]).toEqual(["Read", "gmail_send_email"])
   })
 })
 

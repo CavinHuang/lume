@@ -1285,7 +1285,6 @@ const lumeConfigWebSearchSchema = z
     strategy: z.enum(["priority", "joint"]).optional(),
     providers: z
       .object({
-        guanlan: lumeConfigWebSearchProviderSchema.optional(),
         exa: lumeConfigWebSearchProviderSchema.optional(),
         pipellm: lumeConfigWebSearchProviderSchema.optional(),
         zhipu: lumeConfigWebSearchProviderSchema.optional(),
@@ -1388,6 +1387,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("permissions.approvals"),
     value: lumeConfigPermissionApprovalsSchema,
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("permissions.classifier.enabled"),
+    value: z.boolean(),
   }),
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("webSearch"),
@@ -1580,6 +1583,9 @@ const automationTriggerModeSchema = z.enum([
   "chat",
 ]);
 
+// #647 P2-23：source/systemAction 不接受渲染进程输入——它们决定无人值守
+// bypassPermissions 授权，只能由 sidecar 内部调用方（routine-executor 等）经
+// manager 直写；CREATE 处理器服务端强制 source:"manual"。
 export const automationCreateInputSchema = z.object({
   name: z.string().min(1),
   enabled: z.boolean().optional(),
@@ -1587,12 +1593,10 @@ export const automationCreateInputSchema = z.object({
   threadId: z.string().optional(),
   schedule: automationScheduleSchema,
   triggerModes: z.array(automationTriggerModeSchema).optional(),
-  source: automationJobSourceSchema.optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
   toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1),
-  systemAction: automationSystemActionSchema.optional(),
 });
 
 export const automationUpdateInputSchema = z.object({
@@ -1603,12 +1607,10 @@ export const automationUpdateInputSchema = z.object({
   threadId: z.string().optional(),
   schedule: automationScheduleSchema.optional(),
   triggerModes: z.array(automationTriggerModeSchema).optional(),
-  source: automationJobSourceSchema.optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
   toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1).optional(),
-  systemAction: automationSystemActionSchema.optional(),
 });
 
 export const automationDeleteInputSchema = z.object({

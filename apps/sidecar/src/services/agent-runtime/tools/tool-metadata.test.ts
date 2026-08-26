@@ -88,6 +88,44 @@ describe("tool-metadata", () => {
     expect(isToolAllowedInPlanMode("AskUserQuestion")).toBeTrue();
   });
 
+  test("treats automation_template as a write tool and keeps automation_list plan-safe", () => {
+    // create 会创建真实定时 agent run，整工具取最保守值对齐 automation_set
+    expect(getToolMetadata("automation_template")).toMatchObject({
+      category: "write",
+      riskLevel: "high",
+      allowedInPlanMode: false
+    });
+    expect(isToolAllowedInPlanMode("automation_list")).toBeTrue();
+  });
+
+  test("classifies subagent orchestration bookkeeping with explicit plan gating", () => {
+    // FinishAgentTask/RetireSubagent 是纯编排状态簿记：control/low 免审批口径。
+    // FinishAgentTask 在 plan 模式必须可见——coordinator 完成守卫强制调用它，
+    // plan 禁用会造成 Unknown tool 死循环；RetireSubagent 无此依赖维持 plan 禁。
+    expect(getToolMetadata("FinishAgentTask")).toMatchObject({
+      category: "control",
+      riskLevel: "low",
+      allowedInPlanMode: true
+    });
+    expect(isToolAllowedInPlanMode("FinishAgentTask")).toBeTrue();
+    expect(getToolMetadata("RetireSubagent")).toMatchObject({
+      category: "control",
+      riskLevel: "low",
+      allowedInPlanMode: false
+    });
+    expect(isToolAllowedInPlanMode("RetireSubagent")).toBeFalse();
+  });
+
+  test("treats automation_template as a write tool and keeps automation_list plan-safe", () => {
+    // create 会创建真实定时 agent run，整工具取最保守值对齐 automation_set
+    expect(getToolMetadata("automation_template")).toMatchObject({
+      category: "write",
+      riskLevel: "high",
+      allowedInPlanMode: false
+    });
+    expect(isToolAllowedInPlanMode("automation_list")).toBeTrue();
+  });
+
   test("describes UI personalization as a local write tool", () => {
     expect(getToolMetadata("personalize_ui")).toMatchObject({
       name: "personalize_ui",
@@ -118,12 +156,10 @@ describe("tool-metadata", () => {
     }
   });
 
-  test("classifies Guanlan tools as low-risk plan-safe network reads", () => {
+  test("classifies web tools as low-risk plan-safe network reads", () => {
     for (const name of [
-      "guanlan_search",
-      "guanlan_read",
-      "guanlan_hotnews",
-      "guanlan_research"
+      "web_search",
+      "web_fetch"
     ]) {
       expect(getToolMetadata(name)).toMatchObject({
         category: "network",

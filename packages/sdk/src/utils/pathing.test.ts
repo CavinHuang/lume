@@ -2,7 +2,7 @@ import { afterAll, afterEach, describe, expect, test } from "bun:test"
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { ensurePathAllowed, isFakeIpRange, resolveInputPath, toPathKey } from "./pathing.js"
+import { canonicalizePath, ensurePathAllowed, ensureWriteContained, writeContainmentRoots, isFakeIpRange, resolveInputPath, toPathKey } from "./pathing.js"
 
 describe("isFakeIpRange", () => {
   test("matches the 198.18.0.0/15 fake-IP benchmark range", () => {
@@ -101,5 +101,95 @@ describe("symlink-aware path resolution (#336)", () => {
 
     expect(ensurePathAllowed(join(root, "open", "door.txt"), "read", sandbox)).toContain("denied")
     expect(ensurePathAllowed(join(root, "open", "plain.txt"), "read", sandbox)).toBeNull()
+  })
+})
+
+describe("ensureWriteContained (#546)", () => {
+  test("allows plain and not-yet-existing paths inside the workspace without a sandbox", () => {
+    const root = makeTempDir("lume-contained-ok-")
+
+    expect(ensureWriteContained(join(root, "existing.txt"), root)).toBeNull()
+    expect(ensureWriteContained(join(root, "nested", "new.txt"), root)).toBeNull()
+  })
+
+  test("denies lexical escapes regardless of sandbox state", () => {
+    const root = makeTempDir("lume-contained-lex-")
+    const outside = makeTempDir("lume-contained-out-")
+
+    expect(ensureWriteContained(join(outside, "x.txt"), root)).toContain("denied")
+    expect(ensureWriteContained(join(outside, "x.txt"), root, [root])).toContain("denied")
+    expect(ensureWriteContained(join(outside, "x.txt"), root, [outside])).toBeNull()
+  })
+
+  test("writeContainmentRoots merges both sources and containment honors privateWriteRoots", () => {
+    // #639 复审 P2 拆分：privateWriteRoots 只参与写入放行，不并入
+    // additionalDirectories（提示词/快照/相对路径解析不再看到内部目录）
+    const root = makeTempDir("lume-contained-pwr-")
+
+    expect(writeContainmentRoots({ additionalDirectories: ["/a"], privateWriteRoots: [root] })).toEqual([
+      "/a",
+      root,
+    ])
+    expect(writeContainmentRoots({})).toEqual([])
+
+    // 仅声明 privateWriteRoots（additionalDirectories 为空、cwd 不覆盖）时
+    // 写入放行——防止"回退 engine 根集后 skills 写入被 SDK 层误拒"的回归
+    const grantedRoot = makeTempDir("lume-contained-pwr-grant-")
+    const outside = makeTempDir("lume-contained-pwr-out-")
+    expect(ensureWriteContained(join(grantedRoot, "x.txt"), root, writeContainmentRoots({ privateWriteRoots: [grantedRoot] }))).toBeNull()
+    expect(ensureWriteContained(join(outside, "y.txt"), root, writeContainmentRoots({}))).toContain("denied")
+  })
+
+  test("rejects Win32 UNC/device paths lexically without touching the filesystem", () => {
+    // 跨平台复审 P2：同步 realpath 对网络路径可能阻塞事件循环至 SMB 超时，
+    // 必须在 canonicalize 之前词法拒绝。POSIX 上 `\\` 只是普通文件名，
+    // 不走该分支（此处验证其按平台生效、不误伤）。
+    const root = makeTempDir("lume-contained-unc-")
+    if (process.platform === "win32") {
+      expect(ensureWriteContained("\\\\srv\\share\\x.txt", root)).toContain("UNC")
+      expect(ensureWriteContained("\\\\\\\?\\C:\\x.txt", root)).toContain("UNC")
+    } else {
+      const posixBackslashName = join(root, "\\\\srv")
+      expect(ensureWriteContained(posixBackslashName, root)).toBeNull()
+    }
+  })
+
+  test("denies a junction/symlink directory resolving outside the workspace", () => {
+    // junction 在 Windows 无需特权，是 #546 的主攻击载体
+    const root = makeTempDir("lume-contained-junction-")
+    const outside = makeTempDir("lume-contained-target-")
+    symlinkSync(outside, join(root, "link"), process.platform === "win32" ? "junction" : "dir")
+
+    // 词法判定看不见链接目标；canonicalize 后必须拒绝
+    expect(ensureWriteContained(join(root, "link", "secret.txt"), root)).toContain("denied")
+  })
+})
+
+describe("canonicalizePath", () => {
+  test("resolves existing paths to their realpath", () => {
+    const root = makeTempDir("lume-canonical-")
+    mkdirSync(join(root, "realdir"))
+    writeFileSync(join(root, "realdir", "f.txt"), "x", "utf8")
+
+    expect(canonicalizePath(join(root, "realdir", "f.txt"))).toBe(realpathSync(join(root, "realdir", "f.txt")))
+  })
+
+  test("rejoins a missing tail onto the realpath prefix (guardrail handles link/newfile.txt)", () => {
+    const root = makeTempDir("lume-canonical-tail-")
+    mkdirSync(join(root, "realdir"))
+
+    expect(canonicalizePath(join(root, "realdir", "new.txt"))).toBe(
+      join(realpathSync(join(root, "realdir")), "new.txt"),
+    )
+  })
+
+  test.skipIf(!symlinksSupported)("resolves a dangling symlink body to its target side (#336)", () => {
+    const root = makeTempDir("lume-canonical-dangling-")
+    mkdirSync(join(root, "target-side"))
+    symlinkSync(join(root, "target-side", "missing.txt"), join(root, "dangling.txt"), "file")
+
+    expect(canonicalizePath(join(root, "dangling.txt"))).toBe(
+      join(realpathSync(join(root, "target-side")), "missing.txt"),
+    )
   })
 })

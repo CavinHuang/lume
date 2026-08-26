@@ -21,7 +21,8 @@ import { defineTool } from './types.js'
 import type { ToolContext, ToolExecutionMetadata, ToolResult } from '../types.js'
 import { bundledRipgrepDirectory } from '../utils/ripgrep.js'
 import { analyzeBashCommand } from '../utils/bash-command-analysis.js'
-import { resolveShellInvocation, shellKind, shellKindWithoutDiscovery } from '../utils/shell-invocation.js'
+import { resolveShellInvocation, shellKind } from '../utils/shell-invocation.js'
+import { isReadOnlyShellInput } from '../utils/shell-read-only.js'
 import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-sandbox.js'
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
@@ -61,7 +62,7 @@ type ShellTask = Awaited<ReturnType<typeof startShellTask>>
 
 export const BashTool = defineTool({
   name: 'Bash',
-  description: 'Execute a shell command and return its output. Commands still running after the foreground budget continue in the background and emit one terminal notification; do not poll ProcessOutput. Read the returned output file when full logs are needed. On Windows, use a configured POSIX bash when available; otherwise commands run through PowerShell. Keep each command in one shell dialect and do not mix cmd.exe, PowerShell, and POSIX syntax.',
+  description: 'Execute a shell command and return its output. Commands still running after the foreground budget continue in the background and emit one terminal notification; do not poll ProcessOutput. Read the returned output file when full logs are needed. On Windows, use a configured POSIX bash when available; otherwise commands run through PowerShell. Keep each command in one shell dialect and do not mix cmd.exe, PowerShell, and POSIX syntax. An exit code 0 with no output is a successful silent check: state that explicitly instead of searching for extra output.',
   inputSchema: {
     type: 'object',
     properties: {
@@ -158,240 +159,6 @@ export const BashTool = defineTool({
   },
 })
 
-function isReadOnlyShellInput(input: unknown, _context?: ToolContext): boolean {
-  if (!input || typeof input !== 'object') return false
-  const command = (input as Record<string, unknown>).command
-  if (typeof command !== 'string' || !command.trim()) return false
-  const normalized = command.trim()
-
-  // These constructs can execute arbitrary code or write through the shell,
-  // even when the visible command starts with a read-looking executable.
-  if (/[>`]|>>|\$\(|`/.test(normalized)) return false
-
-  const analysis = analyzeBashCommand(normalized)
-  if (analysis.status === 'simple') {
-    return analysis.commands.length > 0
-      && analysis.commands.every((segment) => isReadOnlySegment(segment.executable, segment.argv.slice(1)))
-      && !analysis.hasRedirection
-  }
-
-  // Non-provable syntax falls back per dialect (#300): Bash has no safe
-  // fallback (compound and piped forms escape any first-word whitelist), so it
-  // fails closed. PowerShell keeps its conservative inspection subset — either
-  // the command invokes powershell/pwsh explicitly or the shell for this
-  // platform is PowerShell. The dialect check never triggers Windows bash
-  // discovery (#471): an unsettled probe reads as bash, so the decision is
-  // stable instead of drifting with the discovery timeout window.
-  const runsPowerShell = /^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s|$)/i.test(normalized)
-    || shellKindWithoutDiscovery() === 'powershell'
-  return runsPowerShell ? isReadOnlyPowerShell(normalized) : false
-}
-
-const READ_ONLY_EXECUTABLES = new Set([
-  'cat', 'cut', 'dir', 'echo', 'find', 'findstr', 'git', 'grep', 'head', 'less', 'ls', 'pwd',
-  'rg', 'sed', 'sort', 'tail', 'type', 'uniq', 'wc', 'where', 'which',
-])
-
-function isReadOnlySegment(executable: string, args: string[]): boolean {
-  if (!READ_ONLY_EXECUTABLES.has(executable)) return false
-  if (executable === 'git') {
-    const subcommandIndex = args.findIndex((arg) => !arg.startsWith('-'))
-    if (subcommandIndex < 0) return false
-    const subcommand = args[subcommandIndex]!
-    if (!new Set(['branch', 'diff', 'log', 'show', 'status']).has(subcommand)) return false
-    const rest = args.slice(subcommandIndex + 1)
-    if (subcommand === 'branch') {
-      // Only listing forms are reads: an operand names a branch to create,
-      // and delete/move/copy/set-upstream flags mutate refs (#300).
-      if (rest.some((arg) => !arg.startsWith('-') && arg !== '--')) return false
-      return !rest.some((arg) => (
-        /^-[dDmMcCu]/.test(arg)
-        || /^--(?:delete|move|copy|set-upstream(?:-to)?|edit-description|track)\b/.test(arg)
-      ))
-    }
-    if (subcommand === 'diff') {
-      // --output writes the diff to a file; --ext-diff executes a
-      // repo-config-controlled external diff command (#300).
-      return !rest.some((arg) => arg === '--output' || arg.startsWith('--output=') || arg === '--ext-diff')
-    }
-    return true
-  }
-  // These whitelist members have argument forms that mutate or execute;
-  // reject them so they cannot race Edit/Write as "read-only" work.
-  if (executable === 'find') return !args.some((arg) => /^-(?:delete|exec|execdir|ok|okdir|fls|fprint)/.test(arg))
-  if (executable === 'sed') return isReadOnlySedArgs(args)
-  if (executable === 'sort') return !args.some((arg) => (
-    arg === '--output'
-    || arg.startsWith('--output=')
-    // No other short sort flag is "o", so any short cluster containing it is -o.
-    // grep -o is unrelated: grep arguments are never checked here.
-    || (arg.startsWith('-') && !arg.startsWith('--') && arg.includes('o'))
-  ))
-  if (executable === 'uniq') {
-    // uniq [INPUT [OUTPUT]] — a second operand names the output file it writes (#300).
-    return args.filter((arg) => !arg.startsWith('-') && arg !== '--').length <= 1
-  }
-  return true
-}
-
-function isReadOnlySedArgs(args: string[]): boolean {
-  if (args.some((arg) => /^(-i|--in-place)/.test(arg))) return false
-  const { scripts, readsScriptFile } = sedScriptParts(args)
-  // Fail closed (#453): a -f/--file script body lives in a file this static
-  // check never sees (it can carry `w FILE` or GNU `e CMD`), and a `$` in a
-  // script position expands at runtime into text the argv literal never showed
-  // (e.g. X='s/.*/curl evil/e' sed $X README).
-  if (readsScriptFile) return false
-  return !scripts.some((script) => script.includes('$') || sedScriptWritesFile(script))
-}
-
-/** Collect the script arguments (not the input file paths) sed will execute, plus whether any form loads the script from a file. */
-function sedScriptParts(args: string[]): { scripts: string[]; readsScriptFile: boolean } {
-  const scripts: string[] = []
-  let readsScriptFile = false
-  let pending: 'script' | 'skip' | undefined
-  let sawScript = false
-  let endOfOptions = false
-  for (const arg of args) {
-    if (pending) {
-      if (pending === 'script') scripts.push(arg)
-      pending = undefined
-      continue
-    }
-    if (!endOfOptions && arg === '--') {
-      endOfOptions = true
-      continue
-    }
-    if (!endOfOptions && arg.startsWith('--')) {
-      if (arg.startsWith('--expression=')) {
-        scripts.push(arg.slice('--expression='.length))
-        sawScript = true
-      } else if (arg === '--expression') {
-        pending = 'script'
-        sawScript = true
-      } else if (arg === '--file' || arg.startsWith('--file=')) {
-        // --file names a script file; its contents stay uninspected here and
-        // the caller fails closed (#453). The attached value needs no skip.
-        readsScriptFile = true
-        if (arg === '--file') pending = 'skip'
-      }
-      continue
-    }
-    if (!endOfOptions && arg.startsWith('-') && arg.length > 1) {
-      const cluster = arg.slice(1)
-      const flagIndex = cluster.search(/[ef]/)
-      if (flagIndex >= 0) {
-        if (cluster[flagIndex] === 'f') {
-          readsScriptFile = true
-          // A trailing f consumes the next argument as its filename.
-          if (flagIndex === cluster.length - 1) pending = 'skip'
-        } else if (flagIndex < cluster.length - 1) {
-          scripts.push(cluster.slice(flagIndex + 1))
-          sawScript = true
-        } else {
-          pending = 'script'
-          sawScript = true
-        }
-      }
-      continue
-    }
-    if (!sawScript) {
-      scripts.push(arg)
-      sawScript = true
-    }
-  }
-  return { scripts, readsScriptFile }
-}
-
-/**
- * Recognize sed script forms that write files or execute commands: a
- * standalone `w`/`W`/`e` command or the same as an `s` suffix. Only command
- * positions are inspected, so patterns, replacements, append text, and file
- * paths that merely contain those letters do not trip the check.
- */
-function sedScriptWritesFile(script: string): boolean {
-  const isDangerousCommand = (char: string | undefined) => char === 'w' || char === 'W' || char === 'e'
-  const length = script.length
-  let i = 0
-  let atCommand = true
-  while (i < length) {
-    const char = script[i]!
-    if (char === ';' || char === '\n') {
-      atCommand = true
-      i += 1
-      continue
-    }
-    if (!atCommand) {
-      i += 1
-      continue
-    }
-    if (char === ' ' || char === '\t' || char === '{' || char === '}' || char === '!') {
-      i += 1
-      continue
-    }
-    if (char === '#') {
-      while (i < length && script[i] !== '\n') i += 1
-      continue
-    }
-    // Addresses: /re/, line numbers, $, ranges, and custom \cREc delimiters.
-    if (char === '/') {
-      i += 1
-      while (i < length && script[i] !== '/') i += script[i] === '\\' ? 2 : 1
-      i += 1
-      continue
-    }
-    if (char === '\\') {
-      const delimiter = script[i + 1]
-      i += 2
-      while (i < length && script[i] !== delimiter) i += script[i] === '\\' ? 2 : 1
-      i += 1
-      continue
-    }
-    if ((char >= '0' && char <= '9') || char === '$' || char === ',') {
-      i += 1
-      continue
-    }
-    if (isDangerousCommand(char)) return true
-    if (char === 's' || char === 'y') {
-      const delimiter = script[i + 1]
-      if (!delimiter) return false
-      i += 2
-      // s has two fields (regex, replacement); y has three (src, dst, then a
-      // closing delimiter). Each field scan ends at its own delimiter.
-      for (let field = 0; field < (char === 's' ? 2 : 3); field += 1) {
-        while (i < length && script[i] !== delimiter) i += script[i] === '\\' ? 2 : 1
-        i += 1
-      }
-      while (i < length && /[a-zA-Z0-9]/.test(script[i]!)) {
-        if (isDangerousCommand(script[i])) return true
-        i += 1
-      }
-      continue
-    }
-    // Any other command consumes the rest of the line as its argument
-    // (r/w-style filenames, labels, a\i\c text).
-    atCommand = false
-    i += 1
-  }
-  return false
-}
-
-function isReadOnlyPowerShell(command: string): boolean {
-  const normalized = command
-    .replace(/^\s*(?:powershell|pwsh)(?:\.exe)?\s+(?:-NoLogo\s+|-NoProfile\s+|-NonInteractive\s+)*-Command\s+/i, '')
-    .trim()
-  // Reject pipeline (`|`), chaining/call (`&`), the ForEach-Object alias `%`,
-  // script-block braces, and line breaks so piped or nested payloads cannot
-  // ride behind a whitelisted first word (#300).
-  if (!normalized || /[>`]|>>|\$\(|[;&|%{}\r\n]|\b(?:Set|Remove|Copy|Move|New|Add|Clear|Out|Start|Stop|Invoke|Install|Update)-[A-Za-z]+\b/i.test(normalized)) {
-    return false
-  }
-  // Unparsed strings cannot be arg-checked, so only git subcommands whose
-  // common forms never take mutation targets survive here; branch/diff move
-  // to the parsed path only (#300).
-  return /^(?:Get-(?:ChildItem|Content|Location|Item|ItemProperty|Process|Service|Command|Date|Help|Member|Variable|Acl|FileHash|AuthenticodeSignature|ComputerInfo)|Select-String|Where-Object|Test-Path|Resolve-Path|Measure-Object|Sort-Object|Format-(?:Table|List)|Write-Output|Write-Host|git\s+(?:status|log|show)\b|(?:ls|dir|type|cat|pwd|where|findstr)\b)/i.test(normalized)
-}
-
 async function startShellTask(input: {
   command: string
   timeoutMs?: number
@@ -424,9 +191,13 @@ async function startDirectShellTask({
   const shellType = shellKind(shell.command)
   const sandbox = withBundledRipgrepSandbox(context.sandbox)
   const detached = process.platform !== 'win32'
+  // 与 durable 后台路径对称：剔除 ELECTRON_RUN_AS_NODE，前台命令启动 Electron
+  // 不再退化为纯 node（#538）
+  const childEnv = { ...process.env }
+  delete childEnv.ELECTRON_RUN_AS_NODE
   const proc = spawnWithProcessSandbox(shell.command, shell.args, {
     cwd: context.cwd,
-    env: { ...process.env },
+    env: childEnv,
     timeoutMs,
     detached,
     stdio: ['ignore', 'pipe', 'pipe'],
@@ -542,12 +313,18 @@ async function startDirectShellTask({
           : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
         : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`
       const footer = truncationFooter(stdoutStats, stderrStats, outputFile)
+      // #573④:验证用途的大输出附失败摘要,模型不必在 10 万字符里翻失败清单
+      const verificationDigest = purpose?.toLowerCase() === 'verification'
+        && stdoutPreview.length + stderrPreview.length > FAILURE_DIGEST_MIN_CHARS
+        ? extractFailureDigest(`${stdoutPreview}\n${stderrPreview}`)
+        : []
       const output = assembleShellResult(
         firstLine,
         [
           stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
           stderrPreview ? `stderr:\n${stderrPreview}` : '',
           spawnError ? `process error: ${spawnError}` : '',
+          ...(verificationDigest.length > 0 ? [`failure digest:\n${verificationDigest.map((line) => `- ${line}`).join('\n')}`] : []),
           ...(footer ? [footer] : []),
         ],
         code !== 0 && code !== null
@@ -798,8 +575,18 @@ async function startDurableShellTask({
       void (async () => {
         await emitNewOutput()
         const latest = getProcessJob(job.id)
-        if (!latest || latest.status === 'running') return
+        if (!latest) {
+          // 任务记录被清（如 registry 清理）：视作终态收尾，否则定时器与监听器泄漏至
+          // 进程结束，且后台写租约无人释放会永久占死该工作区的写互斥（#711 review）
+          clearInterval(poll)
+          context.abortSignal?.removeEventListener('abort', stop)
+          context.onBackgroundTaskCompleted?.()
+          return
+        }
+        if (latest.status === 'running') return
         clearInterval(poll)
+        // 与 direct 路径对称：任务终态后摘除 run-abort 监听器，避免每次调用泄漏一个闭包（#538）
+        context.abortSignal?.removeEventListener('abort', stop)
         if (settled) return
         settled = true
         // Drain the worker's final writes to EOF; a single bounded read can
@@ -823,7 +610,20 @@ async function startDurableShellTask({
         const normalizedExecution = applySemanticOutcome(execution, interpretation)
         const stdoutStats = stdoutAccumulator.snapshot()
         const stderrStats = stderrAccumulator.snapshot()
-        const output = formatShellResult(normalizedExecution, stdoutStats.content, stderrStats.content, interpretation, truncationFooter(stdoutStats, stderrStats, outputFile), outputFile)
+        // #573④:同前台路径,验证用途的大输出附失败摘要
+        const verificationDigest = purpose?.toLowerCase() === 'verification'
+          && stdoutStats.content.length + stderrStats.content.length > FAILURE_DIGEST_MIN_CHARS
+          ? extractFailureDigest(`${stdoutStats.content}\n${stderrStats.content}`)
+          : []
+        const output = formatShellResult(
+          normalizedExecution,
+          stdoutStats.content,
+          stderrStats.content,
+          interpretation,
+          truncationFooter(stdoutStats, stderrStats, outputFile),
+          outputFile,
+          verificationDigest.length > 0 ? `failure digest:\n${verificationDigest.map((line) => `- ${line}`).join('\n')}` : undefined,
+        )
         const result = {
           output,
           isError: executionOutcome(normalizedExecution) !== 'succeeded',
@@ -1072,6 +872,7 @@ function formatShellResult(
   interpretation: ReturnType<typeof interpretShellExit>,
   footer?: string,
   outputFile?: string,
+  failureDigest?: string,
 ): string {
   const outcome = executionOutcome(execution)
   const firstLine = outcome === 'succeeded'
@@ -1084,6 +885,7 @@ function formatShellResult(
     [
       stdoutPreview ? `stdout:\n${stdoutPreview}` : '',
       stderrPreview ? `stderr:\n${stderrPreview}` : '',
+      ...(failureDigest ? [failureDigest] : []),
       ...(footer ? [footer] : []),
     ],
     outcome !== 'succeeded' && execution.exitCode !== null && execution.exitCode !== undefined
@@ -1570,6 +1372,44 @@ function boundedPreview(value: string, maxChars = PREVIEW_CHARS): string {
   if (value.length <= maxChars) return value
   const half = Math.floor(maxChars / 2)
   return `${value.slice(0, half)}\n...(truncated)...\n${value.slice(-half)}`
+}
+
+/** #573④:超过该长度的验证输出才值得附加失败摘要 */
+const FAILURE_DIGEST_MIN_CHARS = 10_000
+/** #573④:摘要行数上限——只做路标,不替代完整输出 */
+const FAILURE_DIGEST_MAX_LINES = 20
+
+const FAILURE_LINE_PATTERNS: RegExp[] = [
+  /^\s*[✗✕×]\s/,               // vitest/jest 失败标记
+  /^\s*●\s/,                    // jest 失败块标题
+  /\bFAIL\b/,                   // jest/go test
+  /--- FAIL:/,                  // go test 子测试
+  /^error(\[\w+\])?:/i,         // cargo/rustc
+  /^(?:AssertionError|ExpectationError|CompareError):/,
+  /\b[1-9]\d* (?:failed|failing)\b/i,  // #649 review P2:非零才抓——全绿汇总行「0 failed」不得当失败证据
+]
+
+/**
+ * #573④:从大体积验证输出中抽取失败相关行(去重、截断),作为紧凑摘要附在结果尾部。
+ * 完整输出仍按既有头尾保留策略下发,摘要是路标不是替代。
+ */
+export function extractFailureDigest(output: string, maxLines = FAILURE_DIGEST_MAX_LINES): string[] {
+  const seen = new Set<string>()
+  const digest: string[] = []
+  // 威胁建模 review F3:剥 ANSI CSI/OSC 序列——终端控制串不得进模型上下文
+  const ansiPattern = /\x1b\[[0-9;?]*[A-Za-z]|\x1b\][^\x07]*(?:\x07|\x1b\\)/g
+  for (const rawLine of output.split(/\r?\n/)) {
+    const line = rawLine.replace(ansiPattern, "").trim()
+    if (!line || line.length > 300) continue
+    if (!FAILURE_LINE_PATTERNS.some((pattern) => pattern.test(line))) continue
+    const key = line.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    // 截断显式标记（文案 review F4）：半句会被模型当完整错误信息
+    digest.push(line.length > 240 ? `${line.slice(0, 237)}...` : line)
+    if (digest.length >= maxLines) break
+  }
+  return digest
 }
 
 export function redactSensitiveText(value: string): string {

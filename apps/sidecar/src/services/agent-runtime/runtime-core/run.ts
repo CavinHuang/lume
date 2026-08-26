@@ -11,6 +11,7 @@ import {
   type SkillDefinition,
   type ContentBlockParam,
   type ToolResult,
+  DEFAULT_CONTEXT_WINDOW,
   createTodoTool,
   type ToolDefinition,
   type PersistedToolContinuation,
@@ -29,6 +30,7 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
 } from "@lume/shared";
+import { isBuiltinBrowserToolName } from "@lume/shared";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -49,6 +51,7 @@ import {
   getEffectiveLumeConfig,
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
+import { resolveConfiguredPrivateWriteRoots } from "../permissions/permission-config";
 import { getSidecarRenderClient } from "../tools/web/render-client-holder";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import {
@@ -84,7 +87,6 @@ import {
   buildPluginIdIndex,
   PLUGIN_MCP_WORKSPACE_SLUG,
 } from "../plugins/plugin-mcp-bridge.js";
-import { clearRuntimeToolDescriptors } from "../tools/tool-descriptor-session";
 import { getThreadFileStateCache } from "../tools/thread-file-state-cache";
 import {
   createCodingRunTracker,
@@ -107,6 +109,7 @@ import {
   readLatestTodoState,
 } from "./todo-state";
 import { createFileBackedRunContinuationStore } from "./run-continuation-store";
+import type { RunContinuationState } from "./run-continuation";
 import { persistAbortContinuation } from "../interruption/abort-continuation";
 import { classifyToolKind } from "../interruption/approval-service";
 import {
@@ -656,7 +659,7 @@ async function assembleSessionContext({
   initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
   subagentDefinition: AgentDefinition | undefined;
 }) {
-  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+  const runtimeSkills = toolset.availableToolNames.some(isBuiltinBrowserToolName)
     && !input.browserAttachments?.length
     ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
     : surfaceSkills;
@@ -664,7 +667,7 @@ async function assembleSessionContext({
     registeredPlugins,
     { ...pluginAssembly, skills: runtimeSkills },
   );
-  const contextTokenBudget = input.resolvedModel?.contextWindow ?? 32_000;
+  const contextTokenBudget = input.resolvedModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW;
   const beforeContextResult = await executeWorkflowHookSafely(
     input.workflowHooks,
     {
@@ -863,13 +866,11 @@ async function createRuntimeCoreSessionImpl(
         toolName.toLowerCase() === "processoutput" ? "read" : "execute";
       const toolUseId = toolInput.result.tool_use_id || task.id;
       const now = new Date().toISOString();
-      void createFileBackedRunContinuationStore(sessionDir)
-        .upsert({
-          version: 2,
-          runId: input.runId,
-          threadId: input.lumeSessionId,
-          status: "waiting_background",
-          checkpoint: {
+      const store = createFileBackedRunContinuationStore(sessionDir);
+      void store
+        .get(input.runId)
+        .then((existing) => {
+          const checkpoint: NonNullable<RunContinuationState["checkpoint"]> = {
             step: "waiting_for_tool_result",
             toolCallId: toolUseId,
             toolName,
@@ -884,10 +885,49 @@ async function createRuntimeCoreSessionImpl(
                 .digest("hex"),
               kind: toolKind,
             },
-          },
-          reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
-          createdAt: now,
-          updatedAt: now,
+          };
+          // #650：主槽已有另一个在等后台任务时，旧快照降级进 backgroundCheckpoints
+          // 数组保留（按 processJobId 去重更新），不再被本任务覆盖。
+          const priorOther =
+            existing?.version === 2 &&
+            existing.checkpoint.processJobId &&
+            existing.checkpoint.processJobId !== task.id
+              ? [existing.checkpoint]
+              : [];
+          const carriedOthers = existing?.version === 2 ? existing.backgroundCheckpoints ?? [] : [];
+          const mergedOthers = [
+            ...carriedOthers.filter(
+              (item) =>
+                item.processJobId !== task.id &&
+                !priorOther.some((p) => p.processJobId === item.processJobId),
+            ),
+            ...priorOther.map((p) => ({
+              processJobId: p.processJobId!,
+              toolCallId: p.toolCallId ?? "",
+              toolName: p.toolName ?? "",
+              toolKind: p.toolKind ?? ("execute" as const),
+              toolCall: p.toolCall ?? {
+                id: p.toolCallId ?? "",
+                name: p.toolName ?? "",
+                input: null,
+                inputHash: "",
+                kind: p.toolKind ?? ("execute" as const),
+              },
+              syntheticToolResult: p.syntheticToolResult,
+              updatedAt: now,
+            })),
+          ];
+          return store.upsert({
+            version: 2,
+            runId: input.runId!,
+            threadId: input.lumeSessionId,
+            status: "waiting_background",
+            checkpoint,
+            ...(mergedOthers.length > 0 ? { backgroundCheckpoints: mergedOthers } : {}),
+            reason: "后台命令已持久化，恢复时重新附着而不重复执行。",
+            createdAt: existing?.createdAt ?? now,
+            updatedAt: now,
+          });
         })
         .catch((error) => {
           // fire-and-forget 持久化失败（AV 锁/磁盘满等）只降级恢复能力，不允许变成未处理拒绝崩进程
@@ -913,33 +953,47 @@ async function createRuntimeCoreSessionImpl(
       void continuationStore
         .get(input.runId)
         .then((continuation) => {
-          if (
-            !continuation ||
-            continuation.version !== 2 ||
-            continuation.checkpoint.processJobId !== event.task_id
-          )
-            return;
-          return continuationStore.update(input.runId!, {
-            status: "ready_to_resume",
-            checkpoint: {
-              ...continuation.checkpoint,
-              step: "after_tool_result",
-              syntheticToolResult: {
-                type: "tool_result",
-                tool_use_id:
-                  event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
-                content: event.message ?? event.summary ?? "",
-                ...(event.status === "failed" ||
-                event.status === "stopped" ||
-                event.status === "interrupted"
-                  ? { is_error: true }
-                  : {}),
-                ...(event.execution
-                  ? { _meta: { execution: event.execution } }
-                  : {}),
+          if (!continuation || continuation.version !== 2) return;
+          const synthetic = {
+            type: "tool_result",
+            tool_use_id:
+              event.tool_use_id ?? continuation.checkpoint.toolCallId ?? "",
+            content: event.message ?? event.summary ?? "",
+            ...(event.status === "failed" ||
+            event.status === "stopped" ||
+            event.status === "interrupted"
+              ? { is_error: true }
+              : {}),
+            ...(event.execution
+              ? { _meta: { execution: event.execution } }
+              : {}),
+          };
+          // 主槽命中（最新后台任务）
+          if (continuation.checkpoint.processJobId === event.task_id) {
+            return continuationStore.update(input.runId!, {
+              status: "ready_to_resume",
+              checkpoint: {
+                ...continuation.checkpoint,
+                step: "after_tool_result",
+                syntheticToolResult: synthetic,
               },
-            },
-            reason: `后台命令已进入终态：${event.status}。`,
+              reason: `后台命令已进入终态：${event.status}。`,
+            });
+          }
+          // #650：次槽命中——把 syntheticToolResult 回填进对应数组项
+          const others = continuation.backgroundCheckpoints ?? [];
+          const hitIndex = others.findIndex(
+            (item) => item.processJobId === event.task_id,
+          );
+          if (hitIndex < 0) return;
+          const nextOthers = others.map((item, index) =>
+            index === hitIndex
+              ? { ...item, syntheticToolResult: synthetic, updatedAt: new Date().toISOString() }
+              : item,
+          );
+          return continuationStore.update(input.runId!, {
+            backgroundCheckpoints: nextOthers,
+            updatedAt: new Date().toISOString(),
           });
         })
         .catch((error) => {
@@ -1148,7 +1202,13 @@ async function createRuntimeCoreSessionImpl(
       await Promise.all([
         subagentRuns.length > 0
           ? (async () => {
+              // 总上限:长期不响应的审批/僵尸委派不得无限期挂住父 run。
+              // 超时后放行本轮收割,未完成 runs 保持 running(完成后 announce 照发,
+              // 下一轮 guard 会再次尝试收割)。
+              const waitStartedAt = Date.now();
+              const BACKGROUND_WAIT_TOTAL_LIMIT_MS = 30 * 60 * 1000;
               while (
+                Date.now() - waitStartedAt < BACKGROUND_WAIT_TOTAL_LIMIT_MS &&
                 subagentRuns.some(
                   (run) => registry.get(run.runId)?.status === "running",
                 )
@@ -1212,12 +1272,42 @@ async function createRuntimeCoreSessionImpl(
     return coding ?? getTodoCompletionBlocker(currentTodoState);
   };
   const enableFileCheckpointing = input.permissionMode !== "plan";
+  // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
+  // privateWriteRoots 白名单同源，否则 skills/plugins 等已授权写根会被新加的
+  // 无条件复核误拒。
+  //
+  // 但 containment 根集与"additionalDirectories"是两个关注点（#639 复审 P2）：
+  // 后者还会流进系统提示词、checkpoint 快照扫描、相对路径解析与 coding
+  // tracker 工作区根。skills/plugins/.lume 等内部管理目录走 SDK 的
+  // privateWriteRoots 专用通道（只放行写入），不进 additionalDirectories。
+  const privateWriteRoots = resolveConfiguredPrivateWriteRoots({
+    agentCwd: input.cwd,
+    lumeWorkDir: input.lumeWorkDir,
+    filesRoot: input.filesRoot,
+    plansRoot: input.plansRoot,
+    artifactsRoot: input.artifactsRoot,
+    workspaceSlug: input.workspaceSlug,
+    configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
+  });
   const additionalDirectories = [
     ...new Set(
       [
+        ...resolveConfiguredPrivateWriteRoots({
+          agentCwd: input.cwd,
+          lumeWorkDir: input.lumeWorkDir,
+          filesRoot: input.filesRoot,
+          plansRoot: input.plansRoot,
+          artifactsRoot: input.artifactsRoot,
+          workspaceSlug: input.workspaceSlug,
+          configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
+        }),
         ...(input.additionalDirectories ?? []),
         input.lumeWorkDir,
-        input.artifactsRoot,
+        // artifactsRoot 通常是 lumeWorkDir/artifacts：已被覆盖时跳过，免同树
+        // 双扫进 checkpoint 快照（性能复审）
+        ...(input.artifactsRoot && (!input.lumeWorkDir || !resolve(input.artifactsRoot).startsWith(resolve(input.lumeWorkDir) + "/"))
+          ? [input.artifactsRoot]
+          : []),
       ]
         .filter((directory): directory is string => Boolean(directory))
         .map((directory) => resolve(directory))
@@ -1256,9 +1346,10 @@ async function createRuntimeCoreSessionImpl(
   });
 
   const agentOptions: AgentOptions = {
+    subagentRunId: input.subagentRunId,
     provider: createRoutingPiAiProvider(providerRoutes),
     model: input.resolvedModel?.id ?? input.resolvedModelId,
-    contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
+    contextWindow: input.resolvedModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
     cwd: input.cwd,
     threadType: input.threadType,
     artifactsRoot: input.artifactsRoot,
@@ -1279,10 +1370,12 @@ async function createRuntimeCoreSessionImpl(
       : {}),
     ...(Object.keys(agentHooks).length > 0 ? { hooks: agentHooks } : {}),
     agents,
-    permissionMode:
-      input.permissionMode === "bypassPermissions"
-        ? "bypassPermissions"
-        : "default",
+    // 真值透传（#571 第 4 项）：此前除 bypassPermissions 外一律折叠成 default，
+    // 使 acceptEdits/dontAsk 在 Agent cfg 层失真。查询级 override（lume-runner）
+    // 一直传真值，故行为面未变；此处修的是 cfg 谎言，防未来消费方踩假值。
+    // 未设模式时归一 default：SDK init 消息的兜底是 || 'bypassPermissions'，
+    // undefined 直达会被误报成完全自动（#684 review）。
+    permissionMode: input.permissionMode ?? "default",
     includePartialMessages: true,
     skillsDirectories: resolveSkillDirectories(input.cwd, input.workspaceSlug),
     shouldLoadFilesystemSkill: createRuntimeSkillFilter(input.workspaceSlug),
@@ -1303,18 +1396,18 @@ async function createRuntimeCoreSessionImpl(
           messageMetadata: input.messageMetadata,
         },
       }),
-    registerGeneratedRuntimeTools: (tools) =>
-      ToolRuntime.registerGeneratedTools({
-        tools,
-        sessionId: input.lumeSessionId,
-      }),
+    // registerGeneratedRuntimeTools 不再需要：生成的 ToolSearch/ExecuteTool 定义自带
+    // runtimeMetadata，canUseTool 直接从定义组装 descriptor（#541 双载体合一）
     ...(input.userMessage?.trim() ? { completionGuard } : {}),
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
+    // 只放行写入的内部管理根（skills/plugins/.lume/plans/files），不进提示词
+    // 与快照（见上方注释）
+    privateWriteRoots,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,
-      contextWindow: input.resolvedModel?.contextWindow ?? 32_000,
+      contextWindow: input.resolvedModel?.contextWindow ?? DEFAULT_CONTEXT_WINDOW,
       maxOutputTokens: input.resolvedModel?.maxTokens,
       systemPrompt,
       memoryContext: contextAssembly.memoryContext,
@@ -1340,9 +1433,6 @@ async function createRuntimeCoreSessionImpl(
 
   const agent = createAgent(agentOptions);
   pendingCleanup.push(() => agent.close());
-  pendingCleanup.push(() => {
-    clearRuntimeToolDescriptors(input.lumeSessionId);
-  });
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 
@@ -1382,9 +1472,9 @@ async function createRuntimeCoreSessionImpl(
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      clearRuntimeToolDescriptors(input.lumeSessionId);
       // file-access-ledger 与线程级 fileStateCache 不随 run 清理（#569）：
       // 跨消息 stale 防护依赖记录存活；清理挂点=线程删除。
+      // descriptor-session 已随 #541 双载体合一删除，无清理挂点。
     },
   };
 

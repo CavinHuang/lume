@@ -488,6 +488,21 @@ export function setReadingNoteShareCard(noteId: string, shareCardPath: string): 
 }
 
 
+/**
+ * #637：把存量 legacy 弱种子 weread apiKey 密文一次性升级为 v2。返回迁移条数。
+ */
+export function reencryptWereadApiKeyWithInstalledKey(): number {
+  const stored = readSettings();
+  const value = stored?.encryptedWereadApiKey;
+  if (!value || value.startsWith("enc:v2:")) return 0;
+  writeSettings({
+    ...normalizeReadingSettings(readSettings()),
+    encryptedWereadApiKey: encryptSecret(decryptSecret(value)),
+    updatedAt: Date.now()
+  });
+  return 1;
+}
+
 export function getReadingSettings(): ReadingSettings {
   initReadingStorage();
   return normalizeReadingSettings(readSettings());
@@ -547,7 +562,10 @@ const SEARCH_SOURCE_TIMEOUT_MS = 8_000;
 export async function searchReadingBooks(query: string, limit = 10): Promise<ReadingSearchResult[]> {
   const apiKey = getReadingWereadApiKey();
   if (apiKey) {
-    const result = await new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit);
+    // #596：apiKey 分支与公共分支同口径包超时，避免 weread 慢调用挂住搜索
+    const result = await withSearchTimeout(
+      new BookDataService({ wereadApiKey: apiKey }).searchWeread(query, limit), { ok: true, data: [] }
+    );
     return result.ok ? result.data : [];
   }
   return withSearchTimeout(

@@ -3,7 +3,8 @@ import {
   getToolMetadata,
   inferToolMetadata
 } from "./tool-metadata";
-import type {
+import {
+  LUME_TOOL_SOURCES,
   LumeToolCapability,
   LumeToolDescriptorInput,
   LumeToolMetadata,
@@ -19,13 +20,32 @@ export function createToolDescriptorsFromDefinitions(
     const baseMetadata = getToolMetadata(definition.name) ?? inferToolMetadata(definition.name);
     const runtimeMetadata = readRuntimeMetadata(definition);
     const resolvedSource = readRuntimeSource(definition) ?? inferRuntimeSource(definition.name, source);
+    // 定义体的显式 isReadOnly 优先于类别推断（#537）：defineTool 会把布尔
+    // 规范化为函数形态，这里两种形态都认；动态求值失败时回退推断
+    const definitionIsReadOnly = readDeclaredReadOnly(definition);
     if (resolvedSource === "mcp" || resolvedSource === "plugin") {
+      // 四必填维度兜底与 sdk 分支对称（#711 review）：单载体 + fail-closed
+      // descriptor 组装下，缺失会让全部 mcp/plugin 工具被 descriptor_missing
+      // 误 deny。但名称启发式对远端可控的 mcp/plugin 名恒倾向 read/low——
+      // 若照抄 sdk 分支会经 metadata_low 在 default+plan 双通道自动放行，
+      // 构成 fail-open 翻转。故 riskLevel 钳到 medium、allowedInPlanMode
+      // 恒 false，让 approval 路径承接；显式 runtimeMetadata 仍可覆盖。
+      const fallbackRisk: LumeToolMetadata["riskLevel"] =
+        baseMetadata.riskLevel === "low" ? "medium" : baseMetadata.riskLevel;
       return {
         name: definition.name,
         source: resolvedSource,
         definition,
         metadata: {
           description: baseMetadata.description,
+          category: baseMetadata.category,
+          capability: inferCapability(definition.name, resolvedSource, baseMetadata.category),
+          riskLevel: fallbackRisk,
+          sideEffects: inferSideEffects(resolvedSource, baseMetadata.category),
+          allowedInPlanMode: false,
+          isConcurrencySafe: isConcurrencySafe(baseMetadata.category),
+          requiresApprovalByDefault: true,
+          ...(definitionIsReadOnly !== undefined ? { isReadOnly: definitionIsReadOnly } : {}),
           ...runtimeMetadata
         }
       };
@@ -41,7 +61,7 @@ export function createToolDescriptorsFromDefinitions(
         riskLevel: baseMetadata.riskLevel,
         sideEffects: inferSideEffects(resolvedSource, baseMetadata.category),
         allowedInPlanMode: baseMetadata.allowedInPlanMode ?? false,
-        isReadOnly: baseMetadata.category === "read" || baseMetadata.category === "network",
+        isReadOnly: definitionIsReadOnly ?? (baseMetadata.category === "read" || baseMetadata.category === "network"),
         isConcurrencySafe: isConcurrencySafe(baseMetadata.category),
         requiresApprovalByDefault: baseMetadata.riskLevel !== "low",
         ...runtimeMetadata
@@ -77,18 +97,9 @@ function readRuntimeMetadata(definition: ToolDefinition): Partial<LumeToolMetada
 
 function readRuntimeSource(definition: ToolDefinition): LumeToolSource | undefined {
   const source = readRuntimeMetadataRecord(definition)?.source;
-  if (
-    source === "sdk" ||
-    source === "lume" ||
-    source === "memory" ||
-    source === "automation" ||
-    source === "plan" ||
-    source === "task" ||
-    source === "mcp" ||
-    source === "skill" ||
-    source === "plugin"
-  ) {
-    return source;
+  // 单一源判定（#711 review 第四轮）：枚举增值只改 LUME_TOOL_SOURCES 一处
+  if (typeof source === "string" && (LUME_TOOL_SOURCES as readonly string[]).includes(source)) {
+    return source as LumeToolSource;
   }
   return undefined;
 }
@@ -98,6 +109,19 @@ function readRuntimeMetadataRecord(definition: ToolDefinition): Record<string, u
   return metadata && typeof metadata === "object" && !Array.isArray(metadata)
     ? metadata as Record<string, unknown>
     : undefined;
+}
+
+function readDeclaredReadOnly(definition: ToolDefinition): boolean | undefined {
+  const value = (definition as { isReadOnly?: unknown }).isReadOnly;
+  if (typeof value === "boolean") return value;
+  if (typeof value !== "function") return undefined;
+  try {
+    // 依赖入参的动态只读函数无参求值可能得到 undefined——视为无法确定，回退推断
+    const result = (value as () => unknown)();
+    return typeof result === "boolean" ? result : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function inferRuntimeSource(toolName: string, fallback: LumeToolSource): LumeToolSource {
@@ -144,11 +168,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
-function isCategory(value: unknown): value is LumeToolMetadata["category"] {
+export function isCategory(value: unknown): value is LumeToolMetadata["category"] {
   return value === "read" || value === "write" || value === "execute" || value === "control" || value === "network";
 }
 
-function isCapability(value: unknown): value is LumeToolCapability {
+export function isCapability(value: unknown): value is LumeToolCapability {
   return value === "filesystem" ||
     value === "shell" ||
     value === "web" ||
@@ -162,15 +186,16 @@ function isCapability(value: unknown): value is LumeToolCapability {
     value === "external";
 }
 
-function isRiskLevel(value: unknown): value is LumeToolMetadata["riskLevel"] {
+export function isRiskLevel(value: unknown): value is LumeToolMetadata["riskLevel"] {
   return value === "low" || value === "medium" || value === "high";
 }
 
-function isSideEffects(value: unknown): value is LumeToolSideEffects {
+export function isSideEffects(value: unknown): value is LumeToolSideEffects {
   return value === "none" ||
     value === "local_read" ||
     value === "local_write" ||
     value === "network" ||
     value === "process" ||
-    value === "external";
+    value === "external" ||
+    value === "desktop";
 }

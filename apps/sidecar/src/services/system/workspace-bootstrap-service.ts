@@ -96,11 +96,11 @@ const CORE_WORKSPACE_FILE_TYPES: BootstrapFileType[] = ['AGENTS', 'SOUL', 'TOOLS
  * 模板目录位于项目根目录的 templates/workspace/
  */
 function getTemplatesDir(): string {
-  // 在 sidecar 中，我们需要找到项目根目录
-  // sidecar 位于 apps/sidecar/
-  // 模板位于 templates/workspace/
+  // #523:宿主(桌面主进程)经 env 注入模板目录——打包产物与 dev bundle 的
+  // 布局下,编译文件位置向上 5 级的源码布局查找必然落空
+  const injected = process.env.LUME_TEMPLATES_DIR?.trim();
+  if (injected) return injected;
   const currentDir = dirname(fileURLToPath(import.meta.url));
-  // 从 apps/sidecar/src/services/system 向上找到项目根目录
   const projectRoot = join(currentDir, '..', '..', '..', '..', '..');
   return join(projectRoot, 'templates', 'workspace');
 }

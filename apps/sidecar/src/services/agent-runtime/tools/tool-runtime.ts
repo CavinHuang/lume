@@ -9,10 +9,6 @@ import { getRuntimeFileAccessLedger } from "./file-access-ledger";
 import { wrapToolDefinitionWithRuntimePolicies } from "./tool-runtime-wrapper";
 import { createLogger } from "../../infra/logger";
 import {
-  appendRuntimeToolDescriptors,
-  setRuntimeToolDescriptors
-} from "./tool-descriptor-session";
-import {
   resolveEffectiveToolPolicies,
   type ResolveEffectiveToolPolicyInput
 } from "./tool-policy-matcher";
@@ -59,7 +55,6 @@ export const TASK_MANAGEMENT_DENY_SET = new Set([
   "TaskList",
   "TaskGet",
   "TaskStop",
-  "TaskOutput",
   "ProcessOutput",
   "ProcessStop",
 ]);
@@ -72,7 +67,6 @@ export class ToolRuntime {
       threadId: input.sessionId,
       cwd: input.cwd
     });
-    setRuntimeToolDescriptors(input.sessionId, descriptors);
 
     return {
       tools,
@@ -126,7 +120,6 @@ export class ToolRuntime {
       const residual = resolvedDescriptors.filter((descriptor) => TASK_MANAGEMENT_DENY_SET.has(descriptor.name));
       if (residual.length > 0) throw new Error(`Subagent task-management deny set violated: ${residual.map((item) => item.name).join(", ")}`);
     }
-    setRuntimeToolDescriptors(input.sessionId, resolvedDescriptors);
     return materializeRuntimeTools({
       descriptors: resolvedDescriptors,
       threadId: input.sessionId,
@@ -138,15 +131,6 @@ export class ToolRuntime {
         requiredDuringSkillScope: true
       }
     } : tool);
-  }
-
-  static registerGeneratedTools(input: {
-    tools: ToolDefinition[];
-    sessionId: string;
-  }): void {
-    const registry = new ToolRegistry();
-    registry.registerMany(createToolDescriptorsFromDefinitions(input.tools, "sdk"));
-    appendRuntimeToolDescriptors(input.sessionId, registry.list());
   }
 }
 
@@ -180,16 +164,28 @@ function resolveDescriptors(input: ToolRuntimeBuildInput): LumeToolDescriptor[] 
   return descriptors;
 }
 
+/** 审批豁免键不得随定义自声明存活：runtimeWrapped 短路复用的定义同样剥离（#711 review 第四轮） */
+function stripDeclaredDelegatesPermission(tool: ToolDefinition): ToolDefinition {
+  const meta = (tool as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata;
+  if (!meta || meta.delegatesPermission === undefined) return tool;
+  const { delegatesPermission: _stripped, ...rest } = meta;
+  return {
+    ...tool,
+    runtimeMetadata: rest,
+  } as ToolDefinition;
+}
+
 function materializeRuntimeTools(input: {
   descriptors: LumeToolDescriptor[];
   threadId: string;
   cwd: string;
 }): ToolDefinition[] {
   return input.descriptors.map((descriptor) => {
+    // 已盖章的定义直接复用（但豁免键仍剥离）；其余统一包 wrapper——包括
+    // AskUserQuestion，单载体化后它同样需要 runtimeMetadata 供 canUseTool 组装（#541）
     const runtimeTool =
-      descriptor.canonicalName === "askuserquestion" ||
       (descriptor.definition as { runtimeMetadata?: Record<string, unknown> }).runtimeMetadata?.runtimeWrapped === true
-        ? descriptor.definition
+        ? stripDeclaredDelegatesPermission(descriptor.definition)
         : wrapToolDefinitionWithRuntimePolicies({
             descriptor,
             threadId: input.threadId,

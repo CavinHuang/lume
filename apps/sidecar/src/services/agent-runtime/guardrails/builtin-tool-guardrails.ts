@@ -1,5 +1,6 @@
-import { isAbsolute, relative, resolve } from "node:path";
+import { resolve } from "node:path";
 import { canonicalizeAgentToolName } from "@lume/shared";
+import { ensureWriteContained } from "@lume/agent-sdk";
 import { evaluateRuntimeToolSafety } from "./runtime-tool-safety";
 import type { LumeGuardrail } from "./guardrail-types";
 import type { RunToolInputGuardrailsInput } from "./guardrail-runner";
@@ -34,17 +35,21 @@ export const fileWriteBoundaryGuardrail: LumeGuardrail<RunToolInputGuardrailsInp
   mode: "blocking",
   async run(input, context) {
     const normalized = canonicalizeAgentToolName(input.toolName);
-    if (!["write", "edit", "multiedit", "notebookedit"].includes(normalized)) {
+    if (!// 新增写类工具必须同步此名单（漏加 = 静默绕过边界，无报错）——
+  // 可维护性复审标记的唯二静默漏防护点之一
+  ["write", "edit", "multiedit", "notebookedit"].includes(normalized)) {
       return { behavior: "allow" };
     }
     const cwd = input.context.cwd;
     if (!cwd) return { behavior: "allow" };
-    const roots = [cwd, ...(context.additionalDirectories ?? input.context.additionalDirectories ?? [])]
-      .map((root) => resolve(root));
+    // realpath 复核（#546）：junction/symlink 可穿越词法边界写穿 workspace，
+    // 目标与根都 canonicalize 后比对；SDK 沙箱恒未启用，这里是工具输入层
+    // 唯一边界（写入瞬间还有 writeFileAtomic 的 assertAllowed 复检）
+    const additionalDirectories = context.additionalDirectories ?? input.context.additionalDirectories ?? [];
     const paths = collectFileWritePaths(input.input);
     for (const path of paths) {
-      const absolutePath = resolve(cwd, path);
-      if (!roots.some((root) => isInsideDirectory(root, absolutePath))) {
+      const denial = ensureWriteContained(resolve(cwd, path), cwd, additionalDirectories);
+      if (denial) {
         return {
           behavior: "reject",
           reason: "禁止写入 workspace 外路径"
@@ -93,11 +98,6 @@ function collectFileWritePaths(input: unknown): string[] {
     ? record.edits.flatMap((edit) => collectFileWritePaths(edit))
     : [];
   return [...direct, ...edits];
-}
-
-function isInsideDirectory(root: string, target: string): boolean {
-  const rel = relative(root, target);
-  return rel === "" || (!rel.startsWith("..") && !isAbsolute(rel));
 }
 
 function isMemoryWriteTool(normalizedToolName: string): boolean {

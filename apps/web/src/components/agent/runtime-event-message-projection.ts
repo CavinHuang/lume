@@ -1,4 +1,5 @@
 import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent, RuntimeCodingReport } from '@lume/shared'
+import { isDelegationToolName } from './subagent-run-projection'
 import type {
   RuntimeAssistantBlock,
   RuntimeAssistantMessageView,
@@ -7,7 +8,8 @@ import type {
   RuntimeToolCallView,
 } from './runtime-message-view'
 
-const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。'
+// #566:turn_limited 后系统可能自动续跑，不再指示用户手动「继续」（自动续跑未生效时下一条用户消息同样会经恢复上下文接续）
+export const TURN_LIMIT_NOTICE = '本轮已达到最大执行轮次，当前进度已保存。'
 
 export interface ProjectionState {
   messages: RuntimeMessageView[]
@@ -21,6 +23,12 @@ export interface ProjectionState {
   compactionMessageByRun: Map<string, string>
   fileReferenceBinding?: FileReferenceBinding
   fileReferenceProtocolVersion?: FileReferenceProtocolVersion
+  /**
+   * #566:待收回的「已达上限」提示——turn_limited 后系统可能自动续跑；若同一链的
+   * run.started 随后到达（期间无用户消息），剥掉该提示尾缀，避免给用户假信号。
+   * 用户消息插入则保留提示（手动继续场景提示仍然成立）。
+   */
+  pendingTurnLimitNotice?: { messageId: string } | null
 }
 
 /**
@@ -67,11 +75,13 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
   // 因位于通用早退之前,各自保留最小防线(见分支内注释)。
 
   if (event.type === 'run.started') {
+    retractPendingTurnLimitNotice(state)
     state.terminalClosed = false
     return
   }
 
   if (event.type === 'message.user.submitted') {
+    state.pendingTurnLimitNotice = null
     flushAssistant(state.messages, state.currentAssistant)
     messages.push({
       id: event.messageId ?? `user:${event.createdAt}`,
@@ -388,7 +398,7 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
       ...(event.execution ? { execution: event.execution } : {}),
       ...(event.resultRef ? { resultRef: event.resultRef } : {}),
       ...(existing?.subagentRunId ? { subagentRunId: existing.subagentRunId } : {}),
-      ...(existing?.toolName === 'Agent' || event.toolName === 'Agent'
+      ...(isDelegationToolName(existing?.toolName ?? '') || isDelegationToolName(event.toolName ?? '')
         ? { subagentStatus: isError ? 'errored' as const : 'completed' as const }
         : existing?.subagentStatus ? { subagentStatus: existing.subagentStatus } : {}),
     }
@@ -430,6 +440,11 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
     if (event.type === 'run.turn_limited') {
       appendAssistantTextBlock(state.currentAssistant, TURN_LIMIT_NOTICE)
       recomputeAssistantContent(state.currentAssistant)
+      // #566:记录提示尾缀，若同链 run.started 随后到达则剥掉（自动续跑不给用户假信号）
+      const lastBlock = state.currentAssistant.blocks.at(-1)
+      state.pendingTurnLimitNotice = lastBlock?.type === 'text'
+        ? { messageId: state.currentAssistant.id }
+        : null
     }
     if (event.type === 'run.completed') {
       state.currentAssistant.messageId = event.finalMessageId
@@ -781,6 +796,39 @@ function flushAssistant(
 ): void {
   const snapshot = snapshotAssistant(assistant)
   if (snapshot) messages.push(snapshot)
+}
+
+/** #566:自动续跑链的下一 run 开始——剥掉上一边界的「已达上限」提示尾缀。
+ * 必须**克隆替换**消息与尾块对象（review M2）：stabilizeRuntimeMessages 按引用
+ * 复用缓存视图，原地 mutate 在跨帧增量/live 路径上对 UI 不可见。 */
+function retractPendingTurnLimitNotice(state: ProjectionState): void {
+  const pending = state.pendingTurnLimitNotice
+  state.pendingTurnLimitNotice = null
+  if (!pending) return
+  const index = state.messages.findIndex((item) => item.id === pending.messageId)
+  const message = state.messages[index]
+  if (!message || message.type !== 'assistant') return
+  const lastBlockIndex = message.blocks.length - 1
+  const last = message.blocks[lastBlockIndex]
+  if (last?.type !== 'text' || !last.text.endsWith(TURN_LIMIT_NOTICE)) return
+  // 块 id 按索引派生，不删块防 id 漂移；提示独占时留空文本块（渲染无痕）
+  // noticeLength 与下方 message.text 切片同源取 TURN_LIMIT_NOTICE.length，防单边漂移
+  const strippedBlockText = last.text.slice(0, -TURN_LIMIT_NOTICE.length)
+  const strippedMessageText = message.text.endsWith(TURN_LIMIT_NOTICE)
+    ? message.text.slice(0, -TURN_LIMIT_NOTICE.length)
+    : message.text
+  const clonedBlocks = [...message.blocks]
+  clonedBlocks[lastBlockIndex] = { ...last, text: strippedBlockText }
+  // tokenCount 同步扣掉提示的估算值（~5 token），保持口径诚实
+  const noticeTokens = estimateTextTokens(TURN_LIMIT_NOTICE)
+  state.messages[index] = {
+    ...message,
+    text: strippedMessageText,
+    blocks: clonedBlocks,
+    ...(typeof message.tokenCount === 'number'
+      ? { tokenCount: Math.max(0, message.tokenCount - noticeTokens) }
+      : {}),
+  }
 }
 
 /**

@@ -1,5 +1,5 @@
 import { canonicalizeAgentToolName } from "@lume/shared";
-import { analyzeBashCommand, shellKindConservative } from "@lume/agent-sdk";
+import { analyzeBashCommand, isReadOnlyPowerShell, shellKindConservative } from "@lume/agent-sdk";
 import {
   PS_CLEAR_CONTENT_VERBS,
   PS_CONFIRM_COMMAND,
@@ -7,7 +7,8 @@ import {
   PS_DELETE_COMMAND,
   PS_DYNAMIC_EXEC_VERBS,
   PS_FORMAT_VERBS,
-  PS_STOP_VERBS
+  PS_STOP_VERBS,
+  hasPowerShellContentSignal
 } from "../ps-dangerous-verbs";
 
 export type RuntimeToolSafetyDecision =
@@ -49,11 +50,16 @@ const FORCE_CONFIRM_BASH_RULES: CommandRule[] = [
  * 良性 Get-* / Format-Table 等命令不受影响。
  */
 
+const HARD_DENY_TARGETS = String.raw`(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile|\$\{env:userprofile\})`;
+
 const HARD_DENY_POWERSHELL_RULES: CommandRule[] = [
   {
-    // 删除族指向盘符根/根路径/用户主目录裸目标；不带递归标志也拒，比 bash 侧更严；
-    // 完整 UNC 根（\\server\share）不在目标命中面内。填充区不含换行，防跨行吞并下一行的良性参数
-    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n]["']?(?:[a-z]:[\\/]*|[\\/]+|~|\$home|\$env:userprofile)["']?(?=\s|$|[;&|])`, "i"),
+    // 删除族指向盘符根/根路径/用户主目录裸目标；不带递归标志也拒，比 bash 侧更严。
+    // 双支结构：裸/单层引号形态共享前瞻（边界后不得再接路径，防 ($home)\Documents 子路径
+    // 被过度硬拒）；括号支容忍多层配对括号与内层引号（("～")、(($home)) 复合形态同属
+    // 删除意图）且闭合后即边界。完整 UNC 根（\\server\share）不在目标命中面内。
+    // 填充区不含换行，防跨行吞并下一行的良性参数
+    pattern: new RegExp(String.raw`${PS_DELETE_COMMAND}[^\r\n;&|]*[^\S\r\n](?:[(["']?${HARD_DENY_TARGETS}["')]?(?=\s|$|[;&|])|\(+\s*["']?${HARD_DENY_TARGETS}["']?\s*\)+(?=\s|$|[;&|]))`, "i"),
     reason: "禁止删除根目录或用户主目录"
   }
 ];
@@ -109,22 +115,32 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown, cont
   }
 
   /*
-   * PS 词表仅在实际以 PowerShell 为执行 shell 的环境应用：POSIX bash 在场时命令是 bash
-   * 语法，模型不会发 PS 动词，而 iex/ri 等真实 POSIX 命令与 PS 撞名，全平台跑词表会把
-   * Elixir/Ruby 日常命令翻成强审批且「始终允许」豁免不掉。探测复用 packages/sdk 的 shell
-   * 解析顺序且不触发 Windows bash 发现；与 #471 只读判定的差异在冷启动方向——bash 发现
-   * 未决时按保守侧读作 powershell（fail-closed），否则无 bash 机器生命周期首条命令必然
-   * 跳过词表，恰是本层要防的场景。显式配置 bash 的机器不受翻转影响。
+   * PS 词表激活判定（#707 两通道）：其一为方言——实际以 PowerShell 为执行 shell 的环境。
+   * POSIX bash 在场时命令是 bash 语法，模型不会发 PS 动词，而 iex/ri 等真实 POSIX 命令与
+   * PS 撞名，全平台跑词表会把 Elixir/Ruby 日常命令翻成强审批且「始终允许」豁免不掉。探测
+   * 复用 packages/sdk 的 shell 解析顺序且不触发 Windows bash 发现；与 #471 只读判定的差异
+   * 在冷启动方向——bash 发现未决时按保守侧读作 powershell（fail-closed），否则无 bash 机器
+   * 生命周期首条命令必然跳过词表，恰是本层要防的场景。其二为内容信号（win32 限定）——装
+   * POSIX bash 的 Windows 机上方言读作 bash，词表整层休眠，Remove-Item -Recurse -Force 一类
+   * 命令漏判；文本自身呈强 PS 形态时无视方言激活（信号形态刻意排除 iex/ri 撞名，见
+   * ps-dangerous-verbs）。非 win32 宿主不消费信号：Linux/macOS 上 PS 命令必然 command-not-found，
+   * 且跨平台套用会翻转已钉住的精确 bash 读法。
    */
-  const powershellRulesActive = shellKindConservative(context.platform ?? process.platform, context.env ?? process.env) === "powershell";
+  const platform = context.platform ?? process.platform;
+  const powershellDialect = shellKindConservative(platform, context.env ?? process.env) === "powershell";
+  // 内容信号只升确认档（#707）：issue 场景的危害是「判 low 静默放行」，确认层即可兜住；
+  // hard-deny 层与 parse-unavailable 放行通道仍由真实方言独占——显式配置 bash 的机器
+  // 回精确读法（不硬拒）的既定语义不被文本信号翻转
+  const powershellConfirmActive =
+    powershellDialect || (platform === "win32" && hasPowerShellContentSignal(command));
 
-  for (const rule of [...HARD_DENY_BASH_RULES, ...(powershellRulesActive ? HARD_DENY_POWERSHELL_RULES : [])]) {
+  for (const rule of [...HARD_DENY_BASH_RULES, ...(powershellDialect ? HARD_DENY_POWERSHELL_RULES : [])]) {
     if (rule.pattern.test(command)) {
       return { behavior: "deny", reason: rule.reason };
     }
   }
 
-  for (const rule of [...FORCE_CONFIRM_BASH_RULES, ...(powershellRulesActive ? FORCE_CONFIRM_POWERSHELL_RULES : [])]) {
+  for (const rule of [...FORCE_CONFIRM_BASH_RULES, ...(powershellConfirmActive ? FORCE_CONFIRM_POWERSHELL_RULES : [])]) {
     if (rule.pattern.test(command)) {
       return { behavior: "confirm", reason: rule.reason };
     }
@@ -132,6 +148,19 @@ export function evaluateRuntimeToolSafety(toolName: string, input: unknown, cont
 
   const analysis = analyzeBashCommand(command);
   if (analysis.status !== "simple") {
+    /*
+     * PS 方言收口（#571 第 3 项）：PowerShell 命令（显式前缀或 PS 默认 shell 的机器）
+     * 无法被 bash 语法树解析，此前一律 confirm 且该 confirm 不持久化——即使同一命令
+     * 已「始终允许」，这里也会把它翻回审批（gateway 合并语义），构成 Windows 上的
+     * 恒久双闸。现改为：保守只读子集内的命令放行（内容证明，与引擎免审通道同源），
+     * 其余不可解析形态维持 fail-closed 确认。非 PS 方言路径不变。
+     */
+    const psDialect =
+      powershellDialect ||
+      /^\s*(?:powershell|pwsh)(?:\.exe)?(?:\s|$)/i.test(command);
+    if (psDialect && isReadOnlyPowerShell(command)) {
+      return { behavior: "allow" };
+    }
     return { behavior: "confirm", reason: "命令包含无法安全解析的 Shell 或 PowerShell 语法，需要一次性确认" };
   }
 

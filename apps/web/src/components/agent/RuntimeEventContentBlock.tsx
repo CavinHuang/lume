@@ -17,6 +17,7 @@ import { agentSend, getThreadMessageVersions, revokeFilePreviewScope } from '@/l
 import { MessageFileReferenceBindingProvider } from './thread-file-env'
 import { getAgentRole, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
+import { isDelegationToolName } from './subagent-run-projection'
 import { AGENT_ROLE_ASSETS } from '@/components/settings/agents-settings-state'
 import { toast } from 'sonner'
 import { AgentAttachmentGrid, isImageAttachment } from './AgentAttachmentGrid'
@@ -40,7 +41,7 @@ import { PlanPreviewCard, SmoothText } from './message-blocks/markdown'
 import { collectAssistantSources } from './source-references'
 import { AssistantMessageFooter, CopyMessageButton, formatMessageTime } from './message-blocks/assistant-footer'
 import { MinimalProcessGroup, ToolExecutionDetails, riskLevelClassName, riskLevelLabel } from './message-blocks/minimal-process'
-import { asRecord, asString, memoryMutationError, memoryMutationLabel, parseToolCallOutput, summarizeInput } from './message-blocks/tool-summary'
+import { asRecord, asString, displayToolName, memoryMutationError, memoryMutationLabel, parseToolCallOutput, summarizeInput } from './message-blocks/tool-summary'
 
 export type { CopyFeedbackState }
 export { getAssistantCopyText, getCopyTextWithoutAfterglow, showTemporaryCopiedFeedback }
@@ -1400,7 +1401,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   const isRunning = toolCall.status === 'running'
   const input = asRecord(toolCall.input)
 
-  if (toolCall.toolName === 'Agent') {
+  if (isDelegationToolName(toolCall.toolName)) {
     return (
       <SubagentInlinePanel
         threadId={threadId}
@@ -1455,7 +1456,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           />
         </span>
       )}
-      <span className="font-semibold text-[var(--lume-text-primary)]">{toolCall.toolName}</span>
+      <span className="font-semibold text-[var(--lume-text-primary)]">{displayToolName(toolCall.toolName)}</span>
       {toolCall.riskLevel && (
         <span className={cn('rounded-full px-2 py-0.5 text-[11px] font-medium', riskLevelClassName(toolCall.riskLevel))}>
           {riskLevelLabel(toolCall.riskLevel)}
@@ -1479,7 +1480,7 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
           {formatDurationLabel(toolCall.durationMs)}
         </span>
       )}
-      <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input)}</span>
+      <span className="min-w-0 flex-1 truncate text-[var(--lume-text-muted)]">{summarizeInput(input, toolCall.toolName)}</span>
       {isRunning && <AgentLoadingIndicator variant="drive" startedAt={toolCall.startedAt} className="shrink-0" />}
     </>
   )

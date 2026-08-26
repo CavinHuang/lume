@@ -328,6 +328,8 @@ let settingsBroker: SettingsBroker | null = null
 let diagnosticContentStore: DiagnosticContentStore | null = null
 let sidecarLogDigestPolicy: LumeLogDigestPolicy | null = null
 let connectionVaultKey: Buffer | null = null
+// sidecar 崩溃惰性重启时经 SIDECAR_READY 补发，避免重启后加密静默回退弱种子(#617)
+let secretEncryptionKey: Buffer | null = null
 const pendingRendererDeliveries = new Map()
 const rendererLogSubscriptions = new Map()
 
@@ -519,6 +521,7 @@ const sidecarHost = createSidecarHost({
     }
     showDesktopProposalNotification(method, params)
     showPlanningReminderNotification(method, params)
+    showAutomationRunNotification(method, params)
     showDesktopActionHud(method, params)
     // Agent 灵动岛 service（Task 7）：先于 renderer 转发处理 sidecar 通知，
     // 确保即便主窗口隐藏也能触发 intent 刷新。
@@ -668,6 +671,39 @@ function showPlanningReminderNotification(method, params) {
     } catch (error) {
       writeMainLog('error', 'desktop.notification', 'planning_reminder.show_failed', 'planning reminder notification failed', { data: { error } })
     }
+  }
+}
+
+// #566 端到端 review A2:automation 停摆/失败必须有主动通知面——无人值守场景用户
+// 不会盯着管理页；success 保持静默不打扰，failed/waiting 才是「需要人介入」的信号。
+// #649 follow-up:同 job 冷却窗——常驻失败的定时 job 按 cron 频率会无限刷 OS 通知。
+const AUTOMATION_NOTIFY_COOLDOWN_MS = 10 * 60 * 1000
+const automationNotifyLastAt = new Map()
+
+function showAutomationRunNotification(method, params) {
+  if (method !== 'automation:run-completed' || !params || typeof params !== 'object') return
+  const run = params.run
+  if (!run || (run.status !== 'failed' && run.status !== 'waiting_for_user' && run.status !== 'waiting_for_approval')) return
+  if (!Notification.isSupported()) return
+  const jobKey = typeof run.jobId === 'string' ? run.jobId : ''
+  const lastAt = jobKey ? automationNotifyLastAt.get(jobKey) : undefined
+  const now = Date.now()
+  if (lastAt !== undefined && now - lastAt < AUTOMATION_NOTIFY_COOLDOWN_MS) {
+    writeMainLog('info', 'desktop.notification', 'automation_run.cooldown_skip', 'automation notification suppressed by per-job cooldown', { data: { jobId: jobKey, status: run.status } })
+    return
+  }
+  if (jobKey) automationNotifyLastAt.set(jobKey, now)
+  try {
+    const title = run.status === 'failed' ? `自动化任务未完成：${params.jobName ?? '未命名任务'}` : `自动化任务等待处理：${params.jobName ?? '未命名任务'}`
+    const desktopNotification = new Notification({
+      title,
+      body: typeof run.message === 'string' && run.message.trim() ? run.message : '请打开自动化页面查看详情。',
+      silent: true,
+    })
+    desktopNotification.on('click', () => { void showMainWindow() })
+    desktopNotification.show()
+  } catch (error) {
+    writeMainLog('error', 'desktop.notification', 'automation_run.show_failed', 'automation run notification failed', { data: { error } })
   }
 }
 
@@ -2786,6 +2822,15 @@ function createSidecarHost({ onNotification }) {
       env.LUME_BUNDLED_PLUGINS_DIR = bundledPluginsDir
     }
 
+    // #523:bootstrap 模板目录随打包产物分发,dev 模式直指仓库源码目录;
+    // 不注入则 sidecar 的向上 5 级查找在打包布局下必然断链
+    const templatesDir = app.isPackaged
+      ? join(process.resourcesPath, 'templates', 'workspace')
+      : resolve(REPO_ROOT, 'templates', 'workspace')
+    if (existsSync(templatesDir)) {
+      env.LUME_TEMPLATES_DIR = templatesDir
+    }
+
     const sidecarScriptPath = getSidecarScriptPath({
       appIsPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -2922,6 +2967,25 @@ function createSidecarHost({ onNotification }) {
               })
             }
           }
+          if (secretEncryptionKey) {
+            try {
+              runningChild.postMessage(JSON.stringify({
+                method: 'system.secret-encryption-key',
+                params: { key: secretEncryptionKey.toString('base64') },
+              }))
+            } catch (error) {
+              writeMainLog('warn', 'desktop.sidecar.security', 'secret_key.delivery_failed', 'failed to reinstall secret encryption key in sidecar', {
+                data: { error },
+              })
+            }
+          } else {
+            // 首装失败（启动窗口内 sidecar 崩溃 / keyring 暂不可用）时
+            // secretEncryptionKey 为 null 且无其他恢复点——存量 v2 密文会在本
+            // session 内锁死、新密文静默降级 legacy（交叉复审 F1）。惰性重启
+            // 的 READY 是唯一恢复时机，fire-and-forget 重试安装；失败仍走
+            // install 内部 catch 记日志，等下一次 READY 再试。
+            void installSecretEncryptionKeyInSidecar()
+          }
           logDesktopStartup('sidecar reported system.ready', 'sidecar.ready')
           settleStart()
           return
@@ -3000,7 +3064,16 @@ function createSidecarHost({ onNotification }) {
           const requestSequence = payload.browserRpc?.sequence
           if (typeof requestSequence !== 'number'
             || requestSequence !== browserRpcInboundSequence + 1
-            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) return
+            || !verifyBrowserRpcMac('sidecar->main', requestSequence, String(payload.id), payload.params ?? null, payload.browserRpc.mac)) {
+            // #611：畸形/失序/坏 MAC 的请求也须回一条错误响应，否则 sidecar 干等超时后
+            // 误报 executed_unknown（「可能已执行」——实际包根本没被接受）。语义归
+            // browser_unavailable（传输面故障、可重试），不含校验细节不构成 oracle；
+            // 响应 MAC 由 desktop 正常签名。
+            const sequence = ++browserRpcOutboundSequence
+            const body = { ok: false, error: 'browser_unavailable' }
+            runningChild.postMessage(JSON.stringify({ id: payload.id, error: { code: 'browser_unavailable' }, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, String(payload.id), body) } }))
+            return
+          }
           browserRpcInboundSequence = requestSequence
           void dispatchCommand('browser_runtime', payload.params ?? {}, {})
             .then((result) => {
@@ -3202,7 +3275,16 @@ function createSidecarHost({ onNotification }) {
 
   async function notifyBrowserSettings(settings) {
     await start()
-    child.postMessage(JSON.stringify({ method: 'browser:settings', params: { extensionBackendEnabled: settings?.extensionBackendEnabled === true } }))
+    // browserEnabled/browserUseEnabled 直达 sidecar 驱动工具 isEnabled 门控(#608);
+    // 缺省(undefined)视为启用,与 DEFAULT_BROWSER_SETTINGS 一致
+    child.postMessage(JSON.stringify({
+      method: 'browser:settings',
+      params: {
+        extensionBackendEnabled: settings?.extensionBackendEnabled === true,
+        browserEnabled: settings?.browserEnabled !== false,
+        browserUseEnabled: settings?.browserUseEnabled !== false,
+      },
+    }))
   }
 
   async function stop() {
@@ -3478,6 +3560,7 @@ app.whenReady().then(async () => {
   desktopHostState = await startDesktopHost()
   await sidecarHost.start()
   await unlockConnectionVaultStore()
+  await installSecretEncryptionKeyInSidecar()
   await sidecarHost.notifyBrowserSettings?.(browserRuntime.getSettings())
   logDesktopStartup('sidecar ready', 'sidecar.ready')
   pageRenderer = new PageRenderer()
@@ -3613,6 +3696,29 @@ async function unlockDesktopContextStore() {
 
 function getConnectionVaultKeyPath(): string {
   return join(resolveConfigDir(), 'connection-vault-key.json')
+}
+
+// 应用级随机密钥（safeStorage 包裹落盘，仅原机可解）：注入后 sidecar 的
+// encryptSecret 脱离可推导的 USERNAME/HOME 种子(#617)。Linux 无 keyring 时
+// Electron 退 basic_text 后端，isEncryptionAvailable 仍返回 true——照样注入，
+// 包裹文件靠 loadOrCreateDesktopContextKey 的 0600 收权兜底；真正注入失败
+// （key 文件损坏等）时 catch 跳过，sidecar 自动退回 legacy 行为。
+async function installSecretEncryptionKeyInSidecar(): Promise<void> {
+  let key: Buffer | null = null
+  try {
+    key = loadOrCreateDesktopContextKey({
+      path: join(resolveConfigDir(), 'secret-encryption-key.bin'),
+      safeStorage,
+    })
+    await sidecarHost.call('system.secret-encryption-key', { key: key.toString('base64') })
+    secretEncryptionKey?.fill(0)
+    secretEncryptionKey = Buffer.from(key)
+    logDesktopStartup('secret encryption key installed')
+  } catch (error) {
+    logDesktopStartup(`secret encryption unavailable: ${error instanceof Error ? error.message : String(error)}`)
+  } finally {
+    key?.fill(0)
+  }
 }
 
 async function installConnectionVaultKeyInSidecar(key: Buffer): Promise<void> {

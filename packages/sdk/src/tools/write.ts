@@ -6,7 +6,7 @@ import { mkdir, readFile, stat } from 'fs/promises'
 import { dirname } from 'path'
 import { defineTool } from './types.js'
 import type { ToolContext } from '../types.js'
-import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
+import { ensurePathAllowed, ensureWriteContained, writeContainmentRoots, getUnsafeFilePathReason, resolveInputPath } from '../utils/pathing.js'
 import { decodeTextFile, encodeTextFile } from '../utils/text-file.js'
 import { countLineChanges } from '../utils/line-change-stats.js'
 import { withFileMutationLock } from '../utils/file-mutation-lock.js'
@@ -14,8 +14,11 @@ import { writeFileAtomic } from '../utils/fs-atomic.js'
 
 const DEFAULT_MAX_WRITE_BYTES = 4 * 1024 * 1024
 
+// writeFileAtomic 检出 symlink 后的写入瞬间复检：containment 不以沙箱启用为
+// 前提（#546），sandbox 启用时再叠加 deny/allow 规则
 const assertWriteAllowed = (context: ToolContext) => (resolvedPath: string): string | null =>
-  ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
+  ensureWriteContained(resolvedPath, context.cwd, writeContainmentRoots(context))
+  ?? ensurePathAllowed(resolvedPath, 'write', context.sandbox, context.additionalDirectories)
 
 export const FileWriteTool = defineTool({
   name: 'Write',
@@ -48,6 +51,11 @@ export const FileWriteTool = defineTool({
     const unsafePathReason = getUnsafeFilePathReason(input.file_path)
     if (unsafePathReason) return { data: `Error: ${unsafePathReason}`, is_error: true }
     const filePath = await resolveInputPath(context.cwd, input.file_path, context.additionalDirectories)
+    // containment 复核不以沙箱启用为前提（#546）：junction/symlink 可穿越词法边界
+    const containmentError = ensureWriteContained(filePath, context.cwd, writeContainmentRoots(context))
+    if (containmentError) {
+      return { data: containmentError, is_error: true }
+    }
     const sandboxError = ensurePathAllowed(
       filePath,
       'write',
@@ -87,8 +95,12 @@ export const FileWriteTool = defineTool({
         // Read-before-overwrite 强制（#569）：新建文件天然豁免，已存在文件
         // 必须有读取记录，否则盲覆盖。
         if (!previousRead) {
+          // 容量区分（#655）：LRU 驱逐产生的伪未读与真未读分开表述。
+          const data = context.fileStateCache?.wasDroppedByCapacity(filePath)
+            ? `Error: The read record for ${filePath} was dropped because the session's file-state cache hit its capacity limit (long sessions drop the oldest records). Read the file again before overwriting it.`
+            : `Error: File has not been read yet: ${filePath}. Read it first before overwriting an existing file.`
           return {
-            data: `Error: File has not been read yet: ${filePath}. Read it first before overwriting an existing file.`,
+            data,
             is_error: true,
             _meta: { file: { path: filePath, conflict: 'not_read', retryable: true } },
           }
@@ -127,6 +139,10 @@ export const FileWriteTool = defineTool({
           overwritten,
           lines,
           bytes,
+          // ±行直接进 data（renderer 只能读到 content 反序列化结果，_meta 在
+          // run-observer/live 总线两处被剥，#572 review 四向实证）
+          linesAdded: lineChanges.linesAdded,
+          linesRemoved: lineChanges.linesRemoved,
           message: `File written: ${filePath} (${lines} lines, ${bytes} bytes)`,
         },
         _meta: {

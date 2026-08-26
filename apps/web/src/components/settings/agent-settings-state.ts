@@ -46,7 +46,7 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   {
     value: 'default',
     label: '默认',
-    desc: '每次确认高风险操作',
+    desc: '写入与执行类操作需确认，可证只读的命令免审',
     icon: 'shield',
     tone: 'sky',
     emphasis: '受控',
@@ -54,7 +54,7 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   {
     value: 'acceptEdits',
     label: '允许编辑',
-    desc: '自动接受文件编辑，确认其他操作',
+    desc: '自动接受文件编辑与只读命令，其余操作仍确认',
     icon: 'pencil',
     tone: 'emerald',
     emphasis: '高效',
@@ -62,7 +62,7 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   {
     value: 'dontAsk',
     label: '少询问',
-    desc: '自动允许低风险操作，危险操作仍确认',
+    desc: '低风险判定命令自动放行（含删除/发布类仍逐条确认），判定依据是内置安全词表',
     icon: 'shield-check',
     tone: 'emerald',
     emphasis: '智能',
@@ -70,7 +70,7 @@ export const PERMISSION_OPTIONS: PermissionOption[] = [
   {
     value: 'bypassPermissions',
     label: '全部允许',
-    desc: '跳过所有权限确认（谨慎使用）',
+    desc: '跳过审批确认；硬性危险拦截仍然生效（谨慎使用）',
     icon: 'shield-off',
     tone: 'amber',
     emphasis: '高风险',

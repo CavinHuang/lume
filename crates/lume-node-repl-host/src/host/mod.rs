@@ -116,8 +116,18 @@ impl HostServices {
         {
             let path =
                 application_path.ok_or_else(|| anyhow!("Windows requires applicationPath"))?;
-            command = Command::new("cmd.exe");
-            command.args(["/d", "/s", "/c", "start", "", path]);
+            // #634 加固：cmd.exe /c start 会把参数再过一遍 cmd 解析（引号/特殊
+            // 字符即命令注入面）。改为直接 spawn 带默认关联程序的 ShellExecute
+            // 语义等价物：路径必须存在且以 .exe 结尾，杜绝任意字符串进 shell。
+            let trimmed = path.trim();
+            if !trimmed.to_ascii_lowercase().ends_with(".exe") {
+                bail!("Windows launch requires an absolute path to a .exe application");
+            }
+            let exe_path = std::path::PathBuf::from(trimmed);
+            if !exe_path.is_absolute() || !exe_path.is_file() {
+                bail!("Windows launch target must be an existing absolute .exe path");
+            }
+            command = Command::new(&exe_path);
         }
         #[cfg(all(unix, not(target_os = "macos")))]
         {

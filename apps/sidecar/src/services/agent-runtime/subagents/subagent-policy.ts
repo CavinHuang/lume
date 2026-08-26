@@ -79,7 +79,7 @@ export function resolveSubagentSpawnPolicy(input: SubagentSpawnPolicyInput): Sub
   if (activeFanout >= maxFanout) {
     return {
       ok: false,
-      error: `子任务并发扇出超限: active=${activeFanout}, maxFanout=${maxFanout}`,
+      error: `子任务并发扇出超限: active=${activeFanout}, maxFanout=${maxFanout}。请等待部分子任务完成后再委派，或减少本轮委派数量`,
       depth,
       rootThreadId,
       parentRunId

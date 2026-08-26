@@ -23,13 +23,15 @@ import {
 } from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
-import { browserRpcErrorFromPayload, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
+import { browserRpcErrorFromPayload, classifyBrowserRequestTimeout, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
 import { setLogDigestPolicy } from "./services/infra/log-digest";
+import { migrateLegacySecretCiphertexts } from "./services/system/secret-reencryption-service";
 import type { LumeLogDigestPolicy } from "@lume/shared";
 import { installPrivilegedCredential } from "./services/infra/privileged-auth";
+import { installSecretEncryptionKey } from "./services/infra/secret-crypto";
 import { installConnectionVaultKey } from "./services/channel/connection-credential-store";
 import { createBrowserBroker } from "./services/browser/browser-broker";
 import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
@@ -78,19 +80,19 @@ function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest
     const sequence = ++browserRpcOutboundSequence;
     // policy:confirm 等用户在弹窗操作;tab_browser_auth_request(browserAuth
     // 凭据窗)同样等用户输入,desktop 侧 expiresAt 允许至 +5min。
-    const timeoutMs = request.method === "policy:confirm" || request.method === "tab_browser_auth_request"
+    // 超时错误码与等待时长同源于 classifyBrowserRequestTimeout：确认类报
+    // confirmation_timeout（动作必然未执行），其余报 executed_unknown（可能
+    // 已执行）——两类不能塌缩（#659/#606）。
+    const timeoutCode = classifyBrowserRequestTimeout(request.method);
+    const timeoutMs = timeoutCode === "confirmation_timeout"
       ? BROWSER_CONFIRMATION_TIMEOUT_MS
       : BROWSER_REQUEST_TIMEOUT_MS;
     const timeout = setTimeout(() => {
       pendingBrowserMainRequests.delete(request.requestId);
-      // 请求已送达 desktop，变更型动作可能已执行——不能与"未执行"塌缩为同一错误码
-      // 确认类等待超时=用户未在时限内裁决,动作必然未执行、desktop 弹窗仍开着,
-      // 报 executed_unknown 是双重误导(#606 review)
-      if (request.method === "policy:confirm" || request.method === "tab_browser_auth_request") {
-        reject(Object.assign(new Error("confirmation timed out"), { code: "confirmation_timeout" }));
-        return;
-      }
-      reject(Object.assign(new Error("browser request timed out"), { code: "executed_unknown" }));
+      reject(Object.assign(
+        new Error(timeoutCode === "confirmation_timeout" ? "confirmation timed out" : "browser request timed out"),
+        { code: timeoutCode },
+      ));
     }, timeoutMs);
     pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
     rpcTransport.send(JSON.stringify({
@@ -108,6 +110,17 @@ function browserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: n
     .update(`${direction}|${sequence}|${id}|${JSON.stringify(body)}`)
     .digest("base64url");
 }
+
+// #611：desktop 死亡/通道断开时批量 reject in-flight 请求——否则全部干等到超时后
+// 误报 executed_unknown（「可能已执行」，而实际包根本没送达）。断连是明确的
+// browser_unavailable（可重试），与业务错误分离。
+rpcTransport.onClose(() => {
+  for (const [requestId, pending] of [...pendingBrowserMainRequests]) {
+    pendingBrowserMainRequests.delete(requestId);
+    clearTimeout(pending.timeout);
+    pending.reject(Object.assign(new Error("browser transport disconnected"), { code: "browser_unavailable" }));
+  }
+});
 
 function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: number, id: string, body: unknown, mac: unknown): boolean {
   if (typeof mac !== "string" || !browserRpcSecret) return false;
@@ -252,8 +265,62 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   if (method === "system.connection-vault-key") {
-    installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
-    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    // 与 system.secret-encryption-key 同型：畸形 key 抛错时回 error 响应，
+    // 不让 desktop 侧 await 等满超时（交叉复审发现 pre-existing 同缺陷）
+    try {
+      installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "connection_vault_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
+    return;
+  }
+
+  if (method === "system.secret-encryption-key") {
+    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 RPC 超时上限才降级
+    try {
+      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
+    return;
+  }
+
+  if (method === "system.secret-encryption-key") {
+    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 45s 超时才降级
+    try {
+      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
+      // #637：密钥就位后立即把存量弱种子密文升级为 v2（失败不阻断注入应答）
+      void migrateLegacySecretCiphertexts().catch((error) => {
+        writeLogRecord({
+          level: "warn",
+          context: "sidecar.secret-reencryption",
+          event: "migration.failed",
+          message: error instanceof Error ? error.message : String(error)
+        });
+      });
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
     return;
   }
 
@@ -425,9 +492,15 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   });
-  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", false)) {
+  // 完成事件写入器恒注册：懒启动路径（run-now/create 等）同样依赖它把
+  // automation:run-completed 推给前端，不能随 autostart 门控一起被跳过（#647 P0-2）。
+  {
     const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
     setAutomationNotificationWriter(writeNotification);
+  }
+  // 默认自启：否则 sidecar 重启后既有 enabled 任务全部静默停摆，
+  // 只能靠次日日程生成或用户恰好编辑任务才被拉起（#647 P0-1）。
+  if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", true)) {
     void startAutomationRunner().catch((error) => {
       writeLogRecord({
         level: "error",

@@ -385,6 +385,8 @@ export interface SubagentRunOutcome {
 
 export interface SubagentRunRecord {
   runId: string
+  /** 桥接:子线程 attempt 的 runtime runId(s),web 投影按此匹配事件流。 */
+  runtimeRunIds?: string[]
   parentThreadId: string
   parentRunId?: string
   rootThreadId: string
@@ -1979,6 +1981,10 @@ export const AGENT_IPC_CHANNELS = {
   GET_CODING_REPOSITORY_PUBLISH_STATE: 'agent:get-coding-repository-publish-state',
   /** 提交已暂存内容或推送当前分支 */
   APPLY_CODING_REPOSITORY_PUBLISH_ACTION: 'agent:apply-coding-repository-publish-action',
+  /** 按快照还原单次 Coding Run 写过的文件（指纹冲突/已提交边界拒绝覆盖） */
+  REVERT_CODING_RUN: 'agent:revert-coding-run',
+  /** 按快照还原单个 Coding 文件到 Run 前内容 */
+  REVERT_CODING_FILE: 'agent:revert-coding-file',
   /** 只读读取项目绑定目录二进制文件 */
   READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
   /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */

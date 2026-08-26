@@ -156,7 +156,7 @@ registerToolMetadata({
   name: "MultiEdit",
   category: "write",
   riskLevel: "medium",
-  description: "批量编辑多个文件"
+  description: "单文件多处精确替换"
 });
 
 registerToolMetadata({
@@ -193,6 +193,23 @@ registerToolMetadata({
   category: "control",
   riskLevel: "low",
   description: "向用户提问",
+  allowedInPlanMode: true
+});
+
+// 显式注册委派工具元数据:不依赖 inferToolMetadata 名称推断的巧合默认值
+registerToolMetadata({
+  name: "Delegate",
+  category: "control",
+  riskLevel: "medium",
+  description: "委派独立子会话执行任务",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "WaitForDelegations",
+  category: "read",
+  riskLevel: "low",
+  description: "等待后台委派的子会话完成并收割结果",
   allowedInPlanMode: true
 });
 
@@ -254,38 +271,6 @@ registerToolMetadata({
   riskLevel: "low",
   description: "获取网页内容",
   // Plan 模式允许网络获取
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "guanlan_search",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 中文互联网搜索",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "guanlan_read",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 中文网页阅读",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "guanlan_hotnews",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 中文热榜",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "guanlan_research",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 研究证据包",
   allowedInPlanMode: true
 });
 
@@ -540,6 +525,46 @@ registerToolMetadata({
   riskLevel: "low",
   description: "管理任务列表",
   allowedInPlanMode: false
+});
+
+// 子代理编排簿记：纯状态迁移（验收/退役），无 FS/进程写入——对齐 TodoWrite 的
+// control/low 免审批口径，避免每次验收子代理都弹审批。
+// FinishAgentTask 必须在 plan 模式保持可见：coordinator 完成守卫会强制模型调用
+// 它来解除 awaiting_review 阻塞，plan 禁用会造成 Unknown tool 死循环（review 发现）；
+// 它只做任务状态迁移，不违反 plan 只读承诺。RetireSubagent 无此依赖，维持 plan 禁。
+registerToolMetadata({
+  name: "FinishAgentTask",
+  description: "验收、延期或取消已提交的子代理任务",
+  category: "control",
+  riskLevel: "low",
+  allowedInPlanMode: true
+});
+
+registerToolMetadata({
+  name: "RetireSubagent",
+  description: "退役空闲的持久子代理会话",
+  category: "control",
+  riskLevel: "low",
+  allowedInPlanMode: false
+});
+
+// automation_template 是 list/create 复合动作：create 会创建真实定时 agent run
+// （对齐 automation_set 的 write/high）；元数据只能取整工具最保守值，plan 模式
+// 下的纯查看走 read 类工具（automation_list / automation_read）。
+registerToolMetadata({
+  name: "automation_template",
+  category: "write",
+  riskLevel: "high",
+  description: "查看和使用自动化任务模板（create 会创建真实定时任务）",
+  allowedInPlanMode: false
+});
+
+registerToolMetadata({
+  name: "automation_list",
+  category: "read",
+  riskLevel: "low",
+  description: "搜索和筛选已有自动化任务",
+  allowedInPlanMode: true
 });
 
 // Task 工具（启动子 Agent）
