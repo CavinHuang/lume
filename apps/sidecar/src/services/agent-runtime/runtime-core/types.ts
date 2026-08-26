@@ -9,7 +9,7 @@ import type { LumeRuntimeEvent } from "@lume/shared";
 export interface AgentRuntimeEmitter {
   onSdkMessage: (message: SDKMessage) => void;
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" | "stopped" }) => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
   onBrowserAuthRequest: (request: AgentBrowserAuthRequest) => void;

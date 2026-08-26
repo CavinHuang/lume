@@ -438,26 +438,45 @@ async function handleWindowState(input: {
     filesRoot: input.filesRoot,
     screenshots,
   });
-  if (!input.routeScreenshot) throw new Error("vision_unavailable");
+  // vision 路由不可用时降级为纯文本观察而非抛错：文本树/截图路径/账本元数据
+  // 对模型仍然有价值，全丢只会让调用零信息失败（#538）
+  const baseText = JSON.stringify({
+    ...result,
+    screenshots: screenshots.map((candidate, index) => {
+      const screenshot = asRecord(candidate);
+      const { url: _url, ...metadata } = screenshot;
+      return {
+        ...metadata,
+        url: saved[index]?.threadPath,
+        ...(saved[index]?.fileRef ? { fileRef: saved[index]?.fileRef } : {}),
+      };
+    }),
+  });
+  if (!input.routeScreenshot) {
+    return {
+      type: "tool_result",
+      tool_use_id: input.toolUseId ?? "",
+      content: [{
+        type: "text",
+        text: `${baseText}\n[vision unavailable: no image router configured; textual observation and saved screenshot paths are provided above]`,
+      }],
+      ...(metadata ? { _meta: metadata } : {}),
+    };
+  }
 
   const content: Array<Record<string, unknown>> = [{
     type: "text",
-    text: JSON.stringify({
-      ...result,
-      screenshots: screenshots.map((candidate, index) => {
-        const screenshot = asRecord(candidate);
-        const { url: _url, ...metadata } = screenshot;
-        return {
-          ...metadata,
-          url: saved[index]?.threadPath,
-          ...(saved[index]?.fileRef ? { fileRef: saved[index]?.fileRef } : {}),
-        };
-      }),
-    }),
+    text: baseText,
   }];
   for (const screenshot of saved) {
     const route = await input.routeScreenshot(screenshot.absPath);
-    if (route.status === "vision_unavailable") throw new Error("vision_unavailable");
+    if (route.status === "vision_unavailable") {
+      content.push({
+        type: "text",
+        text: `[vision unavailable: screenshot saved to ${screenshot.threadPath ?? screenshot.absPath} but cannot be rendered as an image]`,
+      });
+      continue;
+    }
     if (route.status === "image_ready") {
       content.push({
         type: "image",

@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -20,6 +20,7 @@ import {
   moveAuthorizedFileRef,
   moveAgentFile,
   moveWorkspaceFile,
+  movePathWithFallback,
   promoteFileRefToProject,
   renameAgentFile,
   renameWorkspaceFile,
@@ -1083,5 +1084,85 @@ describe("promoteFileRefToProject", () => {
       { source: "legacy", scopeId: workspace.slug, relativePath: "legacy.txt" },
       workspace.slug
     )).toThrow("项目尚未绑定本地目录");
+  });
+});
+
+describe("movePathWithFallback Windows 占用重试与降级（#552）", () => {
+  let tempDir = "";
+
+  function createTempMoveDir(): void {
+    tempDir = mkdtempSync(join(tmpdir(), "lume-move-fallback-"));
+  }
+
+  function epermError(): Error {
+    return Object.assign(new Error("EBUSY: resource busy"), { code: "EPERM" });
+  }
+
+  test("EPERM 短退避重试成功则不降级", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "b.txt");
+    writeFileSync(src, "data", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, (s, t) => {
+      calls += 1;
+      if (calls === 1) throw epermError();
+      renameSync(s, t);
+    });
+
+    expect(calls).toBe(2);
+    expect(existsSync(dst)).toBe(true);
+    expect(existsSync(src)).toBe(false);
+  });
+
+  test("EPERM 持续占用走 copy+delete 降级且内容完整", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "nested", "b.txt");
+    mkdirSync(join(tempDir, "nested"), { recursive: true });
+    writeFileSync(src, "payload-content", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw epermError();
+    });
+
+    expect(calls).toBe(3); // 初次 + 2 次退避重试
+    expect(readFileSync(dst, "utf-8")).toBe("payload-content");
+    expect(existsSync(src)).toBe(false);
+  }, 10_000);
+
+  test("EXDEV 直接降级不重试", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "b.txt");
+    writeFileSync(src, "cross-device", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+    });
+
+    expect(calls).toBe(1);
+    expect(readFileSync(dst, "utf-8")).toBe("cross-device");
+    expect(existsSync(src)).toBe(false);
+  });
+
+  test("非占用错误码立即抛出不重试不降级", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "missing.txt");
+    const dst = join(tempDir, "b.txt");
+
+    let calls = 0;
+    expect(() => movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    })).toThrow();
+
+    expect(calls).toBe(1);
+    expect(existsSync(dst)).toBe(false);
   });
 });

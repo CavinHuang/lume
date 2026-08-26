@@ -37,9 +37,10 @@ jobs:
       - name: Unit tests
         run: bun run test:core
       # 双态反向覆盖（#729 review 安全方向）：natives 就位后 fail-closed 回退
-      # 块（bash.test.ts 反向门控）在主测试里恒跳，此处以空产物路径补跑
+      # 块（bash.test.ts 反向门控）与 tokens JS 计数分支在主测试里恒跳，
+      # 此处以空产物路径补跑
       - name: Unit tests (natives-absent fail-closed fallback)
-        run: LUME_NATIVES_PATH=/nonexistent.node bun test packages/sdk/src/tools/bash.test.ts
+        run: LUME_NATIVES_PATH=/nonexistent.node bun test packages/sdk/src/tools/bash.test.ts packages/sdk/src/utils/tokens.test.ts
       - name: Core smoke
         run: bun run test:smoke
 

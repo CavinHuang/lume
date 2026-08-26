@@ -55,12 +55,12 @@ describe("tool registry", () => {
 
   test("split uses nearest setCore plus requiredDuringSkillScope", () => {
     const registry = createToolRegistry();
-    const skillTool = tool("GuanlanSearch");
+    const skillTool = tool("DeepSearch");
     skillTool.runtimeMetadata = { requiredDuringSkillScope: true } as never;
     registry.global.register([tool("Bash"), tool("WebFetch"), skillTool]);
     registry.preset("default").setCore(["Bash"]);
     const { core, deferred } = registry.agent("a1").view().split();
-    expect(core.map((t) => t.name).sort()).toEqual(["Bash", "GuanlanSearch"]);
+    expect(core.map((t) => t.name).sort()).toEqual(["Bash", "DeepSearch"]);
     expect(deferred.map((t) => t.name)).toEqual(["WebFetch"]);
   });
 
@@ -102,7 +102,7 @@ describe("CORE_TOOL_NAMES preset", () => {
 describe("applyOverrides", () => {
   function setup() {
     const registry = createToolRegistry();
-    registry.global.register([tool("Bash"), tool("WebFetch"), tool("GuanlanSearch")]);
+    registry.global.register([tool("Bash"), tool("WebFetch"), tool("DeepSearch")]);
     registry.preset("default").setCore(["Bash"]);
     return registry;
   }
@@ -110,8 +110,8 @@ describe("applyOverrides", () => {
   test("no overrides returns the unmasked view", () => {
     const registry = setup();
     const { tools, deferredTools, undo } = applyOverrides(registry, "a1", undefined);
-    expect(tools.map((t) => t.name)).toEqual(["Bash", "WebFetch", "GuanlanSearch"]);
-    expect(deferredTools.map((t) => t.name)).toEqual(["WebFetch", "GuanlanSearch"]);
+    expect(tools.map((t) => t.name)).toEqual(["Bash", "WebFetch", "DeepSearch"]);
+    expect(deferredTools.map((t) => t.name)).toEqual(["WebFetch", "DeepSearch"]);
     undo();
   });
 
@@ -151,11 +151,11 @@ describe("applyOverrides", () => {
     const registry = setup();
     const pools = {
       tools: [tool("Bash"), tool("ToolSearch")],
-      deferredTools: [tool("WebFetch"), tool("GuanlanSearch")],
+      deferredTools: [tool("WebFetch"), tool("DeepSearch")],
     };
     const { tools, deferredTools } = applyOverrides(registry, "a1", { disallowedTools: ["Web*"] }, pools);
     expect(tools.map((t) => t.name)).toEqual(["Bash", "ToolSearch"]);
-    expect(deferredTools.map((t) => t.name)).toEqual(["GuanlanSearch"]);
+    expect(deferredTools.map((t) => t.name)).toEqual(["DeepSearch"]);
   });
 
   test("string list plus disallowedTools intersects allow with deny", () => {
@@ -175,7 +175,7 @@ describe("applyOverrides", () => {
     const registry = setup();
     const pools = {
       tools: [tool("Bash"), tool("WebFetch"), tool("ToolSearch")],
-      deferredTools: [tool("GuanlanSearch")],
+      deferredTools: [tool("DeepSearch")],
     };
     const { tools, deferredTools } = applyOverrides(
       registry,

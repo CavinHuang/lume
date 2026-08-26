@@ -56,6 +56,7 @@ import {
   compactConversation as defaultCompactConversation,
   microCompactMessages as defaultMicroCompactMessages,
   createAutoCompactState,
+  COMPACTION_BREAKER_THRESHOLD,
   type AutoCompactState,
 } from './utils/compact.js'
 import {
@@ -359,7 +360,10 @@ export class QueryEngine {
   private compactState: AutoCompactState
   // Recovery-path breaker, independent of the proactive compaction counter:
   // unrelated proactive failures must not disable overflow self-rescue (#567 item 2).
-  private promptTooLongRecoveryFailures = 0
+  // Both breakers are session-owned via config when the host threads them
+  // through (#725 review R6/R7) — per-run engines would reset them each run
+  // and the breakers could never trip.
+  private promptTooLongRecoveryFailures: number
   private sessionId: string
   private apiTimeMs = 0
   private hookRegistry?: HookRegistry
@@ -392,7 +396,8 @@ export class QueryEngine {
             : tool)
     }
     this.provider = config.provider
-    this.compactState = createAutoCompactState()
+    this.compactState = config.autoCompactState ?? createAutoCompactState()
+    this.promptTooLongRecoveryFailures = config.promptTooLongRecoveryFailures ?? 0
     this.sessionId = config.sessionId || crypto.randomUUID()
     this.hookRegistry = config.hookRegistry
     this.workingDirectory = config.cwd
@@ -643,11 +648,13 @@ export class QueryEngine {
         failureReason: result.failureReason,
         retainedTokens: result.retainedTokens,
         retainedMessageCount: result.retainedMessageCount,
-        state: result.state ?? {
-          ...this.compactState,
-          compacted: true,
-          consecutiveFailures: 0,
-        },
+        state: result.state ?? (result.compacted === false
+          ? this.compactState
+          : {
+            ...this.compactState,
+            compacted: true,
+            consecutiveFailures: 0,
+          }),
         metadata: result.metadata,
         usage: result.usage,
       }
@@ -1278,7 +1285,7 @@ export class QueryEngine {
         // failures (reset to 0 on success) instead of the one-shot `compacted`
         // flag: a tool loop can outgrow the window a second time, and repeated
         // failures trip the breaker on their own.
-        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < 3) {
+        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < COMPACTION_BREAKER_THRESHOLD) {
           try {
             const compacted = yield* this.runCompaction('prompt_too_long', protectedMessageIndex)
             if (compacted) {
@@ -1294,6 +1301,13 @@ export class QueryEngine {
           }
         }
 
+        // 最终错误附恢复尝试上下文（#709 第 5 项）：裸 provider 错误会让人误以为
+        // 重试即可。N 为本引擎实例内累计的恢复失败次数——Lume 生产装配下每次
+        // prompt 新建引擎（N 通常为 1），长生命周期宿主下跨 turn 累计。
+        const errorMessage = err?.message || 'Unknown provider error'
+        const finalMessage = isPromptTooLongError(err) && this.promptTooLongRecoveryFailures > 0
+          ? `${errorMessage} (auto-compaction recovery attempted ${this.promptTooLongRecoveryFailures} time(s) without success)`
+          : errorMessage
         yield {
           type: 'result',
           subtype: 'error_during_execution',
@@ -1301,7 +1315,7 @@ export class QueryEngine {
           ...this.createResultUsageFields(),
           num_turns: this.turnCount,
           cost: this.totalCost,
-          errors: [err?.message || 'Unknown provider error'],
+          errors: [finalMessage],
         }
         return
       }
@@ -2299,6 +2313,15 @@ export class QueryEngine {
    */
   getMessages(): NormalizedMessageParam[] {
     return [...this.messages]
+  }
+
+  /** Terminal breaker state for the host to thread into the next run's engine (#725 review R6/R7). */
+  getAutoCompactState(): AutoCompactState {
+    return this.compactState
+  }
+
+  getPromptTooLongRecoveryFailures(): number {
+    return this.promptTooLongRecoveryFailures
   }
 
   /**

@@ -5,7 +5,6 @@ import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { JSDOM } from "jsdom";
 import { loadBinary as lumeLoadBinary, loadPage as lumeLoadPage, type FetchImpl } from "../../web-fetch-http.js";
-import { renderStructuredBinary } from "../../web-fetch-content.js";
 
 export type AgentStorage = unknown;
 export type HTMLElement = globalThis.HTMLElement;
@@ -204,11 +203,6 @@ export function isEnoent(error: unknown): boolean {
 }
 
 export const logger = { warn: (..._args: unknown[]) => undefined };
-
-export async function convertBufferWithMarkit(buffer: Uint8Array, extension: string, _signal?: AbortSignal): Promise<{ content: string; ok: boolean; error?: string }> {
-  const result = await renderStructuredBinary(buffer, extension, `fixture${extension}`);
-  return result ? { content: result.markdown, ok: true } : { content: "", ok: false, error: `unsupported document type: ${extension}` };
-}
 
 export async function runtimeLoadPage(url: string, options: {
   timeout?: number;

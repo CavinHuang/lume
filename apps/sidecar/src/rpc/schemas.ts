@@ -1283,7 +1283,6 @@ const lumeConfigWebSearchSchema = z
     strategy: z.enum(["priority", "joint"]).optional(),
     providers: z
       .object({
-        guanlan: lumeConfigWebSearchProviderSchema.optional(),
         exa: lumeConfigWebSearchProviderSchema.optional(),
         pipellm: lumeConfigWebSearchProviderSchema.optional(),
         zhipu: lumeConfigWebSearchProviderSchema.optional(),
@@ -1374,6 +1373,12 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: z.enum(["off", "low", "medium", "high", "max"]).nullable(),
   }),
   lumeConfigUpdateBaseSchema.extend({
+    // 存量缺口:输入框队列模式选择器的保存(updateAgentFollowUpQueueMode)一直
+    // 因缺此 union 成员被参数校验拒绝(#715 review 发现)
+    path: z.literal("agent.followUpQueueMode"),
+    value: z.enum(["steer", "queue", "interrupt"]).nullable(),
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("agent.permissionMode"),
     value: z
       .enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"])
@@ -1386,6 +1391,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("permissions.approvals"),
     value: lumeConfigPermissionApprovalsSchema,
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("permissions.classifier.enabled"),
+    value: z.boolean(),
   }),
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("webSearch"),
@@ -1839,7 +1848,7 @@ export const routineTriggerEntryInputSchema = z.object({
 }).strict();
 
 export const testSearchBackendInputSchema = z.object({
-  provider: z.enum(["guanlan", "exa", "tavily", "brave", "duckduckgo", "pipellm", "zhipu", "bing"]),
+  provider: z.enum(["exa", "tavily", "brave", "duckduckgo", "pipellm", "zhipu", "bing"]),
   apiKey: z.string().optional(),
 }).strict();
 

@@ -36,7 +36,7 @@ function assertSafeSegment(value: string, label: string): string {
 }
 
 export function getConfigDir(): string {
-  const fromEnv = process.env.LUME_CONFIG_DIR?.trim();
+  const fromEnv = sanitizeEnvPath(process.env.LUME_CONFIG_DIR);
   if (fromEnv) {
     const resolved = isAbsolute(fromEnv) ? fromEnv : resolve(process.cwd(), fromEnv);
     return ensureDir(resolved, "配置目录");
@@ -44,8 +44,19 @@ export function getConfigDir(): string {
   return ensureDir(join(homedir(), CONFIG_DIR_NAME), "配置目录");
 }
 
+/**
+ * env 路径清洗：Node 的 process.env 赋 undefined/非字符串会强转出字面
+ * "undefined"，测试恢复逻辑一旦漏守卫就会让配置根落进 cwd/undefined
+ * （#725 review S6 残留目录事故）。此处视同未配置。
+ */
+function sanitizeEnvPath(value: string | undefined): string | undefined {
+  const trimmed = value?.trim();
+  if (!trimmed || trimmed === "undefined" || trimmed === "null") return undefined;
+  return trimmed;
+}
+
 export function getAliceConfigDir(): string {
-  const fromEnv = process.env.ALICE_CONFIG_DIR?.trim();
+  const fromEnv = sanitizeEnvPath(process.env.ALICE_CONFIG_DIR);
   if (fromEnv) {
     const resolved = isAbsolute(fromEnv) ? fromEnv : resolve(process.cwd(), fromEnv);
     return ensureDir(resolved, "Alice 兼容配置目录");

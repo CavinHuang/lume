@@ -405,22 +405,27 @@ function sanitizeSingleLine(value: string): string {
 
 /**
  * 结果输出组装的完整管线：权限钳制注记在前、touched-files 清单收尾。
- * 抽出为独立导出是接线级测试面——runSidecarSubagent 本体直调不可行级 mock
- * （见 run.delegate.test S2 注释），漏传 codingReport 之类接线回归在此钉死。
+ * 全部键必选——可空以 `| undefined` 表达，调用点删任一实参由 typecheck
+ * TS2741 拦截（#729 终局审查：类型契约取代源码文本钉）。
  */
 export function composeSidecarRunOutput(input: {
   baseOutput: string;
   status: "completed" | "errored" | "aborted" | "timed_out";
-  codingReport?: { changedFiles?: string[] };
+  codingReport: { changedFiles?: string[] } | undefined;
   permissionModeAdjusted: boolean;
-  requestedPermissionMode?: string;
-  childPermissionMode?: string;
+  requestedPermissionMode: string | undefined;
+  childPermissionMode: string | undefined;
 }): string {
   const withModeNote =
     input.permissionModeAdjusted && input.childPermissionMode
-      ? `${input.baseOutput}\n\n[子代理权限模式: ${sanitizeSingleLine(String(input.requestedPermissionMode))} → ${sanitizeSingleLine(String(input.childPermissionMode))}（不得超过父线程权限）]`
+      ? `${input.baseOutput}\n\n[子代理权限模式: ${modeLabel(input.requestedPermissionMode)} → ${modeLabel(input.childPermissionMode)}（不得超过父线程权限）]`
       : input.baseOutput;
   return appendSubagentChangedFiles(withModeNote, input.status, input.codingReport);
+}
+
+/** 注记内的模型可控串：单行折断 + 长度上限（#729 终局审查）。 */
+function modeLabel(value: string | undefined): string {
+  return sanitizeSingleLine(value ?? "").slice(0, 48);
 }
 
 /**
