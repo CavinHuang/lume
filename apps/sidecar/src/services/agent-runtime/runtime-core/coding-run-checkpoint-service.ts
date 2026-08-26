@@ -88,11 +88,15 @@ function canonicalizeExistingPath(path: string): string {
  * 按 git root 解析该仓库的 baseline commit：先查 baselineCommits 直达键，
  * 键失配（词法 vs realpath）时按 canonical 路径对齐再查；最后回退到
  * 「git root 位于 record.cwd 内」时的全局 baselineCommit。三处调用点同构。
+ * 调用方已算过 canonical root 时经参数复用，避免每文件重复 realpath。
  */
-function findBaselineCommitForGitRoot(record: CodingRunCheckpointRecord, gitRoot: string): string | undefined {
+function findBaselineCommitForGitRoot(
+  record: CodingRunCheckpointRecord,
+  gitRoot: string,
+  canonicalGitRoot: string = canonicalizeExistingPath(gitRoot),
+): string | undefined {
   const direct = record.baselineCommits?.[resolve(gitRoot)];
   if (direct) return direct;
-  const canonicalGitRoot = canonicalizeExistingPath(gitRoot);
   for (const [key, commit] of Object.entries(record.baselineCommits ?? {})) {
     if (commit && canonicalizeExistingPath(key) === canonicalGitRoot) return commit;
   }
@@ -257,7 +261,7 @@ function readBaselineContent(record: CodingRunCheckpointRecord, absolutePath: st
   const canonicalRoot = canonicalizeExistingPath(gitRoot);
   const canonicalPath = canonicalizeExistingPath(absolutePath);
   if (!isPathInside(canonicalRoot, canonicalPath)) return null;
-  const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot);
+  const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot, canonicalRoot);
   if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
   const gitPath = relative(canonicalRoot, canonicalPath).split(sep).join("/");
   const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
@@ -497,7 +501,7 @@ function readBaselineBuffer(record: CodingRunCheckpointRecord, absolutePath: str
   const canonicalRoot = canonicalizeExistingPath(gitRoot);
   const canonicalPath = canonicalizeExistingPath(absolutePath);
   if (!isPathInside(canonicalRoot, canonicalPath)) return null;
-  const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot);
+  const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot, canonicalRoot);
   if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
   const gitPath = relative(canonicalRoot, canonicalPath).split(sep).join("/");
   const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {

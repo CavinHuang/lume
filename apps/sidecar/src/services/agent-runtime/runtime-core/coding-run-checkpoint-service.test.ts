@@ -1,4 +1,5 @@
 import { mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { symlinkSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -333,20 +334,25 @@ describe("coding run checkpoints", () => {
 
   test("lexical persisted baseline keys align with realpath git toplevel via explicit symlink (#728 review)", async () => {
     // 显式构造 /var→/private/var 型分叉（不依赖 macOS tmpdir 恰为 symlink）：
-    // 持久化键用词法 alias 路径，git toplevel 恒返回真实路径——修复前直达
-    // 键失配 + 词法 isPathInside 短路，提交边界漏判、已提交文件可被 rewind。
-    const realRepo = await mkdtemp(join(tmpdir(), "lume-coding-symreal-"));
+    // 项目路径的前缀段穿过 symlink（alias/repo，repo 本体为真实目录，与
+    // assertNoSymlinkPath 的防穿越语义相容），持久化键为词法 alias 形态，
+    // 而 git toplevel 恒返回真实路径——修复前直达键失配 + 词法 isPathInside
+    // 短路，提交边界漏判、已提交文件可被 rewind。
+    const realParent = await mkdtemp(join(tmpdir(), "lume-coding-symreal-"));
     const aliasParent = await mkdtemp(join(tmpdir(), "lume-coding-symbolic-"));
-    temporaryDirectories.push(realRepo, aliasParent);
-    let alias = "";
+    temporaryDirectories.push(realParent, aliasParent);
+    const realRepo = join(realParent, "repo");
+    await mkdir(realRepo, { recursive: true });
+    let aliasParentLink = "";
     try {
-      alias = join(aliasParent, "repo-link");
-      symlinkSync(realRepo, alias, "dir");
+      aliasParentLink = join(aliasParent, "parent-link");
+      symlinkSync(realParent, aliasParentLink, "dir");
     } catch {
       // Windows 无符号链接权限时跳过（Linux/macOS CI 必然执行）
       return;
     }
-    const filePath = join(alias, "file.ts");
+    const lexicalRepo = join(aliasParentLink, "repo");
+    const filePath = join(lexicalRepo, "file.ts");
     await writeFile(filePath, "before\n", "utf8");
     runGit(realRepo, ["init"]);
     runGit(realRepo, ["config", "user.email", "lume@example.test"]);
@@ -359,9 +365,9 @@ describe("coding run checkpoints", () => {
     await persistCodingRunCheckpoint({
       sessionDir,
       runId: "symreal-run",
-      cwd: alias,
+      cwd: lexicalRepo,
       baselineCommit,
-      baselineCommits: { [alias]: baselineCommit },
+      baselineCommits: { [lexicalRepo]: baselineCommit },
       checkpoint: {
         userMessageId: "message-1",
         createdAt: new Date().toISOString(),
@@ -372,6 +378,7 @@ describe("coding run checkpoints", () => {
     });
 
     // 提交后 revert：提交边界必须被识别（committed_boundary），不得回滚
+    await writeFile(filePath, "after\n", "utf8");
     runGit(realRepo, ["add", "file.ts"]);
     runGit(realRepo, ["commit", "-m", "turn commit"]);
     const result = await revertCodingRun({ sessionDir, runId: "symreal-run" });
