@@ -25,8 +25,14 @@ let messageTokenCache = new WeakMap<object, number>()
 export function estimateTokens(text: string): number {
   if (!text) return 0
   try {
-    const nativeCount = countStringTokens(text)
-    if (nativeCount > 0) return nativeCount
+    // #736:tiktoken-rs 对单 regex piece 内的长同类字符游程近 O(n²)(40KB→0.6s、
+    // 320KB→56s),Read 校验同步喂入最大 1MiB,最坏冻结事件循环数分钟。线性预检:
+    // 任一同类字符游程超限即跳过 native,走下方 char-based 估算(估算语义;
+    // CJK 按 fullTokenChars 1:1 几乎无损,ASCII 游程本就是异常输入)。
+    if (!hasLongHomogeneousRun(text)) {
+      const nativeCount = countStringTokens(text)
+      if (nativeCount > 0) return nativeCount
+    }
   } catch {
     // Keep @lume/agent-sdk usable without native binaries.
   }
@@ -119,6 +125,36 @@ function safeStringify(value: unknown): string {
   } catch {
     return String(value)
   }
+}
+
+/**
+ * 同类字符游程上限。tiktoken piece 由同类游程构成,游程 ≤ 此值时
+ * Σ(piece²) 有界(1MiB 输入最坏 <1ms),整体 encode 保持近线性。
+ * 真实文本(词级/随机 base64/带标点 minified)游程远低于此;超过即视为
+ * 病态输入(#736:重复填充、零字节 base64 等)。
+ */
+const NATIVE_RUN_LIMIT = 2048
+
+/** 线性扫描是否存在超长同类字符游程(粗分类宁枉勿纵,误判仅降级为估算)。 */
+function hasLongHomogeneousRun(text: string): boolean {
+  let runLen = 0
+  let runClass = -1
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i)
+    const cls =
+      c === 0x20 || (c >= 0x09 && c <= 0x0d) ? 0
+      : c >= 0x30 && c <= 0x39 ? 1
+      : c < 0x80 && ((c | 0x20) >= 0x61 && (c | 0x20) <= 0x7a) ? 2 // ascii letters
+      : c < 0x80 ? 3 // ascii punct/other
+      : 4 // non-ascii(surrogate halves included)
+    if (cls === runClass) {
+      if (++runLen > NATIVE_RUN_LIMIT) return true
+    } else {
+      runClass = cls
+      runLen = 1
+    }
+  }
+  return false
 }
 
 function countsAsFullTokenChar(code: number): boolean {

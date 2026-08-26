@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test } from "bun:test"
-import { isNativeAvailable } from "@lume/natives"
+import { countStringTokens, isNativeAvailable } from "@lume/natives"
 import { findModelMeta } from "@lume/shared"
 
 const { estimateCost, estimateMessagesTokens, estimateTokens, getContextWindowSize, __resetMessageTokenCacheForTests } = await import("./tokens.js")
@@ -29,6 +29,25 @@ describe("token estimation", () => {
     ])
 
     expect(tokens).toBe(2_000 + estimateTokens("12345678"))
+  })
+})
+
+describe("#736 tiktoken long-run O(n²) guard", () => {
+  test("single-piece homogeneous run returns fast instead of stalling the loop", () => {
+    // 80KB 无换行同构游程:natives 直调实测 ~2s(#736 表格),同步路径不可接受
+    const text = "a".repeat(80 * 1024)
+    const t0 = performance.now()
+    const tokens = estimateTokens(text)
+    const ms = performance.now() - t0
+    expect(tokens).toBeGreaterThan(0)
+    expect(ms).toBeLessThan(500)
+  })
+
+  test("healthy long prose still routes through exact native counting", () => {
+    if (!isNativeAvailable()) return
+    const sentence = "The quick brown fox jumps over the lazy dog near the river bank. "
+    const text = sentence.repeat(Math.ceil((256 * 1024) / sentence.length))
+    expect(estimateTokens(text)).toBe(countStringTokens(text))
   })
 })
 
