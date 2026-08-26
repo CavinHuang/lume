@@ -48,6 +48,9 @@ import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./a
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
 import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
 import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
+import { clearToolPermissionSession } from "../agent-runtime/interruption/tool-permission-session";
+import { cancelPendingAskUserQuestionBySession } from "../agent-runtime/interruption/ask-user-question-session";
+import { clearPermissionDenials } from "../agent-runtime/permissions/permission-denials";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
@@ -743,6 +746,11 @@ function deleteAgentThreadLocked(id: string): void {
   getAgentSubmissionStore().deleteThread(id);
   // #517:guidance 是纯内存态,线程硬删除时同步清理防 Map 只增不减
   runGuidanceStore.discardThread(id);
+  // #519:审批/提问会话与拒绝记录随线程硬删除回收——grants/bypass/denials
+  // 三 Map 按 thread 键只增不减;pending resolver 一并取消防悬挂至超时
+  clearToolPermissionSession(id);
+  cancelPendingAskUserQuestionBySession(id);
+  clearPermissionDenials(id);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {
