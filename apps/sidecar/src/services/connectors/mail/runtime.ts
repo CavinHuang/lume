@@ -4,14 +4,13 @@ import type {
   ExecutionContext,
   ProviderExecutors,
   RuntimeLogger,
-  TransitFileWriter,
 } from "../core/types";
 import type { MailActionName } from "./actions";
 import type { MailCredential, MailFetchedMessage, MailProtocol, MailSendInput } from "./protocol";
 
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Readable, Transform } from "node:stream";
@@ -46,7 +45,8 @@ export interface MailRuntimeConfig {
   connectAuthMessage: string;
   /**
    * Screen the resolved IP addresses of the mailbox hosts before connecting.
-   * Only needed by providers whose hosts come from user input.
+   * Enabled by default; providers whose hosts are hardcoded as part of the
+   * integration may opt out explicitly.
    */
   enforceHostNetworkPolicy?: boolean;
   readCredential(values: Record<string, string>): MailCredential;
@@ -57,7 +57,6 @@ export interface MailActionContext {
   fetcher: typeof fetch;
   protocol: MailProtocol;
   config: MailRuntimeConfig;
-  transitFiles?: TransitFileWriter;
   signal?: AbortSignal;
 }
 
@@ -77,9 +76,6 @@ function createMailActionHandlers(): Record<MailActionName, MailActionHandler> {
     },
     get_email(input, context) {
       return executeMailAction("get_email", input, context);
-    },
-    download_attachment(input, context) {
-      return executeMailAction("download_attachment", input, context);
     },
     mark_email_read(input, context) {
       return executeMailAction("mark_email_read", input, context);
@@ -141,9 +137,6 @@ export function createMailProviderRuntime(config: MailRuntimeConfig): MailProvid
         config,
         signal: context.signal,
       };
-      if (context.transitFiles) {
-        providerContext.transitFiles = context.transitFiles;
-      }
       return providerContext;
     },
   });
@@ -359,44 +352,6 @@ export async function executeMailAction(
           attachments: message.attachments,
         };
       }
-      case "download_attachment": {
-        const downloadInput = input as {
-          folder?: string;
-          uid: number;
-          attachmentId: string;
-        };
-        const folder = downloadInput.folder ?? defaultFolder;
-        const attachment = await protocol.downloadAttachment(
-          credential,
-          folder,
-          downloadInput.uid,
-          downloadInput.attachmentId,
-        );
-        try {
-          const transitFiles = requireTransitFiles(context);
-          const name =
-            attachment.filename ?? `${context.config.attachmentFallbackPrefix}-attachment-${attachment.attachmentId}`;
-          const mimeType = attachment.contentType ?? "application/octet-stream";
-          const upload = await transitFiles.create(
-            new File([await readFile(attachment.filePath)], name, { type: mimeType }),
-          );
-          return {
-            folder,
-            uid: downloadInput.uid,
-            attachmentId: attachment.attachmentId,
-            size: attachment.size,
-            file: {
-              fileId: upload.fileId,
-              downloadUrl: upload.downloadUrl,
-              name,
-              mimeType,
-              sizeBytes: upload.sizeBytes,
-            },
-          };
-        } finally {
-          await attachment.cleanup();
-        }
-      }
       case "mark_email_read": {
         const markInput = input as { folder?: string; uid: number };
         const folder = markInput.folder ?? defaultFolder;
@@ -435,11 +390,12 @@ export async function executeMailAction(
       case "delete_email": {
         const deleteInput = input as { folder?: string; uid: number };
         const folder = deleteInput.folder ?? defaultFolder;
-        await protocol.deleteMessage(credential, folder, deleteInput.uid);
+        const trashFolder = await protocol.deleteMessage(credential, folder, deleteInput.uid);
         return {
           folder,
           uid: deleteInput.uid,
           deleted: true,
+          trashFolder,
         };
       }
       case "get_folder_status": {
@@ -725,13 +681,6 @@ function noop() {
   return Promise.resolve();
 }
 
-function requireTransitFiles(context: MailActionContext) {
-  if (!context.transitFiles) {
-    throw new ProviderRequestError(400, "Transit file storage is not enabled.");
-  }
-  return context.transitFiles;
-}
-
 function inferReplyRecipients(credential: MailCredential, original: MailFetchedMessage, replyAll: boolean) {
   const directRecipients =
     original.replyTo.length > 0 ? original.replyTo : original.summary.from ? [original.summary.from] : [];
@@ -866,6 +815,12 @@ export function mapProtocolError(
           400,
           `${config.displayName} message UID does not exist in the selected folder.`,
         );
+      case "trash_missing":
+        // 服务器未提供 \Trash:delete_email 拒绝硬删,属可向用户解释的输入/配置问题
+        return new ProviderRequestError(400, error.message);
+      case "uid_validity_changed":
+        // 邮箱重建/无基准:UID 已不可信,拒绝是可自纠冲突(重新 search 后重试)
+        return new ProviderRequestError(409, error.message);
       case "blocked_host":
         // The mailbox host came from the connected credential, so a host the
         // egress policy refuses is invalid input, not an upstream failure — the

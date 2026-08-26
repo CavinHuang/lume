@@ -1,6 +1,9 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { createLogger } from "../../infra/logger";
+
+const log = createLogger("coding-diagnostics");
 
 /**
  * #573①:Edit/Write 成功后的单仓诊断回传——按项目内已安装的 checker 探测可用性,
@@ -10,7 +13,9 @@ import { join } from "node:path";
  * 信任边界(#573 十视角 review·威胁建模):checker 的错误文案完全由仓库内容控制,
  * 会以 [diagnostics] 帧进入模型上下文——按不可信数据处理(控制字符剥离、长度预算),
  * 且交集执法保证只有触及本次编辑文件的错误才触发回注。spawn 项目内 checker 属
- * 「隐式执行仓库代码」,授权对齐(tsc/eslint 首跑审批)为已知 follow-up。
+ * 「隐式执行仓库代码」,授权对齐(tsc/eslint 首跑审批)为已知 follow-up;
+ * #649 follow-up 落地第一步:每次 spawn 留审计级日志(命令路径+参数),让这条
+ * 绕过 Bash 审批的执行通道至少可观测、可追溯。
  */
 
 export type DiagnosticsChecker = "tsc" | "eslint";
@@ -195,6 +200,8 @@ function runProcess(
       windowsHide: true,
       env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
     });
+    // 审计级痕迹:此通道不经 Bash 审批面即执行仓库内代码(#649 follow-up)
+    log.info("[diagnostics] checker spawned", { commandPath, args: args.join(" "), cwd });
     let stdout = "";
     let stderrTail = "";
     let timedOut = false;

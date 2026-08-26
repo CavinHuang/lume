@@ -270,28 +270,6 @@ export type ResolvedCredential =
       metadata: Record<string, unknown>;
     };
 
-export interface TransitFileRead {
-  file: File;
-  sizeBytes: number;
-  name: string;
-  mimeType: string;
-}
-
-export interface TransitFileStore {
-  readonly maxBytes: number;
-  create(file: File): Promise<{
-    fileId: string;
-    downloadUrl: string;
-    sizeBytes: number;
-    name: string;
-    mimeType: string;
-  }>;
-  read(fileId: string): Promise<TransitFileRead>;
-  delete(fileId: string): Promise<boolean>;
-}
-
-export type TransitFileWriter = TransitFileStore;
-
 /**
  * Runtime services available to action executors.
  *
@@ -301,8 +279,6 @@ export type TransitFileWriter = TransitFileStore;
 export interface ExecutionContext {
   /** Resolve the credential currently configured for a provider service id. */
   getCredential(service: string): Promise<ResolvedCredential | undefined>;
-  /** Optional local temporary file storage for actions that produce downloadable files. */
-  transitFiles?: TransitFileWriter;
   /** Optional cancellation signal propagated from the HTTP request or runner. */
   signal?: AbortSignal;
 }

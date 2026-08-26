@@ -236,9 +236,12 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
       {
         // #649 review P1-1:触顶检测挂 onComplete 的 reason——T7a 后 sidecar 生产不再
         // 构造 run.turn_limited 事件(已迁事件总线 run.end{stopReason:'max_turns'}),
-        // onRuntimeEvent 检测在生产中永不为真
+        // onRuntimeEvent 检测在生产中永不为真。
+        // #649 round3:max_turns 与 repeat_guard 都属「保护机制停止的半途而废」,
+        // 漏 repeat_guard 会让无人值守任务被重复执行保护停下时仍记「任务执行完成」
+        // (im-message-router 同款口径:两个 reason 都归 turn_limited)
         onComplete: (payload) => {
-          if (payload?.reason === "max_turns") turnLimitedStopped = true;
+          if (payload?.reason === "max_turns" || payload?.reason === "repeat_guard") turnLimitedStopped = true;
         },
         onError: (error) => {
           runtimeError = error;

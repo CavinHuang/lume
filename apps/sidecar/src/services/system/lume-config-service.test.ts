@@ -4,11 +4,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   MEMORY_LOCAL_ONNX_EMBEDDING_MODEL_REF,
-  type LumeConfigFile
+  type LumeConfigFile,
+  type LumeConfigSectionSet
 } from "@lume/shared";
 import YAML from "yaml";
 import { getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
-import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, updateLumeConfigSection } from "./lume-config-service";
+import { getEffectiveLumeConfig, getEffectivePluginRuntimeConfig, KNOWN_LUME_SECTION_KEYS, updateLumeConfigSection } from "./lume-config-service";
 
 describe("lume-config-service", () => {
   let prevConfigDir: string | undefined;
@@ -770,22 +771,17 @@ describe("lume-config-service", () => {
   });
 
   // #727 review 测试完备 P2：写失败必须如实上抛（update 响亮路径）且不记未发生
-  // 的迁移/用户审计，tmp 不残留；读路径（惰性迁移重写）失败则优雅回退不崩。
-  // 注入点：bak 位被目录占用时 copyFileSync 必炸。
-  test("#706：备份位被目录占用时 update 上抛、零审计、tmp 清理，读取优雅回退", () => {
-    writeFileSync(getLumeConfigYamlPath(), YAML.stringify({
-      version: 1,
-      permissions: {
-        classifier: { enabled: false },
-        rules: []
-      }
-    }), "utf-8");
-    mkdirSync(join(dirname(getLumeConfigYamlPath()), "lume.yaml.bak"));
+  // 的迁移/用户审计，tmp 不残留；读路径失败则优雅回退不崩。
+  // 注入点（bak 已删）：yaml 本位被目录占用——rename(file→dir) 跨平台必炸。
+  test("#706：配置位被目录占用时 update 上抛、零审计、tmp 清理，读取优雅回退", () => {
+    const yamlPath = getLumeConfigYamlPath();
+    rmSync(yamlPath, { force: true });
+    mkdirSync(yamlPath);
 
-    // 读路径：迁移重写失败回退默认配置，不向 48 处热调用方抛错
+    // 读路径：读取失败回退默认配置，不向 48 处热调用方抛错
     expect(() => getEffectiveLumeConfig()).not.toThrow();
 
-    // 写路径：update 必须响亮失败
+    // 写路径：update 必须响亮失败（rename 落在目录位上）
     let threw = false;
     try {
       updateLumeConfigSection({ source: "agent", path: "models.title.defaultModelRef", value: "openai/x" });
@@ -794,7 +790,7 @@ describe("lume-config-service", () => {
     }
     expect(threw).toBeTrue();
 
-    const dir = dirname(getLumeConfigYamlPath());
+    const dir = dirname(yamlPath);
     const leftovers = readdirSync(dir).filter((name) => name.startsWith("lume.yaml.tmp."));
     expect(leftovers).toEqual([]);
     if (existsSync(getLumeConfigAuditPath())) {
@@ -803,4 +799,27 @@ describe("lume-config-service", () => {
     }
   });
 
+});
+
+describe("#649 round3: 剥键白名单与 normalize 实际处理集一致", () => {
+  test("KNOWN_LUME_SECTION_KEYS 覆盖 LumeConfigSectionSet 全部 section + 顶层 version/workspaces", () => {
+    // 与 shared LumeConfigSectionSet 十字段逐一对照——shared 新增 section 而未更新
+    // KNOWN 清单时,此处显式失败提醒同步(否则合法键被误报「未识别」刷屏)
+    const allSections: Required<Pick<LumeConfigSectionSet, keyof LumeConfigSectionSet>> = {
+      models: {}, agent: {}, providers: {}, mcp: {}, memory: {},
+      skills: {}, plugins: {}, permissions: {}, hooks: {}, webSearch: {}
+    };
+    for (const key of Object.keys(allSections)) {
+      expect(KNOWN_LUME_SECTION_KEYS).toContain(key);
+    }
+    // 顶层文件段由 normalizeLumeConfigFile 消费,同样必须豁免
+    expect(KNOWN_LUME_SECTION_KEYS).toContain("version");
+    expect(KNOWN_LUME_SECTION_KEYS).toContain("workspaces");
+    // 幽灵键守卫:清单里的每个键都必须真实存在于类型面
+    for (const key of KNOWN_LUME_SECTION_KEYS) {
+      const known = key === "version" || key === "workspaces"
+        || Object.prototype.hasOwnProperty.call(allSections, key);
+      expect(known).toBe(true);
+    }
+  });
 });
