@@ -242,7 +242,8 @@ describe("runtime-core run", () => {
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
       expect(deferredTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
     } finally {
-      await result?.session.dispose();
+      // dispose 独立 try/catch：其失败不得跳过 env 恢复与临时目录清理
+      try { await result?.session.dispose(); } catch { /* cleanup best-effort */ }
       if (previousToolSearch === undefined) delete process.env.ENABLE_TOOL_SEARCH;
       else process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
       if (previousBundledDir === undefined) delete process.env.LUME_BUNDLED_PLUGINS_DIR;
