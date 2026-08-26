@@ -160,7 +160,7 @@ import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
 import type { BrowserSettings,
-  LumeLogLevel, LumeLogEventInput,} from '@lume/shared'
+  LumeLogLevel, LumeLogEventInput, LumeLogError,} from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
 import { nativeEventToIntent, summarizeValue, normalizeHostLevel, LUME_LOGGING_DEFAULTS } from '@lume/shared'
 import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
@@ -434,14 +434,24 @@ async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<
         command: e.name,
         args: summarizeValue(e.args),
         ...(e.result !== undefined ? { result: summarizeValue(e.result) } : {}),
+        ...(e.suppressedCount !== undefined ? { suppressedCount: e.suppressedCount } : {}),
       },
-      ...(e.error ? { error: e.error } : {}),
+      ...(e.error !== undefined ? { error: e.error as LumeLogError } : {}),
     })),
   }, name, args, run)
 }
 
-function handleLogged(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void {
-  ipcMain.handle(channel, (event, ...args) => logIpcCommand(channel, args[0], () => handler(event, ...args)))
+function handleLogged(
+  channel: string,
+  // 契约：本包装仅把 args[0] 作为参数摘要进埋点日志，handler 只收单个 payload。
+  // 未来多参 handler 必须另起 ipcMain.handle 并自行埋点，避免静默丢参。
+  handler: (event: Electron.IpcMainInvokeEvent, payload?: unknown) => unknown,
+): void {
+  ipcMain.handle(channel, (event, payload) => {
+    // sender 校验先于埋点：拒绝路径不得把未信任载荷的摘要写进日志。
+    validateIpcSender(event, getTrustedWindows())
+    return logIpcCommand(channel, payload, () => handler(event, payload))
+  })
 }
 
 function writeRateLimitedTrayWarning(event, message, ownerWebContentsId, data = {}) {
@@ -3501,7 +3511,6 @@ handleLogged('lume:window-control', async (event, op) => {
   }
 })
 handleLogged('lume:relaunch', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   setImmediate(() => {
     app.relaunch()
     app.exit(0)
@@ -3509,7 +3518,6 @@ handleLogged('lume:relaunch', async (event) => {
   return null
 })
 handleLogged('lume:update:check', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
@@ -3517,7 +3525,6 @@ handleLogged('lume:update:check', async (event) => {
   return createUpdateInfo(result?.updateInfo, app.getVersion())
 })
 handleLogged('lume:update:download', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   const sender = event.sender
   const progressState = { previousTransferred: 0, started: false }
@@ -3559,14 +3566,13 @@ handleLogged('lume:update:download', async (event) => {
   })
 })
 handleLogged('lume:update:download-asset', async (event, payload) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
-  if (!payload || typeof payload.url !== 'string') throw new Error('缺少更新安装包地址')
-  await downloadMacUpdateAsset(payload.url, event.sender)
+  const assetUrl = (payload as { url?: unknown } | undefined)?.url
+  if (typeof assetUrl !== 'string') throw new Error('缺少更新安装包地址')
+  await downloadMacUpdateAsset(assetUrl, event.sender)
   return null
 })
 handleLogged('lume:update:install', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (pendingMacUpdatePath) {
     const dmgPath = pendingMacUpdatePath
@@ -3608,7 +3614,6 @@ handleLogged('lume:update:install', async (event) => {
 })
 
 handleLogged('lume:app:signature', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   const macSignatureStable = await detectMacSignatureStable({
     platform: process.platform,
     isPackaged: app.isPackaged,
