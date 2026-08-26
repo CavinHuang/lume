@@ -16,6 +16,7 @@ import { getActiveBrowserBroker } from "../../../browser/browser-broker-holder"
 import { getBrowserToolSessionRegistry, type BrowserToolSessionRegistry } from "./browser-tool-session"
 
 const WRAPPER_PREFIX = BROWSER_TOOL_NAME_PREFIX
+export type BrowserToolName = (typeof BROWSER_TOOL_NAMES)[number]
 
 type BrowserToolBroker = Pick<BrowserBroker, "dispatch" | "listBackends">
 

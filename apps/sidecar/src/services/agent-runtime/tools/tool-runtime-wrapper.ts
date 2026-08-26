@@ -2,7 +2,7 @@ import { access, readFile, realpath, stat } from "node:fs/promises";
 import { getRuntimeHostPorts } from "../host-ports";
 import { createHash } from "node:crypto";
 import { relative, resolve } from "node:path";
-import { isFullReadText, type ToolDefinition, type ToolResult } from "@lume/agent-sdk";
+import type { ToolDefinition, ToolResult } from "@lume/agent-sdk";
 import { createDiagnosticLogSummary, createLogger } from "../../infra/logger";
 import type { FileAccessLedger } from "./file-access-ledger";
 import type { LumeToolDescriptor } from "./tool-types";
@@ -413,16 +413,15 @@ function readInputPath(input: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
-// Read 完整读判定：_meta.read 结构化字段优先（partial/truncated/summarized，
-// #314 与 #535 同源），文本截断标记兜底服务「无 _meta.read 的旧形制/plugin/MCP
-// read」——它们无法自证部分视图；若未来再收窄判定，先想清楚这一默认值放宽的是谁
+// Read 完整读判定走 _meta.read 结构化字段（partial/truncated/summarized，
+// #314 与 #535 同源）。默认 true 服务「无 _meta.read 的旧形制/plugin/MCP
+// read」——它们无法自证部分视图；若未来再收窄判定，先想清楚这一默认值放宽的是谁。
+// 不做 content 文本嗅探：对抗轮实证零行视图/unchanged 短路会被绕过（#711 review）
 function isFullReadResult(result: ToolResult): boolean {
   const readMeta = result._meta?.read;
-  if (readMeta && typeof readMeta === "object") {
-    const meta = readMeta as Record<string, unknown>;
-    if (meta.partial === true || meta.truncated === true || meta.summarized === true) return false;
-  }
-  return isFullReadText(result.content);
+  if (!readMeta || typeof readMeta !== "object") return true;
+  const meta = readMeta as Record<string, unknown>;
+  return meta.partial !== true && meta.summarized !== true;
 }
 
 function getReadRange(

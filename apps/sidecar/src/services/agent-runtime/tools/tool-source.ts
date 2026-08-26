@@ -30,8 +30,16 @@ export function createToolDescriptorsFromDefinitions(
         definition,
         metadata: {
           description: baseMetadata.description,
-          // 与 sdk 分支对称（review）：定义体显式 isReadOnly 同样生效；无声明
-          // 时维持原状不引入推断（plugin 仍可经 runtimeMetadata 覆盖）
+          // 四必填维度兜底与 sdk 分支对称（#711 review）：单载体 + fail-closed
+          // descriptor 组装下，缺失会让全部 mcp/plugin 工具被 descriptor_missing
+          // 误 deny。显式 runtimeMetadata 仍可覆盖各字段。
+          category: baseMetadata.category,
+          capability: inferCapability(definition.name, resolvedSource, baseMetadata.category),
+          riskLevel: baseMetadata.riskLevel,
+          sideEffects: inferSideEffects(resolvedSource, baseMetadata.category),
+          allowedInPlanMode: baseMetadata.allowedInPlanMode ?? false,
+          isConcurrencySafe: isConcurrencySafe(baseMetadata.category),
+          requiresApprovalByDefault: baseMetadata.riskLevel !== "low",
           ...(definitionIsReadOnly !== undefined ? { isReadOnly: definitionIsReadOnly } : {}),
           ...runtimeMetadata
         }

@@ -25,10 +25,10 @@ describe('Read partial-view signals (#535)', () => {
     const dir = await mkdtemp(join(tmpdir(), 'lume-read-marker-'))
     try {
       // .vue 不在 SUMMARIZABLE_EXTENSIONS：默认读走 ranged 路径且必然截断
-      const filePath = await makeFile(dir, 'comp.vue', 800)
+      const filePath = await makeFile(dir, 'comp.vue', 2500)
       const result = await FileReadTool.call({ file_path: filePath }, { cwd: dir } as never)
       const content = (result as { content?: unknown }).content
-      expect(String(content)).toContain('\n[showing lines 1-500 of 800+; use offset=500 to continue reading]')
+      expect(String(content)).toContain('[truncated: showing lines 1-2000 of 2500 total. Continue with offset')
       expect(readMeta(result).partial).toBe(true)
     } finally {
       await rm(dir, { recursive: true, force: true })

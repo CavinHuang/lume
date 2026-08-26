@@ -126,7 +126,6 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
     return sortClaimMatchesFirst(scoredByRerank.slice(0, maxResults), queryPlan);
   } catch {
     return sortClaimMatchesFirst(meetsMinScore(merged).slice(0, maxResults), queryPlan);
->>>>>>> ee364e4ce (🛠 fix(tools): 实现层杂项缺陷合集十二项全修（#538）)
   }
 }
 

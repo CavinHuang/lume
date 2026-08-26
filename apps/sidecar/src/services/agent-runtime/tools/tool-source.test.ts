@@ -56,18 +56,16 @@ describe("createToolDescriptorsFromDefinitions", () => {
     const registry = new ToolRegistry();
     registry.registerMany(createToolDescriptorsFromDefinitions([tool], "sdk"));
 
+    // 四必填维度兜底（#711 review）：单载体 + fail-closed descriptor 组装下，
+    // mcp/plugin 分支不再留空——推断值先兜底，显式 runtimeMetadata 仍可覆盖
     expect(registry.get("PluginEcho")).toMatchObject({
       name: "PluginEcho",
       source: "plugin",
       metadata: {
-        category: "control",
+        category: "read",
         capability: "plugin",
-        riskLevel: "medium",
-        sideEffects: "external",
-        allowedInPlanMode: false,
-        isReadOnly: false,
-        isConcurrencySafe: false,
-        requiresApprovalByDefault: true,
+        riskLevel: "low",
+        requiresApprovalByDefault: false,
         resultPolicy: { maxChars: 200_000 }
       }
     });

@@ -38,7 +38,8 @@ export type LumeToolSideEffects =
   | "local_write"
   | "network"
   | "process"
-  | "external";
+  | "external"
+  | "desktop";
 
 export interface LumeToolMetadata {
   title?: string;

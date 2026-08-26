@@ -612,12 +612,13 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
       fileLedger: ledger
     });
 
+    // isolation 别名已随 Agent schema 删参退役（#575）：携带该字段的输入不再被当作
+    // 后台请求拦截，只有 run_in_background === true 触发后台策略。
     await expect(
       tool.call({ prompt: "go", isolation: "remote" }, { cwd: root, toolUseId: "tool-remote" })
     ).resolves.toMatchObject({
-      is_error: true,
-      tool_use_id: "tool-remote",
-      content: "Agent 不允许后台执行"
+      type: "tool_result",
+      content: "started"
     });
   });
 
