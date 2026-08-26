@@ -15,6 +15,7 @@ export const LOG_PREVIEW_MAX_CHARS = 200
 export const REDACT_KEY_PARTS: readonly string[] = [
   'token', 'secret', 'password', 'apikey', 'authorization',
   'cookie', 'setcookie', 'accesstoken', 'refreshtoken', 'grant',
+  'credential', 'privatekey',
 ]
 
 /** Normalized key EXACTLY in this set → truncated preview instead of full redaction. */
@@ -23,7 +24,9 @@ export const CONTENT_PREVIEW_KEYS: ReadonlySet<string> = new Set([
   'content', 'contents', 'html', 'markdown', 'input', 'output',
 ])
 
-/** Union of both processes' quiet lists; failures are NEVER quiet regardless of this set. */
+/** Union of both processes' quiet lists; failures are NEVER quiet regardless of this set.
+ *  privileged-decrypt-key 返回裸 API key 字符串（summarizeValue 对顶层字符串仅截断不脱敏），
+ *  必须静默——与 main 侧 desktop_diagnostic_decrypt 的 QUIET_IPC_COMMANDS 同族口径 */
 export const QUIET_RPC_METHODS: ReadonlySet<string> = new Set([
   'system.log-level',
   'healthcheck',
@@ -33,6 +36,7 @@ export const QUIET_RPC_METHODS: ReadonlySet<string> = new Set([
   'agent:get-pending-interactive',
   'agent:list-workspaces',
   'channel:oauth-status',
+  'channel:privileged-decrypt-key',
   'model-meta:get',
 ])
 
