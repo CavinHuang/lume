@@ -402,6 +402,7 @@ async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<
     isQuiet: (candidate) => QUIET_IPC_COMMANDS.has(candidate),
     emit: (e) => safeLogIpcEvent(() => writeMainLog(e.level, IPC_LOG_CONTEXT, e.event, e.message, {
       durationMs: e.durationMs,
+      status: e.event === 'command.completed' ? 'ok' : 'error',
       ...e.correlation,
       ...(origin ? { origin } : {}),
       data: {
@@ -455,6 +456,7 @@ function getTrustedWindows() {
 function resolveRendererTraceOrigin(ownerWebContentsId) {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id === ownerWebContentsId) return 'main_window'
   if (quickInputWindow && !quickInputWindow.isDestroyed() && quickInputWindow.webContents.id === ownerWebContentsId) return 'quick_input'
+  if (islandWindow && !islandWindow.isDestroyed() && islandWindow.webContents.id === ownerWebContentsId) return 'agent_island'
   throw new Error('cannot derive trace origin from untrusted renderer')
 }
 
@@ -3421,12 +3423,12 @@ async function startDesktopHost(): Promise<DesktopHostState> {
       binaryPath,
       log: logDesktopStartup,
       logEvent: ({ level, context, event, message, data }) => {
-        const resolvedLevel = normalizeHostLevel(level)
+        // LumeHostLogLine 契约下四核心字段必为 string，仅 data 可缺。
         writeMainLog(
-          resolvedLevel,
-          context ?? 'desktop.host',
-          event ?? 'host.log',
-          message ?? '',
+          normalizeHostLevel(level),
+          context,
+          event,
+          message,
           { source: 'desktop-host', ...(data ? { data } : {}) },
         )
       },

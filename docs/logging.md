@@ -113,4 +113,4 @@ pretty 行尾带 ≤200 字符 JSON 摘要（status/durationMs/data/error），�
 - **web 渲染层凭据子串名单随 shared 收紧**：由 6 片段扩至与桌面端一致的 10 片段（新增 setcookie/accesstoken/refreshtoken/grant）。
 - **宿主结构化行不进文本诊断缓冲**：node-repl 宿主崩溃时 `rejectAll` 携带的 stderr 不含已被结构化解析的 LUMELOG 行（它们已入统一日志）。
 - **close() 尾窗补偿**：LoggingService.close() 对 flush await 期间入队的事件做有界补冲刷（≤3 遍）；supervisor/manager 的残尾冲刷同时挂在 exit 与 close（幂等）。
-- **多窗口 surface 归因**：renderer 事件与 lume:invoke 命令事件带顶层 `origin` 字段（`main_window` / `quick_input` / island 等），由主进程按 sender webContents 统一注入；无法判定时为 `renderer_unknown`。
+- **多窗口 surface 归因**：renderer 事件与 lume:invoke 命令事件带顶层 `origin` 字段（`main_window` / `quick_input` / `agent_island`），由主进程按 sender webContents 统一注入；无法判定时为 `renderer_unknown`。命令事件另带 `status` 字段（ok/error），与 sidecar 的 rpc 记录对齐。

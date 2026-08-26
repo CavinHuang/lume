@@ -79,12 +79,11 @@ function isValidIdShape(value: unknown): value is string {
  * 从载荷浅层（顶层与一层嵌套）提取已知关联 ID，供 IPC/RPC 摘要事件挂到顶层，
  * 使工程师能从一条 command.completed 结构化跳转到同会话的 agent spine。
  */
-export function extractCorrelationIds(payload: unknown, depth = 0): Record<string, string> {
-  const out: Record<string, string> = {}
+function extractCorrelationIdsInternal(payload: unknown, depth: number, out: Record<string, string>): void {
   // 永不抛出：敌对载荷（throwing getter / Proxy）最多损失关联 ID，不得影响调用方语义。
   // 子层扫描限量，避免大载荷上做全量 Object.values 物化。
   try {
-    if (depth > 1 || payload == null || typeof payload !== 'object' || Array.isArray(payload)) return out
+    if (depth > 1 || payload == null || typeof payload !== 'object' || Array.isArray(payload)) return
     for (const [key, field] of CORRELATION_ID_KEYS) {
       if (out[field]) continue
       const candidate = (payload as Record<string, unknown>)[key]
@@ -93,17 +92,21 @@ export function extractCorrelationIds(payload: unknown, depth = 0): Record<strin
     if (depth === 0) {
       const children = Object.entries(payload as Record<string, unknown>).slice(0, SUMMARIZE_MAX_KEYS)
       for (const [, child] of children) {
-        const nested = extractCorrelationIds(child, 1)
-        for (const [field, value] of Object.entries(nested)) {
-          if (!out[field]) out[field] = value
-        }
+        extractCorrelationIdsInternal(child, 1, out)
       }
     }
   } catch {
     // ignore：关联 ID 是尽力而为的观测增强。
   }
+}
+
+/** 从载荷浅层（顶层与一层嵌套）提取已知关联 ID；永不抛出。 */
+export function extractCorrelationIds(payload: unknown): Record<string, string> {
+  const out: Record<string, string> = {}
+  extractCorrelationIdsInternal(payload, 0, out)
   return out
 }
+
 
 export function summarizeValue(input: unknown, depth = 0): unknown {
   if (input == null || typeof input === 'boolean' || typeof input === 'number') return input
@@ -170,19 +173,41 @@ export function normalizeHostLevel(level: unknown): LumeLogLevel {
 
 export const LUMELOG_PREFIX = "LUMELOG ";
 
+/** 宿主 LUMELOG 行的类型视图：Rust log_line 恒定输出四个核心字符串字段（协议契约）。 */
+export interface LumeHostLogLine {
+  level: string;
+  context: string;
+  event: string;
+  message: string;
+  data?: Record<string, unknown>;
+}
+
 /**
- * 解析宿主输出的单行结构化日志；非前缀/坏 JSON/非对象载荷一律返回 null，
+ * 解析宿主输出的单行结构化日志；非前缀/坏 JSON/非对象载荷/缺核心字段一律返回 null，
  * 由调用方决定回退路径。supervisor 与 node-repl runtime-manager 共用。
  */
-export function parseLumeLogLine(line: string): Record<string, unknown> | null {
+export function parseLumeLogLine(line: string): LumeHostLogLine | null {
   if (!line.startsWith(LUMELOG_PREFIX)) return null;
   try {
     const parsed: unknown = JSON.parse(line.slice(LUMELOG_PREFIX.length));
     if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return null;
-    return parsed as Record<string, unknown>;
+    const candidate = parsed as Record<string, unknown>;
+    // 协议核心四字段必为字符串：缺任一即视为不合规行，走调用方文本回退。
+    for (const key of ["level", "context", "event", "message"] as const) {
+      if (typeof candidate[key] !== "string") return null;
+    }
+    const data = candidate.data;
+    if (data !== undefined && (typeof data !== "object" || Array.isArray(data))) return null;
+    return parsed as LumeHostLogLine;
   } catch {
     return null;
   }
+}
+
+/** 三端重复的「规整结果断言」收敛：非对象包装一层 {value}，语义与 desktop safeRecord 一致。 */
+export function asRecord(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  return { value };
 }
 
 const MAX_NORMALIZE_DEPTH = 6;

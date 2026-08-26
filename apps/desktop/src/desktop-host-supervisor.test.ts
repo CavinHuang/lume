@@ -1,7 +1,8 @@
 import { describe, expect, test } from 'bun:test'
 import { EventEmitter } from 'node:events'
 import type { ChildProcess } from 'node:child_process'
-import { createDesktopHostSupervisor, type DesktopHostStructuredLog } from './desktop-host-supervisor'
+import { createDesktopHostSupervisor } from './desktop-host-supervisor'
+import type { LumeHostLogLine } from '@lume/shared'
 
 class FakeChildProcess extends EventEmitter {
   stdout = new EventEmitter()
@@ -14,7 +15,7 @@ function createHarness() {
   const children: FakeChildProcess[] = []
   const timers: Array<() => void> = []
   const logs: string[] = []
-  const events: DesktopHostStructuredLog[] = []
+  const events: LumeHostLogLine[] = []
   let clock = 1_000_000
   const supervisor = createDesktopHostSupervisor({
     binaryPath: 'desktop-host.bin',

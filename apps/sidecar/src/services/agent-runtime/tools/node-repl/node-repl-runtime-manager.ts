@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { delimiter, dirname, join } from "node:path";
 import { spawnWithProcessSandbox, type SandboxSettings } from "@lume/agent-sdk";
-import { normalizeHostLevel, parseLumeLogLine } from "@lume/shared";
+import { normalizeHostLevel, parseLumeLogLine, type LumeHostLogLine } from "@lume/shared";
 import { writeLogRecord } from "../../../infra/logger";
 import type {
   JsExecInput,
@@ -118,23 +118,16 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       if (!line) continue;
       const parsed = parseLumeLogLine(line);
       if (!parsed) {
-        // 非前缀/坏 JSON/非对象载荷一律回退诊断缓冲。
+        // 非前缀/坏 JSON/非对象/缺核心字段一律回退诊断缓冲。
         this.stderr = truncate(`${this.stderr}${line}\n`, MAX_STDERR_CHARS);
         continue;
       }
-      const host = parsed as {
-        level?: string;
-        context?: string;
-        event?: string;
-        message?: string;
-        data?: Record<string, unknown>;
-      };
       writeLogRecord({
-        level: normalizeHostLevel(host.level),
-        context: host.context ?? "node-repl.host",
-        event: host.event ?? "host.log",
-        message: host.message ?? "",
-        ...(host.data ? { data: host.data } : {}),
+        level: normalizeHostLevel(parsed.level),
+        context: parsed.context,
+        event: parsed.event,
+        message: parsed.message,
+        ...(parsed.data ? { data: parsed.data } : {}),
       });
     }
   }

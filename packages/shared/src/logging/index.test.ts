@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { REDACT_KEY_PARTS, CONTENT_PREVIEW_KEYS, LOG_PREVIEW_MAX_CHARS, QUIET_RPC_METHODS, clipLogPreview, summarizeValue, extractCorrelationIds, isLumeLogSource, normalizeHostLevel, parseLumeLogLine, normalizeLogValue } from './index'
+import { REDACT_KEY_PARTS, CONTENT_PREVIEW_KEYS, LOG_PREVIEW_MAX_CHARS, QUIET_RPC_METHODS, clipLogPreview, summarizeValue, extractCorrelationIds, isLumeLogSource, normalizeHostLevel, parseLumeLogLine, normalizeLogValue, asRecord } from './index'
 
 describe('clipLogPreview', () => {
   test('短字符串原样返回', () => {
@@ -136,12 +136,23 @@ describe('跨进程工具（第二波收敛）', () => {
     expect(normalizeHostLevel('bogus')).toBe('info')
     expect(normalizeHostLevel(undefined)).toBe('info')
   })
-  test('parseLumeLogLine：合法/坏 JSON/null/数组/非前缀', () => {
-    expect(parseLumeLogLine('LUMELOG {"level":"warn","event":"e"}')).toEqual({ level: 'warn', event: 'e' })
+  test('parseLumeLogLine：合法/坏 JSON/null/数组/缺核心字段/非前缀', () => {
+    const ok = parseLumeLogLine('LUMELOG {"level":"warn","context":"c","event":"e","message":"m","data":{"k":1}}')
+    expect(ok).toEqual({ level: 'warn', context: 'c', event: 'e', message: 'm', data: { k: 1 } })
+    // 协议核心四字段（level/context/event/message）缺任一或非字符串 → 不合规行返回 null
+    expect(parseLumeLogLine('LUMELOG {"level":"warn","event":"e"}')).toBeNull()
+    expect(parseLumeLogLine('LUMELOG {"level":1,"context":"c","event":"e","message":"m"}')).toBeNull()
+    expect(parseLumeLogLine('LUMELOG {"data":{"x":1}}')).toBeNull()
     expect(parseLumeLogLine('LUMELOG not-json')).toBeNull()
     expect(parseLumeLogLine('LUMELOG null')).toBeNull()
     expect(parseLumeLogLine('LUMELOG [1]')).toBeNull()
     expect(parseLumeLogLine('plain text')).toBeNull()
+  })
+  test('asRecord：对象原样、标量包装 {value}', () => {
+    const obj = { a: 1 }
+    expect(asRecord(obj)).toBe(obj)
+    expect(asRecord(42)).toEqual({ value: 42 })
+    expect(asRecord(null)).toEqual({ value: null })
   })
   test('normalizeLogValue：凭据遮蔽、TypedArray 骨架、循环引用、深度帽', () => {
     const out = normalizeLogValue({ apiKey: 'sk-x', chunk: new Uint8Array(8), body: 'ok' }) as Record<string, unknown>

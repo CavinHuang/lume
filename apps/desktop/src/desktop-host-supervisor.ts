@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 import { spawn as spawnProcess } from 'node:child_process'
 import { createDesktopHostSpawnConfig, createDesktopHostTokenFilePath } from './sidecar-process'
-import { parseLumeLogLine } from '@lume/shared'
+import { parseLumeLogLine, type LumeHostLogLine } from '@lume/shared'
 
 export type DesktopHostState =
   | { available: true; endpoint: string; token: string }
@@ -18,14 +18,6 @@ export function nextCrashState(previous: number[], now: number): { crashTimes: n
   return { crashTimes, shouldRestart: crashTimes.length < 3, delayMs: 2 ** Math.max(0, crashTimes.length - 1) * 1000 }
 }
 
-export interface DesktopHostStructuredLog {
-  level?: string
-  context?: string
-  event?: string
-  message?: string
-  data?: Record<string, unknown>
-}
-
 interface DesktopHostSupervisorOptions {
   binaryPath: string
   platform?: NodeJS.Platform
@@ -36,7 +28,7 @@ interface DesktopHostSupervisorOptions {
   tempDir?: string
   baseEnv?: NodeJS.ProcessEnv
   log?: (message: string) => void
-  logEvent?: (event: DesktopHostStructuredLog) => void
+  logEvent?: (event: LumeHostLogLine) => void
   writeTokenFile?: (path: string, token: string) => void
   removeTokenFile?: (path: string) => void
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
@@ -138,11 +130,12 @@ export function createDesktopHostSupervisor({
         // 避免 null 解构在 data handler 里抛未捕获异常击穿主进程。
         const parsed = parseLumeLogLine(line)
         if (!parsed) {
+          // 非前缀/坏 JSON/非对象/缺核心字段回退文本路径。
           log(`[desktop-host] ${line}`)
           continue
         }
         try {
-          logEvent?.(parsed as DesktopHostStructuredLog)
+          logEvent?.(parsed)
         } catch {
           // logEvent 自身故障不得在 data handler 里抛未捕获异常。
           log(`[desktop-host] ${line}`)
