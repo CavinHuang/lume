@@ -134,7 +134,10 @@ async function run() {
     );
 
     const initialLumeConfig = await sidecar.call(LUME_CONFIG_GET_EFFECTIVE, { workspaceSlug: workspace.slug });
-    assert(initialLumeConfig?.version === 1, "lume-config:get-effective unavailable");
+    // #684 把 CONFIG_VERSION 升到 2 后本断言未同步（PR#729 补）：首建默认配置
+    // 落盘即 v2；下方 writeSmokeLumeConfig 的 version:1 夹具仍刻意保留，
+    // 用于覆盖读路径的 v1→v2 迁移。
+    assert(initialLumeConfig?.version === 2, "lume-config:get-effective unavailable");
     assert(
       typeof initialLumeConfig?.sourcePath === "string"
       && normalizePathForAssert(initialLumeConfig.sourcePath).endsWith("/.lume/lume.yaml"),

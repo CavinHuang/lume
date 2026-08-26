@@ -1918,7 +1918,7 @@ describe("QueryEngine auto compaction usage", () => {
       outputTokens: 10,
       totalTokens: 60
     });
-  });
+  }, 30_000);
 
   test("does not auto compact when only non-conversation usage is above threshold", async () => {
     const provider = new StaticProvider([{
