@@ -674,7 +674,9 @@ export type CodingRepositoryPublishState =
       upstream?: string
       head: string
       indexHash: string
-      worktreeHash: string
+      // 工作区 patch 超 16MB 水位时缺失：仅提交已暂存内容不受影响，
+      // 包含未暂存变更会被 RPC schema 与 service 双层拦截
+      worktreeHash?: string
       stagedCount: number
       unstagedCount: number
       untrackedCount: number
