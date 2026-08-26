@@ -64,7 +64,7 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     child.stdout.on("data", (chunk) => {
       if (overflowed) return;
       stdoutBytes += Buffer.byteLength(chunk, "utf8");
-      if (stdoutBytes > MAX_GIT_TEXT_OUTPUT_BYTES) {
+      if (stdoutBytes > 16 * 1024 * 1024) {
         overflowed = true;
         stdout = "";
         child.kill();

@@ -404,12 +404,20 @@ describe("coding-change-service", () => {
     ]);
     writeFileSync(join(root, "src", "second.ts"), "export const second = 'newer';\n");
 
-    await expect(applyCodingDiffAction(root, {
-      threadId: "thread-test",
-      scope: "section",
-      action: "stage",
-      files: diffs.map((file) => ({ path: file.path, expectedDiffHash: file.diffHash })),
-    })).rejects.toThrow("刷新 Diff");
+    // 不用 expect().rejects：bun 1.3.14 Windows 下该匹配器与这条被拒 promise
+    // 组合会挂死（try/catch 等价断言，语义不变）
+    let staleError: unknown;
+    try {
+      await applyCodingDiffAction(root, {
+        threadId: "thread-test",
+        scope: "section",
+        action: "stage",
+        files: diffs.map((file) => ({ path: file.path, expectedDiffHash: file.diffHash })),
+      });
+    } catch (error) {
+      staleError = error;
+    }
+    expect(staleError instanceof Error && staleError.message.includes("刷新 Diff")).toBe(true);
     expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: root, encoding: "utf8" }).trim())
       .toBe("");
   }, 30_000);
@@ -535,16 +543,24 @@ describe("coding-change-service", () => {
     if (!state.available) throw new Error(state.reason);
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'newer';\n");
 
-    await expect(applyCodingRepositoryPublishAction(root, {
-      threadId: "thread-test",
-      action: "commit",
-      message: "test: stale worktree",
-      expectedBranch: state.branch,
-      expectedHead: state.head,
-      expectedIndexHash: state.indexHash,
-      includeUnstagedChanges: true,
-      expectedWorktreeHash: state.worktreeHash,
-    })).rejects.toThrow("工作区已变化");
+    // 不用 expect().rejects：bun 1.3.14 Windows 下该匹配器与这条被拒 promise
+    // 组合会挂死（try/catch 等价断言，语义不变）
+    let staleError: unknown;
+    try {
+      await applyCodingRepositoryPublishAction(root, {
+        threadId: "thread-test",
+        action: "commit",
+        message: "test: stale worktree",
+        expectedBranch: state.branch,
+        expectedHead: state.head,
+        expectedIndexHash: state.indexHash,
+        includeUnstagedChanges: true,
+        expectedWorktreeHash: state.worktreeHash,
+      });
+    } catch (error) {
+      staleError = error;
+    }
+    expect(staleError instanceof Error && staleError.message.includes("工作区已变化")).toBe(true);
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
@@ -559,14 +575,20 @@ describe("coding-change-service", () => {
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'newer';\n");
     execFileSync("git", ["add", "--", "src/index.ts"], { cwd: root });
 
-    await expect(applyCodingRepositoryPublishAction(root, {
-      threadId: "thread-test",
-      action: "commit",
-      message: "test: stale commit",
-      expectedBranch: state.branch,
-      expectedHead: state.head,
-      expectedIndexHash: state.indexHash,
-    })).rejects.toThrow("暂存区已变化");
+    let staleError: unknown;
+    try {
+      await applyCodingRepositoryPublishAction(root, {
+        threadId: "thread-test",
+        action: "commit",
+        message: "test: stale commit",
+        expectedBranch: state.branch,
+        expectedHead: state.head,
+        expectedIndexHash: state.indexHash,
+      });
+    } catch (error) {
+      staleError = error;
+    }
+    expect(staleError instanceof Error && staleError.message.includes("暂存区已变化")).toBe(true);
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 });
