@@ -118,10 +118,16 @@ export function LogSettings() {
     }
   }
 
+  // #753: 仅单文件跟随——' * '（全目录）跟随会退化为 250ms 全量重扫，随历史累积线性恶化。
+  const liveFollowEligible = selectedFileName !== '' && selectedFileName !== '*'
+  const liveFollowRef = React.useRef(liveFollowEligible)
+  React.useEffect(() => { liveFollowRef.current = liveFollowEligible }, [liveFollowEligible])
+
   React.useEffect(() => {
+    if (!liveFollowEligible) return
     let unsubscribe: (() => Promise<void>) | undefined
     void subscribeLiveLogs(() => {
-      if (livePausedRef.current || liveRefreshTimer.current) return
+      if (livePausedRef.current || !liveFollowRef.current || liveRefreshTimer.current) return
       liveRefreshTimer.current = setTimeout(() => {
         liveRefreshTimer.current = null
         setContentRefreshKey((key) => key + 1)
@@ -131,7 +137,7 @@ export function LogSettings() {
       if (liveRefreshTimer.current) clearTimeout(liveRefreshTimer.current)
       void unsubscribe?.()
     }
-  }, [])
+  }, [liveFollowEligible])
 
   const selectedFile = React.useMemo(
     () => snapshot?.files.find((file) => file.name === selectedFileName) ?? null,

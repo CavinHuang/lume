@@ -133,6 +133,7 @@ import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
 import { instrumentIpcCommand } from './logging/ipc-instrumentation'
+import { createLogLiveForwarder } from './logging/live-forwarder'
 import {
   createChromeNativeHostInstallPlan,
   writeChromeNativeHostRegistration,
@@ -2560,15 +2561,23 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       rendererLogSubscriptions.get(context.ownerWebContentsId)?.()
       const target = getTrustedWindows().find((win) => win.webContents.id === context.ownerWebContentsId)
       if (!target) throw new Error('trusted renderer is unavailable')
+      // #753: 推送先过合流/背压闸（100ms 合并 + 单推上限），再发往 renderer。
+      const forwarder = createLogLiveForwarder({
+        isAlive: () => !target.isDestroyed() && !target.webContents.isDestroyed(),
+        send: (payload) => target.webContents.send('lume:event:logs:live', payload),
+      })
       const unsubscribe = getLoggingService().subscribe((events) => {
         if (target.isDestroyed() || target.webContents.isDestroyed()) {
           rendererLogSubscriptions.get(context.ownerWebContentsId)?.()
           rendererLogSubscriptions.delete(context.ownerWebContentsId)
           return
         }
-        target.webContents.send('lume:event:logs:live', { events })
+        forwarder.push(events)
       })
-      rendererLogSubscriptions.set(context.ownerWebContentsId, unsubscribe)
+      rendererLogSubscriptions.set(context.ownerWebContentsId, () => {
+        forwarder.dispose()
+        unsubscribe()
+      })
       return { ok: true }
     }
     case 'desktop_log_live_unsubscribe':
