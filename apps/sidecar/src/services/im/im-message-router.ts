@@ -925,7 +925,15 @@ export function createImAgentStreamEmitter(
 }
 
 async function defaultSendMessage(input: AgentSendInput): Promise<void> {
-  appendAgentMessage(input, createImAgentStreamEmitter(input.threadId));
+  const emitter = createImAgentStreamEmitter(input.threadId);
+  try {
+    appendAgentMessage(input, emitter);
+  } catch (error) {
+    // 同步段 throw（如 submission 去重命中「已终结」）时 emitter 尚无任何
+    // 终态回调：显式走 onError 让卡片 finish/订阅退订，否则悬挂（#725 review S1-P3）。
+    emitter.onError(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 }
 
 export async function routeInboundImMessage(
