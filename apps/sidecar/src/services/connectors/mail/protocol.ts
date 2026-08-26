@@ -243,7 +243,9 @@ interface BodyPart {
 const observedMailboxUidValidity = new Map<string, string>();
 
 function mailboxStateKey(email: string, folder: string): string {
-  return `${email}\0${folder}`;
+  // 与连接闸门(#698)同口径:同一物理邮箱的大小写变体共享 UIDVALIDITY 基准,
+  // 否则混合大小写写入的基准对后续比对不可见,fail-closed 会误拒合法动作
+  return `${email.toLowerCase()}\0${folder}`;
 }
 
 export function createMailProtocol(config: MailProtocolConfig, deps: MailProtocolDependencies = {}): MailProtocol {
@@ -631,7 +633,10 @@ async function withImapConnectionLimit<T>(account: string, run: () => Promise<T>
     imapAccountGates.set(account, gate);
   }
   if (gate.active >= maxImapConnectionsPerAccount) {
-    // executor 同步完成 push 才返回 promise,释放路径的 shift 不可能早于入队
+    // 排队即预占名额(active 含排队者):唤醒者恢复后直接运行、不再复查,
+    // 晚到者必见 active≥max 而入队,无法插队超发。守恒依赖此约定——
+    // 若改成「唤醒后补记」,排队窗口内的新到达会读到偏小的 active 造成超限。
+    // executor 同步完成 push 才返回 promise,释放路径的 shift 不可能早于入队。
     await new Promise<void>((resolve) => {
       gate!.active += 1;
       gate!.waiters.push(resolve);
@@ -644,7 +649,18 @@ async function withImapConnectionLimit<T>(account: string, run: () => Promise<T>
   } finally {
     gate.active -= 1;
     gate.waiters.shift()?.();
+    // 预占模型下被放行者仍计在 active 中,active===0 蕴含无人持有此 gate,
+    // 此刻删除安全;后续到达者新建条目,不会与旧引用互撞
+    if (gate.active === 0 && gate.waiters.length === 0) {
+      imapAccountGates.delete(account);
+    }
   }
+}
+
+/** 仅供不变式测试观察闸门生命周期:账号空闲后条目应被清理。 */
+export function imapAccountGateStateForTest(email: string): { active: number; waiting: number } | undefined {
+  const gate = imapAccountGates.get(email.toLowerCase());
+  return gate ? { active: gate.active, waiting: gate.waiters.length } : undefined;
 }
 
 async function withImapClient<T>(
@@ -673,14 +689,23 @@ async function openAndRunImapClient<T>(
   } catch (error) {
     throw mapLibraryError(error, config);
   } finally {
+    // close 是清理兜底,自身失败不得顶替业务错误(或吞掉成功返回值);
+    // socket 资源由进程回收,静默即可
+    const closeQuietly = () => {
+      try {
+        client.close?.();
+      } catch {
+        /* 清理兜底的失败无诊断价值 */
+      }
+    };
     if (connected) {
       try {
         await client.logout();
       } catch {
-        client.close?.();
+        closeQuietly();
       }
     } else {
-      client.close?.();
+      closeQuietly();
     }
   }
 }

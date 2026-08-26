@@ -806,7 +806,9 @@ export function mapProtocolError(
           ? new ProviderRequestError(400, config.connectAuthMessage)
           : new ProviderRequestError(
               401,
-              `${config.displayName} rejected the stored authorization code. Reconnect the account with a fresh ${config.displayName} authorization code.`,
+              // #698:服务器侧 "login failed" 也可能来自临时风控/频率限制而非凭证失效,
+              // 文案不得把用户径直引向重置授权码
+              `${config.displayName} rejected the login. If the stored authorization code was changed or expired, reconnect with a fresh code; otherwise the server may be throttling this account temporarily — retry shortly before reconnecting.`,
             );
       case "folder_not_found":
         return new ProviderRequestError(400, `${config.displayName} folder does not exist.`);

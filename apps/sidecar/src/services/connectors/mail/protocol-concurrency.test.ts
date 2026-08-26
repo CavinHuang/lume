@@ -1,5 +1,10 @@
 import { describe, expect, it } from "bun:test";
-import { createMailProtocol, maxImapConnectionsPerAccount, type MailCredential } from "./protocol";
+import {
+  createMailProtocol,
+  imapAccountGateStateForTest,
+  maxImapConnectionsPerAccount,
+  type MailCredential,
+} from "./protocol";
 
 /**
  * 回归钉死 #698:协议层一动作一连接,agent 并行只读工具会同时开多条 IMAP
@@ -150,5 +155,14 @@ describe("per-account IMAP connection gate (#698)", () => {
     await expect(protocol.getFolderStatus(credential("user@qq.com"), "INBOX")).resolves.toMatchObject({
       messages: 1,
     });
+  });
+
+  it("drops the gate entry once an account goes idle", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake);
+
+    await protocol.getFolderStatus(credential("cleanup@qq.com"), "INBOX");
+
+    expect(imapAccountGateStateForTest("cleanup@qq.com")).toBeUndefined();
   });
 });
