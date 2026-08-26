@@ -538,14 +538,16 @@ function translateMoveError(error: unknown): Error {
 }
 
 /**
- * 返回 undefined=干净完成；有值=移动成功但源副本清理失败（Windows 占用窗口），
- * 调用方必须把它透传到 RPC 结果供前端提示，否则用户会看到旧路径文件"复活"（#552 UX review round7）。
- * rename 参数仅供测试注入（#771 测试缝）。
+ * #552 合并版：保留告警链与 errno 中文化（本分支），并采纳 main(#771) 的
+ * 可注入 rename 供测试钉死重试/降级序列；占用重试全平台生效——main 的测试
+ * 已在 Ubuntu 钉死该语义，POSIX 挂载点场景由「源清理失败保副本+告警」兜底。
+ * 返回 undefined=干净完成；有值=移动成功但源副本清理失败（占用窗口），
+ * 调用方必须透传到 RPC 结果供前端提示，否则旧路径文件"复活"无从解释。
  */
 export function movePathWithFallback(
   sourcePath: string,
   targetPath: string,
-  rename: typeof renameSync = renameSync,
+  rename: typeof renameSync = renameSync
 ): string | undefined {
   try {
     return movePathWithFallbackInner(sourcePath, targetPath, rename);
@@ -557,13 +559,16 @@ export function movePathWithFallback(
 function movePathWithFallbackInner(
   sourcePath: string,
   targetPath: string,
-  rename: typeof renameSync,
+  rename: typeof renameSync
 ): string | undefined {
   let firstErrorCode: string | undefined;
   try {
     rename(sourcePath, targetPath);
     return undefined;
   } catch (error) {
+    // EXDEV=跨设备直接降级；EPERM/EBUSY 全平台短退避重试吸收瞬态占用——
+    // main(#771) 的测试已在 Ubuntu 钉死该语义；POSIX 挂载点等永久占用场景由
+    // 「复制成功后源清理失败保副本+告警」兜底，不会清空挂载内容（#552 合并裁定）
     const code = errnoOf(error);
     if (code !== "EXDEV" && code !== "EPERM" && code !== "EBUSY") {
       throw error;

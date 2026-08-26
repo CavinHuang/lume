@@ -364,28 +364,6 @@ describe("agent-thread-manager advanced ops", () => {
     expect(existsSync(runtimeCoreSessionDir)).toBeFalse();
   });
 
-  test("deleteAgentThread 应回收审批会话状态（#519：grants/bypassed/denials 随线程删除清理）", () => {
-    const session = createAgentThread("delete approval state");
-
-    markToolPermissionSessionBypassed(session.id);
-    markToolFingerprintAllowed(session.id, "fp-delete-approval");
-    recordPermissionDenial({
-      threadId: session.id,
-      toolName: "Bash",
-      rawInput: { command: "rm -rf /" },
-      reasonCode: "denied_by_user"
-    });
-    expect(runtimePermissionSessionStore.isBypassed(session.id)).toBeTrue();
-    expect(runtimePermissionSessionStore.isFingerprintGranted(session.id, "fp-delete-approval")).toBeTrue();
-    expect(getPermissionDeniedSummary(session.id)).toContain("已拒绝的工具操作");
-
-    deleteAgentThread(session.id);
-
-    expect(runtimePermissionSessionStore.isBypassed(session.id)).toBeFalse();
-    expect(runtimePermissionSessionStore.isFingerprintGranted(session.id, "fp-delete-approval")).toBeFalse();
-    expect(getPermissionDeniedSummary(session.id)).toBe("");
-  });
-
   test("deleteAgentThread 回收审批会话与拒绝记录（#519）", () => {
     const session = createAgentThread("权限清理会话");
     const neighbor = createAgentThread("相邻会话");
@@ -411,6 +389,7 @@ describe("agent-thread-manager advanced ops", () => {
     deleteAgentThread(neighbor.id);
     expect(runtimePermissionSessionStore.isBypassed(neighbor.id)).toBeFalse();
   });
+
 
   test("truncateAgentMessagesFrom 应直接重建裁剪后的 transcript", () => {
     const session = createAgentThread("truncate transcript");

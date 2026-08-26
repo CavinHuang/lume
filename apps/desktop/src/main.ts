@@ -211,6 +211,7 @@ const HEALTHCHECK_TIMEOUT_MS = 45_000
 // (UTF-16 code units)。sidecar 对超限帧静默丢弃且错误响应不带 id,pending
 // 查表必 miss,caller 只能干等 45s 超时——发送端预检让 caller 立即得明确错误。
 const SIDECAR_RPC_MESSAGE_LIMIT_UNITS = 96 * 1024 * 1024
+
 // 长等待档位：首装搜索后端 = Python 下载 120s + 解压 + pip 安装 120s（#552 动线3），
 // 通用 45s 上限必然假失败。仅白名单方法使用，不影响常规 RPC 的故障感知速度。
 const LONG_RPC_TIMEOUT_MS = 300_000
