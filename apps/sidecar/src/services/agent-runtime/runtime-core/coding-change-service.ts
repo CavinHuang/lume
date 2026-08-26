@@ -29,6 +29,9 @@ const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024;
 const GIT_TIMEOUT_MS = 10_000;
 const GIT_PUBLISH_TIMEOUT_MS = 120_000;
 const MAX_REVIEW_SEARCH_OUTPUT_BYTES = 16 * 1024 * 1024;
+// 字符串版 runGitCommand 的输出水位：binary diff（--binary --full-index）可达数百 MB，
+// 无上限累积会以 UTF-16 翻倍驻留内存。超限 kill 并返回 null，调用方已有 null=失败分支。
+const MAX_GIT_TEXT_OUTPUT_BYTES = 16 * 1024 * 1024;
 const MAX_BLAME_CACHE_ENTRIES = 128;
 const blameCache = new Map<string, CodingBlameResult>();
 const SHOULD_ISOLATE_GIT_SPAWN = "bun" in process.versions;
@@ -56,7 +59,19 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     }
     child.stdout.setEncoding("utf8");
     let stdout = "";
-    child.stdout.on("data", (chunk) => { stdout += chunk; });
+    let stdoutBytes = 0;
+    let overflowed = false;
+    child.stdout.on("data", (chunk) => {
+      if (overflowed) return;
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes > MAX_GIT_TEXT_OUTPUT_BYTES) {
+        overflowed = true;
+        stdout = "";
+        child.kill();
+        return;
+      }
+      stdout += chunk;
+    });
     const timeout = setTimeout(() => {
       child.kill();
       finish(null);
@@ -67,7 +82,7 @@ const GIT_COMMAND_WORKER_SOURCE = String.raw`
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      finish(code === 0 ? stdout : null);
+      finish(!overflowed && code === 0 ? stdout : null);
     });
   });
 `;
@@ -1742,7 +1757,19 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
     }
     child.stdout?.setEncoding("utf8");
     let stdout = "";
-    child.stdout?.on("data", (chunk) => { stdout += chunk; });
+    let stdoutBytes = 0;
+    let overflowed = false;
+    child.stdout?.on("data", (chunk) => {
+      if (overflowed) return;
+      stdoutBytes += Buffer.byteLength(chunk, "utf8");
+      if (stdoutBytes > MAX_GIT_TEXT_OUTPUT_BYTES) {
+        overflowed = true;
+        stdout = "";
+        child.kill();
+        return;
+      }
+      stdout += chunk;
+    });
     const timeout = setTimeout(() => {
       child.kill();
       finish(null);
@@ -1753,7 +1780,7 @@ function runGitCommand(args: string[], cwd: string): Promise<string | null> {
     });
     child.on("close", (code) => {
       clearTimeout(timeout);
-      finish(code === 0 ? stdout : null);
+      finish(!overflowed && code === 0 ? stdout : null);
     });
   });
 }
