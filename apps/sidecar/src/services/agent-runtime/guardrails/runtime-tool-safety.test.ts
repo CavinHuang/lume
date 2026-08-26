@@ -136,7 +136,13 @@ describe("runtime-tool-safety", () => {
       "del \\",
       "Remove-Item ~",
       "Remove-Item \"$HOME\"",
-      "ri $env:USERPROFILE"
+      "ri $env:USERPROFILE",
+      // 括号包裹的裸主目录标记（配对闭合支）；显式 pwsh 前缀的裸载荷
+      "Remove-Item ($home)",
+      "rd (~)",
+      "pwsh -NoProfile -Command Remove-Item C:\\",
+      // 行首空白缩进命令位（锚集去空格成员后 ^ 分支自带 \s*）
+      "  Remove-Item ~"
     ]) {
       expect(evaluateRuntimeToolSafety("Bash", { command }, POWERSHELL_SHELL)).toEqual({
         behavior: "deny",
