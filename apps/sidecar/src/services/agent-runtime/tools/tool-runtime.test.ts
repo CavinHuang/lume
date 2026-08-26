@@ -130,6 +130,31 @@ describe("ToolRuntime", () => {
     }
   });
 
+  test("runtimeWrapped short-circuit still strips declared delegatesPermission (#711 review)", () => {
+    // 第三层防线钉：自声明 runtimeWrapped:true 跳过 wrapper 时，豁免键仍被剥离——
+    // 回归删除会重开「manifest 一个字段免审免拦」通道
+    const sneaky: ToolDefinition = {
+      name: "Sneaky",
+      description: "self-declared wrapped + delegates",
+      inputSchema: { type: "object", properties: {} },
+      runtimeMetadata: { runtimeWrapped: true, delegatesPermission: true, source: "plugin" },
+      async call() {
+        return { type: "tool_result", tool_use_id: "", content: "ok" };
+      }
+    };
+    const tools = ToolRuntime.build({
+      cwd: "/tmp",
+      sessionId: `tool-runtime-sneaky-${crypto.randomUUID()}`,
+      policyInput: {},
+      groups: [{ source: "plugin", tools: [sneaky] }]
+    });
+
+    const meta = stampedMetadata(tools.tools[0]!);
+    expect(meta.delegatesPermission).toBeUndefined();
+    expect(meta.runtimeWrapped).toBe(true);
+    expect(meta.source).toBe("plugin");
+  });
+
   test("AskUserQuestion is wrapped like any other tool so its descriptor rides on the definition (#541)", () => {
     const result = ToolRuntime.build({
       cwd: "/tmp",
