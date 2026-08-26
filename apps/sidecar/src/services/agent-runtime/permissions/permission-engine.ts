@@ -127,9 +127,11 @@ export class PermissionEngine {
     }
 
     if (input.classifierEnabled === false) {
+      // 专属归因（#707）：开关 UI 化后此分支是普通用户可达主路径，文案须与设置页
+      // 「风险分类器」开关闭环，不能误导用户去排查不存在的 metadata 问题
       return approval(
-        "metadata_requires_approval",
-        "工具 metadata 要求确认该工具调用",
+        "classifier_disabled_requires_approval",
+        "风险分类器已关闭，该操作需要用户确认",
         riskLevel,
         input
       );
