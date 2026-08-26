@@ -17,7 +17,9 @@ import { join } from "node:path";
 
 mock.module("../agent/agent-service", () => ({
   // 永不 resolve：executeJob 停在 await dispatchAgentRun，job 留在 runningJobs
-  dispatchAgentRun: () => new Promise<void>(() => {})
+  dispatchAgentRun: () => new Promise<void>(() => {}),
+  // #587 起 runner 还导入此导出；mock 工厂须枚举全量被导出（bun 缺具名导出即抛）
+  onAgentInteractionResolved: () => () => {}
 }));
 
 mock.module("../channel/channel-manager", () => ({
