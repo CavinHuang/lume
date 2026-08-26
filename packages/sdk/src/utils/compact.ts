@@ -476,8 +476,9 @@ function validateSummary(text: string, requiredHeadings: string[]): CompactionFa
  * 摘要输入上限裁切（#709 第 6 项）：序列化文本无界时，小窗模型的摘要请求自身
  * 超窗必败、×3 烧完熔断。按模型窗口给输入定预算，超限保头（目标）保尾（近期
  * 进展）截中。密度不均匀时全文平均外推会低估保留区 token（#725 review R5），
- * 故切后复测、超限按实测密度再收缩，至多 4 轮收敛。治本是给模型显式配置
- * 真实 contextWindow。
+ * 故切后复测、超限按实测密度再收缩，至多 6 轮收敛（自然分布实测 ≤3 轮；
+ * budget 极小时固定 marker 可大于比例余量致不收敛，生产路径由调用方 2048
+ * 下限钳住）。治本是给模型显式配置真实 contextWindow。
  */
 export function truncateSerializedConversation(text: string, inputBudgetTokens: number): string {
   // 收缩目标低于预算 ~4%：给截断 marker 与密度估计残差留余量，避免高密度
@@ -510,9 +511,16 @@ async function generateSummary(
   // previousSummary 随压缩轮次单调膨胀且不受 maxTokens 约束（#725 review R5），
   // 须与序列化文本共享窗口预算，否则长会话数轮后总输入仍破窗。
   const summaryTokens = options.previousSummary ? estimateTokens(options.previousSummary) : 0
+  // 小窗模型下固定输出预算会把输入挤到负数：同步收缩 maxTokens 保证
+  // 输入 + 输出 + margin + summary 恒落窗（#725 review S2）；大窗时原值直通零回归。
+  const usableWindow = Math.max(
+    0,
+    getContextWindowSize(model) - SUMMARY_INPUT_SAFETY_MARGIN_TOKENS - summaryTokens,
+  )
+  const effectiveMaxTokens = Math.max(512, Math.min(maxTokens, usableWindow - 2_048))
   const inputBudgetTokens = Math.max(
-    2_048,
-    getContextWindowSize(model) - maxTokens - SUMMARY_INPUT_SAFETY_MARGIN_TOKENS - summaryTokens,
+    1_024,
+    Math.min(2_048, usableWindow - effectiveMaxTokens),
   )
   const conversationText = truncateSerializedConversation(serializeConversation(messages), inputBudgetTokens)
   let prompt = `<conversation>\n${conversationText}\n</conversation>\n\n`
@@ -527,7 +535,7 @@ async function generateSummary(
 
   const response = await provider.createMessage({
     model,
-    maxTokens,
+    maxTokens: effectiveMaxTokens,
     system: SUMMARIZATION_SYSTEM_PROMPT,
     messages: [{ role: 'user', content: prompt }],
     abortSignal: options.abortSignal,
@@ -600,8 +608,12 @@ function failureResult(
       // proactive failures (#567 item 2). manual 触发失败烧共享熔断是有意的
       // （#709 第 7 项语义确认）：manual 与 auto 走同一摘要链路，连续失败即链路
       // 坏，auto 继续尝试只会重复烧钱；manual 成功会清零重新武装 auto。
+      // 'aborted' 是用户意图而非链路坏证据，豁免——否则跨 run 持久化后连续
+      // 手动中断慢压缩会粘死 auto（#725 review S4）。
       consecutiveFailures:
-        trigger === 'prompt_too_long' ? state.consecutiveFailures : state.consecutiveFailures + 1,
+        trigger === 'prompt_too_long' || failureReason === 'aborted'
+          ? state.consecutiveFailures
+          : state.consecutiveFailures + 1,
     },
   }
 }

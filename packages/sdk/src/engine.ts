@@ -643,11 +643,13 @@ export class QueryEngine {
         failureReason: result.failureReason,
         retainedTokens: result.retainedTokens,
         retainedMessageCount: result.retainedMessageCount,
-        state: result.state ?? {
-          ...this.compactState,
-          compacted: true,
-          consecutiveFailures: 0,
-        },
+        state: result.state ?? (result.compacted === false
+          ? this.compactState
+          : {
+            ...this.compactState,
+            compacted: true,
+            consecutiveFailures: 0,
+          }),
         metadata: result.metadata,
         usage: result.usage,
       }

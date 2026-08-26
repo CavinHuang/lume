@@ -89,7 +89,7 @@ import { getAgentSubmissionStore } from "./agent-submission-store";
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" | "stopped" }) => void;
   /** options.fromActiveRun=true 表示错误来自 run 执行链(runtime 会话内失败)——
    * 终值已由事件总线 run.end{isError} 单源交付,消费方不得再合成 run.failed(T7c)。 */
   onError: (error: string, options?: { fromActiveRun?: boolean }) => void;
@@ -1025,6 +1025,9 @@ async function finalizeAgentSendStage({
       durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length
     });
+    // aborted 也是终态：必须走 onComplete 让下游（IM 卡片 finish/订阅退订）
+    // 收尾，否则监听器随 /stop 路径永久残留（#725 review S1）。
+    emit.onComplete({ reason: "stopped" });
   }
   if (runtimeResult.status === "errored") {
     log.error("[Agent 会话] 运行失败", {

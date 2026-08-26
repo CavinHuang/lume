@@ -118,7 +118,13 @@ describe("renderImRunCard 压缩中间态标题（#709 第 4 项）", () => {
   });
 
   test("compacting 残留 + 终态时显示终态标题而非压缩标题（#725 review R8）", () => {
-    const state: ImRunCardState = { status: "completed", blocks: [], startedAtMs: 1000, endedAtMs: 5000, compacting: true };
+    // 走真实 reducer 链路产出终态（terminal() spread 会残留 compacting）
+    let state = initialImRunCardState(1000);
+    state = reduceImRunCardEvent(state, baseEvent({ type: "context.compaction.started" }));
+    expect(state.compacting).toBe(true);
+    state = reduceImRunCardEvent(state, baseEvent({ type: "run.completed" }), 5000);
+    expect(state.status).toBe("completed");
+    expect(state.compacting).toBe(true);
     expect(renderImRunCard(state).header.title.content).toBe("已完成");
   });
 });

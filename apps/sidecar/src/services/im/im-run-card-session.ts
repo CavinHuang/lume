@@ -144,35 +144,25 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
   // 直喂 reducer，幂等由其引用相等保证；终态退订防泄漏。
   const runtimeStatuses = getAgentRuntimeStatusManager();
   let statusPhaseCompacting = false;
+  const applyCompactionState = (compacting: boolean): void => {
+    statusPhaseCompacting = compacting;
+    const now = new Date().toISOString();
+    stream.apply({
+      id: `card:compaction:${compacting ? "started" : "completed"}:${now}`,
+      type: compacting ? "context.compaction.started" : "context.compaction.completed",
+      threadId,
+      runId: "",
+      createdAt: now,
+      trigger: "auto",
+      preTokens: 0,
+      policy: "",
+      source: ""
+    } as LumeRuntimeEvent);
+  };
   const unsubRuntimeStatus = runtimeStatuses.subscribe((status) => {
     if (finished || !opening || status.threadId !== threadId) return;
     const compacting = status.phase === "compacting";
-    if (compacting === statusPhaseCompacting) return;
-    statusPhaseCompacting = compacting;
-    const now = new Date().toISOString();
-    stream.apply(compacting
-      ? {
-        id: `card:compaction:started:${now}`,
-        type: "context.compaction.started",
-        threadId,
-        runId: "",
-        createdAt: now,
-        trigger: "auto",
-        preTokens: 0,
-        policy: "",
-        source: ""
-      } as LumeRuntimeEvent
-      : {
-        id: `card:compaction:completed:${now}`,
-        type: "context.compaction.completed",
-        threadId,
-        runId: "",
-        createdAt: now,
-        trigger: "auto",
-        preTokens: 0,
-        policy: "",
-        source: ""
-      } as LumeRuntimeEvent);
+    if (compacting !== statusPhaseCompacting) applyCompactionState(compacting);
   });
 
   const ensureOpened = (): void => {
@@ -188,19 +178,7 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
       // 对齐开卡前已置位的压缩态（订阅回调对未开卡期间的变化不落状态）
       const current = runtimeStatuses.get(threadId);
       if (current?.phase === "compacting" && !statusPhaseCompacting) {
-        statusPhaseCompacting = true;
-        const now = new Date().toISOString();
-        stream.apply({
-          id: `card:compaction:started:${now}`,
-          type: "context.compaction.started",
-          threadId,
-          runId: "",
-          createdAt: now,
-          trigger: "auto",
-          preTokens: 0,
-          policy: "",
-          source: ""
-        } as LumeRuntimeEvent);
+        applyCompactionState(true);
       }
       return ok;
     });

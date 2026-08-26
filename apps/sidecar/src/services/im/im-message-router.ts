@@ -101,7 +101,7 @@ export interface ImMessageRouterDeps {
 type ImAgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" | "stopped" }) => void;
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
@@ -806,7 +806,11 @@ export function createImAgentStreamEmitter(
       }
     },
     onComplete: (payload) => {
-      // 卡片终态：达到轮次上限/重复护栏单独标注，其余按完成
+      // 卡片终态：达到轮次上限/重复护栏单独标注，用户停止映射中断态，其余按完成
+      if (payload?.reason === "stopped") {
+        cardSession?.finish({ kind: "interrupted" });
+        return;
+      }
       cardSession?.finish({
         kind: payload?.reason === "max_turns" || payload?.reason === "repeat_guard" ? "turn_limited" : "completed"
       });

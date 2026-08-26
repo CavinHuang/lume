@@ -1628,7 +1628,9 @@ describe("Agent session message uuid realignment (#363)", () => {
         message.role === "user"
         && Array.isArray(message.content)
         && (message.content as any[]).some((block) => block?.type === "tool_result"))
+      expect(toolResultMessage).toBeDefined()
       const block = (toolResultMessage!.content as any[]).find((b) => b?.type === "tool_result")
+      expect(block).toBeDefined()
       // live 推送与重建路径共享同一投影：私有字段不落持久轨，台账事实验形后存活
       expect(block._meta).toEqual({
         computerUseAction: { actionId: "action-live", action: "click", phase: "verified", window: { id: 3, app: "IDE" } },
@@ -1666,11 +1668,12 @@ describe("Agent session message uuid realignment (#363)", () => {
             failureReason: "max_tokens" as const,
           }
         },
-      } as any,
+      },
     })
 
     try {
-      for (const expectedAttempts of [1, 2]) {
+      // 第 4 次 run 熔断门已关（failures=3 不再尝试）：N 封顶在 3
+      for (const expectedAttempts of [1, 2, 3, 3]) {
         let lastError = ""
         for await (const event of agent.query(`turn ${expectedAttempts}`)) {
           if (event.type === "result" && event.subtype === "error_during_execution") {

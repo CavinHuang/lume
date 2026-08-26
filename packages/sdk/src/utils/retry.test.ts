@@ -115,7 +115,7 @@ describe("computeRetryDelay (#351)", () => {
 });
 
 describe("isPromptTooLongError widened recognition (#567 item 1)", () => {
-  test("413 is unambiguous", () => {
+  test("413 without an HTML body enters recovery", () => {
     expect(isPromptTooLongError({ status: 413, message: "Payload Too Large" })).toBe(true);
   });
 
@@ -145,10 +145,18 @@ describe("isPromptTooLongError widened recognition (#567 item 1)", () => {
       status: 400,
       message: "The input token count (123456) exceeds the maximum number of tokens allowed (100000)."
     })).toBe(true);
+    // TGI router answers ValidationError with HTTP 422 (#725 review S3)
+    expect(isPromptTooLongError({
+      status: 422,
+      message: "Input validation error: `inputs` must have less than 4096 tokens"
+    })).toBe(true);
+    // OpenAI-compat gateways normalize the same failure to 400
     expect(isPromptTooLongError({
       status: 400,
       message: "Input validation error: `inputs` must have less than 4096 tokens"
     })).toBe(true);
+    // Non-overflow 422s stay out of recovery
+    expect(isPromptTooLongError({ status: 422, message: "invalid temperature" })).toBe(false);
   });
 
   test("413 gateway HTML body-limit pages do not enter recovery (#709 item 3)", () => {
@@ -186,8 +194,8 @@ describe("isPromptTooLongError widened recognition (#567 item 1)", () => {
       message: "Unable to submit request because the input token count is 135538 but model only supports up to 131072"
     })).toBe(true);
     expect(isPromptTooLongError({
-      status: 400,
-      message: "Input validation error: `inputs` tokens + max_new_tokens must be <= 1024"
+      status: 422,
+      message: "Input validation error: `inputs` tokens + `max_new_tokens` must be <= 1024. Given: 1872"
     })).toBe(true);
   });
 });
