@@ -401,11 +401,17 @@ export function resolveAuthorizedBrowserUploadPaths(
             ? candidateInput
             : join(root.root, candidateInput),
         );
-        if (!isWithin(root.root, candidate)) continue;
+        // 外部入参为词法路径而 root 已 realpath 化（macOS tmpdir /var→
+        // /private/var）：归属判定前把 candidate 规范化到同一口径，
+        // 否则合法上传被误判 scope 外
+        const canonicalCandidate = existsSync(candidate)
+          ? realpathSync(candidate)
+          : candidate;
+        if (!isWithin(root.root, canonicalCandidate)) continue;
         ref = {
           source: root.source,
           scopeId: root.scopeId,
-          relativePath: relative(root.root, candidate).split(sep).join("/"),
+          relativePath: relative(root.root, canonicalCandidate).split(sep).join("/"),
         };
         break;
       }

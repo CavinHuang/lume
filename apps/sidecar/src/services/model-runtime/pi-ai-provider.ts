@@ -146,9 +146,24 @@ export interface StreamThinkingOptions {
  * 模型能力自行钳制(xhigh/max 无 thinkingLevelMap 时自动折到 high)。
  * 预算键必须落在钳制后的档位上:pi-ai 的 clampReasoning 会把 xhigh/max 折成 high。
  *
- * thinking 缺失(未选关闭)保留旧径 reasoning:"medium":advisor/memory-v2/suggest/
- * vision-router 等不经 engine 的直连消费方不设 thinking,若翻转成 {} 会向各渠
- * 显式下发关闭信号,改变其出网形态(#631 review)——仅显式 disabled 返回 {}。
+ * thinking 缺失(未选关闭)保留旧径 reasoning:"medium":不经 engine、直连
+ * createConnectionLlmProvider/createLazyConnectionLlmProvider 的辅助消费方不设
+ * thinking,若翻转成 {} 会向各渠显式下发关闭信号,改变其出网形态(#631 review)
+ * ——仅显式 disabled 返回 {}。
+ *
+ * 【agent.thinkingLevel 豁免清单(#670 文档化)】下列消费方恒按 medium 出网
+ * (provider 兜底 reasoning:"medium"),不受 UI 思考档位控制——均为后台辅助
+ * 任务,避免深思考烧预算,也不随用户「关闭」一起停(记忆抽取等依赖思考质量)。
+ * 全部共用本兜底,无一处单独传 effort:
+ * - advisor 二审(advisor-service.ts)
+ * - memory-v2 五服务:抽取/query-planner/会话摘要/persona/rerank
+ * - suggest 分析器(suggest/analyst.ts)
+ * - reading / routine 日报 LLM 适配器
+ * - 桌面提案生成(desktop-proposal-generator.ts)
+ * - 划词编辑(file-selection-edit-service.ts)
+ * - 技能进化(skill-evolution-service.ts)
+ * - computer-use 视觉路由(vision-router 探测+描述)
+ * - 欢迎页建议 + 会话标题生成(agent-service.ts 内联 createMessage)
  */
 export function resolveStreamThinkingOptions(params: CreateMessageParams): StreamThinkingOptions {
   const thinking = params.thinking;
