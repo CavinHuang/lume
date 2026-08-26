@@ -259,7 +259,9 @@ async function ensureManagedPythonReady(): Promise<boolean> {
   const url = `https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_BUILD_DATE}/${archiveName}`;
 
   try {
-    await rm(tempRoot, { recursive: true, force: true });
+    // 预清理失败（上次强杀残留被扫描器锁住）不得永久阻断安装：downloadFile
+    // 的 createWriteStream 会截断既有目标，残件可被覆盖
+    await rm(tempRoot, { recursive: true, force: true }).catch(() => {});
     await mkdir(extractPath, { recursive: true });
     await downloadFile(url, archivePath);
     const extract = await runCommand("tar", ["-xzf", archivePath, "-C", extractPath, "--strip-components", "1"], {
@@ -319,51 +321,96 @@ async function downloadFile(url: string, destination: string): Promise<void> {
     await new Promise<void>((resolve, reject) => {
       let settled = false;
       let activeRequest: http.ClientRequest | null = null;
+      let idleTimer: ReturnType<typeof setTimeout> | undefined;
+      const clearIdle = () => {
+        if (idleTimer !== undefined) {
+          clearTimeout(idleTimer);
+          idleTimer = undefined;
+        }
+      };
       const finish = (error?: Error) => {
         if (settled) return;
         settled = true;
         clearTimeout(totalTimer);
+        clearIdle();
         if (error) reject(error);
         else resolve();
+      };
+      // 空闲检测不用 request.setTimeout——Bun 下响应中期不触发，以 data 事件
+      // 喂狗的自管定时器跨运行时可靠（覆盖连接建立到首字节前与传输中途停滞）
+      const kickIdle = () => {
+        clearIdle();
+        idleTimer = setTimeout(() => {
+          const error = new Error(`下载停滞超过 ${DOWNLOAD_IDLE_TIMEOUT_MS / 1000}s`);
+          activeRequest?.destroy(error);
+          finish(error);
+        }, DOWNLOAD_IDLE_TIMEOUT_MS);
       };
       const totalTimer = setTimeout(() => {
         activeRequest?.destroy(new Error(`下载总时长超时（${DOWNLOAD_TOTAL_TIMEOUT_MS / 1000}s）`));
         finish(new Error(`下载超时: ${url}`));
       }, DOWNLOAD_TOTAL_TIMEOUT_MS);
+      totalTimer.unref();
       const visit = (target: string, redirects: number) => {
         if (redirects > 10) {
           finish(new Error(`下载失败，重定向次数过多: ${url}`));
           return;
         }
         const client = target.startsWith("https:") ? https : http;
-        const request = client.get(target, (response) => {
-          const location = response.headers.location;
-          if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
-            response.resume(); // 丢弃 3xx 响应体并销毁旧响应，再跟进下一跳
-            visit(new URL(location, target).toString(), redirects + 1);
-            return;
-          }
-          if (response.statusCode !== 200) {
-            finish(new Error(`下载失败，HTTP ${response.statusCode}: ${target}`));
-            return;
-          }
-          const file = createWriteStream(destination);
-          response.pipe(file);
-          file.on("finish", () => file.close(() => finish()));
-          file.on("error", finish);
-          response.on("error", finish);
-        });
+        let request: http.ClientRequest;
+        try {
+          request = client.get(target, (response) => {
+            // 必须挂在分支之前：3xx 排空期与非 200 的 socket RST 无监听会
+            // 逃逸成 uncaughtException 计击五击止损通道（#548）
+            response.on("error", finish);
+            const location = response.headers.location;
+            if (response.statusCode && response.statusCode >= 300 && response.statusCode < 400 && location) {
+              let nextUrl: string;
+              try {
+                nextUrl = new URL(location, target).toString();
+              } catch {
+                // 畸形 Location 在 emit 栈内同步抛出会直通 uncaughtException，须显式收口
+                response.resume();
+                finish(new Error(`下载失败，非法重定向地址: ${location}`));
+                return;
+              }
+              response.resume(); // 排空 3xx 响应体释放连接，再跟进下一跳
+              visit(nextUrl, redirects + 1);
+              return;
+            }
+            if (response.statusCode !== 200) {
+              response.resume(); // 排空错误响应体释放 socket
+              finish(new Error(`下载失败，HTTP ${response.statusCode}: ${target}`));
+              return;
+            }
+            const file = createWriteStream(destination);
+            response.pipe(file);
+            response.on("data", kickIdle); // 喂狗：每块数据重置空闲计时
+            file.on("finish", () => file.close((closeError) => closeError ? finish(closeError) : finish()));
+            file.on("error", finish);
+          });
+        } catch (error) {
+          // 非 http(s) 协议等同步抛错必须经 finish 清理定时器，否则钉住事件循环
+          finish(error instanceof Error ? error : new Error(String(error)));
+          return;
+        }
         activeRequest = request;
-        // 空闲超时：传输中途停滞（对端停摆/连接半开）触发 destroy → error → finish
-        request.setTimeout(DOWNLOAD_IDLE_TIMEOUT_MS, () => {
-          request.destroy(new Error(`下载停滞超过 ${DOWNLOAD_IDLE_TIMEOUT_MS / 1000}s`));
-        });
+        kickIdle();
         request.on("error", finish);
       };
       visit(url, 0);
     });
   } catch (error) {
-    await rm(destination, { force: true }).catch(() => {}); // 删半截文件防误用
+    // 删半截文件防误用；Windows 实时扫描器常在写完瞬间持锁，短退避重试
+    for (let attempt = 0; attempt < 3; attempt++) {
+      try {
+        await rm(destination, { force: true });
+        break;
+      } catch {
+        if (attempt === 2) break; // 删不掉只能遗留残件，不影响原始错误上抛
+        await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+      }
+    }
     throw error;
   }
 }
