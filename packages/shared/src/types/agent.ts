@@ -1166,6 +1166,14 @@ export interface AgentToolPermissionGrantSuggestion {
   label: string
 }
 
+/** Edit/Write 类工具的审批前 diff 预览（#560），sidecar 按工具类型生成 */
+export interface AgentToolPermissionPreview {
+  kind: 'diff'
+  path?: string
+  oldText: string
+  newText: string
+}
+
 export interface AgentToolPermissionRequest {
   threadId: string
   /** 所属 runtime runId，用于 durable interruption / checkpoint 关联。 */
@@ -1185,6 +1193,8 @@ export interface AgentToolPermissionRequest {
   matchedRuleId?: string
   classification?: AgentToolPermissionClassification
   grantSuggestion?: AgentToolPermissionGrantSuggestion
+  /** Edit/Write 类工具的 diff 预览；其余工具缺省走单行 input 摘要。 */
+  preview?: AgentToolPermissionPreview
   /** 当前审批策略是否允许授予“始终允许”。 */
   canAllowAlways?: boolean
   input: Record<string, unknown>
