@@ -129,7 +129,8 @@ import {
   applyWorkflowHookEffectsSafely,
 } from "./workflow-hook-safety";
 import { resolvePromptCachePolicy, resolveSdkApiType } from "./request-policy";
-import { humanizeRuntimeErrorMessage } from "../runner/error-message";
+// #289 分层守卫:runtime-core 不得引用上层 runner——humanize 已下沉 shared,直取底层
+import { humanizeRuntimeErrorMessage } from "@lume/shared";
 import {
   getResolvedAgentTools,
 } from "./run-subagent";

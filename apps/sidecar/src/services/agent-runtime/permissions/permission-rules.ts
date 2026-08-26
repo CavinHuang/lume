@@ -87,7 +87,11 @@ export const COMMAND_CONNECTOR_PATTERN = /[;&|<>`]|\$\(/;
 export function allowsCommandScopeGrant(canonicalName: string, key: string): boolean {
   if (canonicalName !== "bash") return true;
   const analysis = analyzeBashCommand(key);
-  if (analysis.status === "simple") return true;
+  if (analysis.status === "simple") {
+    // 三轮 CI 实锤(Ubuntu 有 natives):tree-sitter 把「a && b」这类 list
+    // 也判 simple(逐段简单),command 前缀档必须钉死单命令
+    return analysis.commands.length === 1;
+  }
   if (isReadOnlyShellInput({ command: key })) return true;
   // 解析器不可用的平台（如部分 Windows 构建 analyzeBashCommand 恒
   // parse-unavailable）退守字符串级检查：含连接符/管道/重定向/命令替换的
