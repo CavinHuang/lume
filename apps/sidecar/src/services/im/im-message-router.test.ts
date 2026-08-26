@@ -7,7 +7,7 @@ import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import { updateLumeConfigSection } from "../system/lume-config-service";
 import { createImAgentStreamEmitter, routeInboundImMessage } from "./im-message-router";
 import { createImAccount } from "./im-config-manager";
-import { upsertImThreadBinding } from "./im-thread-binding-store";
+import { getImThreadBindingByPeer, upsertImThreadBinding } from "./im-thread-binding-store";
 
 describe("im-message-router", () => {
   let prevConfigDir: string | undefined;
@@ -238,6 +238,49 @@ describe("im-message-router", () => {
         })
       })
     }));
+  });
+
+  test("绑定线程被归档后消息换绑新建会话，不再路由进不可见线程(#588)", async () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "user-stale",
+      threadId: "thread-archived",
+      contextToken: "ctx-stale"
+    });
+
+    const createdThreads: string[] = [];
+    const sent: AgentSendInput[] = [];
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "user-stale",
+      text: "还在吗",
+      contextToken: "ctx-stale"
+    }, {
+      getThreadMeta: () => ({ id: "thread-archived", status: "archived" } as never),
+      createThread() {
+        const id = `thread-new-${createdThreads.length + 1}`;
+        createdThreads.push(id);
+        return { id };
+      },
+      sendMessage(input) {
+        sent.push(input);
+      }
+    });
+
+    expect(createdThreads).toEqual(["thread-new-1"]);
+    expect(sent.map((item) => item.threadId)).toEqual(["thread-new-1"]);
+    // 换绑后旧绑定不再指向归档线程
+    const rebound = getImThreadBindingByPeer({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "user-stale"
+    });
+    expect(rebound?.threadId).toBe("thread-new-1");
   });
 
   test("rejects Weixin /approve commands when IM text approval is disabled", async () => {

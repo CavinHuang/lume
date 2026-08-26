@@ -937,14 +937,21 @@ export async function routeInboundImMessage(
     const existingBinding = getImThreadBindingByPeer(message);
     return { threadId: existingBinding?.threadId ?? "" };
   }
-  // 陈旧绑定守卫：绑定的线程可能已被桌面端删除。不校验则后续路由对不存在线程
-  // 抛错——WS 渠道静默丢消息，微信渠道 cursor 不推进陷入每秒重投死循环
+  // 陈旧绑定守卫：绑定的线程可能已被桌面端删除或归档/入回收站。不校验则后续
+  // 路由对不存在线程抛错——WS 渠道静默丢消息，微信渠道 cursor 不推进陷入
+  // 每秒重投死循环；归档线程则更隐蔽——消息照常回答但桌面列表里看不到(#588)
   let existing = getImThreadBindingByPeer(message);
-  if (existing && !(deps.getThreadMeta ?? getAgentThreadMeta)(existing.threadId)) {
-    log.warn("IM 绑定指向已删除线程，解除绑定并按新会话处理", {
+  const existingMeta = existing ? (deps.getThreadMeta ?? getAgentThreadMeta)(existing.threadId) : null;
+  // status 缺省视为活跃（存量数据/部分 meta 无该字段），仅明确归档/回收站才换绑
+  if (existing
+    && (!existingMeta
+      || existingMeta.status === "archived"
+      || existingMeta.status === "trashed")) {
+    log.warn("IM 绑定指向已删除/非活跃线程，解除绑定并按新会话处理", {
       provider: message.provider,
       peerId: message.peerId,
-      staleThreadId: existing.threadId
+      staleThreadId: existing.threadId,
+      ...(existingMeta?.status ? { staleStatus: existingMeta.status } : {})
     });
     deleteImThreadBindingByPeer(message);
     existing = null;
