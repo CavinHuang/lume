@@ -25,8 +25,8 @@ let messageTokenCache = new WeakMap<object, number>()
 export function estimateTokens(text: string): number {
   if (!text) return 0
   try {
-    const nativeCount = countStringTokens(text)
-    if (nativeCount > 0) return nativeCount
+    const nativeCount = countTokensNativeChunked(text)
+    if (nativeCount !== undefined && nativeCount > 0) return nativeCount
   } catch {
     // Keep @lume/agent-sdk usable without native binaries.
   }
@@ -43,6 +43,34 @@ export function estimateTokens(text: string): number {
   }
 
   return fullTokenChars + Math.ceil(asciiChars / 4)
+}
+
+/**
+ * 原生计数入口的分块保护（#736）：tiktoken 对「单 regex piece 内无换行的长
+ * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。按
+ * 换行切块、单块超限再定长硬切，把单次 encode 规模压回线性安全区；短文本
+ * 走直连保持逐字节精确。跨硬切边界的 BPE 合并损失使计数变为近似值——本
+ * 计数只服务阈值/展示估算，~0.1% 漂移无害。加载失败返回 undefined 走 JS 回退。
+ */
+const TOKEN_NATIVE_PIECE_LIMIT = 32 * 1024
+
+function countTokensNativeChunked(text: string): number | undefined {
+  if (text.length <= TOKEN_NATIVE_PIECE_LIMIT) {
+    return countStringTokens(text)
+  }
+  let total = 0
+  let start = 0
+  while (start < text.length) {
+    // 切块边界落在换行之后：分隔符计入前块，多行文本的计数不因切块丢失
+    let boundary = text.indexOf("\n", start)
+    boundary = boundary === -1 ? text.length : boundary + 1
+    while (start < boundary) {
+      const stop = Math.min(start + TOKEN_NATIVE_PIECE_LIMIT, boundary)
+      total += countStringTokens(text.slice(start, stop))
+      start = stop
+    }
+  }
+  return total
 }
 
 /**

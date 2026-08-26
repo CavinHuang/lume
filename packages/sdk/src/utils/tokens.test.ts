@@ -30,6 +30,25 @@ describe("token estimation", () => {
 
     expect(tokens).toBe(2_000 + estimateTokens("12345678"))
   })
+
+  // #736：原生 tiktoken 对长同构游程近 O(n²)（256KB 曾实测 30s）。分块保护
+  // 后必须在默认 5s 预算内完成——旧实现跑此钉即超时显形。natives 缺席时
+  // JS 回退本就线性，跳过不浪费。
+  test.skipIf(!isNativeAvailable())("long uniform runs complete linearly via chunked counting (#736)", () => {
+    const text = "o".repeat(256 * 1024)
+    const first = estimateTokens(text)
+    expect(first).toBeGreaterThan(10_000)
+    expect(first).toBeLessThan(1_000_000)
+    expect(estimateTokens(text)).toBe(first)
+  })
+
+  test("#736：多行文本切块后计数与换行符计入自洽（短文本仍走精确直连）", () => {
+    const lines = "alpha beta gamma\n".repeat(4).trimEnd()
+    const withNewlines = estimateTokens(lines)
+    const flattened = estimateTokens(lines.replace(/\n/g, " "))
+    // 换行与空格在 BPE 里量级相近：两种形态计数必须接近而非数量级偏离
+    expect(Math.abs(withNewlines - flattened)).toBeLessThanOrEqual(4)
+  })
 })
 
 describe("estimateMessagesTokens per-message cache", () => {
