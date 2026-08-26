@@ -71,10 +71,13 @@ export const AgentTool: ToolDefinition = {
         type: 'boolean',
         description: 'Run the subagent in the background and return a task ID immediately',
       },
-      subagent_run_id: {
+      isolation: {
         type: 'string',
-        description: 'Internal run id injected by the host runtime. Reused across task events and finalization.',
+        enum: ['none', 'worktree'],
+        description: 'Optional execution isolation. worktree creates a temporary git worktree.',
       },
+      // subagent_run_id 由宿主在派发子代理时编程注入（run-subagent/run-tools 的
+      // forwardedToolInput 覆盖展开），不进 schema——内部字段不应暴露给模型（#540）
     },
     required: ['prompt', 'description'],
   },

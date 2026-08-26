@@ -12,7 +12,7 @@ interface ConnectorToolConfig {
   /** 注入的动作名;缺省注入全部。 */
   enabledActions?: readonly string[];
   readOnlyActions: ReadonlySet<string>;
-  /** 排除的动作(如依赖 transitFiles 的附件下载)。 */
+  /** 排除的动作(缺省注入全部时的黑名单模式)。 */
   excludedActions?: readonly string[];
 }
 
@@ -49,19 +49,23 @@ export const CONNECTOR_TOOL_CONFIGS: readonly ConnectorToolConfig[] = [
   },
   {
     service: "qq_mail",
-    // download_attachment 依赖 transit 文件存储,首版不暴露
-    excludedActions: ["download_attachment"],
     readOnlyActions: MAIL_READ_ONLY,
   },
 ];
 
 function isConnected(service: string): () => boolean {
+  // engine 每轮组装 provider 请求都会调 isEnabled 过滤(#700);凭证读盘解密
+  // 不便宜,2s TTL 内同服务共享一次判定。注入最多延迟 2s 感知连接变化,无害。
+  const TTL_MS = 2_000;
+  let cached: { at: number; value: boolean } | undefined;
   return () => {
+    if (cached && Date.now() - cached.at < TTL_MS) return cached.value;
     try {
-      return hasAnyConnectorCredential(service);
+      cached = { at: Date.now(), value: hasAnyConnectorCredential(service) };
     } catch {
-      return false;
+      cached = { at: Date.now(), value: false };
     }
+    return cached.value;
   };
 }
 

@@ -98,6 +98,22 @@ function buildPostUrl(baseUrl: string, postId: string): string {
 	return postUrl.toString();
 }
 
+/** Discourse 实例探测：/about.json 返回含 about 字段的 JSON（#538 hostname 门） */
+async function isDiscourseInstance(
+	origin: string,
+	timeout: number,
+	signal?: AbortSignal,
+): Promise<boolean> {
+	try {
+		const result = await loadPage(`${origin}/about.json`, { timeout: Math.min(timeout, 5), signal });
+		if (!result.ok) return false;
+		const data = tryParseJson<{ about?: unknown }>(result.content);
+		return Boolean(data?.about);
+	} catch {
+		return false;
+	}
+}
+
 /**
  * Handle Discourse forum URLs via API
  */
@@ -114,6 +130,10 @@ export const handleDiscourse: SpecialHandler = async (
 
 		const basePath = normalizeBasePath(topicMatch?.basePath ?? postMatch?.basePath ?? "");
 		const baseUrl = `${parsed.origin}${basePath}`;
+
+		// hostname 门（#538）：任意站点都可能带 /t/<n> 路径，先确认是 Discourse
+		// 实例再发同源 API 请求（对照 mastodon 的实例探测）
+		if (!(await isDiscourseInstance(parsed.origin, timeout, signal))) return null;
 
 		let requestedPost: DiscoursePost | null = null;
 		let topicId = topicMatch?.topicId ?? null;

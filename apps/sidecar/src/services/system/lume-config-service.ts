@@ -1,4 +1,4 @@
-import { appendFileSync, copyFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
@@ -22,7 +22,6 @@ import {
   type WebSearchProvider
 } from "@lume/shared";
 import { getConfigDir, getLumeConfigAuditPath, getLumeConfigYamlPath } from "../infra/config-paths";
-import { ensureGuanlanReady } from "../infra/guanlan-runtime-service";
 import { createLogger } from "../infra/logger";
 
 interface UpdateLumeConfigSectionInput {
@@ -450,7 +449,7 @@ function normalizeHooksSection(value: unknown): NonNullable<LumeConfigSectionSet
   };
 }
 
-const WEB_SEARCH_PROVIDER_KEYS: WebSearchProvider[] = ["guanlan", "exa", "pipellm", "zhipu", "tavily", "brave", "duckduckgo", "bing"];
+const WEB_SEARCH_PROVIDER_KEYS: WebSearchProvider[] = ["exa", "pipellm", "zhipu", "tavily", "brave", "duckduckgo", "bing"];
 
 function normalizeWebSearchSection(value: unknown): LumeConfigWebSearchSection {
   if (!isPlainObject(value)) return { ...DEFAULT_LUME_WEB_SEARCH };
@@ -473,7 +472,6 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   const providers = config.providers ?? {};
   const enabledProviders = WEB_SEARCH_PROVIDER_KEYS.filter((provider) => providers[provider]?.enabled === true);
   process.env.LUME_WEB_SEARCH_PROVIDERS = enabledProviders.join(",");
-  syncGuanlanEnv(enabledProviders.includes("guanlan"));
 
   const envMap: Partial<Record<WebSearchProvider, string[]>> = {
     brave: ["BRAVE_API_KEY", "LUME_BRAVE_API_KEY"],
@@ -493,39 +491,29 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   }
 }
 
-function syncGuanlanEnv(enabled: boolean): void {
-  process.env.LUME_GUANLAN_ENABLED = enabled ? "1" : "";
-  if (!enabled) {
-    process.env.LUME_GUANLAN_PYTHON = "";
-    return;
-  }
-  const explicitPython = process.env.LUME_PYTHON?.trim();
-  if (explicitPython) {
-    process.env.LUME_GUANLAN_PYTHON = explicitPython;
-    return;
-  }
-  const runtimeRoot = join(getConfigDir(), "runtime", "python");
-  const managedPython = [
-    join(runtimeRoot, "bin", "python3"),
-    join(runtimeRoot, "python.exe")
-  ].find((candidate) => existsSync(candidate));
-  process.env.LUME_GUANLAN_PYTHON = managedPython ?? "";
-  if (!managedPython) {
-    void ensureGuanlanReady()
-      .then((status) => {
-        if (status.ok && status.pythonPath) {
-          process.env.LUME_GUANLAN_PYTHON = status.pythonPath;
-        }
-      })
-      .catch(() => {});
-  }
-}
+export const KNOWN_LUME_SECTION_KEYS: readonly string[] = [
+  "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch",
+  // 顶层文件段(LumeConfigFile),normalizeLumeConfigFile 消费
+  "version", "workspaces",
+];
+const KNOWN_AGENT_KEYS = new Set(["permissionMode", "thinkingLevel", "followUpQueueMode", "maxAutoTurnContinuations"]);
 
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (!isPlainObject(value)) {
     return {};
   }
   const next: LumeConfigSectionSet = {};
+  const knownSections = new Set(KNOWN_LUME_SECTION_KEYS);
+  const droppedTopKeys = Object.keys(value).filter((key) => !knownSections.has(key));
+  const droppedAgentKeys = isPlainObject(value.agent)
+    ? Object.keys(value.agent).filter((key) => !KNOWN_AGENT_KEYS.has(key))
+    : [];
+  if (droppedTopKeys.length > 0 || droppedAgentKeys.length > 0) {
+    log.warn("lume.yaml 含未识别配置键，规范化时已移除（升级 sidecar 或修正拼写）", {
+      ...(droppedTopKeys.length > 0 ? { unknownSections: droppedTopKeys } : {}),
+      ...(droppedAgentKeys.length > 0 ? { unknownAgentKeys: droppedAgentKeys } : {})
+    });
+  }
 
   if (isPlainObject(value.models)) {
     const chat = isPlainObject(value.models.chat) ? value.models.chat : {};
@@ -842,32 +830,25 @@ function writeYamlAtomic(path: string, payload: string): { mtimeMs: number; size
   // tmp 名带 pid+随机串（#706）：裸 Date.now() 双进程同毫秒写互相碰撞，输家
   // 的 rename 撞 ENOENT 后被外层吞掉、调用方静默拿到出厂默认配置。
   const tempPath = join(dir, `lume.yaml.tmp.${process.pid}.${randomUUID().slice(0, 8)}`);
-  const backupPath = join(dir, "lume.yaml.bak");
-  let fingerprint: { mtimeMs: number; size: number; ino: number };
   try {
     writeFileSync(tempPath, payload, "utf-8");
-    // 备份用复制而非先 rename（#706）：rename 会让 path 出现缺失窗口，并发
-    // 读者/写者撞 ENOENT 且不进恢复分支——真实双进程探针 40×ENOENT + 缓存
-    // 投毒面。copy+单次原子 rename 使 path 全程存在，缺失窗口整体消失；
-    // 窗口内代价仅是 .bak 可能短暂超前于最终内容。
-    if (existsSync(path)) copyFileSync(path, backupPath);
+    // 不做 .bak 备份（#727 review 实证）：全仓零读取消费方，纯仪式开销；
+    // 崩溃恢复语义由「读失败回退默认 + 下次惰性规范化重写」承接。
+    // 单次原子 rename 使 path 全程存在，无并发缺失窗口。
     // 指纹在 rename 前对 tmp 自身采样（#727 review）：rename 后再 stat 可能采到
     // 并发后继写者的 inode/mtime，造成「值=本次、指纹=他人」的缓存遮蔽窗口。
     const stats = statSync(tempPath);
-    fingerprint = { mtimeMs: stats.mtimeMs, size: stats.size, ino: stats.ino };
+    const fingerprint = { mtimeMs: stats.mtimeMs, size: stats.size, ino: stats.ino };
     renameSync(tempPath, path);
+    // 防呆钉（#729 review 并发方向）：此处已过 rename 成功点，try 尾段任何
+    // 抛错都会把磁盘新值报成失败（幽灵失败）——sweep 自身双层 catch 永不抛，
+    // 未来改动必须维持该性质或移出 try。
+    sweepStaleConfigTemps(dir);
+    return fingerprint;
   } catch (error) {
     if (existsSync(tempPath)) rmSync(tempPath, { force: true });
     throw error;
   }
-  // bak 清理失败不反噬成功写入：force 只豁免 ENOENT，权限类错误照旧会抛
-  try {
-    rmSync(backupPath, { force: true });
-  } catch {
-    // 残留 .bak 由下一次成功写入覆盖
-  }
-  sweepStaleConfigTemps(dir);
-  return fingerprint;
 }
 
 /** 清理崩溃写者遗留的孤儿 tmp：唯一命名后不再有同名自愈，需显式清扫（#706）。 */

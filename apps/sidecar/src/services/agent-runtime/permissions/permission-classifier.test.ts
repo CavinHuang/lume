@@ -161,6 +161,16 @@ describe("permission classifier", () => {
       riskLevel: "medium",
       shouldAsk: true
     });
+    // iex 分支词边界钉（清单派生重构回归）：全名形态命中 medium；长单词尾部 iex
+    // （maxiex）不得因前词边界丢失而误命中
+    await expect(classifier.classify({ toolName: "Bash", command: "iex $script", shellKind: "powershell" })).resolves.toMatchObject({
+      riskLevel: "medium",
+      shouldAsk: true
+    });
+    await expect(classifier.classify({ toolName: "Bash", command: "cat maxiex.log", shellKind: "powershell" })).resolves.toMatchObject({
+      riskLevel: "low",
+      shouldAsk: false
+    });
     // 换行分隔与 cmd 包裹曾与 guardrail 层一起漏判
     await expect(classifier.classify({ toolName: "Bash", command: "Get-Date\r\ndel \\", shellKind: "powershell" })).resolves.toMatchObject({
       riskLevel: "medium",
@@ -212,5 +222,83 @@ describe("permission classifier", () => {
       riskLevel: "low",
       shouldAsk: false
     });
+  });
+
+  test("content signal reactivates PowerShell vocabulary on bash-configured Windows (#707)", async () => {
+    const classifier = createPermissionClassifier();
+
+    // win32 装 POSIX bash：方言读作 bash、词表曾整层休眠，Remove-Item -Recurse -Force 判 low 免审
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "Remove-Item -Recurse -Force build",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "medium", shouldAsk: true });
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "rd /s /q build",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "medium", shouldAsk: true });
+
+    // -f 不构成危险标志（ri -f 是真实 Ruby docs 用法）：「删除族×标志」组合不得因单 -f 命中
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "ri -f Array#map",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
+
+    // 短别名单独出现不构成信号：POSIX 撞名防误拦口径在 win32 同样保持
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "iex -S mix phx.server",
+      shellKind: "bash",
+      platform: "win32"
+    })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
+
+    // 非 win32 宿主不消费信号（既定精确 bash 读法不翻转）
+    await expect(classifier.classify({
+      toolName: "Bash",
+      command: "Remove-Item -Recurse -Force build",
+      shellKind: "bash",
+      platform: "linux"
+    })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
+  });
+
+  test("llm cache key separates shell dialects (#707)", async () => {
+    let calls = 0;
+    const classifier = createPermissionClassifier({
+      llm: async () => {
+        calls++;
+        return JSON.stringify({ riskLevel: "low", reason: "ok", shouldAsk: false });
+      }
+    });
+
+    const input = { toolName: "Bash", command: "node scripts/build.js" };
+    await classifier.classify({ ...input, shellKind: "bash" });
+    await classifier.classify({ ...input, shellKind: "powershell" });
+
+    expect(calls).toBe(2);
+
+    // 反向钉死：同方言同值仍命中缓存（键纳入方言不得使缓存失效）
+    await classifier.classify({ ...input, shellKind: "bash" });
+    expect(calls).toBe(2);
+  });
+
+  test("uses a neutral explanation for whitelisted-out low-risk commands (#707)", async () => {
+    const classifier = createPermissionClassifier();
+
+    // 该文案经引擎 approval 透传直达审批卡，不得陈述「无风险」与「请确认」自相矛盾
+    const result = await classifier.classify({ toolName: "Bash", command: "node script.js" });
+    expect(result.explanation).toBe("Shell 命令不在自动放行范围内，需要用户确认");
+  });
+
+  test("uses a neutral explanation for the metadata_low fallback (#707)", async () => {
+    const classifier = createPermissionClassifier();
+
+    // skill 等词表外工具走此 fallback，default 档审批卡同样不得出现矛盾归因
+    const result = await classifier.classify({ toolName: "SomeSkillTool" });
+    expect(result.explanation).toBe("该操作不在自动放行范围内，需要用户确认");
   });
 });

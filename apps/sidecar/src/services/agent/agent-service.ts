@@ -30,14 +30,14 @@ import type {
   LumeRuntimeEvent,
   RuntimeCodingReport
 } from "@lume/shared";
-import { AGENT_IPC_CHANNELS, buildConnectionModelRef, FILE_REFERENCE_PROTOCOL_VERSION } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, buildConnectionModelRef, FILE_REFERENCE_PROTOCOL_VERSION, type LumeEffectiveConfig } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import { listChannels, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
   appendAgentThreadSDKMessages,
   getAgentThreadMessages,
   getAgentThreadMeta,
-  getAgentThreadSDKMessages,
+  getRecentAgentThreadSDKMessages,
   readRuntimeCoreTranscriptMessages,
   replaceAgentThreadTranscript,
   tryUpdateAgentThreadMeta
@@ -90,7 +90,7 @@ import { getAgentSubmissionStore } from "./agent-submission-store";
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" | "stopped" }) => void;
   /** options.fromActiveRun=true 表示错误来自 run 执行链(runtime 会话内失败)——
    * 终值已由事件总线 run.end{isError} 单源交付,消费方不得再合成 run.failed(T7c)。 */
   onError: (error: string, options?: { fromActiveRun?: boolean }) => void;
@@ -168,6 +168,9 @@ function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStr
     dispatch.emit.onError(error instanceof Error ? error.message : String(error));
   },
   onQueuedBlocked: (dispatch, error) => {
+    // 校验失败的排队项永远等不到 execute：走 onError 让下游（IM 卡片 finish、
+    // 文本兜底）收尾，否则 emitter 监听随该项悬挂（#725 review S1）。
+    dispatch.emit.onError(error instanceof Error ? error.message : String(error));
     writeLogRecord({
       level: "warn",
       kind: "trace",
@@ -181,6 +184,10 @@ function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStr
       origin: dispatch.input.traceContext?.origin,
       data: { queuedMessageId: dispatch.id, reason: error instanceof Error ? error.message : String(error) }
     });
+  },
+  onQueuedRemoved: (dispatch) => {
+    // 用户移除排队项 = 主动取消：按 stopped 收尾（卡片映射 interrupted 态）
+    dispatch.emit.onComplete({ reason: "stopped" });
   }
   });
 }
@@ -858,8 +865,9 @@ const DEFAULT_MAX_AUTO_TURN_CONTINUATIONS = 3;
 /** 配置上限护栏:防止配置笔误把无人值守成本放大到失控 */
 const HARD_MAX_AUTO_TURN_CONTINUATIONS = 10;
 
-function resolveMaxAutoTurnContinuations(): number {
-  const configured = getEffectiveLumeConfig().agent?.maxAutoTurnContinuations;
+/** #649 follow-up:接受已解析配置以支持 workspace overlay——同段兄弟字段均 workspace-aware,续跑预算不得例外。 */
+function resolveMaxAutoTurnContinuations(config?: LumeEffectiveConfig): number {
+  const configured = (config ?? getEffectiveLumeConfig()).agent?.maxAutoTurnContinuations;
   if (typeof configured !== "number" || !Number.isFinite(configured)) return DEFAULT_MAX_AUTO_TURN_CONTINUATIONS;
   return Math.max(0, Math.min(Math.floor(configured), HARD_MAX_AUTO_TURN_CONTINUATIONS));
 }
@@ -911,12 +919,15 @@ export async function sendAgentMessage(
   }
   directRunThreads.add(threadId);
   try {
-    // 配置只解析一次贯穿全链（review 建议级：外层日志与 gate 判定不得各 resolve 各的）
-    const resolvedMaxContinuations = resolveMaxAutoTurnContinuations();
+    // #649 follow-up:maxContinuations 由 runSendAgentMessage 内按 workspace-aware 配置解析
+    // (prepare 阶段已拿到 effectiveWorkspace),随 outcome 带回供后续轮复用同一判定口径;
+    // 外层不再各自全局解析(同段兄弟字段均 workspace-aware,续跑预算不得例外)
+    let resolvedMaxContinuations: number | undefined;
     // #649 review P1-2:首轮提取一次原始任务贯穿全链——续跑轮 input.userMessage 是裸合成
     // 指令,不显式携带则下一轮恢复上下文把合成指令本身当「原始任务」
     const continuationOriginalTask = extractOriginalTaskText(input.userMessage);
-    let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0, maxContinuations: resolvedMaxContinuations });
+    let outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: 0 });
+    resolvedMaxContinuations = outcome?.maxContinuations ?? resolvedMaxContinuations;
     let continuationCount = 0;
     while (outcome?.autoContinue) {
       continuationCount += 1;
@@ -936,7 +947,7 @@ export async function sendAgentMessage(
         messageMetadata: { ...continuationMetadata, hiddenFromChat: true }
       };
       try {
-        outcome = await runSendAgentMessage(input, emit, { ...options, autoContinuationCount: continuationCount, maxContinuations: resolvedMaxContinuations, continuationOriginalTask });
+        outcome = await runSendAgentMessage(input, emit, { ...(resolvedMaxContinuations !== undefined ? { maxContinuations: resolvedMaxContinuations } : {}), ...options, autoContinuationCount: continuationCount, continuationOriginalTask });
       } catch (error) {
         // 首轮已正常收尾，续跑失败不应把整条发送标成错误;但上一轮终态已被抑制,须补发防悬挂
         log.warn("[Agent 会话] 自动续跑失败，保留已有进度", {
@@ -1133,6 +1144,9 @@ async function finalizeAgentSendStage({
       durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length
     });
+    // aborted 也是终态：必须走 onComplete 让下游（IM 卡片 finish/订阅退订）
+    // 收尾，否则监听器随 /stop 路径永久残留（#725 review S1）。
+    emit.onComplete({ reason: "stopped" });
   }
   if (runtimeResult.status === "errored") {
     log.error("[Agent 会话] 运行失败", {
@@ -1215,7 +1229,8 @@ async function prepareAgentSendStage({
     modelFacingUserMessage = [capabilityProjection.context, modelFacingUserMessage].filter(Boolean).join("\n\n");
   }
   if (!isManualCompactCommand) {
-    const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getAgentThreadSDKMessages(threadId));
+    // #554:发送路径只需文件尾部的后台任务通知,尾部有界读取替代全量解析
+    const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getRecentAgentThreadSDKMessages(threadId));
     if (pendingBackgroundTasks) {
       modelFacingUserMessage = [modelFacingUserMessage, pendingBackgroundTasks].join("\n\n");
     }
@@ -1486,7 +1501,7 @@ async function runSendAgentMessage(
   input: AgentSendInput,
   emit: AgentStreamEmitter,
   options: AgentSendOptions = {}
-): Promise<{ runtimeResult: AgentRuntimeRunResult; autoContinue: boolean } | undefined> {
+): Promise<{ runtimeResult: AgentRuntimeRunResult; autoContinue: boolean; maxContinuations?: number } | undefined> {
   const { threadId, userMessage } = input;
   const completeIfAborted = () => {
     if (!options.abortSignal?.aborted) return false;
@@ -1568,6 +1583,11 @@ async function runSendAgentMessage(
       ) {
         runtimeStatusManager.markCompacting(threadId);
       }
+      // compact_boundary 到达即压缩完成：切回 streaming，phase 不再滞留
+      // compacting 直到 run 终态（#725 review R8：预存流转缺口）。
+      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
+        runtimeStatusManager.markStreaming(threadId);
+      }
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
         if (runtimeCompleted) {
           appendAgentThreadSDKMessages(threadId, [stampedMessage]);
@@ -1634,7 +1654,8 @@ async function runSendAgentMessage(
     abortSignalled: options.abortSignal?.aborted ?? false,
     queuedCount,
     callerBoundsTurns: input.messageMetadata?.maxTurns !== undefined || input.messageMetadata?.automationJobId !== undefined,
-    maxContinuations: options.maxContinuations ?? resolveMaxAutoTurnContinuations()
+    // #649 follow-up:fallback 走 prepare 已解析的 workspace-aware 配置,与同段字段口径一致
+    maxContinuations: options.maxContinuations ?? resolveMaxAutoTurnContinuations(prepared.effectiveLumeConfig)
   };
   const autoContinue = shouldAutoContinueTurnLimited(runtimeResult, autoContinueDecision);
   // #566 可观测性 review F1:四种否决分支(上限/repeat_guard/中止/排队/调用方限定)必须可区分
@@ -1666,7 +1687,7 @@ async function runSendAgentMessage(
     emit,
     terminalEventsSuppressed: autoContinue
   });
-  return { runtimeResult, autoContinue };
+  return { runtimeResult, autoContinue, maxContinuations: autoContinueDecision.maxContinuations };
 }
 
 export function appendAgentMessage(

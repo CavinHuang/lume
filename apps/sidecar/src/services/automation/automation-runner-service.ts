@@ -1,5 +1,12 @@
 import { randomUUID } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  readFileSync,
+  renameSync,
+  statSync,
+  writeFileSync
+} from "node:fs";
 import type {
   AutomationJob,
   AutomationListRunsInput,
@@ -42,7 +49,44 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 }
 
 function appendRun(run: AutomationRun): void {
-  appendFileSync(getAutomationRunsPath(), `${JSON.stringify(run)}\n`, "utf-8");
+  const runsPath = getAutomationRunsPath();
+  appendFileSync(runsPath, `${JSON.stringify(run)}\n`, "utf-8");
+  rotateAutomationRunsIfBloated(runsPath);
+}
+
+// #555:automation-runs.jsonl 只追加、无轮转,三处高频列表入口(自动化页/routine
+// 执行/cron 工具)全量读盘解析的成本随文件永久恶化。软上限触发的尾部截断使文件
+// 有界:平时零开销(stat 一次),超限才一次性原子重写保留最近窗口,频率随增长
+// 趋近于零。
+const RUNS_FILE_SOFT_CAP_BYTES = 8 * 1024 * 1024;
+const RUNS_ROTATE_KEEP_LINES = 4000;
+
+/** 导出仅供测试:截断是数据删除路径,行为需钉死。 */
+export function rotateAutomationRunsIfBloatedForTest(runsPath: string): void {
+  rotateAutomationRunsIfBloated(runsPath);
+}
+
+function rotateAutomationRunsIfBloated(runsPath: string): void {
+  try {
+    if (statSync(runsPath).size < RUNS_FILE_SOFT_CAP_BYTES) return;
+    const lines = readFileSync(runsPath, "utf-8").split("\n").filter(Boolean);
+    if (lines.length <= RUNS_ROTATE_KEEP_LINES) return;
+    const kept = lines.slice(-RUNS_ROTATE_KEEP_LINES);
+    const tmpPath = `${runsPath}.tmp`;
+    writeFileSync(tmpPath, `${kept.join("\n")}\n`, "utf-8");
+    renameSync(tmpPath, runsPath);
+    writeLogRecord({
+      level: "warn",
+      context: "automation",
+      message: "automation runs file rotated",
+      data: {
+        droppedLines: lines.length - kept.length,
+        keptLines: kept.length
+      }
+    });
+  } catch {
+    // 截断失败不阻断追加主流程:下次写入会再次尝试
+  }
 }
 
 function clearSchedules(): void {
@@ -232,9 +276,12 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
       {
         // #649 review P1-1:触顶检测挂 onComplete 的 reason——T7a 后 sidecar 生产不再
         // 构造 run.turn_limited 事件(已迁事件总线 run.end{stopReason:'max_turns'}),
-        // onRuntimeEvent 检测在生产中永不为真
+        // onRuntimeEvent 检测在生产中永不为真。
+        // #649 round3:max_turns 与 repeat_guard 都属「保护机制停止的半途而废」,
+        // 漏 repeat_guard 会让无人值守任务被重复执行保护停下时仍记「任务执行完成」
+        // (im-message-router 同款口径:两个 reason 都归 turn_limited)
         onComplete: (payload) => {
-          if (payload?.reason === "max_turns") turnLimitedStopped = true;
+          if (payload?.reason === "max_turns" || payload?.reason === "repeat_guard") turnLimitedStopped = true;
         },
         onError: (error) => {
           runtimeError = error;
