@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -21,7 +20,7 @@ export const handleWikipedia: SpecialHandler = async (
 		const titleMatch = parsed.pathname.match(/\/wiki\/(.+)/);
 		if (!titleMatch) return null;
 
-		const title = decodeURIComponent(titleMatch[1]);
+		const title = decodeURIComponent(titleMatch[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Use Wikipedia API to get plain text extract

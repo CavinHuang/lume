@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, loadPage } from "./types.js";
@@ -88,7 +87,7 @@ export const handleNvd: SpecialHandler = async (
 		const match = parsed.pathname.match(/\/vuln\/detail\/(CVE-\d{4}-\d+)/i);
 		if (!match) return null;
 
-		const cveId = match[1].toUpperCase();
+		const cveId = (match[1] ?? "").toUpperCase();
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from NVD API

@@ -149,6 +149,34 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'control',
     riskLevel: 'low',
   },
+  finish_agent_task: {
+    name: 'finishagenttask',
+    label: 'FinishAgentTask',
+    description: '子代理完成任务并回传结果',
+    category: 'control',
+    riskLevel: 'medium',
+  },
+  retire_subagent: {
+    name: 'retiresubagent',
+    label: 'RetireSubagent',
+    description: '退役已完成的子代理身份',
+    category: 'control',
+    riskLevel: 'low',
+  },
+  automation_list: {
+    name: 'automation_list',
+    label: 'Automation List',
+    description: '列出自动化任务',
+    category: 'read',
+    riskLevel: 'low',
+  },
+  automation_template: {
+    name: 'automation_template',
+    label: 'Automation Template',
+    description: '查看自动化任务模板',
+    category: 'read',
+    riskLevel: 'low',
+  },
   // === Worktree ===
   enter_worktree: {
     name: 'enter_worktree',

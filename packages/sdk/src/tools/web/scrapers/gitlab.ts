@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import {
 	buildResult,
@@ -30,7 +29,7 @@ function parseGitLabUrl(url: string): GitLabUrl | null {
 		const segments = parsed.pathname.split("/").filter(Boolean);
 		if (segments.length < 2) return null;
 
-		const [namespace, project, ...rest] = segments;
+		const [namespace, project, ...rest] = segments as [string, string, ...string[]];
 
 		// Repo root
 		if (rest.length === 0) {
@@ -40,11 +39,11 @@ function parseGitLabUrl(url: string): GitLabUrl | null {
 		// Skip - prefix
 		if (rest[0] !== "-") return null;
 
-		const [, type, ...remaining] = rest;
+		const [, type, ...remaining] = rest as [string, ...string[]];
 
 		// File: gitlab.com/{ns}/{proj}/-/blob/{ref}/{path}
 		if (type === "blob" && remaining.length >= 2) {
-			const [ref, ...pathParts] = remaining;
+			const [ref, ...pathParts] = remaining as [string, ...string[]];
 			return {
 				namespace,
 				project,
@@ -56,7 +55,7 @@ function parseGitLabUrl(url: string): GitLabUrl | null {
 
 		// Directory: gitlab.com/{ns}/{proj}/-/tree/{ref}/{path}
 		if (type === "tree" && remaining.length >= 1) {
-			const [ref, ...pathParts] = remaining;
+			const [ref, ...pathParts] = remaining as [string, ...string[]];
 			return {
 				namespace,
 				project,
@@ -68,14 +67,14 @@ function parseGitLabUrl(url: string): GitLabUrl | null {
 
 		// Issue: gitlab.com/{ns}/{proj}/-/issues/{id}
 		if (type === "issues" && remaining.length === 1) {
-			const id = parseInt(remaining[0], 10);
+			const id = parseInt(remaining[0] ?? "", 10);
 			if (Number.isNaN(id)) return null;
 			return { namespace, project, type: "issue", id };
 		}
 
 		// MR: gitlab.com/{ns}/{proj}/-/merge_requests/{id}
 		if (type === "merge_requests" && remaining.length === 1) {
-			const id = parseInt(remaining[0], 10);
+			const id = parseInt(remaining[0] ?? "", 10);
 			if (Number.isNaN(id)) return null;
 			return { namespace, project, type: "merge_request", id };
 		}

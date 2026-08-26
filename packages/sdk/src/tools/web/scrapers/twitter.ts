@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { ToolAbortError } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 

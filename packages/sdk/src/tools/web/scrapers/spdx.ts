@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -56,7 +55,7 @@ export const handleSpdx: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/licenses\/([^/]+?)(?:\.html)?\/?$/i);
 		if (!match) return null;
 
-		const licenseId = decodeURIComponent(match[1]);
+		const licenseId = decodeURIComponent(match[1] ?? "");
 		if (!licenseId) return null;
 
 		const fetchedAt = new Date().toISOString();

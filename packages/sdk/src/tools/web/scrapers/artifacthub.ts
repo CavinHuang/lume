@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, loadPage } from "./types.js";
@@ -85,7 +84,7 @@ export const handleArtifactHub: SpecialHandler = async (
 		if (!pkg) return null;
 
 		const displayName = pkg.display_name || pkg.name;
-		const kindLabel = formatKindLabel(kind);
+		const kindLabel = formatKindLabel(kind ?? "");
 
 		let md = `# ${displayName}\n\n`;
 		if (pkg.description) md += `${pkg.description}\n\n`;

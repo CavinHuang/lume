@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { SpecialHandler } from "./types.js";
 import { buildResult, decodeHtmlEntities, formatIsoDate, loadPage } from "./types.js";
@@ -120,6 +119,7 @@ async function renderListing(ids: number[], timeout: number, title: string, sign
 
 	for (let i = 0; i < stories.length; i++) {
 		const story = stories[i];
+		if (!story) continue;
 		output += `${i + 1}. **${story.title}**\n`;
 		if (story.url) {
 			output += `   ${story.url}\n`;

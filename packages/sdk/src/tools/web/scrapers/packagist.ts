@@ -1,7 +1,20 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
+
+interface PackagistVersion {
+	name: string;
+	version: string;
+	version_normalized?: string;
+	description?: string;
+	license?: string[];
+	homepage?: string;
+	source?: { url: string; type: string };
+	require?: Record<string, string>;
+	"require-dev"?: Record<string, string>;
+	authors?: Array<{ name: string; email?: string }>;
+	time?: string;
+}
 
 /**
  * Handle Packagist URLs via JSON API
@@ -19,8 +32,8 @@ export const handlePackagist: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/packages\/([^/]+)\/([^/]+)/);
 		if (!match) return null;
 
-		const vendor = decodeURIComponent(match[1]);
-		const packageName = decodeURIComponent(match[2]);
+		const vendor = decodeURIComponent(match[1] ?? "");
+		const packageName = decodeURIComponent(match[2] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from Packagist JSON API
@@ -35,22 +48,7 @@ export const handlePackagist: SpecialHandler = async (
 				description?: string;
 				time?: string;
 				maintainers?: Array<{ name: string; avatar_url?: string }>;
-				versions?: Record<
-					string,
-					{
-						name: string;
-						version: string;
-						version_normalized?: string;
-						description?: string;
-						license?: string[];
-						homepage?: string;
-						source?: { url: string; type: string };
-						require?: Record<string, string>;
-						"require-dev"?: Record<string, string>;
-						authors?: Array<{ name: string; email?: string }>;
-						time?: string;
-					}
-				>;
+				versions?: Record<string, PackagistVersion>;
 				type?: string;
 				repository?: string;
 				github_stars?: number;
@@ -74,8 +72,7 @@ export const handlePackagist: SpecialHandler = async (
 		if (!pkg) return null;
 
 		// Find latest stable version (prefer non-dev)
-		type VersionInfo = NonNullable<typeof pkg.versions>[string];
-		let latestVersion: VersionInfo | null = null;
+		let latestVersion: PackagistVersion | null = null;
 		let latestVersionKey = "";
 
 		if (pkg.versions) {
@@ -89,7 +86,8 @@ export const handlePackagist: SpecialHandler = async (
 			}
 			// Fallback to dev-master/dev-main if no stable version
 			if (!latestVersion) {
-				latestVersion = pkg.versions["dev-master"] || pkg.versions["dev-main"] || Object.values(pkg.versions)[0];
+				latestVersion =
+					pkg.versions["dev-master"] ?? pkg.versions["dev-main"] ?? Object.values(pkg.versions)[0] ?? null;
 				latestVersionKey = latestVersion?.version || "";
 			}
 		}

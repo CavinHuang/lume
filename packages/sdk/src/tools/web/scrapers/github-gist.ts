@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { fetchGitHubApi } from "./github.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult } from "./types.js";

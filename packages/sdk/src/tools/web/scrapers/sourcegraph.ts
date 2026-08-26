@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -138,7 +137,7 @@ function parseSourcegraphUrl(url: string): SourcegraphTarget | null {
 		const repoParts = hyphenIndex === -1 ? parts : parts.slice(0, hyphenIndex);
 		if (repoParts.length < 3) return null;
 
-		const lastRepoPart = repoParts[repoParts.length - 1];
+		const lastRepoPart = repoParts[repoParts.length - 1] ?? "";
 		const atIndex = lastRepoPart.indexOf("@");
 		let rev: string | undefined;
 		let repoTail = lastRepoPart;

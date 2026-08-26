@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -89,11 +88,11 @@ export const handleOpenLibrary: SpecialHandler = async (
 		let md: string | null = null;
 
 		if (workMatch) {
-			md = await fetchWork(workMatch[1], timeout, signal);
+			md = await fetchWork(workMatch[1] ?? "", timeout, signal);
 		} else if (editionMatch) {
-			md = await fetchEdition(editionMatch[1], timeout, signal);
+			md = await fetchEdition(editionMatch[1] ?? "", timeout, signal);
 		} else if (isbnMatch) {
-			md = await fetchByIsbn(isbnMatch[1], timeout, signal);
+			md = await fetchByIsbn(isbnMatch[1] ?? "", timeout, signal);
 		}
 
 		if (!md) return null;
@@ -197,7 +196,7 @@ async function fetchEdition(editionId: string, timeout: number, signal?: AbortSi
 	md += `**Open Library:** https://openlibrary.org/books/${editionId}\n`;
 
 	if (edition.works?.length) {
-		const workKey = edition.works[0].key.replace("/works/", "");
+		const workKey = edition.works[0]?.key.replace("/works/", "") ?? "";
 		md += `**Work:** https://openlibrary.org/works/${workKey}\n`;
 	}
 

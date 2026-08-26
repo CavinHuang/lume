@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -36,18 +35,18 @@ function extractCabalField(content: string, fieldName: string): string | undefin
 	const pattern = new RegExp(`^${fieldName}:\\s*(.*)$`, "im");
 	const match = content.match(pattern);
 	if (!match) return undefined;
-	return match[1].trim();
+	return match[1]?.trim();
 }
 
 function extractCabalDescription(content: string): string | undefined {
 	const lines = content.split("\n");
 	const start = lines.findIndex(line => line.toLowerCase().startsWith("description:"));
 	if (start < 0) return undefined;
-	const value = lines[start].replace(/^description:\s*/i, "").trim();
+	const value = lines[start]?.replace(/^description:\s*/i, "").trim() ?? "";
 	const chunks: string[] = [value];
 	for (let i = start + 1; i < lines.length; i++) {
 		const line = lines[i];
-		if (!line.startsWith("  ")) break;
+		if (!line || !line.startsWith("  ")) break;
 		chunks.push(line.trim());
 	}
 	const description = chunks.join("\n").trim();
@@ -86,7 +85,7 @@ export const handleHackage: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/package\/([^/]+)(?:\/|$)/);
 		if (!match) return null;
 
-		const packageId = decodeURIComponent(match[1]);
+		const packageId = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Version endpoint returns a map of version -> status.

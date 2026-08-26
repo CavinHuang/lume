@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -88,7 +87,7 @@ function parseHuggingFaceUrl(url: string): {
 
 		// Skip non-resource paths
 		const reservedPaths = ["docs", "blog", "pricing", "enterprise", "join", "login", "settings"];
-		if (reservedPaths.includes(parts[0])) {
+		if (reservedPaths.includes(parts[0] ?? "")) {
 			return null;
 		}
 
@@ -99,7 +98,7 @@ function parseHuggingFaceUrl(url: string): {
 
 		// huggingface.co/{id} (single part = could be model or user, try model first)
 		if (parts.length === 1) {
-			return { type: "model_or_user", id: parts[0] };
+			return { type: "model_or_user", id: parts[0] ?? "" };
 		}
 
 		return null;
