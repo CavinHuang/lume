@@ -4,17 +4,25 @@ import { join } from "node:path";
 import { tmpdir } from "node:os";
 
 // 单文件 mock:兑换直接返回 canned 凭证(SSRF 护栏禁 loopback 真实请求);
-// 在途窗口由校验器闸门制造,mock 不参与时序
+// exchangeGate 挂起/failExchange 抛错供迟到失败场景控制时序
+let exchangeGate: Promise<void> | null = null;
+let exchangeEntered = false;
+let failExchange = false;
 mock.module("./oauth/oauth-token", () => ({
-  requestAuthorizationCodeToken: async () => ({
-    authType: "oauth2" as const,
-    accessToken: "at",
-    tokenType: "Bearer",
-    refreshToken: "rt",
-    expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
-    profile: { accountId: "oauth2", displayName: "OAuth Credential", grantedScopes: [] },
-    metadata: {},
-  }),
+  requestAuthorizationCodeToken: async () => {
+    exchangeEntered = true;
+    if (exchangeGate) await exchangeGate;
+    if (failExchange) throw new Error("exchange blew up");
+    return {
+      authType: "oauth2" as const,
+      accessToken: "at",
+      tokenType: "Bearer",
+      refreshToken: "rt",
+      expiresAt: new Date(Date.now() + 3_600_000).toISOString(),
+      profile: { accountId: "oauth2", displayName: "OAuth Credential", grantedScopes: [] },
+      metadata: {},
+    };
+  },
   requestRefreshToken: async () => {
     throw new Error("not used in this suite");
   },
@@ -28,13 +36,17 @@ const { installConnectionVaultKey } = await import("../channel/connection-creden
  * #689 回归:token 兑换成功后 validateAndStoreCredential 内部还有一次校验器网络 await,
  * 此窗口内断开连接,迟到结果不得把凭证写回复活"已连接"。
  */
-describe("connector oauth 流终止与在途落盘竞态", () => {
+describe("connector oauth flow termination vs in-flight persist (#689)", () => {
   let previousConfigDir: string | undefined;
   let directory = "";
-  /** 校验器在途闸门:置位后测试可在窗口内注入 disconnect。 */
+  /** 校验器在途闸门:置位后测试可在窗口内注入 disconnect;用例间重置防旧门误释放。 */
   let releaseValidator: (() => void) | undefined;
 
   beforeEach(() => {
+    releaseValidator = undefined;
+    exchangeGate = null;
+    exchangeEntered = false;
+    failExchange = false;
     previousConfigDir = process.env.LUME_CONFIG_DIR;
     directory = mkdtempSync(join(tmpdir(), "lume-connector-race-"));
     process.env.LUME_CONFIG_DIR = directory;
@@ -112,5 +124,63 @@ describe("connector oauth 流终止与在途落盘竞态", () => {
     const pageText = await callbackPage;
     expect(pageText).not.toContain("✅");
     expect(getConnectorCredentialRecord("race_mail").oauth).toBeUndefined();
+  });
+
+  test("旧流兑换迟到失败不得摘除后继新流的 map 占位(finish 幂等)", async () => {
+    setConnectorClientConfig("race_mail", {
+      service: "race_mail",
+      clientId: "cid",
+      clientSecret: "csecret",
+      extra: {},
+      secretExtra: {},
+    });
+    // A 流回调挂在兑换闸门内
+    failExchange = true;
+    let openGate!: () => void;
+    exchangeGate = new Promise<void>((resolve) => {
+      openGate = resolve;
+    });
+    const stale = startConnectorAuthorization("race_mail");
+    stale.done.catch(() => {});
+    const staleUrl = new URL(await stale.authorizationUrl);
+    const staleState = staleUrl.searchParams.get("state");
+    const staleLoopback = new URL(staleUrl.searchParams.get("redirect_uri") ?? "http://127.0.0.1:0/callback");
+    const stalePage = fetch(`${staleLoopback.origin}/callback?state=${staleState}&code=old`).then(
+      (res) => res.text(),
+      () => "fetch-failed",
+    );
+    for (let i = 0; i < 600 && !exchangeEntered; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect(exchangeEntered).toBe(true);
+
+    // A 被顶掉,新流 B 立即接管 map 占位(failExchange 保持 true:A 放行后
+    // 兑换须走 reject,才能触达 catch → pending.reject → finish 重放路径)
+    exchangeGate = null;
+    const fresh = startConnectorAuthorization("race_mail");
+    fresh.done.catch(() => {});
+    const freshUrl = new URL(await fresh.authorizationUrl);
+    await expect(stale.done).rejects.toBeDefined();
+
+    // A 的兑换此刻失败:catch → pending.reject → finish 重入,幂等守卫必须
+    // 拦下重放,map 里仍是 B
+    openGate();
+    const pageText = await stalePage;
+    expect(pageText).not.toContain("✅");
+
+    // B 的真回调照常被处理:兑换即刻成功,校验器闸门就绪后放行
+    failExchange = false;
+    const freshState = freshUrl.searchParams.get("state");
+    const freshLoopback = new URL(freshUrl.searchParams.get("redirect_uri") ?? "http://127.0.0.1:0/callback");
+    const freshPage = fetch(`${freshLoopback.origin}/callback?state=${freshState}&code=new`).then(
+      (res) => res.text(),
+      () => "fetch-failed",
+    );
+    for (let i = 0; i < 600 && !releaseValidator; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    releaseValidator?.();
+    expect(await freshPage).toContain("✅");
+    expect(getConnectorCredentialRecord("race_mail").oauth).toBeDefined();
   });
 });

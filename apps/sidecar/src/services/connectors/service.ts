@@ -162,8 +162,13 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
   });
   const done = new Promise<ResolvedCredential & { authType: "oauth2" }>((resolve, reject) => {
     const server = httpServerFactory((req, res) => void handleOAuthCallback(req, res, service));
-
+    let finished = false;
     const finish = (fn: () => void) => {
+      // 幂等守卫:finish 只结算一次。迟到的 resolve/reject(流已被顶掉/断开后
+      // 兑换才决算)重入会重放 map delete,误摘后继新流的占位——新授权回调
+      // 直接 404,挂死到 10 分钟超时
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       server.close();
       pendingAuthorizations.delete(service);
@@ -270,13 +275,17 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
     });
 
     // 兑换期间流可能已被顶掉/断开(pending 从 map 摘除):盲写会把凭证复活进已终止的流程
-    if (pendingAuthorizations.get(service) !== pending) {
+    const respondFlowTerminated = () => {
+      logger.warn("connector oauth result discarded (flow terminated)", { service });
       respondPage(false, "授权已失效(流程已终止),请回到 Lume 重新发起。");
+    };
+    if (pendingAuthorizations.get(service) !== pending) {
+      respondFlowTerminated();
       return;
     }
     if (!(await validateAndStoreCredential(service, credential, pending))) {
       // 流在校验器在途窗口内被终止:done 已随终止路径 reject,此处只补失效页,不得再报成功
-      respondPage(false, "授权已失效(流程已终止),请回到 Lume 重新发起。");
+      respondFlowTerminated();
       return;
     }
     logger.info("connector oauth flow completed", { service });
@@ -331,7 +340,7 @@ function configRequestedScopes(service: string, auth: OAuth2AuthDefinition): str
   return auth.scopes;
 }
 
-/** 跑凭证验证器补全 profile(邮箱等),落盘 vault。 */
+/** 跑凭证验证器补全 profile(邮箱等),落盘 vault;流在途失配时不落盘并返回 false,由调用方补失效页。 */
 async function validateAndStoreCredential(
   service: string,
   credential: ResolvedCredential & { authType: "oauth2" },

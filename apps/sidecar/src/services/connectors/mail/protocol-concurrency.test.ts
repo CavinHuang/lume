@@ -427,6 +427,7 @@ describe("per-account IMAP connection pool (#698)", () => {
     const protocol = createMailProtocol(config, fake.deps);
     const account = credential();
     const rotated = { ...account, authorizationCode: "wrong-code-9999" };
+    const before = imapPoolMetricsSnapshot();
 
     await protocol.validateImapCredential(account);
     expect(fake.created).toBe(1);
@@ -435,6 +436,8 @@ describe("per-account IMAP connection pool (#698)", () => {
     // 而不是复用旧凭证会话假通过
     await expect(protocol.validateImapCredential(rotated)).rejects.toMatchObject({ kind: "auth" });
     expect(fake.created).toBe(2);
+    // 授权码失配的池内候选被 miss_auth 淘汰(ternary 链唯一无断言分支,钉死)
+    expect(imapPoolMetricsSnapshot().miss_auth - before.miss_auth).toBe(1);
   });
 
   it("replaces a pooled connection that the server or watchdog has killed", async () => {
