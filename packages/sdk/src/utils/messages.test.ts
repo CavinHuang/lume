@@ -118,6 +118,21 @@ describe("ephemeral image references", () => {
     expect(renderComputerUseActionFacts(messages)).toBe("");
   });
 
+  test("mixed batch: valid entries survive, invalid ones dropped (#725 review R9)", () => {
+    const messages = [{ role: "user", content: [{
+      type: "tool_result",
+      tool_use_id: "observe",
+      content: "{}",
+      _meta: { computerUseActions: [
+        { actionId: "action-1", action: "click", phase: "verified", window: { id: 1, app: "IDE" } },
+        { actionId: "action-2", action: "type_text", phase: "bogus", window: { id: 1, app: "IDE" } },
+      ] },
+    }] }];
+    const facts = renderComputerUseActionFacts(messages);
+    expect(facts).toContain("action-1");
+    expect(facts).not.toContain("action-2");
+  });
+
   test("caps oversized string fields and drops unknown fields (#709 item 2)", () => {
     const fact = normalizeComputerUseActionFact({
       actionId: "a".repeat(200),

@@ -48,6 +48,27 @@ class StaticProvider implements LLMProvider {
   }
 }
 
+class ToolUseOnceProvider implements LLMProvider {
+  readonly apiType = "anthropic-messages" as const
+  calls = 0
+
+  async createMessage(_params: CreateMessageParams): Promise<CreateMessageResponse> {
+    this.calls += 1
+    if (this.calls === 1) {
+      return {
+        content: [{ type: "tool_use", id: "call-live-1", name: "MetaTool", input: {} }],
+        stopReason: "tool_use",
+        usage: { input_tokens: 1, output_tokens: 1 },
+      }
+    }
+    return {
+      content: [{ type: "text", text: "done" }],
+      stopReason: "end_turn",
+      usage: { input_tokens: 1, output_tokens: 1 },
+    }
+  }
+}
+
 class ToolUseProvider implements LLMProvider {
   readonly apiType = "anthropic-messages" as const
 
@@ -1567,6 +1588,56 @@ describe("Agent session message uuid realignment (#363)", () => {
 
     const rebuilt = sessionMessagesFromHistory(history)
     expect((rebuilt[0]!.content as any)[0]._meta).toBeUndefined()
+  })
+
+  test("live push path persists the whitelisted _meta shape (#725 review R9)", async () => {
+    // MetaTool 须留在 eager 池：默认 tst 模式会把它延迟进 ToolSearch，引擎直调即 Unknown tool
+    const previousToolSearchMode = process.env.ENABLE_TOOL_SEARCH
+    process.env.ENABLE_TOOL_SEARCH = "standard"
+    const metaTool: ToolDefinition = {
+      name: "MetaTool",
+      description: "emits private _meta",
+      inputSchema: { type: "object", properties: {} },
+      async call() {
+        return {
+          type: "tool_result",
+          tool_use_id: "",
+          content: "ok",
+          _meta: {
+            computerUseAction: { actionId: "action-live", action: "click", phase: "verified", window: { id: 3, app: "IDE" }, screenshotId: "s1" },
+            error: { code: "permission_denied" },
+            ephemeral: "trusted_runtime",
+          },
+        }
+      },
+    }
+    const agent = createAgent({
+      persistSession: false,
+      tools: [metaTool],
+      provider: new ToolUseOnceProvider(),
+      canUseTool: async () => ({ behavior: "allow" }),
+    })
+
+    try {
+      for await (const _event of agent.query("hello")) {
+        // drain
+      }
+
+      const persisted = (agent as any).sessionMessages as Array<{ role: string; content: unknown }>
+      const toolResultMessage = persisted.find((message) =>
+        message.role === "user"
+        && Array.isArray(message.content)
+        && (message.content as any[]).some((block) => block?.type === "tool_result"))
+      const block = (toolResultMessage!.content as any[]).find((b) => b?.type === "tool_result")
+      // live 推送与重建路径共享同一投影：私有字段不落持久轨，台账事实验形后存活
+      expect(block._meta).toEqual({
+        computerUseAction: { actionId: "action-live", action: "click", phase: "verified", window: { id: 3, app: "IDE" } },
+      })
+    } finally {
+      await agent.close()
+      if (previousToolSearchMode === undefined) delete process.env.ENABLE_TOOL_SEARCH
+      else process.env.ENABLE_TOOL_SEARCH = previousToolSearchMode
+    }
   })
 })
 

@@ -161,4 +161,22 @@ describe("isPromptTooLongError widened recognition (#567 item 1)", () => {
       message: "<html><body>Bad Request</body></html>"
     })).toBe(false);
   });
+
+  test("structured code still wins over an HTML body (#725 review R4)", () => {
+    expect(isPromptTooLongError({
+      status: 400,
+      error: { error: { code: "context_length_exceeded", message: "<html>gateway page</html>" } }
+    })).toBe(true);
+  });
+
+  test("nested err.error.error.message form is recognized (#725 review R9)", () => {
+    expect(isPromptTooLongError({
+      status: 400,
+      error: { error: { message: "`inputs` must have less than 4096 tokens" } }
+    })).toBe(true);
+    expect(isPromptTooLongError({
+      status: 413,
+      error: { error: { message: "<html><body>413</body></html>" } }
+    })).toBe(false);
+  });
 });

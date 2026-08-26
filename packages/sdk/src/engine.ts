@@ -1289,7 +1289,8 @@ export class QueryEngine {
         }
 
         // 最终错误附恢复尝试上下文（#709 第 5 项）：裸 provider 错误会让人误以为
-        // 重试即可，实际自动压缩已到天花板。
+        // 重试即可。N 为本引擎实例内累计的恢复失败次数——Lume 生产装配下每次
+        // prompt 新建引擎（N 通常为 1），长生命周期宿主下跨 turn 累计。
         const errorMessage = err?.message || 'Unknown provider error'
         const finalMessage = isPromptTooLongError(err) && this.promptTooLongRecoveryFailures > 0
           ? `${errorMessage} (auto-compaction recovery attempted ${this.promptTooLongRecoveryFailures} time(s) without success)`

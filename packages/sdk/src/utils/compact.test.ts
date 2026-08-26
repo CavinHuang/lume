@@ -8,6 +8,7 @@ import {
   shouldAutoCompact,
   truncateSerializedConversation,
 } from "./compact.js";
+import { estimateTokens } from "./tokens.js";
 
 const VALID_SUMMARY = `## Goal
 Preserve the current task.
@@ -303,10 +304,28 @@ describe("truncateSerializedConversation (#709 item 6)", () => {
     const text = `${head}\n\n${tail}`;
     const truncated = truncateSerializedConversation(text, 1_000);
     expect(truncated.length).toBeLessThan(text.length);
-    expect(truncated).toContain("[... ");
-    expect(truncated).toContain(" characters truncated ...]");
+    expect(truncated).toContain("[... characters truncated ...]");
     expect(truncated.startsWith(`[User]: aaa`)).toBe(true);
     expect(truncated.endsWith("zzz")).toBe(true);
+  });
+
+  test("mixed-density text converges to the token budget (#725 review R5)", () => {
+    // 中文头尾（~1 char/token 高密度）+ ASCII 工具输出中段（~4 chars/token 低密度）：
+    // 全文平均外推会低估保留区 token，实测旧实现超预算 3 倍+；复测循环必须收敛。
+    const head = `[User]: ${"中文消息".repeat(1_000)}`;
+    const middle = `\n\n[Tool result t1]: ${"x".repeat(80_000)}\n\n`;
+    const tail = `[Assistant]: ${"近期进展".repeat(1_000)}`;
+    const budget = 2_048;
+    const truncated = truncateSerializedConversation(`${head}${middle}${tail}`, budget);
+    expect(estimateTokens(truncated)).toBeLessThanOrEqual(budget);
+    expect(truncated).toContain("[User]: 中文消息");
+    expect(truncated.endsWith("近期进展")).toBe(true);
+  });
+
+  test("zero budget degrades gracefully instead of returning the full text via slice(-0)", () => {
+    const text = "a".repeat(500);
+    const truncated = truncateSerializedConversation(text, 0);
+    expect(truncated.length).toBeLessThan(text.length);
   });
 });
 

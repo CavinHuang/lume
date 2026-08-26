@@ -475,16 +475,25 @@ function validateSummary(text: string, requiredHeadings: string[]): CompactionFa
 /**
  * 摘要输入上限裁切（#709 第 6 项）：序列化文本无界时，小窗模型的摘要请求自身
  * 超窗必败、×3 烧完熔断。按模型窗口给输入定预算，超限保头（目标）保尾（近期
- * 进展）截中。治本是给模型显式配置真实 contextWindow。
+ * 进展）截中。密度不均匀时全文平均外推会低估保留区 token（#725 review R5），
+ * 故切后复测、超限按实测密度再收缩，至多 4 轮收敛。治本是给模型显式配置
+ * 真实 contextWindow。
  */
 export function truncateSerializedConversation(text: string, inputBudgetTokens: number): string {
-  const textTokens = estimateTokens(text)
-  if (textTokens <= inputBudgetTokens) return text
-  const charsPerToken = text.length / Math.max(1, textTokens)
-  const maxChars = Math.floor(inputBudgetTokens * charsPerToken)
-  const headChars = Math.floor(maxChars * 0.4)
-  const tailChars = Math.max(0, maxChars - headChars)
-  return `${text.slice(0, headChars)}\n\n[... ${text.length - maxChars} characters truncated ...]\n\n${text.slice(-tailChars)}`
+  // 收缩目标低于预算 ~4%：给截断 marker 与密度估计残差留余量，避免高密度
+  // 文本（CJK ≈1 char/token）下每轮只能磨掉几个 token 的慢收敛。
+  const target = Math.max(1, Math.floor(inputBudgetTokens * 0.96))
+  let current = text
+  for (let round = 0; round < 6; round++) {
+    const tokens = estimateTokens(current)
+    if (tokens <= inputBudgetTokens) return current
+    // 按当前文本实测密度定字符预算：每轮密度估计随收缩更贴近保留区真实值。
+    const maxChars = Math.max(1, Math.floor(target * (current.length / Math.max(1, tokens))))
+    const headChars = Math.floor(maxChars * 0.4)
+    const tailChars = Math.max(1, maxChars - headChars)
+    current = `${current.slice(0, headChars)}\n\n[... characters truncated ...]\n\n${current.slice(current.length - tailChars)}`
+  }
+  return current
 }
 
 async function generateSummary(
@@ -498,9 +507,12 @@ async function generateSummary(
     abortSignal?: AbortSignal
   },
 ): Promise<SummaryCallResult> {
+  // previousSummary 随压缩轮次单调膨胀且不受 maxTokens 约束（#725 review R5），
+  // 须与序列化文本共享窗口预算，否则长会话数轮后总输入仍破窗。
+  const summaryTokens = options.previousSummary ? estimateTokens(options.previousSummary) : 0
   const inputBudgetTokens = Math.max(
     2_048,
-    getContextWindowSize(model) - maxTokens - SUMMARY_INPUT_SAFETY_MARGIN_TOKENS,
+    getContextWindowSize(model) - maxTokens - SUMMARY_INPUT_SAFETY_MARGIN_TOKENS - summaryTokens,
   )
   const conversationText = truncateSerializedConversation(serializeConversation(messages), inputBudgetTokens)
   let prompt = `<conversation>\n${conversationText}\n</conversation>\n\n`

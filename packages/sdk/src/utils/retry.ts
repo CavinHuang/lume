@@ -159,14 +159,15 @@ export function isPromptTooLongError(err: any): boolean {
   const message = String(err?.error?.error?.message || err?.error?.message || err?.message || '')
   // An HTML body means a gateway/proxy error page, not a provider API error:
   // it carries no token semantics and recovery would just burn three summary
-  // calls before the breaker trips (#709 item 3). Applies to 400 and 413 alike.
-  if (/<html/i.test(message)) return false
+  // calls before the breaker trips (#709 item 3). Applies to the 413 fast path
+  // and the message regex alike — but a structured code still wins over it.
+  const hasHtmlBody = /<html/i.test(message)
   // 413 is unambiguous. For 400, structured OpenAI-style codes take priority and
   // the message match stays a fallback — OpenAI-compat gateways rephrase the
   // Anthropic wording freely (#567 item 1).
-  if (err?.status === 413) return true
+  if (err?.status === 413) return !hasHtmlBody
   if (err?.status !== 400) return false
   const code = String(err?.error?.error?.code || err?.error?.code || '')
   if (code.includes('context_length_exceeded')) return true
-  return /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large|exceeds the maximum number of tokens|must have less than \d+ tokens/i.test(message)
+  return !hasHtmlBody && /context[ _-]?length|maximum context|prompt( is|'s)? too (long|large)|input (is )?too long|request.{0,16}too large|exceeds the maximum number of tokens|must have less than \d+ tokens/i.test(message)
 }
