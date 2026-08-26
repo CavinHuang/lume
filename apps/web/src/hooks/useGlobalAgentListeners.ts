@@ -50,6 +50,7 @@ import {
   upsertPendingToolPermission,
 } from './pending-interactive-state'
 import { appendRuntimeEvents, hydrateRuntimeEvents } from './runtime-event-state'
+import { createRuntimeEventFlushScheduler, type RuntimeEventFlushScheduler } from './runtime-event-flush-scheduler'
 import { projectDesktopActionVisualEvent } from './desktop-action-visual-state'
 import { consumeBusEnvelope, type LifecycleAdapterState } from './lifecycle-event-adapter'
 import { useAgentEventBus } from './useAgentEventBus'
@@ -118,21 +119,27 @@ export function useGlobalAgentListeners() {
   const setMemoryCenterVersion = useSetAtom(memoryCenterVersionAtom)
 
   const pendingRuntimeEventsRef = useRef<LumeRuntimeEvent[]>([])
-  const runtimeEventsRafRef = useRef<number | null>(null)
   const desktopActionVisualTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  // #676:rAF + 后台回退竞速调度(见 runtime-event-flush-scheduler.ts)。
+  // 调度器经 flushRef 中转而非直接捕获 flushRuntimeEvents:不依赖「useSetAtom
+  // setter 引用稳定」这一外部不变量(Provider scoped/remount 或迁移 createStore
+  // 时首建闭包会过期),每次渲染中转指向最新回调。
+  const flushRuntimeEventsRef = useRef<() => void>(() => {})
   const flushRuntimeEvents = useCallback(() => {
-    runtimeEventsRafRef.current = null
     const batch = pendingRuntimeEventsRef.current
     if (batch.length === 0) return
     pendingRuntimeEventsRef.current = []
     setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
   }, [setRuntimeEvents])
+  flushRuntimeEventsRef.current = flushRuntimeEvents
+  const runtimeEventsSchedulerRef = useRef<RuntimeEventFlushScheduler | null>(null)
+  if (runtimeEventsSchedulerRef.current === null) {
+    runtimeEventsSchedulerRef.current = createRuntimeEventFlushScheduler(() => flushRuntimeEventsRef.current())
+  }
   const enqueueRuntimeEvent = useCallback((event: LumeRuntimeEvent) => {
     pendingRuntimeEventsRef.current.push(event)
-    if (runtimeEventsRafRef.current === null) {
-      runtimeEventsRafRef.current = requestAnimationFrame(flushRuntimeEvents)
-    }
-  }, [flushRuntimeEvents])
+    runtimeEventsSchedulerRef.current?.schedule()
+  }, [])
 
   // ---- lifecycle 总线消费(T7c 起恒开:active agent tab 即订阅,经适配器喂现有投影) ----
   // useGlobalAgentListeners 会被 App 与 QuickInput 同时挂载:两实例各自消费总线会导致
@@ -437,10 +444,7 @@ export function useGlobalAgentListeners() {
     return () => {
       unlisten.then((fn) => fn())
       unlistenSuggestions.then((fn) => fn())
-      if (runtimeEventsRafRef.current !== null) {
-        cancelAnimationFrame(runtimeEventsRafRef.current)
-        runtimeEventsRafRef.current = null
-      }
+      runtimeEventsSchedulerRef.current?.cancelPending()
       if (desktopActionVisualTimerRef.current) {
         clearTimeout(desktopActionVisualTimerRef.current)
         desktopActionVisualTimerRef.current = null
