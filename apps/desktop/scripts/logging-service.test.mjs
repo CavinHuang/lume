@@ -39,7 +39,7 @@ test('normalizes cyclic and sensitive data without invoking getters', () => {
   })
   assert.equal(getterCalled, false)
   assert.deepEqual(normalizeLogValue({ body: 'raw provider body', contentPreview: 'safe preview' }), {
-    body: '[redacted]',
+    body: 'raw provider body',
     contentPreview: 'safe preview',
   })
 })
@@ -219,6 +219,152 @@ test('default consoleLevel still hides debug events in the terminal', async () =
     assert.doesNotMatch(terminal.join(''), /DEBUG/)
   } finally {
     await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// 内容键输出截断预览而非全遮蔽；凭据键维持 [redacted]。
+test('content keys are previewed instead of redacted', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-preview-'))
+  const service = new LoggingService({
+    configDir,
+    terminal: { write: () => true },
+    settings: { fileLevel: 'info' },
+  })
+  try {
+    const event = service.emit({
+      level: 'info',
+      source: 'main',
+      context: 'test',
+      event: 'preview.case',
+      message: 'x',
+      data: { prompt: 'z'.repeat(500), apiKey: 'sk-live' },
+    })
+    assert.equal(event.data.apiKey, '[redacted]')
+    assert.ok(event.data.prompt.startsWith('z'.repeat(200)))
+    assert.ok(event.data.prompt.endsWith('…(+300)'))
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// dev 构建默认放开控制台到 trace；env 或持久化覆盖优先。
+test('dev builds default console level to trace until overridden', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-devtrace-'))
+  const terminal = { write: () => true }
+  const dev = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+  const prod = new LoggingService({ configDir, terminal, now: () => new Date() })
+  const custom = new LoggingService({ configDir, isDev: true, settings: { consoleLevel: 'warn' }, terminal, now: () => new Date() })
+  try {
+    assert.equal(dev.getSettings().consoleLevel, 'trace')
+    assert.equal(prod.getSettings().consoleLevel, 'info')
+    assert.equal(custom.getSettings().consoleLevel, 'warn')
+  } finally {
+    await dev.close()
+    await prod.close()
+    await custom.close()
+    await rmRetry(configDir)
+  }
+})
+
+// pretty 格式须在行尾携带 data/error 摘要——参数/结果可见性是埋点的核心价值（评审 H1）。
+test('pretty terminal lines include a clipped data summary', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-pretty-'))
+  const chunks = []
+  const terminal = { write: (text) => { chunks.push(text); return true } }
+  const service = new LoggingService({ configDir, terminal, now: () => new Date() })
+  service.updateSettings({ consoleLevel: 'trace' })
+  try {
+    service.emit({
+      level: 'debug', source: 'main', context: 'desktop.ipc', event: 'command.completed',
+      message: 'ipc completed: demo', durationMs: 12,
+      data: { command: 'demo', result: { ok: 1 } },
+    })
+    const line = chunks.join('')
+    assert.ok(line.includes('command.completed'))
+    assert.ok(line.includes('"durationMs":12'))
+    assert.ok(line.includes('"result":{"ok":1}'))
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// settings-replace 的全量快照回填不得把 dev trace 静默打回 info（评审 H2）。
+test('updateSettings keeps dev trace when incoming value equals the default', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-devhot-'))
+  const terminal = { write: () => true }
+  const service = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+  try {
+    assert.equal(service.getSettings().consoleLevel, 'trace')
+    service.updateSettings({ consoleLevel: 'info' })
+    assert.equal(service.getSettings().consoleLevel, 'trace')
+    service.updateSettings({ consoleLevel: 'warn' })
+    assert.equal(service.getSettings().consoleLevel, 'warn')
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// dev-trace 的 env 优先级矩阵（评审 T3）：显式 env > legacy env > 持久化非默认值 > dev 默认。
+test('dev trace env precedence matrix', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-envmatrix-'))
+  const terminal = { write: () => true }
+  const prevConsole = process.env.LUME_LOG_CONSOLE_LEVEL
+  const prevLegacy = process.env.LUME_LOG_LEVEL
+  try {
+    // 显式 env 存在时，dev 不做默认提升（运行时由 env 阈值生效）。
+    process.env.LUME_LOG_CONSOLE_LEVEL = 'debug'
+    delete process.env.LUME_LOG_LEVEL
+    let service = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+    assert.equal(service.getSettings().consoleLevel, 'info')
+    await service.close()
+
+    // legacy env 在构造器中晚于 dev 提升应用，会覆盖之。
+    delete process.env.LUME_LOG_CONSOLE_LEVEL
+    process.env.LUME_LOG_LEVEL = 'warn'
+    service = new LoggingService({ configDir, isDev: true, terminal, now: () => new Date() })
+    assert.equal(service.getSettings().consoleLevel, 'warn')
+    assert.equal(service.getSettings().fileLevel, 'warn')
+    await service.close()
+
+    // legacy env + 持久化非默认值并存：legacy 仍胜出（既有语义，此处钉住）。
+    process.env.LUME_LOG_LEVEL = 'warn'
+    service = new LoggingService({ configDir, isDev: true, settings: { consoleLevel: 'debug' }, terminal, now: () => new Date() })
+    assert.equal(service.getSettings().consoleLevel, 'warn')
+    await service.close()
+  } finally {
+    if (prevConsole === undefined) delete process.env.LUME_LOG_CONSOLE_LEVEL
+    else process.env.LUME_LOG_CONSOLE_LEVEL = prevConsole
+    if (prevLegacy === undefined) delete process.env.LUME_LOG_LEVEL
+    else process.env.LUME_LOG_LEVEL = prevLegacy
+    await rmRetry(configDir)
+  }
+})
+
+// 三轮评审 F1：close() 首遍 flush 的 await 期间入队的事件须被尾窗补偿冲刷。
+test('close drains events enqueued during the final flush', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-closedrain-'))
+  const service = new LoggingService({ configDir, terminal: { write: () => true }, now: () => new Date() })
+  try {
+    service.emit({ level: 'info', source: 'main', context: 'probe', event: 'app.started', message: 'A-first' })
+    const closing = service.close()
+    // close 内部 flushInternal 挂起于 await mkdir/appendFile 时同步入队 B
+    service.emit({ level: 'info', source: 'main', context: 'probe', event: 'app.started', message: 'B-during-flush' })
+    await closing
+    const files = await (async () => {
+      const { readdir } = await import('node:fs/promises')
+      return readdir(join(configDir, 'logs'))
+    })()
+    const content = files
+      .filter((f) => f.endsWith('.ndjson'))
+      .map((f) => require('node:fs').readFileSync(join(configDir, 'logs', f), 'utf8'))
+      .join('')
+    assert.ok(content.includes('A-first'))
+    assert.ok(content.includes('B-during-flush'), '尾窗事件必须落盘')
+  } finally {
     await rmRetry(configDir)
   }
 })

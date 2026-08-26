@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { posix } from 'node:path'
 import { spawn as spawnProcess } from 'node:child_process'
 import { createDesktopHostSpawnConfig, createDesktopHostTokenFilePath } from './sidecar-process'
+import { parseLumeLogLine, type LumeHostLogLine } from '@lume/shared'
 
 export type DesktopHostState =
   | { available: true; endpoint: string; token: string }
@@ -27,6 +28,7 @@ interface DesktopHostSupervisorOptions {
   tempDir?: string
   baseEnv?: NodeJS.ProcessEnv
   log?: (message: string) => void
+  logEvent?: (event: LumeHostLogLine) => void
   writeTokenFile?: (path: string, token: string) => void
   removeTokenFile?: (path: string) => void
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
@@ -66,6 +68,7 @@ export function createDesktopHostSupervisor({
   tempDir = tmpdir(),
   baseEnv = process.env,
   log = (_message: string) => undefined,
+  logEvent,
   writeTokenFile = (path, token) => writeFileSync(path, token, { encoding: 'utf8', mode: 0o600 }),
   removeTokenFile = (path) => rmSync(path, { force: true }),
   schedule = setTimeout,
@@ -110,12 +113,45 @@ export function createDesktopHostSupervisor({
     const running = spawn(config.command, config.args, config.options)
     child = running
     if (activeConnection) state = activeConnection
-    running.stdout?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
-    running.stderr?.on('data', (chunk) => log(`[desktop-host] ${String(chunk).trimEnd()}`))
+    // 无换行洪水的兜底：缓冲超限保留末尾 64KB，防止 O(n²) 重扫与内存无界。
+    const MAX_LINE_BUFFER_CHARS = 1024 * 1024
+    const lineBuffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
+    const ingestChunk = (stream: 'stdout' | 'stderr', chunk: string) => {
+      lineBuffers[stream] += chunk
+      if (lineBuffers[stream].length > MAX_LINE_BUFFER_CHARS) {
+        lineBuffers[stream] = lineBuffers[stream].slice(-64 * 1024)
+      }
+      const lines = lineBuffers[stream].split('\n')
+      lineBuffers[stream] = lines.pop() ?? ''
+      for (const raw of lines) {
+        const line = raw.trimEnd()
+        if (!line) continue
+        // parseLumeLogLine：非前缀/坏 JSON/非对象载荷返回 null → 回退文本路径，
+        // 避免 null 解构在 data handler 里抛未捕获异常击穿主进程。
+        const parsed = parseLumeLogLine(line)
+        if (!parsed) {
+          // 非前缀/坏 JSON/非对象/缺核心字段回退文本路径。
+          log(`[desktop-host] ${line}`)
+          continue
+        }
+        try {
+          logEvent?.(parsed)
+        } catch {
+          // logEvent 自身故障不得在 data handler 里抛未捕获异常。
+          log(`[desktop-host] ${line}`)
+        }
+      }
+    }
+    running.stdout?.on('data', (chunk) => ingestChunk('stdout', String(chunk)))
+    running.stderr?.on('data', (chunk) => ingestChunk('stderr', String(chunk)))
     let spawnedAt = 0
     running.once?.('spawn', () => { spawnedAt = now() })
     running.once?.('exit', (code) => {
       if (stopped || child !== running) return
+      // 冲刷残尾：宿主死在半行输出时，退出前把缓冲里最后一行处理掉。
+      // Node 不保证末尾 stdio data 先于 exit 排空，故 close 再兜一次（幂等）。
+      ingestChunk('stdout', '\n')
+      ingestChunk('stderr', '\n')
       log(`[desktop-host] exited with code ${code}`)
       scheduleRestart(`desktop host exited with code ${code}; restarting`, spawnedAt)
     })
@@ -123,6 +159,11 @@ export function createDesktopHostSupervisor({
       if (stopped || child !== running) return
       log(`[desktop-host] failed: ${error instanceof Error ? error.message : String(error)}`)
       scheduleRestart(`desktop host failed: ${error instanceof Error ? error.message : String(error)}; restarting`, spawnedAt)
+    })
+    running.once?.('close', () => {
+      // stdio 流排空的确定时点：兜住 exit 之后才到达的尾随 data（幂等，空缓冲为无操作）。
+      ingestChunk('stdout', '\n')
+      ingestChunk('stderr', '\n')
     })
   }
 
