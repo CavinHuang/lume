@@ -3,6 +3,7 @@ import { getImThreadBindingByThreadId } from "./im-thread-binding-store";
 import { getImRuntimeAccount } from "./im-config-manager";
 import { sendBoundImTextMessage } from "./im-send-service";
 import { createFeishuCardStream, type FeishuCardStream } from "./feishu/feishu-card-stream";
+import { getAgentRuntimeStatusManager } from "../agent/agent-runtime-status-manager";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("im-run-card");
@@ -137,13 +138,69 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
   let openOutcome: boolean | null = null;
   let finished = false;
 
+  // 压缩中间态（#709 第 4 项，#725 review R8）：runtime event 流不发
+  // context.compaction.*（T7a 后 live 走事件总线，IM 无订阅），改从
+  // runtimeStatusManager 的 compacting phase 订阅驱动卡片状态。合成事件
+  // 直喂 reducer，幂等由其引用相等保证；终态退订防泄漏。
+  const runtimeStatuses = getAgentRuntimeStatusManager();
+  let statusPhaseCompacting = false;
+  const unsubRuntimeStatus = runtimeStatuses.subscribe((status) => {
+    if (finished || !opening || status.threadId !== threadId) return;
+    const compacting = status.phase === "compacting";
+    if (compacting === statusPhaseCompacting) return;
+    statusPhaseCompacting = compacting;
+    const now = new Date().toISOString();
+    stream.apply(compacting
+      ? {
+        id: `card:compaction:started:${now}`,
+        type: "context.compaction.started",
+        threadId,
+        runId: "",
+        createdAt: now,
+        trigger: "auto",
+        preTokens: 0,
+        policy: "",
+        source: ""
+      } as LumeRuntimeEvent
+      : {
+        id: `card:compaction:completed:${now}`,
+        type: "context.compaction.completed",
+        threadId,
+        runId: "",
+        createdAt: now,
+        trigger: "auto",
+        preTokens: 0,
+        policy: "",
+        source: ""
+      } as LumeRuntimeEvent);
+  });
+
   const ensureOpened = (): void => {
     if (opening) return;
     opening = stream.open().then((ok) => {
       openOutcome = ok;
       if (!ok) {
+        unsubRuntimeStatus();
         stream.close();
         log.info("卡片通道不可用，回退文本回复", { threadId });
+        return ok;
+      }
+      // 对齐开卡前已置位的压缩态（订阅回调对未开卡期间的变化不落状态）
+      const current = runtimeStatuses.get(threadId);
+      if (current?.phase === "compacting" && !statusPhaseCompacting) {
+        statusPhaseCompacting = true;
+        const now = new Date().toISOString();
+        stream.apply({
+          id: `card:compaction:started:${now}`,
+          type: "context.compaction.started",
+          threadId,
+          runId: "",
+          createdAt: now,
+          trigger: "auto",
+          preTokens: 0,
+          policy: "",
+          source: ""
+        } as LumeRuntimeEvent);
       }
       return ok;
     });
@@ -166,6 +223,7 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
     finish: (status) => {
       if (finished) return;
       finished = true;
+      unsubRuntimeStatus();
       // 未曾开过卡（无任何内容事件即终态）：无需建空卡
       if (!opening) {
         return;

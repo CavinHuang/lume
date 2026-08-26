@@ -1457,6 +1457,11 @@ async function runSendAgentMessage(
       ) {
         runtimeStatusManager.markCompacting(threadId);
       }
+      // compact_boundary 到达即压缩完成：切回 streaming，phase 不再滞留
+      // compacting 直到 run 终态（#725 review R8：预存流转缺口）。
+      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
+        runtimeStatusManager.markStreaming(threadId);
+      }
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
         if (runtimeCompleted) {
           appendAgentThreadSDKMessages(threadId, [stampedMessage]);

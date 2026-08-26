@@ -94,6 +94,17 @@ describe("reduceImRunCardEvent", () => {
     state = reduceImRunCardEvent(state, baseEvent({ type: "context.compaction.completed" }));
     expect(state.compacting).toBe(false);
   });
+
+  test("从未 started 时 completed 返回原引用（#725 review R8）", () => {
+    const state = initialImRunCardState(1000);
+    expect(reduceImRunCardEvent(state, baseEvent({ type: "context.compaction.completed" }))).toBe(state);
+  });
+
+  test("终态后迟到的压缩事件被冻结（#725 review R8）", () => {
+    let state = initialImRunCardState(1000);
+    state = reduceImRunCardEvent(state, baseEvent({ type: "run.completed" }), 5000);
+    expect(reduceImRunCardEvent(state, baseEvent({ type: "context.compaction.started" }))).toBe(state);
+  });
 });
 
 describe("renderImRunCard 压缩中间态标题（#709 第 4 项）", () => {
@@ -104,5 +115,10 @@ describe("renderImRunCard 压缩中间态标题（#709 第 4 项）", () => {
     // 非压缩运行保持原标题
     const idle = renderImRunCard({ status: "running", blocks: [], startedAtMs: 1000 });
     expect(idle.header.title.content).toBe("正在处理");
+  });
+
+  test("compacting 残留 + 终态时显示终态标题而非压缩标题（#725 review R8）", () => {
+    const state: ImRunCardState = { status: "completed", blocks: [], startedAtMs: 1000, endedAtMs: 5000, compacting: true };
+    expect(renderImRunCard(state).header.title.content).toBe("已完成");
   });
 });
