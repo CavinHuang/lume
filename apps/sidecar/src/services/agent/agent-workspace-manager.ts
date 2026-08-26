@@ -31,6 +31,7 @@ import {
   getWorkspaceMcpPath,
   getWorkspaceSkillsDir
 } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { REMOVED_BUNDLE_SKILLS, seedDefaultSkills } from "../skills/default-skills-seeder";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
@@ -103,14 +104,8 @@ function writeJsonAtomic(path: string, payload: string): void {
 }
 
 function backupCorruptIndex(indexPath: string, label: string): void {
-  if (!existsSync(indexPath)) return;
-  const backupPath = `${indexPath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(indexPath, backupPath);
-    log.warn("backed up corrupt workspace index", { label, backupPath });
-  } catch (error) {
-    log.warn("failed to back up corrupt workspace index", { label, backupPath, error });
-  }
+  const backupPath = backupCorruptFile(indexPath);
+  if (backupPath) log.warn("backed up corrupt workspace index", { label, backupPath });
 }
 
 function readIndex(): AgentWorkspacesIndex {
