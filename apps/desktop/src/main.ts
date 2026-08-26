@@ -140,7 +140,8 @@ import { createLogContentDigest, createSidecarLogDigestPolicy, isSafeStorageSecu
 import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
-import type { BrowserSettings } from '@lume/shared'
+import type { BrowserSettings,
+  LumeLogLevel, LumeLogEventInput,} from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
 import { nativeEventToIntent, summarizeValue, normalizeHostLevel, LUME_LOGGING_DEFAULTS } from '@lume/shared'
 import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
@@ -348,7 +349,14 @@ function getDiagnosticLease(): LumeDiagnosticCaptureSettings | null {
     : lease
 }
 
-function writeMainLog(level, context, event, message, extra = {}) {
+// 显式签名：本函数是全部主进程埋点的汇入点，隐式 any 会让 schema 校验归零。
+function writeMainLog(
+  level: LumeLogLevel,
+  context: string,
+  event: string,
+  message: string,
+  extra: Partial<LumeLogEventInput> = {},
+) {
   return getLoggingService().emit({
     level,
     source: 'main',
@@ -468,7 +476,7 @@ function createSafeMessageLogSummary(value) {
   }
 }
 
-function logDesktopStartup(message, event = 'app.lifecycle', level = 'info') {
+function logDesktopStartup(message: string, event = 'app.lifecycle', level: LumeLogLevel = 'info') {
   writeMainLog(level, 'desktop.lifecycle', event, message)
   const logPath = process.env.LUME_DESKTOP_STARTUP_LOG?.trim()
   if (!logPath) return
@@ -2220,7 +2228,8 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'write_web_log_batch': {
       // 多窗口（主窗/快输窗/island）各自运行 renderer 日志实例，按 sender 注入 surface 归因，
       // 否则同源故障在日志里无法区分来自哪个窗口。
-      const webBatch = payload as any
+      // 先校验形状再变异：origin 注入不能在 ingestBatch 校验之前制造 TypeError。
+      const webBatch = payload as { events?: unknown; batchId?: unknown }
       let surfaceOrigin: string | undefined
       try {
         surfaceOrigin = resolveRendererTraceOrigin(context.ownerWebContentsId)
@@ -2228,7 +2237,11 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         surfaceOrigin = 'renderer_unknown'
       }
       if (Array.isArray(webBatch?.events)) {
-        for (const e of webBatch.events) e.origin ??= surfaceOrigin
+        for (const e of webBatch.events) {
+          if (e && typeof e === 'object') {
+            ;(e as Record<string, unknown>).origin ??= surfaceOrigin
+          }
+        }
       }
       return {
         accepted: getLoggingService().ingestBatch(webBatch as any, 'renderer'),

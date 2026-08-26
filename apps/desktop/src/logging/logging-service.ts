@@ -41,6 +41,7 @@ const MAX_BATCH_BYTES = 512 * 1024
 const MAX_QUEUE_EVENTS = 5_000
 const MAX_RECENT_EVENT_IDS = 10_000
 const FLUSH_INTERVAL_MS = 50
+const SATURATED_WARN_INTERVAL_MS = 5_000
 const MAX_STRING_CHARS = 8_192
 const MAX_EVENT_BYTES = 64 * 1024
 
@@ -121,6 +122,25 @@ function isLevel(value: unknown): value is LumeLogLevel {
   return typeof value === 'string' && value in LEVEL_ORDER
 }
 
+// 运行时校验+钳制：手改 settings.json 或未来直调方传入非法值时，
+// 防止非法 level 让 LEVEL_ORDER 比较恒 false 造成文件日志黑洞。
+function sanitizeLoggingSettings(settings: Partial<LumeLoggingSettings>): Partial<LumeLoggingSettings> {
+  const out: Partial<LumeLoggingSettings> = { ...settings }
+  for (const key of ['consoleLevel', 'fileLevel'] as const) {
+    const value = out[key]
+    if (value !== undefined && !isLevel(value)) delete out[key]
+  }
+  if (out.format !== undefined && out.format !== 'pretty' && out.format !== 'json') delete out.format
+  for (const key of ['retentionDays', 'maxSegmentMb', 'maxTotalMb'] as const) {
+    const raw = out[key]
+    if (raw === undefined) continue
+    const num = Number(raw)
+    if (!Number.isFinite(num)) delete out[key]
+    else (out as Record<string, unknown>)[key] = Math.max(1, Math.round(num))
+  }
+  return out
+}
+
 // 派生自 shared 的 LUME_LOG_SOURCES 单一来源，新增 source 时类型系统会同步。
 const isSource = isLumeLogSource
 
@@ -193,11 +213,12 @@ export class LoggingService {
   private droppedLastAt = ''
   private listeners = new Set<LiveListener>()
   private snapshotActive = false
+  private lastSaturatedWarnAt = 0
 
   constructor(options: LoggingServiceOptions) {
     this.logsDir = join(options.configDir, 'logs')
     this.isDev = options.isDev ?? false
-    this.settings = { ...LUME_LOGGING_DEFAULTS, ...options.settings }
+    this.settings = { ...LUME_LOGGING_DEFAULTS, ...sanitizeLoggingSettings(options.settings ?? {}) }
     this.applyDevConsoleDefault()
     const legacyLevel = process.env.LUME_LOG_LEVEL
     if (isLevel(legacyLevel)) {
@@ -222,7 +243,7 @@ export class LoggingService {
   }
 
   updateSettings(settings: Partial<LumeLoggingSettings>): void {
-    this.settings = { ...this.settings, ...settings }
+    this.settings = { ...this.settings, ...sanitizeLoggingSettings(settings) }
     this.applyDevConsoleDefault()
   }
 
@@ -307,10 +328,12 @@ export class LoggingService {
 
   async close(): Promise<void> {
     await this.flush()
-    // 尾窗补偿：首次 flush 的 await 期间入队的事件只被重新武装 50ms timer（close 已返回，
-    // will-quit 后该 timer 永不触发）。有界补冲刷，防止关停期持续生产者造成死循环。
-    for (let pass = 0; pass < 3 && this.queue.length > 0 && !this.snapshotActive; pass += 1) {
+    // 尾窗补偿按队列深度定遍数（每批 ≤100 条）：突发 3000 条也要全部落盘。
+    // passes 上限防关停期持续生产者造成死循环；snapshotActive（导出/清空）时尊重暂停语义。
+    let passes = Math.ceil(this.queue.length / MAX_BATCH_EVENTS) + 2
+    while (this.queue.length > 0 && passes > 0 && !this.snapshotActive) {
       await this.flush()
+      passes -= 1
     }
   }
 
@@ -534,7 +557,14 @@ export class LoggingService {
         this.noteDropped(event)
         return
       } else {
-        this.writeEmergency('critical log queue saturated', { event: event.event, source: event.source })
+        // 全保护饱和：丢弃必须记账（dropped 汇总为 warn 受保护，恢复后可见）；
+        // emergency 直写按 5s 节流，否则错误风暴会以生产者速率刷屏 stderr。
+        this.noteDropped(event)
+        const nowMs = Date.now()
+        if (nowMs - this.lastSaturatedWarnAt >= SATURATED_WARN_INTERVAL_MS) {
+          this.lastSaturatedWarnAt = nowMs
+          this.writeEmergency('critical log queue saturated', { event: event.event, source: event.source })
+        }
         return
       }
     }

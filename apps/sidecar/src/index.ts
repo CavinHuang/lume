@@ -278,8 +278,16 @@ async function handleRpcLine(line: string): Promise<void> {
     const startedAt = performance.now();
     const result = await handler(payload.params);
     const durationMs = performance.now() - startedAt;
+    // 与 main 进程 safeLogIpcEvent 同语义：摘要/记录自身的异常不得把成功 RPC 变成失败。
+    const emitRpcLog = (record: Parameters<typeof writeLogRecord>[0]) => {
+      try {
+        writeLogRecord(record);
+      } catch {
+        // ignore：观测异常静默降级。
+      }
+    };
     if (durationMs >= SLOW_RPC_MS) {
-      writeLogRecord({
+      emitRpcLog({
         level: "warn",
         context: "rpc.server",
         event: "rpc.slow",
@@ -291,7 +299,7 @@ async function handleRpcLine(line: string): Promise<void> {
         data: { method, params: summarizeValue(payload.params) }
       });
     } else if (!QUIET_RPC_METHODS.has(method)) {
-      writeLogRecord({
+      emitRpcLog({
         level: "debug",
         context: "rpc.server",
         event: "rpc.completed",
@@ -305,16 +313,20 @@ async function handleRpcLine(line: string): Promise<void> {
     }
     writeResponse({ id: payload.id, result });
   } catch (error) {
-    writeLogRecord({
-      level: "error",
-      context: "rpc.server",
-      event: "rpc.failed",
-      message: `sidecar RPC failed: ${method}`,
-      status: "error",
-      ...correlation,
-      rpcRequestId: String(payload.id),
-      data: { method, params: summarizeValue(payload.params), error }
-    });
+    try {
+      writeLogRecord({
+        level: "error",
+        context: "rpc.server",
+        event: "rpc.failed",
+        message: `sidecar RPC failed: ${method}`,
+        status: "error",
+        ...correlation,
+        rpcRequestId: String(payload.id),
+        data: { method, params: summarizeValue(payload.params), error }
+      });
+    } catch {
+      // failed 记录自身异常不得吞掉原始错误响应。
+    }
     writeResponse({
       id: payload.id,
       error: {

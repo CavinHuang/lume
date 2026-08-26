@@ -53,6 +53,12 @@ export function clipLogPreview(text: string): string {
 
 const SUMMARIZE_MAX_DEPTH = 2
 const SUMMARIZE_MAX_KEYS = 30
+// 键名同样要有上界：渲染层可控的超长键名曾实测把单条日志摘要撑到 30MB（fuzz 探针）。
+const MAX_KEY_NAME_CHARS = 128
+
+function clipKeyName(key: string): string {
+  return key.length > MAX_KEY_NAME_CHARS ? `${key.slice(0, MAX_KEY_NAME_CHARS)}…` : key
+}
 
 /** 关联 ID 键 → 事件顶层字段名；值须通过 validId 同款形状校验才采纳。 */
 const CORRELATION_ID_KEYS: ReadonlyArray<readonly [string, string]> = [
@@ -75,19 +81,26 @@ function isValidIdShape(value: unknown): value is string {
  */
 export function extractCorrelationIds(payload: unknown, depth = 0): Record<string, string> {
   const out: Record<string, string> = {}
-  if (depth > 1 || payload == null || typeof payload !== 'object' || Array.isArray(payload)) return out
-  for (const [key, field] of CORRELATION_ID_KEYS) {
-    if (out[field]) continue
-    const candidate = (payload as Record<string, unknown>)[key]
-    if (isValidIdShape(candidate)) out[field] = candidate
-  }
-  if (depth === 0) {
-    for (const child of Object.values(payload as Record<string, unknown>)) {
-      const nested = extractCorrelationIds(child, 1)
-      for (const [field, value] of Object.entries(nested)) {
-        if (!out[field]) out[field] = value
+  // 永不抛出：敌对载荷（throwing getter / Proxy）最多损失关联 ID，不得影响调用方语义。
+  // 子层扫描限量，避免大载荷上做全量 Object.values 物化。
+  try {
+    if (depth > 1 || payload == null || typeof payload !== 'object' || Array.isArray(payload)) return out
+    for (const [key, field] of CORRELATION_ID_KEYS) {
+      if (out[field]) continue
+      const candidate = (payload as Record<string, unknown>)[key]
+      if (isValidIdShape(candidate)) out[field] = candidate
+    }
+    if (depth === 0) {
+      const children = Object.entries(payload as Record<string, unknown>).slice(0, SUMMARIZE_MAX_KEYS)
+      for (const [, child] of children) {
+        const nested = extractCorrelationIds(child, 1)
+        for (const [field, value] of Object.entries(nested)) {
+          if (!out[field]) out[field] = value
+        }
       }
     }
+  } catch {
+    // ignore：关联 ID 是尽力而为的观测增强。
   }
   return out
 }
@@ -122,14 +135,21 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
     if (!Object.prototype.hasOwnProperty.call(input, key)) continue
     if (keyCount >= SUMMARIZE_MAX_KEYS) break
     keyCount += 1
-    const value = (input as Record<string, unknown>)[key]
+    let value: unknown
+    try {
+      value = (input as Record<string, unknown>)[key]
+    } catch {
+      out[clipKeyName(key)] = '[getter threw]'
+      continue
+    }
     const classified = classifyLogKey(key)
+    const outKey = clipKeyName(key)
     if (classified === 'redact') {
-      out[key] = '[redacted]'
+      out[outKey] = '[redacted]'
       continue
     }
     // 内容键的对象值必须走递归分类：任何在此处直接 JSON 序列化的捷径都会让嵌套凭据绕过脱敏。
-    out[key] = summarizeValue(value, depth + 1)
+    out[outKey] = summarizeValue(value, depth + 1)
   }
   return out
 }
@@ -185,7 +205,7 @@ function normalizeClip(text: string): string {
  * 权威的日志数据规整器：三端（main/sidecar/renderer）共用同一份遍历骨架与上限
  * （深 6 / 键 100 / 数组 100 / 字符串 8K），杜绝拷贝间漂移。
  */
-export function normalizeLogValue(
+function normalizeLogValueInternal(
   value: unknown,
   depth = 0,
   state: LogNormalizeState = { seen: new WeakSet<object>(), keys: 0 },
@@ -212,26 +232,45 @@ export function normalizeLogValue(
   }
 
   if (Array.isArray(value)) {
-    return value.slice(0, MAX_NORMALIZE_ARRAY_ITEMS).map((item) => normalizeLogValue(item, depth + 1, state));
+    return value.slice(0, MAX_NORMALIZE_ARRAY_ITEMS).map((item) => normalizeLogValueInternal(item, depth + 1, state));
   }
 
   const output: Record<string, unknown> = {};
-  const descriptors = Object.getOwnPropertyDescriptors(value);
+  let descriptors: PropertyDescriptorMap;
+  // getOwnPropertyDescriptors 会触发自有 getter——throwing getter 在此即抛，须整体兜底。
+  try {
+    descriptors = Object.getOwnPropertyDescriptors(value);
+  } catch {
+    return "[descriptor error]";
+  }
   for (const key of Object.keys(descriptors).slice(0, MAX_NORMALIZE_KEYS)) {
     state.keys += 1;
     if (state.keys > MAX_NORMALIZE_KEYS) break;
     const classified = classifyLogKey(key);
+    const outKey = key.length > MAX_KEY_NAME_CHARS ? `${key.slice(0, MAX_KEY_NAME_CHARS)}…` : key;
     if (classified === "redact") {
-      output[key] = "[redacted]";
+      output[outKey] = "[redacted]";
       continue;
     }
     const descriptor = descriptors[key];
     const resolved = descriptor && "value" in descriptor
-      ? normalizeLogValue(descriptor.value, depth + 1, state)
+      ? normalizeLogValueInternal(descriptor.value, depth + 1, state)
       : "[Accessor]";
-    output[key] = classified === "preview" && typeof resolved === "string"
+    output[outKey] = classified === "preview" && typeof resolved === "string"
       ? clipLogPreview(resolved)
       : resolved;
   }
   return output;
+}
+
+/**
+ * 永不抛出的规整入口：敌对输入（throwing getter / Proxy / descriptor 异常）降级为
+ * 错误标记——日志观测绝不能反向影响业务调用方。
+ */
+export function normalizeLogValue(value: unknown, depth = 0, state?: LogNormalizeState): unknown {
+  try {
+    return normalizeLogValueInternal(value, depth, state)
+  } catch {
+    return { normalizeError: '[normalize threw]' }
+  }
 }
