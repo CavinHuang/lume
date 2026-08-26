@@ -1,16 +1,18 @@
 import type { LumeConfigAgentDefaultStrategy, ProviderType } from "@lume/shared";
 
-// 纯函数簇已下移 runtime-core/model-candidates(#289 分层切边);此处 re-export 维持既有 import 路径。
+// 模型引用语法与渠道模型解析纯函数簇已合并下沉 infra/model-refs(#581:
+// 此前与 runtime-core/model-candidates 两处各存一份靠注释人肉同步);
+// 此处 re-export 维持既有 import 路径。
 export {
+  parseModelRef,
+  normalizeProviderId,
   resolveChannelDefaultModelId,
   resolveRequestedModelIdForChannel,
   resolveModelCandidatesForChannel
-} from "../agent-runtime/runtime-core/model-candidates";
+} from "../infra/model-refs";
+export type { ModelRef } from "../infra/model-refs";
 
-export interface ModelRef {
-  provider: string;
-  model: string;
-}
+import { parseModelRef } from "../infra/model-refs";
 
 export type AgentDefaultStrategySource = "thread-override" | "global-default" | "empty";
 
@@ -19,38 +21,6 @@ export interface ResolvedAgentDefaultStrategy {
   channelId?: string;
   modelRef?: string;
   fallbackModelRefs: string[];
-}
-
-const PROVIDER_ALIAS: Record<string, string> = {
-  "z.ai": "zai",
-  "z-ai": "zai",
-  zhipu: "zai",
-  "kimi-code": "kimi-coding"
-};
-
-export function normalizeProviderId(provider: string): string {
-  const normalized = provider.trim().toLowerCase();
-  return PROVIDER_ALIAS[normalized] ?? normalized;
-}
-
-export function parseModelRef(raw: string, defaultProvider: string): ModelRef | null {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const slashIndex = trimmed.indexOf("/");
-  if (slashIndex === -1) {
-    return {
-      provider: normalizeProviderId(defaultProvider),
-      model: trimmed
-    };
-  }
-  const provider = normalizeProviderId(trimmed.slice(0, slashIndex));
-  const model = trimmed.slice(slashIndex + 1).trim();
-  if (!provider || !model) {
-    return null;
-  }
-  return { provider, model };
 }
 
 type ProviderApiFamily = "anthropic" | "google" | "openai";

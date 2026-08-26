@@ -32,13 +32,10 @@ interface ApplyProxySettingsOptions {
   applyDispatcher?: (mode: AgentProxySettings["mode"], proxyUrl?: string) => Promise<void>;
 }
 
-export interface ActiveProxyConfig {
-  mode: AgentProxySettings["mode"];
-  enabled: boolean;
-  httpProxy?: string;
-  httpsProxy?: string;
-  noProxy?: string;
-}
+// #578:ActiveProxyConfig 类型已下沉 infra/proxy-config-holder(与读取器注入
+// 配套);此处 re-export 维持既有 import 路径。
+export type { ActiveProxyConfig } from "../infra/proxy-config-holder";
+import type { ActiveProxyConfig } from "../infra/proxy-config-holder";
 
 type SystemProxySnapshot = Pick<ActiveProxyConfig, "httpProxy" | "httpsProxy" | "noProxy">;
 

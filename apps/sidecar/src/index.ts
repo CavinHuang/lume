@@ -2,7 +2,8 @@ import { argv } from "node:process";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
-import { initProxySettings } from "./services/system/proxy-settings-manager";
+import { initProxySettings, getActiveProxyConfig } from "./services/system/proxy-settings-manager";
+import { setProxyConfigProvider } from "./services/infra/proxy-config-holder";
 import {
   startAutomationRunner,
   stopAutomationRunner
@@ -470,6 +471,8 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   }
+  // #578:infra/proxy-fetch 经 holder 读代理配置,组合根注入读取器剪断 infra→system 上行边。
+  setProxyConfigProvider(getActiveProxyConfig);
   void initProxySettings().catch((error) => {
     writeLogRecord({
       level: "error",

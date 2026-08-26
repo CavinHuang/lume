@@ -128,6 +128,63 @@ describe("分层方向守卫(#289)", () => {
     expect(violations).toEqual([]);
   });
 
+  // #578 登记:应用层↔功能域双向禁入边(import type 放行,与上测同规则)。
+  // infra↔system 环已剪(proxy-config-holder 组合根注入);其余四组环的存量
+  // 越界记录在 legacyEdgeExemptions 台账——新增越界即红,逐 PR 消环时同步删
+  // 豁免;某域对清零后将其升级为硬禁入对。
+  const forbiddenBidirectionalPairs: Array<[string, string]> = [
+    ["agent", "automation"],
+    ["agent", "mcp"],
+    ["agent", "im"],
+    ["agent", "memory-v2"],
+  ];
+
+  /** 存量豁免台账 `<相对 services 的文件路径> => <目标域>`;仅限登记时已知违规。 */
+  const legacyEdgeExemptions = new Set<string>([
+    "agent/agent-file-ref.ts => memory-v2",
+    "agent/agent-files-service.ts => memory-v2",
+    "agent/agent-project-lifecycle-service.ts => automation",
+    "agent/agent-project-lifecycle-service.ts => im",
+    "agent/agent-project-lifecycle-service.ts => mcp",
+    "automation/automation-runner-service.ts => agent",
+    "im/im-chat-commands.ts => agent",
+    "im/im-message-router.ts => agent",
+    "mcp/workspace-mcp-manager.ts => agent",
+    "memory-v2/background-extractor.ts => agent",
+    "memory-v2/consolidation.ts => agent",
+    "memory-v2/dream-evidence.ts => agent",
+    "memory-v2/dream-organizer.ts => agent",
+    "memory-v2/history-organizer.ts => agent",
+    "memory-v2/ingestion.ts => agent",
+    "memory-v2/job-recovery.ts => agent",
+  ]);
+
+  test("#578 登记:域间值导入不得超出存量豁免台账", () => {
+    const servicesRoot = join(repositoryRoot, "apps/sidecar/src/services");
+    const violations: string[] = [];
+    for (const file of listTsFiles(servicesRoot)) {
+      if (/\.test\.ts$|\.bench\.ts$/.test(file)) continue;
+      const relPath = relative(servicesRoot, file).split("\\").join("/");
+      const srcDomain = relPath.split("/")[0];
+      for (const clause of parseImports(readFileSync(file, "utf-8"))) {
+        if (!clause.hasValueSpecifiers) continue;
+        const target = resolveImportFromFile(file, clause.spec);
+        if (!target || !target.startsWith(servicesRoot)) continue;
+        const dstDomain = relative(servicesRoot, dirname(target)).split("\\")[0].split("/")[0];
+        if (dstDomain === srcDomain) continue;
+        const paired = forbiddenBidirectionalPairs.some(
+          ([a, b]) => (srcDomain === a && dstDomain === b) || (srcDomain === b && dstDomain === a),
+        );
+        if (!paired) continue;
+        const edge = `${relPath} => ${dstDomain}`;
+        if (!legacyEdgeExemptions.has(edge)) {
+          violations.push(edge);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+  });
+
   // 正控(#503):守卫只断言空违规时,解析器回归会静默瘫痪而 CI 保持绿。
   // 此处钉死 parseImports 对各导入形态的识别——解析器失效即红。
   test("正控:parseImports 能识别全部导入形态", () => {
