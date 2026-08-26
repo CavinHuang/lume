@@ -742,6 +742,11 @@ function deleteAgentThreadLocked(id: string): void {
   getAgentSubmissionStore().deleteThread(id);
   // #517:guidance 是纯内存态,线程硬删除时同步清理防 Map 只增不减
   runGuidanceStore.discardThread(id);
+  // #519:审批/提问会话与拒绝记录随线程硬删除回收——grants/bypass/denials
+  // 三 Map 按 thread 键只增不减;pending resolver 一并取消防悬挂至超时
+  clearToolPermissionSession(id);
+  cancelPendingAskUserQuestionBySession(id);
+  clearPermissionDenials(id);
   // #613:级联回收线程名下全部 agent tab(含 handoff),防 workspace store
   // 孤儿记录永久留存。惰性动态 import 同 node-repl 回收先例,防模块环。
   void import("../browser/browser-broker-holder")
