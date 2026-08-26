@@ -25,7 +25,7 @@ import type {
   LumeLogSource,
   LumeLoggingSettings,
 } from '@lume/shared'
-import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION } from '@lume/shared'
+import { LUME_LOGGING_DEFAULTS, LUME_LOG_SCHEMA_VERSION, classifyLogKey, clipLogPreview, isLumeLogSource, normalizeLogValue } from '@lume/shared'
 
 const LEVEL_ORDER: Record<LumeLogLevel, number> = {
   trace: 0,
@@ -41,9 +41,7 @@ const MAX_BATCH_BYTES = 512 * 1024
 const MAX_QUEUE_EVENTS = 5_000
 const MAX_RECENT_EVENT_IDS = 10_000
 const FLUSH_INTERVAL_MS = 50
-const MAX_DATA_DEPTH = 6
-const MAX_DATA_KEYS = 100
-const MAX_ARRAY_ITEMS = 100
+const SATURATED_WARN_INTERVAL_MS = 5_000
 const MAX_STRING_CHARS = 8_192
 const MAX_EVENT_BYTES = 64 * 1024
 
@@ -76,44 +74,15 @@ const TERMINAL_INFO_EVENTS = new Set([
   'logging.started',
 ])
 
-const SENSITIVE_KEYS = [
-  'token',
-  'secret',
-  'password',
-  'apikey',
-  'authorization',
-  'cookie',
-  'setcookie',
-  'accesstoken',
-  'refreshtoken',
-  'grant',
-]
-const SENSITIVE_PAYLOAD_KEYS = new Set([
-  'body', 'prompt', 'systemprompt', 'rawrequest', 'rawresponse', 'requestbody', 'responsebody',
-  'content', 'html', 'markdown', 'input', 'output',
-])
-
 type LiveListener = (events: LumeLogEventV2[]) => void
 
 export interface LoggingServiceOptions {
   configDir: string
   settings?: Partial<LumeLoggingSettings>
+  /** Dev build (not packaged): console defaults to trace unless env/persisted override. */
+  isDev?: boolean
   terminal?: Pick<NodeJS.WriteStream, 'write'>
   now?: () => Date
-}
-
-interface NormalizeState {
-  seen: WeakSet<object>
-  keys: number
-}
-
-function normalizedKey(key: string): string {
-  return key.toLowerCase().replace(/[-_\s]/g, '')
-}
-
-function isSensitiveKey(key: string): boolean {
-  const value = normalizedKey(key)
-  return SENSITIVE_PAYLOAD_KEYS.has(value) || SENSITIVE_KEYS.some((candidate) => value.includes(candidate))
 }
 
 function normalizeString(value: string): string {
@@ -122,47 +91,8 @@ function normalizeString(value: string): string {
     : value
 }
 
-export function normalizeLogValue(
-  value: unknown,
-  depth = 0,
-  state: NormalizeState = { seen: new WeakSet<object>(), keys: 0 },
-): unknown {
-  if (value == null || typeof value === 'boolean' || typeof value === 'number') return value
-  if (typeof value === 'string') return normalizeString(value)
-  if (typeof value === 'bigint') return value.toString()
-  if (typeof value === 'symbol' || typeof value === 'function') return `[${typeof value}]`
-  if (value instanceof Error) {
-    return {
-      name: normalizeString(value.name),
-      message: normalizeString(value.message),
-      ...(value.stack ? { stack: normalizeString(value.stack) } : {}),
-    }
-  }
-  if (depth >= MAX_DATA_DEPTH) return '[MaxDepth]'
-  if (!value || typeof value !== 'object') return normalizeString(String(value))
-  if (state.seen.has(value)) return '[Circular]'
-  state.seen.add(value)
-
-  if (Array.isArray(value)) {
-    return value.slice(0, MAX_ARRAY_ITEMS).map((item) => normalizeLogValue(item, depth + 1, state))
-  }
-
-  const output: Record<string, unknown> = {}
-  const descriptors = Object.getOwnPropertyDescriptors(value)
-  for (const key of Object.keys(descriptors).slice(0, MAX_DATA_KEYS)) {
-    state.keys += 1
-    if (state.keys > MAX_DATA_KEYS) break
-    if (isSensitiveKey(key)) {
-      output[key] = '[redacted]'
-      continue
-    }
-    const descriptor = descriptors[key]
-    output[key] = descriptor && 'value' in descriptor
-      ? normalizeLogValue(descriptor.value, depth + 1, state)
-      : '[Accessor]'
-  }
-  return output
-}
+// normalizeLogValue 已收敛到 @lume/shared（三端同一份遍历骨架），此处 re-export 保持既有导入路径。
+export { normalizeLogValue };
 
 function safeRecord(value: unknown): Record<string, unknown> | undefined {
   if (value == null) return undefined
@@ -192,13 +122,27 @@ function isLevel(value: unknown): value is LumeLogLevel {
   return typeof value === 'string' && value in LEVEL_ORDER
 }
 
-function isSource(value: unknown): value is LumeLogSource {
-  return value === 'main'
-    || value === 'sidecar'
-    || value === 'renderer'
-    || value === 'desktop-host'
-    || value === 'node-repl'
+// 运行时校验+钳制：手改 settings.json 或未来直调方传入非法值时，
+// 防止非法 level 让 LEVEL_ORDER 比较恒 false 造成文件日志黑洞。
+function sanitizeLoggingSettings(settings: Partial<LumeLoggingSettings>): Partial<LumeLoggingSettings> {
+  const out: Partial<LumeLoggingSettings> = { ...settings }
+  for (const key of ['consoleLevel', 'fileLevel'] as const) {
+    const value = out[key]
+    if (value !== undefined && !isLevel(value)) delete out[key]
+  }
+  if (out.format !== undefined && out.format !== 'pretty' && out.format !== 'json') delete out.format
+  for (const key of ['retentionDays', 'maxSegmentMb', 'maxTotalMb'] as const) {
+    const raw = out[key]
+    if (raw === undefined) continue
+    const num = Number(raw)
+    if (!Number.isFinite(num)) delete out[key]
+    else (out as Record<string, unknown>)[key] = Math.max(1, Math.round(num))
+  }
+  return out
 }
+
+// 派生自 shared 的 LUME_LOG_SOURCES 单一来源，新增 source 时类型系统会同步。
+const isSource = isLumeLogSource
 
 function validName(value: unknown, fallback: string): string {
   if (typeof value !== 'string') return fallback
@@ -232,10 +176,27 @@ function shortId(value: string | undefined): string | undefined {
   return value ? value.slice(0, 8) : undefined
 }
 
+// pretty 格式默认不带 data——而参数/结果摘要恰是埋点的核心价值，行尾追加裁剪摘要保证终端可读。
+function prettyDetails(event: LumeLogEventV2): string {
+  // error 优先于 data：200 字符截断时保住排障最需要的错误消息。
+  const parts: Record<string, unknown> = {}
+  if (event.status) parts.status = event.status
+  if (Number.isFinite(event.durationMs)) parts.durationMs = event.durationMs
+  if (event.error?.message) parts.error = event.error.message
+  if (event.data) parts.data = event.data
+  if (Object.keys(parts).length === 0) return ''
+  try {
+    return ` ${clipLogPreview(JSON.stringify(parts))}`
+  } catch {
+    return ''
+  }
+}
+
 export class LoggingService {
   readonly logsDir: string
 
   private readonly now: () => Date
+  private readonly isDev: boolean
   private readonly terminal: Pick<NodeJS.WriteStream, 'write'>
   private settings: LumeLoggingSettings
   private seq = 0
@@ -253,10 +214,13 @@ export class LoggingService {
   private droppedLastAt = ''
   private listeners = new Set<LiveListener>()
   private snapshotActive = false
+  private lastSaturatedWarnAt = 0
 
   constructor(options: LoggingServiceOptions) {
     this.logsDir = join(options.configDir, 'logs')
-    this.settings = { ...LUME_LOGGING_DEFAULTS, ...options.settings }
+    this.isDev = options.isDev ?? false
+    this.settings = { ...LUME_LOGGING_DEFAULTS, ...sanitizeLoggingSettings(options.settings ?? {}) }
+    this.applyDevConsoleDefault()
     const legacyLevel = process.env.LUME_LOG_LEVEL
     if (isLevel(legacyLevel)) {
       if (!process.env.LUME_LOG_CONSOLE_LEVEL) this.settings.consoleLevel = legacyLevel
@@ -280,7 +244,21 @@ export class LoggingService {
   }
 
   updateSettings(settings: Partial<LumeLoggingSettings>): void {
-    this.settings = { ...this.settings, ...settings }
+    this.settings = { ...this.settings, ...sanitizeLoggingSettings(settings) }
+    this.applyDevConsoleDefault()
+  }
+
+  // Dev 默认放开控制台到 trace：显式 env 或用户持久化的非默认值优先。
+  // 持久化值等于全局默认(info)时视为"未自定义"，同样放行 dev trace——
+  // settings-replace 的全量快照回填也走这里，否则任意设置写入都会把 dev 静默打回 info。
+  private applyDevConsoleDefault(): void {
+    if (this.isDev && !process.env.LUME_LOG_CONSOLE_LEVEL && this.settings.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel) {
+      this.settings.consoleLevel = 'trace'
+    }
+  }
+
+  getSettings(): Readonly<LumeLoggingSettings> {
+    return this.settings
   }
 
   subscribe(listener: LiveListener): () => void {
@@ -351,6 +329,13 @@ export class LoggingService {
 
   async close(): Promise<void> {
     await this.flush()
+    // 尾窗补偿按队列深度定遍数（每批 ≤100 条）：突发 3000 条也要全部落盘。
+    // passes 上限防关停期持续生产者造成死循环；snapshotActive（导出/清空）时尊重暂停语义。
+    let passes = Math.ceil(this.queue.length / MAX_BATCH_EVENTS) + 2
+    while (this.queue.length > 0 && passes > 0 && !this.snapshotActive) {
+      await this.flush()
+      passes -= 1
+    }
   }
 
   async listFiles(): Promise<LogFileListResult> {
@@ -499,6 +484,22 @@ export class LoggingService {
 
   private accept(input: LumeLogEventInput, expectedSource: LumeLogSource): LumeLogEventV2 | null {
     if (!input || input.source !== expectedSource || !isSource(input.source) || !isLevel(input.level)) return null
+    // 级别早退门：既不落盘也不上终端的事件，不做归一化/序列化/去重登记等任何重活。
+    // 判定必须与下方 fileLevel 门 + writeTerminal 的可见性语义完全一致。
+    const isTraceKind = input.kind === 'trace'
+    const configuredFileLevel = process.env.LUME_LOG_FILE_LEVEL
+    const fileThreshold = isLevel(configuredFileLevel) ? configuredFileLevel : this.settings.fileLevel
+    const fileVisible = process.env.LUME_LOG_FILE !== 'false'
+      && (isTraceKind || LEVEL_ORDER[input.level] >= LEVEL_ORDER[fileThreshold])
+    const terminalConfigured = process.env.LUME_LOG_CONSOLE_LEVEL
+    const terminalThreshold = isLevel(terminalConfigured) ? terminalConfigured : this.settings.consoleLevel
+    const terminalVerbose = terminalThreshold === 'trace' || terminalThreshold === 'debug'
+    const eventName = typeof input.event === 'string' ? input.event : ''
+    const terminalVisible = process.env.LUME_LOG_CONSOLE !== 'false'
+      && (LEVEL_ORDER[input.level] >= LEVEL_ORDER.warn
+        || (input.level === 'info' && TERMINAL_INFO_EVENTS.has(eventName))
+        || (terminalVerbose && LEVEL_ORDER[input.level] >= LEVEL_ORDER[terminalThreshold]))
+    if (!fileVisible && !terminalVisible) return null
     const now = this.now()
     const eventId = validId(input.eventId) ?? randomUUID()
     if (this.recentEventIds.has(eventId)) return null
@@ -541,10 +542,7 @@ export class LoggingService {
 
     this.rememberEventId(eventId)
     this.writeTerminal(normalized)
-    const configuredFileLevel = process.env.LUME_LOG_FILE_LEVEL
-    const fileThreshold = isLevel(configuredFileLevel) ? configuredFileLevel : this.settings.fileLevel
-    if (process.env.LUME_LOG_FILE !== 'false'
-      && (normalized.kind === 'trace' || LEVEL_ORDER[normalized.level] >= LEVEL_ORDER[fileThreshold])) {
+    if (fileVisible) {
       this.enqueue(normalized)
     }
     return normalized
@@ -560,7 +558,14 @@ export class LoggingService {
         this.noteDropped(event)
         return
       } else {
-        this.writeEmergency('critical log queue saturated', { event: event.event, source: event.source })
+        // 全保护饱和：丢弃必须记账（dropped 汇总为 warn 受保护，恢复后可见）；
+        // emergency 直写按 5s 节流，否则错误风暴会以生产者速率刷屏 stderr。
+        this.noteDropped(event)
+        const nowMs = Date.now()
+        if (nowMs - this.lastSaturatedWarnAt >= SATURATED_WARN_INTERVAL_MS) {
+          this.lastSaturatedWarnAt = nowMs
+          this.writeEmergency('critical log queue saturated', { event: event.event, source: event.source })
+        }
         return
       }
     }
@@ -699,7 +704,7 @@ export class LoggingService {
     const format = process.env.LUME_LOG_FORMAT === 'json' ? 'json' : this.settings.format
     this.terminal.write(format === 'json'
       ? `${JSON.stringify(event)}\n`
-      : `${event.observedAt} ${event.level.toUpperCase()} ${event.context} ${event.event}${ids ? ` ${ids}` : ''} ${event.message}\n`)
+      : `${event.observedAt} ${event.level.toUpperCase()} ${event.context} ${event.event}${ids ? ` ${ids}` : ''} ${event.message}${prettyDetails(event)}\n`)
   }
 
   private writeEmergency(message: string, error: unknown): void {
