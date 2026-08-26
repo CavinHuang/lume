@@ -1388,6 +1388,10 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: lumeConfigPermissionApprovalsSchema,
   }),
   lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("permissions.classifier.enabled"),
+    value: z.boolean(),
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("webSearch"),
     value: lumeConfigWebSearchSchema,
   }),
