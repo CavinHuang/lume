@@ -358,7 +358,13 @@ export function AutomationManagementView() {
                 setSelectedJobId(null)
               }}
               onRun={async () => {
-                await runAutomationJobNow(selectedJob.id)
+                // #586:受理即返回，完成靠 automation:run-completed 推送刷新
+                try {
+                  await runAutomationJobNow(selectedJob.id)
+                  toast.success('已在后台执行，可在运行历史中查看结果')
+                } catch (error) {
+                  toast.error(`触发失败：${error instanceof Error ? error.message : String(error)}`)
+                }
               }}
               onSave={async (draft) => {
                 const updated = await updateAutomationJob({
@@ -638,7 +644,13 @@ function AutomationJobGroup({
                   setJobs((prev) => prev.filter((j) => j.id !== job.id))
                 }}
                 onRun={async () => {
-                  await runAutomationJobNow(job.id)
+                  // #586:受理即返回，完成靠 automation:run-completed 推送刷新
+                  try {
+                    await runAutomationJobNow(job.id)
+                    toast.success('已在后台执行，可在运行历史中查看结果')
+                  } catch (error) {
+                    toast.error(`触发失败：${error instanceof Error ? error.message : String(error)}`)
+                  }
                 }}
               />
             )
@@ -1069,7 +1081,7 @@ function AutomationJobDetail({
                   // 影子记录的说明挂整行 title：后缀可能被 truncate 裁掉，行级 tooltip 必须仍可达
                   const rowTitle = run.persistenceLost
                     ? '本次运行确实发生，但记录写入磁盘失败（磁盘满或被占用），重启后此条将消失'
-                    : clickable ? '查看会话回放' : '无可查看的会话'
+                    : [run.message, clickable ? '查看会话回放' : '无可查看的会话'].filter(Boolean).join(' · ')
                   return (
                     <div
                       key={run.id}

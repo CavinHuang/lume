@@ -1530,6 +1530,8 @@ export const submitToolPermissionInputSchema = z.object({
   threadId: idSchema,
   requestId: idSchema,
   decision: z.enum(["allow_once", "allow_always", "deny"]),
+  // #558:「始终允许」作用域档位——缺省 exact;不声明会被 zod strip 静默丢弃
+  allowAlwaysScope: z.enum(["exact", "command", "tool"]).optional(),
   threadPermissionMode: z.enum(["bypassPermissions"]).optional(),
 });
 

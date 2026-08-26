@@ -30,6 +30,23 @@ const toolResult = (id: string) => ({
 })
 
 describe("projectLifecycle", () => {
+  test("流抛错终值过人性化层:渠道裸码不再直达上屏单源(二轮 review P2)", async () => {
+    async function* failing(): AsyncGenerator<SDKMessage> {
+      yield streamTextDelta("he") as any
+      throw new Error("connection_disabled")
+    }
+    const out: any[] = []
+    for await (const ev of projectLifecycle(failing())) out.push(ev)
+
+    const runEnd = out.find((e) => e.kind === "run" && e.phase === "end")
+    expect(runEnd).toBeTruthy()
+    expect(runEnd.detail.stopReason).toBe("error")
+    expect(runEnd.detail.isError).toBe(true)
+    // 变异基线:projector 出口删掉 humanizeRuntimeErrorMessage 包装即红
+    expect(runEnd.detail.result).toContain("连接配置")
+    expect(runEnd.detail.result).not.toContain("connection_disabled")
+  })
+
   test("options.runId 传入:全部骨架事件 runId=传入值(Lume runId 贯穿)", async () => {
     const events = await run([
       streamTextDelta("he") as any,
