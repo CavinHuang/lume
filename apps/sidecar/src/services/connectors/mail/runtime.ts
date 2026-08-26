@@ -165,12 +165,17 @@ async function validateMailCredential(
   }
 
   const protocol = await loadProtocol();
+  // 总预算兼任排队中止信号(#698 审查 P2):预算耗尽时若 IMAP 阶段还在闸门
+  // 排队,立即退队而非任其占坑最坏 ~90s——验证失败已定局,早退让账号名额
+  // 尽快回到正常动作。IMAP 连接建立后的阶段仍靠自身超时收尾(不可取消)。
+  const budget = new AbortController();
+  let budgetTimer: ReturnType<typeof setTimeout> | undefined;
   try {
     // 两阶段共享一个总预算:单阶段超时各自生效,但顺序累加可能突破 RPC 层
     // 统一上限造成状态分裂;总预算先到即按 timeout 失败,不落盘
     const phases = (async () => {
       await validateMailPhase(config, "imap", credential.imapHost, mailImapPort, logger, () =>
-        protocol.validateImapCredential(credential),
+        protocol.validateImapCredential(credential, budget.signal),
       );
       await validateMailPhase(config, "smtp", credential.smtpHost, credential.smtpPort ?? mailSmtpPort, logger, () =>
         protocol.validateSmtpCredential(credential),
@@ -178,17 +183,19 @@ async function validateMailCredential(
     })();
     // 总预算先到时底层验证仍在自行收尾:吞掉迟到的 rejection 防 unhandledRejection
     phases.catch(() => {});
-    await Promise.race([
-      phases,
-      new Promise((_, reject) =>
-        setTimeout(
-          () => reject(new MailProtocolError("timeout", `${config.displayName} connection test budget exceeded`)),
-          mailValidationTotalBudgetMs,
-        ),
-      ),
-    ]);
+    const budgetExhausted = new Promise<never>((_, reject) => {
+      budgetTimer = setTimeout(() => {
+        budget.abort(new MailProtocolError("timeout", `${config.displayName} connection test budget exceeded`));
+        reject(budget.signal.reason);
+      }, mailValidationTotalBudgetMs);
+    });
+    await Promise.race([phases, budgetExhausted]);
   } catch (error) {
     throw mapProtocolError(error, "connect", config);
+  } finally {
+    if (budgetTimer !== undefined) {
+      clearTimeout(budgetTimer);
+    }
   }
 
   const normalizedEmail = credential.email.toLowerCase();

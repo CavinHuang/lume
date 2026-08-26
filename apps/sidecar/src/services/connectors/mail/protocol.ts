@@ -149,7 +149,8 @@ export interface MailFetchedMessage {
 }
 
 export interface MailProtocol {
-  validateImapCredential(credential: MailCredential): Promise<void>;
+  /** waitSignal 只中止「排队等连接名额」阶段;名额到手后连接自身超时照旧。 */
+  validateImapCredential(credential: MailCredential, waitSignal?: AbortSignal): Promise<void>;
   validateSmtpCredential(credential: MailCredential): Promise<void>;
   sendMail(credential: MailCredential, input: MailSendInput): Promise<MailSendResult>;
   listFolders(credential: MailCredential): Promise<MailFolder[]>;
@@ -250,10 +251,16 @@ function mailboxStateKey(email: string, folder: string): string {
 
 export function createMailProtocol(config: MailProtocolConfig, deps: MailProtocolDependencies = {}): MailProtocol {
   return {
-    async validateImapCredential(credential) {
-      await withImapClient(config, deps, credential, async (client) => {
-        await client.list();
-      });
+    async validateImapCredential(credential, waitSignal) {
+      await withImapClient(
+        config,
+        deps,
+        credential,
+        async (client) => {
+          await client.list();
+        },
+        waitSignal,
+      );
     },
     async validateSmtpCredential(credential) {
       const transport = await createSmtpTransport(config, deps, credential);
@@ -619,6 +626,13 @@ function createSmtpSocketFactory(host: string, port: number, lookup: LookupFunct
  */
 export const maxImapConnectionsPerAccount = 2;
 
+/**
+ * 单账号排队深度上限(#698 审查 P2):超限快败而非无限堆积。engine 单轮
+ * 并发 ≤10(MAX_CONCURRENCY 默认),32 已为多会话叠加留足余量;触发即说明
+ * 服务端已不可达或调用方失控,挂死排队不如立刻把「稍后重试」还给模型。
+ */
+export const maxImapWaitersPerAccount = 32;
+
 interface ImapAccountGate {
   active: number;
   waiters: Array<() => void>;
@@ -626,21 +640,62 @@ interface ImapAccountGate {
 
 const imapAccountGates = new Map<string, ImapAccountGate>();
 
-async function withImapConnectionLimit<T>(account: string, run: () => Promise<T>): Promise<T> {
+/**
+ * 排队等待一个连接名额;waitSignal 在排队阶段中止时退队并归还预占名额,
+ * 以 signal.reason(或缺省 provider 错误)reject。
+ */
+async function awaitImapSlot(gate: ImapAccountGate, waitSignal?: AbortSignal): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    const leaveQueueWithoutSlot = () => {
+      const index = gate.waiters.indexOf(wake);
+      if (index >= 0) {
+        gate.waiters.splice(index, 1);
+      }
+      gate.active -= 1;
+      // 预占名额就地转交队头(而非等下一次释放),保持 R=active-waiters 守恒
+      gate.waiters.shift()?.();
+    };
+    const onAbort = () => {
+      leaveQueueWithoutSlot();
+      reject(waitSignal?.reason ?? new MailProtocolError("provider", "aborted while waiting for a connection slot"));
+    };
+    const wake = () => {
+      waitSignal?.removeEventListener("abort", onAbort);
+      resolve();
+    };
+
+    if (waitSignal?.aborted) {
+      onAbort();
+      return;
+    }
+    waitSignal?.addEventListener("abort", onAbort, { once: true });
+    // 排队即预占名额(active 含排队者):唤醒者恢复后直接运行、不再复查,
+    // 晚到者必见 active≥max 而入队,无法插队超发。守恒依赖此约定——
+    // 若改成「唤醒后补记」,排队窗口内的新到达会读到偏小的 active 造成超限。
+    gate.active += 1;
+    gate.waiters.push(wake);
+  });
+}
+
+async function withImapConnectionLimit<T>(
+  account: string,
+  run: () => Promise<T>,
+  waitSignal?: AbortSignal,
+): Promise<T> {
   let gate = imapAccountGates.get(account);
   if (!gate) {
     gate = { active: 0, waiters: [] };
     imapAccountGates.set(account, gate);
   }
   if (gate.active >= maxImapConnectionsPerAccount) {
-    // 排队即预占名额(active 含排队者):唤醒者恢复后直接运行、不再复查,
-    // 晚到者必见 active≥max 而入队,无法插队超发。守恒依赖此约定——
-    // 若改成「唤醒后补记」,排队窗口内的新到达会读到偏小的 active 造成超限。
-    // executor 同步完成 push 才返回 promise,释放路径的 shift 不可能早于入队。
-    await new Promise<void>((resolve) => {
-      gate!.active += 1;
-      gate!.waiters.push(resolve);
-    });
+    if (gate.waiters.length >= maxImapWaitersPerAccount) {
+      throw new MailProtocolError(
+        "provider",
+        `Too many pending operations for ${account}; retry shortly.`,
+      );
+    }
+    // 中止路径在 awaitImapSlot 内部已退队并还原名额,此处直接向上抛
+    await awaitImapSlot(gate, waitSignal);
   } else {
     gate.active += 1;
   }
@@ -668,9 +723,12 @@ async function withImapClient<T>(
   deps: MailProtocolDependencies,
   credential: MailCredential,
   callback: (client: RuntimeImapClient) => Promise<T>,
+  waitSignal?: AbortSignal,
 ) {
-  return withImapConnectionLimit(credential.email.toLowerCase(), () =>
-    openAndRunImapClient(config, deps, credential, callback),
+  return withImapConnectionLimit(
+    credential.email.toLowerCase(),
+    () => openAndRunImapClient(config, deps, credential, callback),
+    waitSignal,
   );
 }
 

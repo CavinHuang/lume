@@ -3,6 +3,7 @@ import {
   createMailProtocol,
   imapAccountGateStateForTest,
   maxImapConnectionsPerAccount,
+  maxImapWaitersPerAccount,
   type MailCredential,
 } from "./protocol";
 
@@ -15,6 +16,8 @@ import {
 interface TrackingFactoryOptions {
   /** 让 connect() 失败指定次数后恢复,覆盖「建连失败走 close 兜底」的名额归还分支。 */
   failConnectTimes?: number;
+  /** status() 挂起到该 promise 决算,用于手动控制名额持有窗口。 */
+  holdStatus?: Promise<void>;
 }
 
 function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
@@ -61,7 +64,12 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
         messageFlagsRemove: async () => true,
         messageMove: async () => ({ path: "target" }),
         messageDelete: async () => true,
-        status: async () => ({ messages: 1 }),
+        status: async () => {
+          if (options.holdStatus) {
+            await options.holdStatus;
+          }
+          return { messages: 1 };
+        },
         download: async () => ({ meta: {}, content: [] }),
       };
     },
@@ -164,5 +172,63 @@ describe("per-account IMAP connection gate (#698)", () => {
     await protocol.getFolderStatus(credential("cleanup@qq.com"), "INBOX");
 
     expect(imapAccountGateStateForTest("cleanup@qq.com")).toBeUndefined();
+  });
+
+  it("aborts a queued waiter and hands its reserved slot back to the queue head", async () => {
+    let releaseHolders!: () => void;
+    const hold = new Promise<void>((resolve) => (releaseHolders = resolve));
+    const fake = makeTrackingFactory({ holdStatus: hold });
+    const protocol = createMailProtocol(config, fake);
+    const account = credential("abort@qq.com");
+
+    const holders = [
+      protocol.getFolderStatus(account, "INBOX"),
+      protocol.getFolderStatus(account, "INBOX"),
+    ];
+    const abort = new AbortController();
+    const queued = protocol.validateImapCredential(account, abort.signal);
+    await new Promise((resolve) => setTimeout(resolve, 1));
+    // 排队即预占:active = 两名额持有者 + 排队者的预占
+    expect(imapAccountGateStateForTest("abort@qq.com")).toMatchObject({
+      active: maxImapConnectionsPerAccount + 1,
+      waiting: 1,
+    });
+
+    abort.abort(new Error("budget gone"));
+    await expect(queued).rejects.toThrow("budget gone");
+    // 中止者退队并还原预占名额:队列清空、两个持有者计数不变
+    expect(imapAccountGateStateForTest("abort@qq.com")).toMatchObject({ active: 2, waiting: 0 });
+
+    releaseHolders();
+    await Promise.all(holders);
+    expect(imapAccountGateStateForTest("abort@qq.com")).toBeUndefined();
+    // 名额记账完好:账号照常可用
+    await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+  });
+
+  it("fast-fails beyond the queue depth cap without breaking the slot ledger", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    const fake = makeTrackingFactory({ holdStatus: hold });
+    const protocol = createMailProtocol(config, fake);
+    const account = credential("cap@qq.com");
+
+    const outcomes: Array<PromiseSettledResult<unknown>> = [];
+    const calls = Array.from({ length: maxImapWaitersPerAccount + 3 }, () =>
+      protocol.getFolderStatus(account, "INBOX").then(
+        (value) => outcomes.push({ status: "fulfilled", value }),
+        (reason) => outcomes.push({ status: "rejected", reason }),
+      ),
+    );
+    // 同步发起即定局:2 直入 + maxImapWaitersPerAccount 排队,第 max+3 个超限快败
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const rejectedNow = outcomes.filter((outcome) => outcome.status === "rejected");
+    expect(rejectedNow).toHaveLength(1);
+    expect((rejectedNow[0] as PromiseRejectedResult).reason).toMatchObject({ kind: "provider" });
+
+    release();
+    await Promise.all(calls);
+    expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(maxImapWaitersPerAccount + 2);
+    expect(imapAccountGateStateForTest("cap@qq.com")).toBeUndefined();
   });
 });
