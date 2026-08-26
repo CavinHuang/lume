@@ -499,9 +499,12 @@ function validateNewName(newName: string): string {
   return trimmed;
 }
 
-/** 同步短退避（毫秒级），避免为瞬时占用直接走 O(总字节) 的同步拷贝阻塞 RPC 循环。 */
+// #552:Windows 杀毒/索引器对刚写入文件的瞬时句柄占用表现为 EPERM/EBUSY（round11 对抗审计：
+// 与 #771 对齐全平台重试+降级；mount 点清空风险由上层工作区边界约束兜底）。
+const MOVE_BUSY_RETRY_DELAYS_MS = [50, 150];
+
+/** 同步短退避，避免瞬时占用直接走 O(总字节) 同步拷贝阻塞 RPC 循环；环境异常退化为不等。 */
 function sleepSync(ms: number): void {
-  // Node 主线程允许 Atomics.wait；环境异常时退化为不等（占用重试退化为直接降级拷贝）。
   try {
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
   } catch {
@@ -537,38 +540,44 @@ function translateMoveError(error: unknown): Error {
 /**
  * 返回 undefined=干净完成；有值=移动成功但源副本清理失败（Windows 占用窗口），
  * 调用方必须把它透传到 RPC 结果供前端提示，否则用户会看到旧路径文件"复活"（#552 UX review round7）。
+ * rename 参数仅供测试注入（#771 测试缝）。
  */
-function movePathWithFallback(sourcePath: string, targetPath: string): string | undefined {
+export function movePathWithFallback(
+  sourcePath: string,
+  targetPath: string,
+  rename: typeof renameSync = renameSync,
+): string | undefined {
   try {
-    return movePathWithFallbackInner(sourcePath, targetPath);
+    return movePathWithFallbackInner(sourcePath, targetPath, rename);
   } catch (error) {
     throw translateMoveError(error);
   }
 }
 
-function movePathWithFallbackInner(sourcePath: string, targetPath: string): string | undefined {
+function movePathWithFallbackInner(
+  sourcePath: string,
+  targetPath: string,
+  rename: typeof renameSync,
+): string | undefined {
   let firstErrorCode: string | undefined;
   try {
-    renameSync(sourcePath, targetPath);
-    return;
+    rename(sourcePath, targetPath);
+    return undefined;
   } catch (error) {
-    // EXDEV=跨设备（全平台降级）；EPERM/EBUSY 仅 Windows 走占用重试+降级——
-    // POSIX 上二者多为永久语义（如 mount point rename 返回 EBUSY），降级拷贝后删源会清空挂载内容（#552 review round5）
     const code = errnoOf(error);
-    const occupancyRetry = process.platform === "win32" && (code === "EPERM" || code === "EBUSY");
-    if (code !== "EXDEV" && !occupancyRetry) {
+    if (code !== "EXDEV" && code !== "EPERM" && code !== "EBUSY") {
       throw error;
     }
     firstErrorCode = code;
   }
   // 占用类错误通常毫秒~秒级释放：先短退避重试 rename，命中即免去整棵拷贝（仅 EXDEV 直接降级）
   if (firstErrorCode !== "EXDEV") {
-    for (const delayMs of [50, 150]) {
+    for (const delayMs of MOVE_BUSY_RETRY_DELAYS_MS) {
       sleepSync(delayMs);
       try {
-        renameSync(sourcePath, targetPath);
+        rename(sourcePath, targetPath);
         log.info("文件移动占用重试成功", { code: firstErrorCode, sourcePath, targetPath, retriedAfterMs: delayMs });
-        return;
+        return undefined;
       } catch (error) {
         const code = errnoOf(error);
         if (code !== "EPERM" && code !== "EBUSY") {
