@@ -203,6 +203,10 @@ export const FILE_PROTOCOL = 'lume-file'
 const APP_PROTOCOL_HOST = 'app'
 const APP_PROTOCOL_ORIGIN = `${APP_PROTOCOL}://${APP_PROTOCOL_HOST}`
 const HEALTHCHECK_TIMEOUT_MS = 45_000
+// #552:与 sidecar MAX_RPC_MESSAGE_UNITS(process-transport.ts)同值同口径
+// (UTF-16 code units)。sidecar 对超限帧静默丢弃且错误响应不带 id,pending
+// 查表必 miss,caller 只能干等 45s 超时——发送端预检让 caller 立即得明确错误。
+const SIDECAR_RPC_MESSAGE_LIMIT_UNITS = 96 * 1024 * 1024
 const SIDECAR_READY_METHOD = 'system.ready'
 const SIDECAR_LOG_METHOD = 'system.log'
 const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
@@ -3211,6 +3215,10 @@ function createSidecarHost({ onNotification }) {
       method,
       params,
     })
+
+    if (payload.length > SIDECAR_RPC_MESSAGE_LIMIT_UNITS) {
+      throw new Error(`sidecar request exceeds size limit: ${method}`)
+    }
 
     return new Promise((resolveCall, rejectCall) => {
       const timeout = setTimeout(() => {
