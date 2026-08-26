@@ -174,6 +174,13 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
 
     // 非 win32 宿主不消费信号（与下方既定语义测试同口径）
     expect(evaluateRuntimeToolSafety("Bash", { command: "Remove-Item -Recurse -Force build" }, { platform: "linux" }).behavior).not.toBe("deny");
+
+    // 参数/字符串位置的全名动词不构成信号（#717 follow-up）：第一支经命令位锚定，
+    // echo 回显文本不再触发 UX 摩擦弹卡；命令位形态（分号/管道/换行后）仍命中
+    expect(hasPowerShellContentSignal("echo remove-item deletes stuff")).toBe(false);
+    expect(hasPowerShellContentSignal("echo 'stop-process' >> log")).toBe(false);
+    expect(hasPowerShellContentSignal("grep -rn restart-computer src/")).toBe(false);
+    expect(hasPowerShellContentSignal("Get-Date; Remove-Item x")).toBe(true);
   });
 
   test("non-win32 hosts keep the exact bash reading while Windows discovery is unsettled", () => {
