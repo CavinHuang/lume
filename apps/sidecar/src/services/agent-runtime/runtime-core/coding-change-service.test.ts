@@ -572,6 +572,50 @@ describe("coding-change-service", () => {
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
+  test("接近但不超水位的变更保持 Publish 可用且指纹齐全（水位下界对照）", async () => {
+    const root = makeTempDir("lume-coding-publish-under-limit-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    // 12MB 随机二进制：--binary base85 编码后 ≈15MB，低于 16MiB 水位
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(12 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const state = await getCodingRepositoryPublishState(root);
+    if (!state.available) throw new Error(`预期可用但降级: ${state.reason}`);
+    expect(state.worktreeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(state.canCommit).toBe(true);
+  }, 30_000);
+
+  test("分区级 unstage 在 patch 超限时报变更过大而非没有可 Unstage 的 Diff", async () => {
+    const root = makeTempDir("lume-coding-section-big-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const diff = await getCodingFileDiff(root, "assets/bundle.bin");
+    await expect(applyCodingDiffAction(root, {
+      threadId: "thread-test",
+      scope: "section",
+      action: "unstage",
+      files: [{ path: diff.path, expectedDiffHash: diff.diffHash }],
+    })).rejects.toThrow("16MB");
+  }, 30_000);
+
+  test("staged 超大可读文本的 diff 读取报文件过大而非静默空内容", async () => {
+    const root = makeTempDir("lume-coding-huge-text-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    // base64 无 \0：git 视为文本，走 readGitTextSource；>16MiB 使 git show 触发水位
+    writeFileSync(join(root, "src", "huge.txt"), randomBytes(20 * 1024 * 1024).toString("base64"));
+    execFileSync("git", ["add", "src/huge.txt"], { cwd: root });
+
+    await expect(getCodingFileDiff(root, "src/huge.txt", { reviewSource: { kind: "staged" } }))
+      .rejects.toThrow("文件过大");
+  }, 60_000);
+
   test("staged 大二进制产物使 git 输出超限时 Publish 状态降级为不可用而非全量累积", async () => {
     const root = makeTempDir("lume-coding-publish-big-binary-");
     tempDirs.push(root);
