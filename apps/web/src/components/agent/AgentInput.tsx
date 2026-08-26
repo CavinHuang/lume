@@ -1072,13 +1072,17 @@ export function AgentInput({
         setLocalDesktopContextTarget(state.target)
       }
     }
+    // #670:identity 必须与实际 payload 同口径——payload 条件省略 thinkingLevel 时
+    // 指纹也须省略,否则同 clientSubmissionId 在途期间用户动过选择器(或显示态
+    // 与发送态不一致)会因服务端 hash 不匹配抛"已用于不同提交内容"
+    const sendThinkingLevelForIdentity = thinkingLevelTouchedRef.current || configThinkingLevelRef.current !== undefined
     const submissionIdentity = JSON.stringify({
       userMessage: text,
       messageParts,
       attachments: effectivePendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
       commentAttachments: effectiveCommentAttachments,
       browserAttachments: effectiveBrowserAttachments,
-      thinkingLevel,
+      ...(sendThinkingLevelForIdentity ? { thinkingLevel } : {}),
       permissionMode,
       workspaceId: workspaceIdRef.current,
       messageMetadata: sendMessageMetadata,

@@ -119,6 +119,45 @@ describe("lume-config-service", () => {
     });
   });
 
+  test("projectInstructionsEnabled：布尔透传、非法值丢弃、工作区覆盖生效(#670)", () => {
+    // 缺省 → 归一化输出不含该键（语义上视为 true）
+    const initial = getEffectiveLumeConfig();
+    expect(initial.agent?.projectInstructionsEnabled).toBeUndefined();
+
+    updateLumeConfigSection({
+      source: "system",
+      path: "agent.projectInstructionsEnabled",
+      value: false,
+      summary: "disable project instructions",
+    });
+    expect(getEffectiveLumeConfig().agent?.projectInstructionsEnabled).toBe(false);
+
+    updateLumeConfigSection({
+      source: "user",
+      path: "agent.projectInstructionsEnabled",
+      value: true,
+      summary: "enable project instructions",
+    });
+    expect(getEffectiveLumeConfig().agent?.projectInstructionsEnabled).toBe(true);
+
+    // 工作区覆盖：仅该 slug 的有效配置翻转
+    updateLumeConfigSection({
+      source: "user",
+      workspaceSlug: "default",
+      path: "agent.projectInstructionsEnabled",
+      value: false,
+      summary: "disable for workspace",
+    });
+    expect(getEffectiveLumeConfig().agent?.projectInstructionsEnabled).toBe(true);
+    expect(getEffectiveLumeConfig("default").agent?.projectInstructionsEnabled).toBe(false);
+
+    // 非法值（字符串）被归一化丢弃，回落全局层
+    const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
+    file.workspaces = { ...file.workspaces, broken: { agent: { projectInstructionsEnabled: "yes" as unknown as boolean } } };
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify(file), "utf-8");
+    expect(getEffectiveLumeConfig("broken").agent?.projectInstructionsEnabled).toBe(true);
+  });
+
   test("应规范化 Computer Use 的 agent surface 和 sky 模型列表", () => {
     updateLumeConfigSection({
       source: "system",

@@ -131,13 +131,15 @@ export function createFileHandlers(
     },
     // #670 行为告知:与 system prompt 注入同源(loadProjectInstructions memo),
     // 开关关闭时同样视为未加载,保持查询结果与实际注入行为一致。
+    // 开关按线程所属工作区作用域读取(与 prompt-builder 的 ctx.workspaceSlug 同口径)。
     [AGENT_IPC_CHANNELS.GET_PROJECT_INSTRUCTIONS_INFO]: async (params) => {
       const input = validateInput(
         threadPathInputSchema,
         params,
         AGENT_IPC_CHANNELS.GET_PROJECT_INSTRUCTIONS_INFO,
       );
-      if (getEffectiveLumeConfig().agent?.projectInstructionsEnabled === false) return null;
+      const workspaceSlug = resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug);
+      if (getEffectiveLumeConfig(workspaceSlug).agent?.projectInstructionsEnabled === false) return null;
       const { agentCwd } = resolveAgentThreadWorkdir(input.threadId);
       const instructions = loadProjectInstructions(agentCwd);
       if (!instructions) return null;

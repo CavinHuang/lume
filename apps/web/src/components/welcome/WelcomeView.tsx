@@ -97,7 +97,13 @@ export function WelcomeView({
   const [modelRef, setModelRef] = useState<string | undefined>()
   const [channelId, setChannelId] = useState<string | undefined>()
   const [modelId, setModelId] = useState<string | undefined>()
-  const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+  // #670 行为告知:thinkingLevel 会随首条消息发送(这里是每个新线程第一条
+  // 消息的唯一入口)。未配置(config 无值)且用户未显式选择过时不携带该字段,
+  // 让 sidecar 走「未配置按 medium 执行」默认——此前本地默认 'off' 硬塞进请求,
+  // 显示「关闭」实为 UI 自作主张。显示默认 'medium' 与 sidecar 未配置默认一致。
+  const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('medium')
+  const thinkingLevelTouchedRef = useRef(false)
+  const configThinkingLevelRef = useRef<LumeConfigThinkingLevel | undefined>(undefined)
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
   const [sending, setSending] = useState(false)
   const sendingRef = useRef(sending)
@@ -137,7 +143,10 @@ export function WelcomeView({
     getEffectiveLumeConfig(configWorkspaceSlug)
       .then((config) => {
         if (!cancelled) {
-          if (config.agent?.thinkingLevel) setThinkingLevel(config.agent.thinkingLevel)
+          if (config.agent?.thinkingLevel) {
+            configThinkingLevelRef.current = config.agent.thinkingLevel
+            setThinkingLevel(config.agent.thinkingLevel)
+          }
           if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
         }
       })
@@ -152,7 +161,10 @@ export function WelcomeView({
       getEffectiveLumeConfig(configWorkspaceSlug)
         .then((config) => {
           if (!cancelled) {
-            if (config.agent?.thinkingLevel) setThinkingLevel(config.agent.thinkingLevel)
+            if (config.agent?.thinkingLevel) {
+              configThinkingLevelRef.current = config.agent.thinkingLevel
+              setThinkingLevel(config.agent.thinkingLevel)
+            }
             if (config.agent?.permissionMode) setPermissionMode(config.agent.permissionMode)
           }
         })
@@ -460,6 +472,9 @@ export function WelcomeView({
         })
       }
 
+      // #670:仅当用户显式配置过(config 有值或本会话动过选择器)才随请求携带
+      // thinkingLevel;否则让 sidecar 走 config 缺省语义(未配置按 medium 执行)
+      const sendThinkingLevel = thinkingLevelTouchedRef.current || configThinkingLevelRef.current !== undefined
       await agentSend({
         threadId: meta.id,
         userMessage: text,
@@ -467,7 +482,7 @@ export function WelcomeView({
         ...(serialized.messageParts.some((part) => part.type === 'capability_ref')
           ? { messageParts: serialized.messageParts }
           : {}),
-        thinkingLevel,
+        ...(sendThinkingLevel ? { thinkingLevel } : {}),
         permissionMode,
         ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
         ...(desktopContextTargetForSend
@@ -612,6 +627,8 @@ export function WelcomeView({
   }
 
   const handleThinkingLevelChange = async (value: LumeConfigThinkingLevel) => {
+    thinkingLevelTouchedRef.current = true
+    configThinkingLevelRef.current = value
     setThinkingLevel(value)
     try {
       await updateAgentThinkingLevel(value)

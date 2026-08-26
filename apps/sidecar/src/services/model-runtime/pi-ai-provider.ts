@@ -151,9 +151,10 @@ export interface StreamThinkingOptions {
  * thinking,若翻转成 {} 会向各渠显式下发关闭信号,改变其出网形态(#631 review)
  * ——仅显式 disabled 返回 {}。
  *
- * 【agent.thinkingLevel 豁免清单(#670 文档化)】下列消费方恒按 medium 出网,
- * 不受 UI 思考档位控制(均为后台辅助任务,固定低档避免深思考烧预算;用户档位
- * 仅作用于经 engine 的主对话链路)。全部共用本兜底,无一处单独传 effort:
+ * 【agent.thinkingLevel 豁免清单(#670 文档化)】下列消费方恒按 medium 出网
+ * (provider 兜底 reasoning:"medium"),不受 UI 思考档位控制——均为后台辅助
+ * 任务,避免深思考烧预算,也不随用户「关闭」一起停(记忆抽取等依赖思考质量)。
+ * 全部共用本兜底,无一处单独传 effort:
  * - advisor 二审(advisor-service.ts)
  * - memory-v2 五服务:抽取/query-planner/会话摘要/persona/rerank
  * - suggest 分析器(suggest/analyst.ts)

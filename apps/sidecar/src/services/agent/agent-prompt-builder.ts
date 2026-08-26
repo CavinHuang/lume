@@ -291,8 +291,8 @@ export function resolveSystemPromptMode(
 }
 
 /** 项目指令注入开关（agent.projectInstructionsEnabled，缺省 true）。#670 行为告知。 */
-function isProjectInstructionsEnabled(): boolean {
-  return getEffectiveLumeConfig().agent?.projectInstructionsEnabled !== false;
+function isProjectInstructionsEnabled(workspaceSlug?: string): boolean {
+  return getEffectiveLumeConfig(workspaceSlug).agent?.projectInstructionsEnabled !== false;
 }
 
 function buildMinimalSections(ctx: SystemPromptContext): string[] {
@@ -308,7 +308,7 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
 
-  if (isProjectInstructionsEnabled()) {
+  if (isProjectInstructionsEnabled(ctx.workspaceSlug)) {
     const minimalProjectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
     if (minimalProjectInstructions) {
       lines.push("", minimalProjectInstructions);
@@ -415,7 +415,7 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
   // 项目级指令文件（CLAUDE.md/AGENTS.md，就近覆盖）：低频变更，进稳定 system
   // 前缀吃 prompt cache；无文件时不产生任何段落，prompt 保持原样。
   // 设置开关（agent.projectInstructionsEnabled，缺省 true）关闭时整体跳过注入。
-  if (isProjectInstructionsEnabled()) {
+  if (isProjectInstructionsEnabled(ctx.workspaceSlug)) {
     const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
     if (projectInstructions) {
       sections.push(projectInstructions);

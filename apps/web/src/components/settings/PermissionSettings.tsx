@@ -268,8 +268,8 @@ export function PermissionSettings() {
       >
         <div className="flex items-center justify-between gap-3 py-1">
           <div className="min-w-0">
-            <div className="text-[12.5px] font-medium text-[var(--text-1)]">项目指令自动注入</div>
-            <div className="mt-0.5 text-[11px] text-[var(--text-3)]">关闭后不读取项目指令文件</div>
+            <div className="text-ui font-medium text-[var(--text-1)]">项目指令自动注入</div>
+            <div className="mt-0.5 text-caption text-[var(--text-3)]">关闭后不读取项目指令文件</div>
           </div>
           <Switch
             checked={projectInstructionsEnabled}

@@ -39,8 +39,10 @@ export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
   const [workspaceStatus, setWorkspaceStatus] = useState<AgentWorkspaceStatus | null>(null)
   const [ordinaryPath, setOrdinaryPath] = useState<string | null>(null)
   const [primaryTodo, setPrimaryTodo] = useState<{ id: string; title: string; status: string } | null>(null)
-  // #670 行为告知:项目指令注入此前完全静默,头部 chip 一次性展示当前生效的
+  // #670 行为告知:项目指令注入此前完全静默,头部 chip 展示当前生效的
   // CLAUDE.md/AGENTS.md(路径与截断态在 tooltip),无指令时不渲染。
+  // 已知语义:挂载时一次性查询,不订阅配置变更——用户改设置页开关或指令文件后,
+  // 已打开会话的 chip 到下次进入该线程前保持旧值;tooltip 描述的是注入时刻快照。
   const [instructionsInfo, setInstructionsInfo] = useState<AgentProjectInstructionsInfo | null>(null)
 
   const runtimePhase = runtimeStatus?.phase
@@ -141,7 +143,7 @@ export function AgentHeader({ threadId, readOnly, actions }: AgentHeaderProps) {
         {primaryTodo && <Button type="button" variant="secondary" onClick={openPrimaryTodo} className="h-7 max-w-[220px] justify-start gap-1.5 px-2 text-[11px]" title={primaryTodo.title}><ListTodo size={13} /><span className="truncate">{primaryTodo.title}</span></Button>}
         {instructionsInfo && (
           <span
-            className="flex h-7 max-w-[220px] shrink-0 items-center gap-1.5 rounded-md bg-[var(--lume-bg-elevated)] px-2 text-[11px] text-muted-foreground"
+            className="flex h-7 max-w-[220px] shrink-0 items-center gap-1.5 rounded-md bg-[var(--lume-bg-elevated)] px-2 text-caption text-muted-foreground"
             title={`${instructionsInfo.path}\n已注入系统提示 ${instructionsInfo.chars} 字符${instructionsInfo.truncated ? '（超出 32KB 上限已截断）' : ''}`}
           >
             <FileText size={13} className="shrink-0" />

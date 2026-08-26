@@ -1374,6 +1374,10 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: z.enum(["off", "low", "medium", "high", "max"]).nullable(),
   }),
   lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("agent.projectInstructionsEnabled"),
+    value: z.boolean(),
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("agent.permissionMode"),
     value: z
       .enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"])
