@@ -361,4 +361,57 @@ describe("project-instructions", () => {
       JSON.stringify = originalStringify;
     }
   });
+
+  test("瞬态读失败不入负缓存：fstat 复核失败后恢复，下次调用重试成功(#663)", () => {
+    const proj = join(root, "proj");
+    mkdirSync(proj, { recursive: true });
+    const file = join(proj, "CLAUDE.md");
+    writeFileSync(file, "# retry rules", "utf-8");
+    const source = findProjectInstructionsFile(proj, { homeDir: root })!;
+
+    // 第一次：句柄身份复核恒失配（模拟 Windows EBUSY 等瞬态 IO 抖动）→ null
+    let failIdentity = true;
+    const flaky = loadProjectInstructions(proj, {
+      homeDir: root,
+      fstat: () =>
+        ({
+          isFile: () => !failIdentity,
+          nlink: 1,
+          dev: failIdentity ? source.dev + 1 : source.dev,
+          ino: failIdentity ? 987654 : source.ino
+        }) as unknown as Stats
+    });
+    expect(flaky).toBeNull();
+
+    // 指纹未变（文件未被修改）时恢复：负结果不得驻留，下次必须重试成功
+    failIdentity = false;
+    const recovered = loadProjectInstructions(proj, {
+      homeDir: root,
+      fstat: () =>
+        ({
+          isFile: () => true,
+          nlink: 1,
+          dev: source.dev,
+          ino: source.ino
+        }) as unknown as Stats
+    });
+    expect(recovered?.path).toBe(file);
+  });
+
+  test("自定义 home 容器名：从实际 home 推导容器，他人层照判不漏(#663)", () => {
+    // 域策略重定向形态：<root>/Profiles/bob 与 <root>/Profiles/carol
+    const profiles = join(root, "Profiles");
+    const bobHome = join(profiles, "bob");
+    const carolDeep = join(profiles, "carol", "proj-deep");
+    mkdirSync(carolDeep, { recursive: true });
+    writeFileSync(join(profiles, "carol", "CLAUDE.md"), "# carol redirected rules", "utf-8");
+
+    // carol 层位于 bob 的真实容器（Profiles）下 → 判为他人层，不读入；
+    // 对照：bob 自己容器下的项目正常可达
+    expect(findProjectInstructionsFile(carolDeep, { homeDir: bobHome })).toBeNull();
+    const bobWork = join(bobHome, "work");
+    mkdirSync(bobWork, { recursive: true });
+    writeFileSync(join(bobHome, "AGENTS.md"), "# bob redirected agents", "utf-8");
+    expect(findProjectInstructionsFile(bobWork, { homeDir: bobHome })?.path).toBe(join(bobHome, "AGENTS.md"));
+  });
 });
