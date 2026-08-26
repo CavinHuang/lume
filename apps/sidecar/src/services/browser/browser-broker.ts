@@ -501,6 +501,7 @@ function normalizeBrowserCommand(method: string, input: Record<string, unknown>)
     case "release_tabs": return { method: "release", params }
     case "handoff_tabs": return { method: "handoff", params }
     case "resume_handoff_tabs": return { method: "resumeHandoff", params }
+    case "prune_thread_tabs": return { method: "pruneThread", params }
     case "finalize_tabs": return {
       method: "finalize",
       params: {
