@@ -803,6 +803,9 @@ export function createAgentHandlers(
         params,
         AGENT_IPC_CHANNELS.ARCHIVE_THREAD,
       );
+      // 与删除/回收站/移动同一护栏（#589）：归档运行中的线程会让 run 转入
+      // 不可见状态继续烧 token，完成后消息追加进列表里不存在的线程。
+      await assertThreadNotRunningAfterGrace(input.threadId, "归档");
       log.info("[Agent 线程] 归档", { threadId: input.threadId.slice(0, 8) });
       return archiveAgentThread(input.threadId);
     },
