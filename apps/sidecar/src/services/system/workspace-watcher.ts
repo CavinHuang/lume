@@ -2,6 +2,7 @@
 import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { AGENT_IPC_CHANNELS, LUME_CONFIG_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
+import { listAgentWorkspaces } from "../agent/agent-workspace-manager";
 import { getAgentWorkspacesDir, getConfigDir, getLumeConfigYamlPath, getStructuredMemoryDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 
@@ -63,6 +64,14 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     }, DEBOUNCE_MS);
   };
 
+  const emitFilesChanged = (): void => {
+    if (filesTimer) clearTimeout(filesTimer);
+    filesTimer = setTimeout(() => {
+      emit(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED, {});
+      filesTimer = null;
+    }, DEBOUNCE_MS);
+  };
+
   const emitMemoryChanged = (): void => {
     if (memoryTimer) clearTimeout(memoryTimer);
     memoryTimer = setTimeout(() => {
@@ -106,6 +115,15 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
   };
 
   safeWatch(watchDir, { recursive: true }, onWorkspaceChanged, "Lume 工作区");
+  // #590:project 型工作区根在任意盘位，不在托管目录监视内——git pull/切分支/
+  // 外部编辑对文件树零信号，树与 agent 的活磁盘认知分叉。逐个监视真实根目录，
+  // 变更并入同一条 WORKSPACE_FILES_CHANGED 通道。ponytail: 工作区列表为启动时
+  // 快照，中途新增的项目工作区重启后覆盖；已删路径的残留 watcher 静默无事件。
+  for (const workspace of listAgentWorkspaces()) {
+    const projectPath = workspace.projectPath?.trim();
+    if (!projectPath) continue;
+    safeWatch(projectPath, { recursive: true }, () => emitFilesChanged(), `project 工作区 ${workspace.slug}`);
+  }
   safeWatch(getStructuredMemoryDir(), { recursive: true }, () => emitMemoryChanged(), "Lume 全局记忆目录");
   safeWatch(getConfigDir(), { recursive: false }, (_eventType, filename) => {
     if (!filename) return;
