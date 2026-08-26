@@ -40,4 +40,22 @@ describe("createProcessRpcTransport 行缓冲（#154 大小上限）", () => {
     await closed;
     input.destroy();
   });
+
+  test("多字节字符劈在 chunk 边界不产出 U+FFFD（#552 stdio UTF-8 劈裂）", async () => {
+    const input = new PassThrough();
+    const output = new PassThrough();
+    const transport = createProcessRpcTransport({ input, output, parentPort: null });
+    const received: string[] = [];
+    transport.listen((line) => received.push(line));
+
+    // 中文行劈成两半：前半以不完整多字节序列结尾
+    const line = JSON.stringify({ method: "t", params: { text: "中文消息测试" } });
+    const raw = Buffer.from(`${line}\n`, "utf8");
+    const splitAt = Buffer.byteLength(line, "utf8") - 3; // 劈在最后一个汉字的中间
+    input.write(raw.subarray(0, splitAt));
+    input.write(raw.subarray(splitAt));
+    await new Promise((resolve) => setImmediate(resolve));
+    expect(received).toHaveLength(1);
+    expect(JSON.parse(received[0]!).params.text).toBe("中文消息测试");
+  });
 });
