@@ -18,8 +18,6 @@ interface TrackingFactoryOptions {
   failConnectTimes?: number;
   /** status() 挂起到该 promise 决算,用于手动控制名额持有窗口。 */
   holdStatus?: Promise<void>;
-  /** 让 logout() 必败,覆盖「graceful 回收失败退 close」分支。 */
-  failLogout?: boolean;
   /** 让 close() 自身抛错,覆盖「清理兜底吞错不顶替业务结果」分支。 */
   throwOnClose?: boolean;
 }
@@ -29,6 +27,9 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
   let peak = 0;
   let created = 0;
   let clock = 0;
+  let logoutCalls = 0;
+  let closeCalls = 0;
+  const clients: Array<{ __emitError: () => void }> = [];
   const tick = () => new Promise((resolve) => setTimeout(resolve, 1));
   return {
     get peak() {
@@ -40,18 +41,25 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
     get live() {
       return live;
     },
+    get logoutCalls() {
+      return logoutCalls;
+    },
+    get closeCalls() {
+      return closeCalls;
+    },
+    get clients() {
+      return clients;
+    },
     /** 推进注入时钟,驱动池化连接的空闲 TTL 判定。 */
     advanceClock(ms: number) {
       clock += ms;
     },
     deps: {
       now: () => clock,
-      createImapClient: () => {
+      createImapClient: (configArg: Record<string, unknown>) => {
         created += 1;
         live += 1;
         peak = Math.max(peak, live);
-        // 与终结出口对齐:logout(graceful 回收)与 close(立即销毁/兜底)
-        // 都代表连接终结,幂等归还计数;idle 归还不终结、不计入
         let released = false;
         const release = () => {
           if (!released) {
@@ -59,28 +67,46 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
             live -= 1;
           }
         };
-        return {
+        // 模拟 imapflow 的 EventEmitter 面:error 监听置 dead 标记是
+        // 借出淘汰的依据,mailboxOpen 置选中态是 requireUnselected 的依据
+        let mailbox: object | undefined;
+        const errorListeners: Array<() => void> = [];
+        const client = {
+          get mailbox() {
+            return mailbox;
+          },
+          on(event: string, listener: () => void) {
+            if (event === "error") {
+              errorListeners.push(listener);
+            }
+          },
           connect: async () => {
             await tick();
+            const auth = (configArg as { auth?: { pass?: string } }).auth;
+            if (auth?.pass && auth.pass !== "abcd1234efgh5678") {
+              throw new Error("LOGIN failed (AUTHENTICATIONFAILED)");
+            }
             if (options.failConnectTimes !== undefined && options.failConnectTimes > 0) {
               options.failConnectTimes -= 1;
               throw new Error("LOGIN failed (AUTHENTICATIONFAILED)");
             }
           },
           logout: async () => {
+            logoutCalls += 1;
             release();
-            if (options.failLogout) {
-              throw new Error("logout failed");
-            }
           },
           close: () => {
+            closeCalls += 1;
             release();
             if (options.throwOnClose) {
               throw new Error("close exploded");
             }
           },
           list: async () => [],
-          mailboxOpen: async () => ({}),
+          mailboxOpen: async () => {
+            mailbox = { path: "INBOX" };
+            return {};
+          },
           search: async () => [1],
           fetchAll: async () => [],
           fetchOne: async () => false,
@@ -96,6 +122,15 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
           },
           download: async () => ({ meta: {}, content: [] }),
         };
+        const withTrigger = Object.assign(client, {
+          __emitError: () => {
+            for (const listener of errorListeners) {
+              listener();
+            }
+          },
+        });
+        clients.push(withTrigger);
+        return client;
       },
     },
   };
@@ -348,18 +383,133 @@ describe("per-account IMAP connection pool (#698)", () => {
     expect(outcomes.filter((outcome) => outcome.status === "fulfilled")).toHaveLength(maxImapWaitersPerAccount + 2);
   });
 
-  it("falls back to close when a graceful TTL recycle fails to log out", async () => {
-    const fake = makeTrackingFactory({ failLogout: true });
+  it("destroys expired pooled connections synchronously without a fire-and-forget LOGOUT", async () => {
+    // P1 回归位:fire-and-forget LOGOUT 的 RTT 窗口会与紧随的新 LOGIN 在
+    // 服务端叠加成 cap+1 会话(#698 超限误判模式回归),驱逐必须同步 close
+    const fake = makeTrackingFactory();
     const protocol = createMailProtocol(config, fake.deps);
     const account = credential();
 
     await protocol.getFolderStatus(account, "INBOX");
     expect(fake.created).toBe(1);
 
-    // TTL 过期触发 graceful 回收,logout 必败须退 close 兜底,业务不受影响
     fake.advanceClock(imapIdleReuseTtlMs + 1);
     await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+
     expect(fake.created).toBe(2);
+    expect(fake.closeCalls).toBeGreaterThanOrEqual(1);
+    expect(fake.logoutCalls).toBe(0);
+  });
+
+  it("never returns an erroring connection to the pool", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    const outcomes = await Promise.allSettled([
+      ...Array.from({ length: 2 }, () => protocol.deleteMessage(account, "INBOX", 999)),
+      ...Array.from({ length: 4 }, () => protocol.getFolderStatus(account, "INBOX")),
+    ]);
+    expect(outcomes.filter((outcome) => outcome.status === "rejected")).toHaveLength(2);
+
+    // 「错误即销毁」承重不变式:存活连接数恰等于池中 idle 数——
+    // 出错连接已销毁,没有任何死连接滞留池外或池内
+    const gateState = imapAccountGateStateForTest(account.email);
+    expect(gateState?.idle).toBeGreaterThan(0);
+    expect(fake.live).toBe(gateState!.idle);
+  });
+
+  it("does not let a rotated authorization code ride on a pooled session", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+    const rotated = { ...account, authorizationCode: "wrong-code-9999" };
+
+    await protocol.validateImapCredential(account);
+    expect(fake.created).toBe(1);
+
+    // fail-open 回归位(#768 审查):换错误授权码重新验证必须真实重连被拒,
+    // 而不是复用旧凭证会话假通过
+    await expect(protocol.validateImapCredential(rotated)).rejects.toMatchObject({ kind: "auth" });
+    expect(fake.created).toBe(2);
+  });
+
+  it("replaces a pooled connection that the server or watchdog has killed", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    await protocol.getFolderStatus(account, "INBOX");
+    expect(fake.created).toBe(1);
+
+    // 模拟 imapflow 空闲看门狗/socket 故障 emit("error"):连接置 dead。
+    // P0 回归位:无此监听时该 emit 是无监听 error → uncaughtException;
+    // 有监听后置 dead,借出前淘汰换新,而不是把死连接交给 callback
+    fake.clients[0]!.__emitError();
+    await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+    expect(fake.created).toBe(2);
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ active: 0, waiting: 0, idle: 1 });
+  });
+
+  it("requires a non-selected connection for STATUS even when the pool has one", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    // searchSummaries 经 withMailbox(EXAMINE)把连接置 selected 态后归还
+    await protocol.searchSummaries(account, "INBOX", {}, { limit: 5, peek: true });
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1 });
+
+    // RFC 3501 §6.3.11:STATUS 不得发往当前选中的邮箱——必须驱逐重建
+    await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+    expect(fake.created).toBe(2);
+  });
+
+  it("keeps pool idle untouched when a queued waiter aborts behind it", async () => {
+    let release!: () => void;
+    const hold = new Promise<void>((resolve) => (release = resolve));
+    const fake = makeTrackingFactory({ holdStatus: hold });
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    // 留一条 authenticated 态 idle(list 族动作;getFolderStatus 会因
+    // requireUnselected 驱逐 selected 连接,不适合做这里的池种子)
+    await protocol.listFolders(account);
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1 });
+
+    // 两个名额被挂住的 STATUS 占满,W1 排队后中止
+    const holders = [
+      protocol.getFolderStatus(account, "INBOX"),
+      protocol.getFolderStatus(account, "INBOX"),
+    ];
+    const abort = new AbortController();
+    const queued = protocol.validateImapCredential(account, abort.signal);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    abort.abort(new Error("budget gone"));
+    await expect(queued).rejects.toThrow("budget gone");
+
+    release();
+    await Promise.all(holders);
+    // 中止者从未借出连接:池内连接照常流转,后续动作复用不再新建
+    const createdAfterHolders = fake.created;
+    await expect(protocol.getFolderStatus(account, "INBOX")).resolves.toMatchObject({ messages: 1 });
+    expect(fake.created).toBe(createdAfterHolders);
+  });
+
+  it("drops the whole gate entry once every connection is destroyed", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    // 成功动作留一条 idle
+    await protocol.getFolderStatus(account, "INBOX");
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1 });
+
+    // 下一个动作借走该 idle 并失败销毁:(active, waiting, idle) 全零 → 条目删除
+    await expect(protocol.deleteMessage(account, "INBOX", 999)).rejects.toMatchObject({
+      kind: "uid_not_found",
+    });
+    expect(imapAccountGateStateForTest(account.email)).toBeUndefined();
   });
 
   it("keeps the business error intact when the fallback close itself throws", async () => {

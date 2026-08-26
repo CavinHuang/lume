@@ -261,7 +261,7 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
         async (client) => {
           await client.list();
         },
-        waitSignal,
+        { waitSignal },
       );
     },
     async validateSmtpCredential(credential) {
@@ -434,7 +434,11 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
       });
     },
     async getFolderStatus(credential, folder) {
-      return await withImapClient(config, deps, credential, async (client) => {
+      return await withImapClient(
+        config,
+        deps,
+        credential,
+        async (client) => {
         const status = toRecord(
           await client.status(folder, {
             messages: true,
@@ -457,7 +461,11 @@ export function createMailProtocol(config: MailProtocolConfig, deps: MailProtoco
           uidNext: readInteger(status?.uidNext),
           uidValidity: readBigIntString(status?.uidValidity),
         };
-      });
+        },
+        // STATUS 对当前选中邮箱是 RFC 3501 明令禁止的;池化后借出的连接
+        // 可能带着上一个动作 mailboxOpen 的选中态,必须要求非 selected
+        { requireUnselected: true },
+      );
     },
   };
 }
@@ -636,9 +644,12 @@ export const maxImapConnectionsPerAccount = 2;
 export const maxImapWaitersPerAccount = 32;
 
 /**
- * 池化连接的最长空闲复用窗口(#698 后续:连接复用)。超过即销毁重建,
- * 惰性判定(借出时检查),无后台定时器;60s 远小于常见服务端空闲踢线
- * (≥5 分钟)且足够覆盖 agent 一轮突发多动作,真死了由「错误即销毁」兜底。
+ * 池化连接的最长空闲复用窗口(#698 后续:连接复用)。惰性判定(借出时检查),
+ * 无后台定时器。真实存活上界并非服务端踢线,而是 min(本地 socketTimeout=30s
+ * 看门狗, 服务端踢线):SELECTED 态连接有 imapflow auto-IDLE 心跳近乎永生,
+ * AUTHENTICATED 态(list/status/验证族归还)30s 即被本地看门狗关闭——该场景
+ * 由建连时挂载的 error 监听置 dead 标记兜住,借出时统一淘汰。本 TTL 因此
+ * 只是资源释放手段,不是活性保证;60s 覆盖 agent 一轮突发多动作的节奏。
  */
 export const imapIdleReuseTtlMs = 60_000;
 
@@ -647,6 +658,10 @@ interface PooledImapConnection {
   idledAt: number;
   /** 建连时的 IMAP host:用户更改 host 设置后旧连接不得跨 host 复用。 */
   host: string;
+  /** 建连时的授权码快照:凭证轮换后旧会话不得冒充新凭证通过验证。 */
+  authCode: string;
+  /** imapflow emit error(watchdog 超时/socket 故障)后置位,借出前必须淘汰。 */
+  dead?: boolean;
 }
 
 interface ImapAccountGate {
@@ -741,86 +756,116 @@ export function imapAccountGateStateForTest(
   return gate ? { active: gate.active, waiting: gate.waiters.length, idle: gate.idle.length } : undefined;
 }
 
+/** 借出选项:waitSignal 只作用于排队段;requireUnselected 见 getFolderStatus。 */
+interface ImapLeaseOptions {
+  waitSignal?: AbortSignal;
+  /**
+   * RFC 3501 §6.3.11 禁止对当前选中的邮箱发 STATUS。getFolderStatus 不自备
+   * selected 前置态,必须要求一条非 selected 连接(或新建)。
+   */
+  requireUnselected?: boolean;
+}
+
 async function withImapClient<T>(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
   credential: MailCredential,
   callback: (client: RuntimeImapClient) => Promise<T>,
-  waitSignal?: AbortSignal,
+  options: ImapLeaseOptions = {},
 ) {
   return withImapConnectionLimit(
     credential.email.toLowerCase(),
     async () => {
       const gate = imapAccountGates.get(credential.email.toLowerCase())!;
-      const client = await acquirePooledClient(config, deps, credential, gate);
+      const conn = await acquirePooledClient(config, deps, credential, gate, options);
       try {
-        const result = await callback(client);
+        const result = await callback(conn.client);
         // 成功才复用:错误一律销毁,坏连接绝不回流池中
-        gate.idle.push({ client, idledAt: (deps.now ?? Date.now)(), host: credential.imapHost });
+        conn.idledAt = (deps.now ?? Date.now)();
+        gate.idle.push(conn);
         return result;
       } catch (error) {
-        retirePooledClient(client, { graceful: false });
+        destroyPooledClient(conn.client);
         throw mapLibraryError(error, config);
       }
     },
-    waitSignal,
+    options.waitSignal,
   );
 }
 
 /**
- * 借出一条连接:优先复用池内未过 TTL 的空闲连接,否则新建。
- * 过期连接就地销毁(graceful:发 LOGOUT 让服务端干净释放会话)。
+ * 借出一条连接:优先复用池内空闲连接,否则新建。候选连接必须同时满足
+ * 未死亡、host 与授权码未变、未过 TTL、(按需)非 selected 态,否则就地
+ * 同步 close 销毁后新建——绝不用 fire-and-forget LOGOUT 驱逐,其 RTT 窗口
+ * 会与紧随的新 LOGIN 在服务端叠加成 cap+1 会话(#698 要消灭的超限误判模式)。
  */
 async function acquirePooledClient(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
   credential: MailCredential,
   gate: ImapAccountGate,
-): Promise<RuntimeImapClient> {
+  options: ImapLeaseOptions,
+): Promise<PooledImapConnection> {
   const now = deps.now ?? Date.now;
   const pooled = gate.idle.pop();
-  if (pooled && pooled.host === credential.imapHost && now() - pooled.idledAt <= imapIdleReuseTtlMs) {
-    return pooled.client;
+  if (
+    pooled &&
+    !pooled.dead &&
+    pooled.host === credential.imapHost &&
+    pooled.authCode === credential.authorizationCode &&
+    !(options.requireUnselected && hasSelectedMailbox(pooled.client)) &&
+    now() - pooled.idledAt <= imapIdleReuseTtlMs
+  ) {
+    return pooled;
   }
   if (pooled) {
-    // TTL 过期或 host 已更改:连接不可复用,graceful 销毁让服务端干净释放
-    retirePooledClient(pooled.client, { graceful: true });
+    destroyPooledClient(pooled.client);
   }
 
   const fresh = await createImapClient(config, deps, credential);
+  const conn: PooledImapConnection = {
+    client: fresh as RuntimeImapClient,
+    idledAt: 0,
+    host: credential.imapHost,
+    authCode: credential.authorizationCode,
+  };
   try {
     await fresh.connect();
   } catch (error) {
-    // socket 可能尚未建立或已死,不做优雅退出,直接静默关闭
-    retirePooledClient(fresh as RuntimeImapClient, { graceful: false });
+    // socket 可能尚未建立或已死,直接静默关闭
+    destroyPooledClient(conn.client);
     throw mapLibraryError(error, config);
   }
-  return fresh as RuntimeImapClient;
+  attachDeadMarker(conn);
+  return conn;
 }
 
 /**
- * 连接终结的统一出口。close 是清理兜底,自身失败不得抛出——socket 资源
- * 由进程回收;graceful 路径先尝试 LOGOUT 让服务端干净释放,失败退 close。
+ * imapflow 对空闲超时/socket 故障会 emit("error")(AUTHENTICATED 态无
+ * auto-IDLE 保活,30s 看门狗必触发),而库内外无人监听——Node 对无监听者
+ * 的 error emit 同步抛 uncaughtException(sidecar 计次 5 次自杀)。
+ * 监听仅置 dead 标记,借出前淘汰;命令级失败仍由 run() 正常上抛。
  */
-function retirePooledClient(client: RuntimeImapClient, options: { graceful: boolean }) {
-  const closeQuietly = () => {
-    try {
-      client.close?.();
-    } catch {
-      /* 清理兜底的失败无诊断价值 */
-    }
-  };
-  if (!options.graceful) {
-    closeQuietly();
-    return;
+function attachDeadMarker(conn: PooledImapConnection) {
+  (conn.client as unknown as { on?: (event: string, listener: () => void) => void }).on?.("error", () => {
+    conn.dead = true;
+  });
+}
+
+function hasSelectedMailbox(client: RuntimeImapClient): boolean {
+  return Boolean((client as unknown as { mailbox?: unknown }).mailbox);
+}
+
+/**
+ * 连接终结的统一出口:同步 close 销毁。close 是清理兜底,自身失败不得
+ * 抛出——socket 资源由进程回收。
+ */
+function destroyPooledClient(client: RuntimeImapClient) {
+  try {
+    client.close?.();
+  } catch {
+    /* 清理兜底的失败无诊断价值 */
   }
-  void (async () => {
-    try {
-      await client.logout();
-    } catch {
-      closeQuietly();
-    }
-  })();
 }
 
 async function withMailbox<T>(
@@ -1212,7 +1257,7 @@ function isTimeoutError(code: string | null, lowerMessage: string) {
 }
 
 function isNetworkError(code: string | null) {
-  return ["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "EPIPE", "ESOCKET"].includes(
+  return ["ECONNRESET", "ECONNREFUSED", "ECONNABORTED", "ENOTFOUND", "EAI_AGAIN", "EPIPE", "ESOCKET", "NoConnection"].includes(
     code ?? "",
   );
 }
