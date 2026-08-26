@@ -1,7 +1,8 @@
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import {
   createConfigFromPolicy,
   getPlatformSupport,
@@ -72,6 +73,30 @@ export interface ProcessSandboxProbeResult extends ProcessSandboxSupport {
 
 export function getProcessSandboxSupport(): ProcessSandboxSupport {
   return mapPlatformSupport(getPlatformSupport())
+}
+
+// macOS 26+ 收紧了 sandbox-exec：deny file-write* 下 allow subpath 的写入直接
+// Operation not permitted，而 mxc-sdk 仅探测二进制存在即声称 seatbelt 可用——
+// 若信其声明，spawnWithProcessSandbox 会把每个命令送进注定失败的沙箱（比不可用
+// 更糟：不是显式降级而是静默假隔离）。这里实测一次最小写探针并缓存结果；
+// 非 darwin 或未声称 seatbelt 时零开销。
+let darwinSeatbeltProbe: boolean | undefined
+
+function isDarwinSeatbeltUsable(): boolean {
+  if (darwinSeatbeltProbe !== undefined) return darwinSeatbeltProbe
+  try {
+    const probeDir = mkdtempSync(join(tmpdir(), 'lume-seatbelt-probe-'))
+    const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* (subpath "${probeDir}"))`
+    const result = spawnSync('/usr/bin/sandbox-exec', ['-p', profile, '/usr/bin/touch', join(probeDir, 'probe')], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    })
+    rmSync(probeDir, { recursive: true, force: true })
+    darwinSeatbeltProbe = result.status === 0
+  } catch {
+    darwinSeatbeltProbe = false
+  }
+  return darwinSeatbeltProbe
 }
 
 export function spawnWithProcessSandbox(
@@ -362,12 +387,22 @@ export function buildSandboxEnvironment(
 }
 
 function mapPlatformSupport(support: PlatformSupport): ProcessSandboxSupport {
+  const seatbeltUsable = process.platform === 'darwin'
+    ? isDarwinSeatbeltUsable()
+    : true
+  const baseAvailable = support.isSupported && (
+    process.platform !== 'win32'
+    || support.availableMethods.includes('processcontainer')
+  )
+  const available = baseAvailable && seatbeltUsable
   return {
-    available: support.isSupported && (
-      process.platform !== 'win32'
-      || support.availableMethods.includes('processcontainer')
-    ),
-    reason: support.reason || (support.isSupported ? '' : 'MXC reports this platform as unsupported'),
+    available,
+    reason: !available
+      ? (support.reason
+        || (!seatbeltUsable
+          ? 'sandbox-exec write probe failed: this macOS version restricts seatbelt profiles'
+          : (support.isSupported ? '' : 'MXC reports this platform as unsupported')))
+      : '',
     ...(support.isolationTier ? { isolationTier: support.isolationTier } : {}),
     warnings: support.isolationWarnings ?? [],
   }
