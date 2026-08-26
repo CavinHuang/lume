@@ -173,9 +173,14 @@ export const NotebookEditTool = defineTool({
           is_error: true,
         }
       }
-      // partial view 的 mtime 底线（#663）：范围读的缓存内容≠全文，内容比对不可用，
-      // 但不能因此零校验放行——mtime 变了即视为读后被改过，拒绝盲改。
-      if (previousRead.isPartialView && previousRead.timestamp !== currentStat.mtimeMs) {
+      // partial view 的新鲜度底线(#663):范围读的缓存内容≠全文,内容比对不可用,
+      // 但不能因此零校验放行——mtime 或任一要素变了即视为读后被改过,拒绝盲改。
+      // mtime+size 双要素与 edit.ts changedSinceRead 同口径(粗粒度时间戳上
+      // 同尺寸替换可穿透单一 mtime 判定)。
+      if (
+        previousRead.isPartialView
+        && (previousRead.timestamp !== currentStat.mtimeMs || previousRead.size !== undefined && previousRead.size !== currentStat.size)
+      ) {
         return {
           data: 'Error: Notebook has been modified since it was read. Read it again before attempting to edit it.',
           is_error: true,

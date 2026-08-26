@@ -68,10 +68,18 @@ const OPEN_FLAGS = process.platform === "win32" ? "r" : constants.O_RDONLY | (co
  */
 const HOME_CONTAINER_NAMES = new Set(["home", "users"]);
 
-/** 实际 home 的容器目录名（小写折叠后）；home 恰在根下时为空串。 */
+/**
+ * 候选层容器名的比较形态。无条件小写折叠（而非按平台 FOLD_CASE）：惯用名集合
+ * 已是小写，Linux 上若不折叠则字面 "Users"（macOS 风格布局经 NAS/共享挂载出现在
+ * Linux 主机）会漏判他家层——fail-open 方向回归；过匹配的代价只是跳层，fail-safe。
+ */
+function foldContainerName(name: string): string {
+  return name.toLowerCase();
+}
+
+/** 实际 home 的容器目录名（折叠后）；home 恰在根下时为空串。 */
 function getHomeContainerName(home: string): string {
-  const container = basename(dirname(resolve(home)));
-  return FOLD_CASE ? container.toLowerCase() : container;
+  return foldContainerName(basename(dirname(resolve(home))));
 }
 
 /**
@@ -81,9 +89,8 @@ function getHomeContainerName(home: string): string {
  */
 function isForeignHomeDir(dir: string, home: string, homeContainerName: string): boolean {
   if (dir === home) return false;
-  const parentName = basename(dirname(dir));
-  const folded = FOLD_CASE ? parentName.toLowerCase() : parentName;
-  return folded !== "" && (HOME_CONTAINER_NAMES.has(folded) || folded === homeContainerName);
+  const parentName = foldContainerName(basename(dirname(dir)));
+  return parentName !== "" && (HOME_CONTAINER_NAMES.has(parentName) || parentName === homeContainerName);
 }
 
 /** 共享爬升器：探测与指纹两条循环走完全相同的层序列，保证 memo 指纹与命中判定一致。 */
@@ -298,9 +305,15 @@ function refreshMemo(key: string, options: ProbeOptions = {}): MemoEntry {
   const entry: MemoEntry = { stamp, result: null };
   if (found) {
     const content = readTrustedContent(found, options);
-    // 瞬态读失败：返回临时条目但不落 memo，保留下次重试通道
-    if (!content) return entry;
-    entry.result = { path: found.path, ...truncateProjectInstructions(content) };
+    if (content === null) {
+      // 瞬态读失败：返回临时条目但不落 memo，保留下次重试通道。
+      // 空串（合法的空指令文件/纯 front matter）不是失败——照常入缓存，
+      // 否则该 cwd 每次 assemble 都全额重走探测链
+      return entry;
+    }
+    if (content) {
+      entry.result = { path: found.path, ...truncateProjectInstructions(content) };
+    }
   }
   memo.set(key, entry);
   if (memo.size > MEMO_MAX_ENTRIES) {
