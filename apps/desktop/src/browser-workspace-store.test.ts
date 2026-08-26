@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { expect, test } from 'bun:test'
-import { BrowserWorkspaceStore } from './browser-workspace-store'
+import { BrowserWorkspaceStore, type BrowserWorkspaceLogEvent } from './browser-workspace-store'
 import type { BrowserTabDescriptor } from '@lume/shared'
 
 function makeTab(tabId: string, url = 'https://example.test/'): BrowserTabDescriptor {
@@ -80,4 +80,28 @@ test('#129 启动时回收存量无引用的死数据记录', () => {
   const tabs = readTabs(directory)
   expect(tabs['orphan-tab']).toBeUndefined()
   expect(tabs['tab-10']).toBeDefined()
+})
+
+test('reports tab_closed/tab_moved/imported via onEvent', () => {
+  const events: BrowserWorkspaceLogEvent[] = []
+  const directory = mkdtempSync(join(tmpdir(), 'lume-workspace-'))
+  const store = new BrowserWorkspaceStore(() => directory, (event) => events.push(event))
+  store.rememberTab(makeTab('tab-m'))
+  store.move(makeTab('tab-m'), 'thread-2')
+  store.close({ ...makeTab('tab-m'), ownerThreadId: 'thread-2' } as unknown as BrowserTabDescriptor)
+  store.importLegacy('thread-9', [
+    { id: 'browser:x', url: 'https://example.test/x' },
+    { id: 'browser:y' },
+    'junk',
+    { id: 'browser:x', url: 'https://example.test/dup' },
+  ], undefined)
+  expect(events.map((event) => event.event)).toEqual([
+    'tab_moved',
+    'tab_closed',
+    'tabs_imported',
+  ])
+  expect(events[0]?.level).toBe('info')
+  expect(events[0]?.data).toMatchObject({ tabId: 'tab-m', fromOwnerThreadId: 'thread-1', toOwnerThreadId: 'thread-2' })
+  expect(events[1]?.data).toMatchObject({ ownerThreadId: 'thread-2', tabId: 'tab-m' })
+  expect(events[2]?.data?.importedTabCount).toBe(2)
 })

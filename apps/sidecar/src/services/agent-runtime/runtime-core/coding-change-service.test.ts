@@ -572,6 +572,52 @@ describe("coding-change-service", () => {
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
+  test("接近但不超水位的变更保持 Publish 可用且指纹齐全（水位下界对照）", async () => {
+    const root = makeTempDir("lume-coding-publish-under-limit-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    // 12MB 随机二进制：base85 编码后实测 ≈16.21MB（精确翻车输入点 ≈13MiB），
+    // 对 16MiB 水位余量 ~3.4%，跨 zlib 压缩级别漂移仅 0.02%——钉的是下界存活而非水位精确值
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(12 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const state = await getCodingRepositoryPublishState(root);
+    if (!state.available) throw new Error(`预期可用但降级: ${state.reason}`);
+    expect(state.worktreeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(state.canCommit).toBe(true);
+  }, 30_000);
+
+  test("分区级 unstage 在 patch 超限时报变更过大而非没有可 Unstage 的 Diff", async () => {
+    const root = makeTempDir("lume-coding-section-big-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const diff = await getCodingFileDiff(root, "assets/bundle.bin");
+    await expect(applyCodingDiffAction(root, {
+      threadId: "thread-test",
+      scope: "section",
+      action: "unstage",
+      files: [{ path: diff.path, expectedDiffHash: diff.diffHash }],
+    })).rejects.toThrow("分区变更超过");
+  }, 30_000);
+
+  test("staged 超大可读文本的 diff 读取报文件过大而非静默空内容", async () => {
+    const root = makeTempDir("lume-coding-huge-text-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    // base64 无 \0：git 视为文本走 readGitTextSource；抛错来自新增的 cat-file -s
+    // 10MB blob 预检（非 git show 水位），见 readGitTextSource 内注释
+    writeFileSync(join(root, "src", "huge.txt"), randomBytes(20 * 1024 * 1024).toString("base64"));
+    execFileSync("git", ["add", "src/huge.txt"], { cwd: root });
+
+    await expect(getCodingFileDiff(root, "src/huge.txt", { reviewSource: { kind: "staged" } }))
+      .rejects.toThrow("文件过大");
+  }, 60_000);
+
   test("staged 大二进制产物使 git 输出超限时 Publish 状态降级为不可用而非全量累积", async () => {
     const root = makeTempDir("lume-coding-publish-big-binary-");
     tempDirs.push(root);
@@ -604,6 +650,18 @@ describe("coding-change-service", () => {
     expect(state.canCommit).toBe(true);
     expect(state.worktreeHash).toBeUndefined();
 
+    // 包含未暂存变更时被 service 守卫显式拦截（须在 commit 前断言，否则 HEAD 已变化先命中）
+    await expect(applyCodingRepositoryPublishAction(root, {
+      threadId: "thread-test",
+      action: "commit",
+      message: "test: include unstaged",
+      expectedBranch: state.branch,
+      expectedHead: state.head,
+      expectedIndexHash: state.indexHash,
+      includeUnstagedChanges: true,
+      expectedWorktreeHash: state.worktreeHash,
+    })).rejects.toThrow("工作区变更超过 16MB");
+
     // 仅提交已 staged 内容不受 worktree 超限影响
     const result = await applyCodingRepositoryPublishAction(root, {
       threadId: "thread-test",
@@ -615,18 +673,6 @@ describe("coding-change-service", () => {
     });
     expect(result.commitHash).toBeTruthy();
     expect(execFileSync("git", ["show", "HEAD:src/index.ts"], { cwd: root, encoding: "utf8" })).toContain("'staged change'");
-
-    // 包含未暂存变更时被显式拦截（schema 层要求 expectedWorktreeHash，service 层兜底）
-    await expect(applyCodingRepositoryPublishAction(root, {
-      threadId: "thread-test",
-      action: "commit",
-      message: "test: include unstaged",
-      expectedBranch: state.branch,
-      expectedHead: state.head,
-      expectedIndexHash: state.indexHash,
-      includeUnstagedChanges: true,
-      expectedWorktreeHash: state.worktreeHash,
-    })).rejects.toThrow();
   }, 30_000);
 
   test("单文件 diff 超限时 stage/unstage 报变更过大而非没有可应用的 Diff", async () => {

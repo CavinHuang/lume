@@ -2,6 +2,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSy
 import { dirname } from "node:path";
 import type { ImPeerRef, ImThreadBinding } from "@lume/shared";
 import { getImThreadBindingsPath } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { createLogger } from "../infra/logger";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 
@@ -25,14 +26,9 @@ function bindingStoreLockPath(): string {
 }
 
 /** 仅 JSON.parse 失败（真损坏）才备份重建；瞬态 IO 读错误不备份，防止把好文件"备份后清空"。 */
-function backupCorruptFile(filePath: string): void {
-  const backupPath = `${filePath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(filePath, backupPath);
-    log.warn("backed up corrupt IM thread bindings", { backupPath });
-  } catch (error) {
-    log.warn("failed to back up corrupt IM thread bindings", { backupPath, error: error instanceof Error ? error.message : String(error) });
-  }
+function backupCorruptBindingsFile(filePath: string): void {
+  const backupPath = backupCorruptFile(filePath);
+  if (backupPath) log.warn("backed up corrupt IM thread bindings", { backupPath });
 }
 
 function readConfigUnlocked(): ImThreadBindingConfig {
@@ -55,7 +51,7 @@ function readConfigUnlocked(): ImThreadBindingConfig {
     };
   } catch {
     // 损坏先备份再重建，防止后续写入把空绑定落盘导致全部 IM 会话割裂
-    backupCorruptFile(path);
+    backupCorruptBindingsFile(path);
     return { version: CONFIG_VERSION, bindings: [] };
   }
 }
@@ -101,8 +97,13 @@ export function upsertImThreadBinding(input: UpsertImThreadBindingInput): ImThre
     const index = config.bindings.findIndex((binding) => binding.key === key);
     if (index >= 0) {
       const existing = config.bindings[index] as ImThreadBinding;
+      // 二轮 review(并发 F6):last-write-wins 换绑——同 peer 双消息竞态双建
+      // 线程时,binding 若定格首写,后建线程会成为孤儿空壳;跟随最新创建收敛。
+      // /new 路径先 delete 再 upsert,不走本分支,语义不受影响。
+      const nextThreadId = input.threadId.trim();
       const updated: ImThreadBinding = {
         ...existing,
+        ...(nextThreadId && nextThreadId !== existing.threadId ? { threadId: nextThreadId } : {}),
         peerName: input.peerName ?? existing.peerName,
         contextToken: input.contextToken ?? existing.contextToken,
         updatedAt: now

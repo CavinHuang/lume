@@ -470,7 +470,7 @@ export class Agent {
       .map((name) => runtimeByName.get(name))
       .filter((candidate): candidate is ToolDefinition => !!candidate)
     const remainingDeferred = deferred.filter((candidate) => !this.activatedToolNames.has(candidate.name))
-    const enableToolSearch = isToolSearchEnabled(remainingDeferred, options.model || this.modelId)
+    const enableToolSearch = isToolSearchEnabled(remainingDeferred, options.model || this.modelId, this.baseOptions.toolSearchMode)
     this.deferredToolPool = enableToolSearch ? remainingDeferred : []
     setDeferredTools(this.deferredToolPool)
     if (this.deferredToolPool.length === 0) {

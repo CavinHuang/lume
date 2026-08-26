@@ -5,7 +5,7 @@
  */
 import { isHardDeniedTool, type CanUseToolFn, type ToolDefinition } from "@lume/agent-sdk";
 import { randomUUID } from "node:crypto";
-import type { AgentToolPermissionRequest } from "@lume/shared";
+import type { AgentToolPermissionPreview, AgentToolPermissionRequest } from "@lume/shared";
 import type { PluginPermissions, SensitiveCapabilityKey } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import type {
@@ -84,9 +84,6 @@ export function resolveRuntimeDescriptor(tool: ToolDefinition): LumeToolDescript
   };
 }
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
 import { type PreparedRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { persistToolApprovalInterruption } from "../interruption/approval-service";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
@@ -136,6 +133,65 @@ function sanitizeToolInput(input: unknown): Record<string, unknown> {
     }
   }
   return copied;
+}
+
+const PERMISSION_PREVIEW_MAX_CHARS = 4_000;
+
+/**
+ * Edit/Write 类工具的审批前 diff 预览（#560）：事后 EditResult 有完整 diff、
+ * 事前审批却只有一行路径。从原始（未截断）input 提取 old/new，超长截断——
+ * 预览够看即可，完整内容仍以执行结果为准。
+ */
+function buildPermissionPreview(
+  toolName: string,
+  rawInput: Record<string, unknown>
+): AgentToolPermissionPreview | undefined {
+  const normalized = toolName.trim().toLowerCase();
+  const isEditLike =
+    normalized.includes("edit") || normalized.includes("write");
+  if (!isEditLike) return undefined;
+
+  const path = [rawInput.file_path, rawInput.path, rawInput.notebook_path].find(
+    (value) => typeof value === "string" && value.trim()
+  ) as string | undefined;
+
+  // MultiEdit：edits 数组逐对拼接；Edit 单对；Write 全文（old 侧为空）
+  const edits = Array.isArray(rawInput.edits) ? rawInput.edits : [];
+  let oldText = "";
+  let newText = "";
+  if (edits.length > 0) {
+    oldText = edits
+      .map((edit) => (isRecord(edit) && typeof edit.old_string === "string" ? edit.old_string : ""))
+      .filter(Boolean)
+      .join("\n…\n");
+    newText = edits
+      .map((edit) => (isRecord(edit) && typeof edit.new_string === "string" ? edit.new_string : ""))
+      .filter(Boolean)
+      .join("\n…\n");
+  } else {
+    oldText = typeof rawInput.old_string === "string" ? rawInput.old_string : "";
+    newText =
+      typeof rawInput.new_string === "string"
+        ? rawInput.new_string
+        : typeof rawInput.content === "string"
+          ? rawInput.content
+          : "";
+  }
+  if (!oldText && !newText) return undefined;
+  const clip = (value: string): string =>
+    value.length > PERMISSION_PREVIEW_MAX_CHARS
+      ? `${value.slice(0, PERMISSION_PREVIEW_MAX_CHARS)}\n…(预览截断)`
+      : value;
+  return {
+    kind: "diff",
+    ...(path ? { path } : {}),
+    oldText: clip(oldText),
+    newText: clip(newText)
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return !!value && typeof value === "object" && !Array.isArray(value);
 }
 
 function toReadableString(value: unknown): string {
@@ -481,6 +537,23 @@ export function createCanUseToolHandler(
                 message: `插件权限确认超时: ${toolName}`,
               });
             },
+            onCancelled: (permissionRequest) => {
+              emit.onRuntimeEvent?.({
+                id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:permission.cancelled`,
+                type: "permission.resolved",
+                threadId: approvalThreadId,
+                runId:
+                  requestRunId ??
+                  permissionRequest.runId ??
+                  params.runtime.sessionId,
+                createdAt: new Date().toISOString(),
+                toolCallId: permissionRequest.toolUseId,
+                requestId: permissionRequest.requestId,
+                toolName,
+                decision: "cancelled",
+                source: "system",
+              });
+            },
           },
         );
         if (pluginDecision === "allow_always") {
@@ -800,6 +873,10 @@ export function createCanUseToolHandler(
       };
     }
 
+    const permissionPreview = buildPermissionPreview(
+      toolName,
+      isRecord(input) ? input : {}
+    );
     const request = {
       threadId: params.runtime.sessionId,
       ...(requestRunId ? { runId: requestRunId } : {}),
@@ -823,6 +900,7 @@ export function createCanUseToolHandler(
         : {}),
       canAllowAlways,
       input: sanitizeToolInput(input),
+      ...(permissionPreview ? { preview: permissionPreview } : {}),
       ...(automationExecution
         ? {
             interruptionType: "automation_approval" as const,
@@ -902,6 +980,24 @@ export function createCanUseToolHandler(
             message: `工具权限确认超时: ${toolName}`,
           });
         },
+        onCancelled: (permissionRequest) => {
+          // abort/超时时补发 resolved 事件，让 web 端按 requestId 摘掉审批横幅
+          emit.onRuntimeEvent?.({
+            id: `${requestRunId ?? params.runtime.sessionId}:${permissionRequest.toolUseId}:permission.cancelled`,
+            type: "permission.resolved",
+            threadId: approvalThreadId,
+            runId:
+              requestRunId ??
+              permissionRequest.runId ??
+              params.runtime.sessionId,
+            createdAt: new Date().toISOString(),
+            toolCallId: permissionRequest.toolUseId,
+            requestId: permissionRequest.requestId,
+            toolName,
+            decision: "cancelled",
+            source: "system",
+          });
+        },
       },
     );
     if (decision === "allow_always") {
@@ -922,6 +1018,21 @@ export function createCanUseToolHandler(
         ok: true,
       });
       return { behavior: "allow" };
+    }
+    // 二轮 review(动线 F1):decision=null 是用户点停止/请求被取消,不是拒绝——
+    // 记 user_denied 会污染后续轮次上下文(模型以为用户拒绝过该操作)。
+    if (decision === null && !permissionTimedOut) {
+      log.debug("[Agent 工具] 完成", {
+        toolName,
+        threadId: params.runtime.sessionId.slice(0, 8),
+        durationMs: Date.now() - toolStartTime,
+        ok: false,
+        reason: "cancelled",
+      });
+      return {
+        behavior: "deny",
+        message: `已取消，未执行工具: ${toolName}`,
+      };
     }
     log.debug("[Agent 工具] 完成", {
       toolName,

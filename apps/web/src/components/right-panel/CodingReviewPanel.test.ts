@@ -90,4 +90,31 @@ describe('CodingReviewPanel diff file tree', () => {
       includeUnstagedChanges: false,
     })).toBe('没有待推送的本地提交')
   })
+
+  test('工作区指纹缺失（patch 超 16MB）时拦截包含未暂存变更并给出根因', () => {
+    const state = {
+      available: true as const,
+      rootId: 'root',
+      rootLabel: 'lume',
+      branch: 'main',
+      head: 'a'.repeat(40),
+      indexHash: 'b'.repeat(64),
+      worktreeHash: undefined,
+      stagedCount: 1,
+      unstagedCount: 3,
+      untrackedCount: 0,
+      ahead: 0,
+      behind: 0,
+      canCommit: true,
+      canPush: true,
+    }
+    expect(codingPublishActionDisabledReason(state, 'commit', {
+      commitMessage: 'test: commit',
+      includeUnstagedChanges: false,
+    })).toBeUndefined()
+    expect(codingPublishActionDisabledReason(state, 'commit', {
+      commitMessage: 'test: commit',
+      includeUnstagedChanges: true,
+    })).toContain('16MB')
+  })
 })

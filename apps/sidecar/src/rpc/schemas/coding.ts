@@ -135,10 +135,12 @@ export const codingRepositoryPublishActionInputSchema = z.discriminatedUnion(
       })
       .superRefine((input, ctx) => {
         if (input.includeUnstagedChanges && !input.expectedWorktreeHash) {
+          // 指纹缺席的现实成因是 worktree patch 超 16MB 水位（见 coding-change-service），
+          // 文案直接给出根因与出路，避免「参数非法」式技术报错直达用户
           ctx.addIssue({
             code: "custom",
             path: ["expectedWorktreeHash"],
-            message: "包含未暂存变更时必须提供工作区指纹",
+            message: "工作区变更超过 16MB 补丁上限，无法包含未暂存变更；请取消勾选或分次提交",
           });
         }
       }),

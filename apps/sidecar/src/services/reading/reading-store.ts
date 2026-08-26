@@ -43,6 +43,7 @@ import {
   getReadingSettingsPath,
   getReadingShareCardsDir
 } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
 import { parseReadingNoteMarkdown, serializeReadingNoteMarkdown } from "./note-markdown";
 import { validateReadingQuoteEvidence } from "./quote-evidence";
@@ -581,14 +582,8 @@ function withSearchTimeout<T>(promise: Promise<T>, fallback: T): Promise<T> {
 }
 
 function backupCorruptLibrary(libraryPath: string): void {
-  if (!existsSync(libraryPath)) return;
-  const backupPath = `${libraryPath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(libraryPath, backupPath);
-    log.warn("书架文件损坏，已备份现场后重建空库", { backupPath });
-  } catch (error) {
-    log.warn("备份损坏书架文件失败", { backupPath, error: error instanceof Error ? error.message : String(error) });
-  }
+  const backupPath = backupCorruptFile(libraryPath);
+  if (backupPath) log.warn("书架文件损坏，已备份现场后重建空库", { backupPath });
 }
 
 function readLibrary(): ReadingLibraryIndex {

@@ -28,6 +28,7 @@ import {
   consumeLatestAutomationTrigger,
   finishAutomationLease,
   heartbeatAutomationLease,
+  isStaleRunningLease,
   mergeLatestAutomationTrigger,
   readAutomationRuntimeState,
   recoverAutomationRuntimeStates,
@@ -49,9 +50,27 @@ export function setAutomationNotificationWriter(writer: NotificationWriter): voi
 
 function appendRun(run: AutomationRun): void {
   const runsPath = getAutomationRunsPath();
-  appendFileSync(runsPath, `${JSON.stringify(run)}\n`, "utf-8");
-  rotateAutomationRunsIfBloated(runsPath);
+  try {
+    appendFileSync(runsPath, `${JSON.stringify(run)}\n`, "utf-8");
+    rotateAutomationRunsIfBloated(runsPath);
+  } catch (error) {
+    // #615①:runs.jsonl 写失败(盘满/EBUSY)不得让 executeJob promise reject——
+    // 三处调用方全是 void 发射无 catch,reject 即 unhandledRejection 且 then 链
+    // (refreshAutomationRunnerJobs/合并触发器)断裂。降级仅记日志。
+    writeLogRecord({
+      level: "warn",
+      kind: "trace",
+      context: "agent.delivery.automation",
+      event: "automation.run_persist_failed",
+      message: "failed to persist automation run record",
+      status: "error",
+      data: { automationJobId: run.jobId, runId: run.id, trigger: run.trigger, error: error instanceof Error ? error.message : String(error) }
+    });
+  }
 }
+
+/** #615 测试钩子:appendRun 的吞错契约需直接验证(调用方全在 executeJob 内部)。 */
+export const appendRunForTest = appendRun;
 
 // #555:automation-runs.jsonl 只追加、无轮转,三处高频列表入口(自动化页/routine
 // 执行/cron 工具)全量读盘解析的成本随文件永久恶化。软上限触发的尾部截断使文件
@@ -388,7 +407,19 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     const pendingScheduledAt = consumeLatestAutomationTrigger(job.id);
     if (pendingScheduledAt !== undefined) {
       const latest = listAutomationJobs().find((item) => item.id === job.id);
-      if (latest?.enabled) void executeJob(latest, "schedule", pendingScheduledAt);
+      // 二轮 review P3:void 递归不在任何外层 catch 链上,尾部失败须就地日志化
+      if (latest?.enabled) {
+        void executeJob(latest, "schedule", pendingScheduledAt).catch((error: unknown) => {
+          writeLogRecord({
+            level: "error",
+            context: "automation.runner",
+            event: "automation.reschedule_background_failed",
+            message: `合并触发补跑的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+            status: "error",
+            data: { automationJobId: latest.id }
+          });
+        });
+      }
     }
   }
   return run;
@@ -444,9 +475,22 @@ function scheduleJobInner(job: AutomationJob): void {
       void refreshAutomationRunnerJobs();
       return;
     }
+    // 二轮 review P3:executeJob 尾部(appendRun/重调度链)不在内部 try 内,
+    // schedule 入口与递归补跑同样需要日志化 catch,否则 unhandledRejection
+    // 进进程止损计数(累计 5 次退出)。
+    const logScheduleTailFailure = (error: unknown): void => {
+      writeLogRecord({
+        level: "error",
+        context: "automation.runner",
+        event: "automation.schedule_background_failed",
+        message: `调度执行的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+        status: "error",
+        data: { automationJobId: latest.id }
+      });
+    };
     void executeJob(latest, "schedule", scheduledAt).then((run) => {
       if (run.status !== "skipped") void refreshAutomationRunnerJobs();
-    });
+    }, logScheduleTailFailure);
   }, delay);
   jobDisposers.set(job.id, () => clearTimeout(timer));
 }
@@ -487,7 +531,45 @@ export async function runAutomationJobNow(input: AutomationRunNowInput): Promise
   if (!job.enabled) {
     throw new Error("任务已禁用，无法执行");
   }
-  return executeJob(job, "manual");
+  // review P2:连点防护——上一轮未结束时二次触发会写 skipped 记录并在首轮
+  // 完成后隐含一次 schedule 补跑,对用户表现为假成功 toast,入口即拒绝。
+  // 二轮 review P1:仅「新鲜」running 态才拒绝——崩溃+30s 内重启留下的
+  // running 孤儿(心跳冻结)必须放行,executeJob 的 tryAcquire 会偷锁自愈;
+  // 无脑读盘拒绝会把「重试即自愈」通道堵死,任务永久砖化。waiting_* 心跳
+  // 停摆是设计内(#587),维持拒绝由交互解决路径收尾。
+  const runtimeState = readAutomationRuntimeState(input.id);
+  const runtimeRunningLive =
+    runtimeState?.status === "running" && !isStaleRunningLease(runtimeState);
+  if (runningJobs.has(input.id) || runtimeRunningLive
+    || runtimeState?.status === "waiting_for_user" || runtimeState?.status === "waiting_for_approval") {
+    throw new Error("任务正在执行中，请等待完成后再试");
+  }
+  // #586:受理即返回回执，不同步等待回合完成——真实任务普遍超 desktop 45s RPC
+  // 超时，同步等待必然报 timed out 而任务实际在跑；完成经既有
+  // automation:run-completed 推送（useAutomationListeners 收到后自动刷新）。
+  // review P2:.catch 必须日志化——executeJob 尾部的 appendRun/通知/重调度链
+  // 不在内部 try 内（Windows rename EBUSY 高发），零痕迹吞掉会让失败不可诊断。
+  void executeJob(job, "manual").catch((error: unknown) => {
+    writeLogRecord({
+      level: "error",
+      context: "automation.runner",
+      event: "automation.run_now_background_failed",
+      message: `立即执行的后台收尾失败: ${error instanceof Error ? error.message : String(error)}`,
+      status: "error",
+      data: { automationJobId: job.id }
+    });
+  });
+  const now = Date.now();
+  return {
+    id: `run-now:${job.id}:${now}`,
+    jobId: job.id,
+    jobName: job.name,
+    trigger: "manual",
+    status: "running",
+    message: "已受理，正在后台执行",
+    startedAt: now,
+    finishedAt: now
+  };
 }
 
 export function resumeAutomationAfterInteraction(threadId: string): void {
