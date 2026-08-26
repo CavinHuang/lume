@@ -579,6 +579,12 @@ describe("file tools", () => {
     expect(result._meta?.read?.truncated).toBeUndefined();
     expect(cache.get(filePath)?.isPartialView).toBe(false);
     expect(String(result.content)).toContain("line-2499");
+
+    // #649 follow-up:summarize 与显式范围同给时范围优先，但必须显式告知 summarize 被忽略
+    const bothGiven = await FileReadTool.call({ file_path: filePath, offset: 0, limit: 100, summarize: true }, { cwd: root, fileStateCache: new FileStateCache() });
+    expect(bothGiven.is_error).toBeFalsy();
+    expect(String(bothGiven.content)).toContain("summarize 参数未生效");
+    expect(String(bothGiven.content)).toContain("line-99");
   });
 
   test("rejects known binary files instead of decoding them as text", async () => {

@@ -526,6 +526,20 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     return {};
   }
   const next: LumeConfigSectionSet = {};
+  // #649 follow-up:normalize 是白名单制,未识别键会被静默丢弃——至少留一条日志,
+  // 否则用户手写的字段(或新版本新增而 sidecar 未升级的字段)消失得无声无息
+  const KNOWN_SECTION_KEYS = new Set(["models", "agent", "permissions", "hooks", "browser"]);
+  const KNOWN_AGENT_KEYS = new Set(["permissionMode", "thinkingLevel", "followUpQueueMode", "maxAutoTurnContinuations"]);
+  const droppedTopKeys = Object.keys(value).filter((key) => !KNOWN_SECTION_KEYS.has(key));
+  const droppedAgentKeys = isPlainObject(value.agent)
+    ? Object.keys(value.agent).filter((key) => !KNOWN_AGENT_KEYS.has(key))
+    : [];
+  if (droppedTopKeys.length > 0 || droppedAgentKeys.length > 0) {
+    log.warn("lume.yaml 含未识别配置键，规范化时已移除（升级 sidecar 或修正拼写）", {
+      ...(droppedTopKeys.length > 0 ? { unknownSections: droppedTopKeys } : {}),
+      ...(droppedAgentKeys.length > 0 ? { unknownAgentKeys: droppedAgentKeys } : {})
+    });
+  }
 
   if (isPlainObject(value.models)) {
     const chat = isPlainObject(value.models.chat) ? value.models.chat : {};
