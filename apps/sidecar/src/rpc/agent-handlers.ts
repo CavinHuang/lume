@@ -1177,6 +1177,10 @@ export function createAgentHandlers(
         threadId: input.threadId,
         requestId: input.requestId,
         decision: input.decision,
+        // #558 review P0:schema 补字段后必须在此透传,否则重建仍会剥掉
+        ...(input.allowAlwaysScope
+          ? { allowAlwaysScope: input.allowAlwaysScope }
+          : {}),
         ...(input.threadPermissionMode
           ? { threadPermissionMode: input.threadPermissionMode }
           : {}),

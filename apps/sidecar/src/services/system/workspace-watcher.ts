@@ -107,6 +107,12 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     }
     try {
       const watcher = watch(targetPath, options, onChange);
+      // review P1:Windows 下被监视目录被删/移走会向 error 事件报 EPERM,
+      // 无监听器即同步 throw 进进程级 uncaught 兜底(累计 5 次退出止损)。
+      // 吞掉记日志:该路径信号失效可接受,不得威胁 sidecar 存活。
+      watcher.on("error", (error) => {
+        log.warn("workspace watcher error", { label, targetPath, error: String(error) });
+      });
       watchers.push(watcher);
       log.debug("watching workspace path", { label, targetPath });
     } catch (error) {

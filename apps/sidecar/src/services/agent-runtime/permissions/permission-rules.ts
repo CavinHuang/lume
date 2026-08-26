@@ -60,6 +60,26 @@ export function matchPermissionRule(input: {
   return true;
 }
 
+/**
+ * #558 review P1:command 档宽指纹的「前缀+词边界」校验可被 shell 连接符后缀
+ * 绕过（`git status && curl … | sh` 的 rest 以空白开头照样命中）。与规则表
+ * 「unparseable 命令永不获得持久 allow」同一口径：bash 类指纹必须能解析为
+ * simple 单命令或经保守只读子集证明，才允许写 command 前缀档；否则降级 exact。
+ */
+export function allowsCommandScopeGrant(canonicalName: string, key: string): boolean {
+  if (canonicalName !== "bash") return true;
+  const analysis = analyzeBashCommand(key);
+  if (analysis.status === "simple") return true;
+  if (isReadOnlyShellInput({ command: key })) return true;
+  // 解析器不可用的平台（如部分 Windows 构建 analyzeBashCommand 恒
+  // parse-unavailable）退守字符串级检查：含连接符/管道/重定向/命令替换的
+  // 一律不给前缀档，纯「命令+参数」形态按前缀授予——不把 #558 弄成全灭。
+  if (analysis.status === "parse-unavailable") {
+    return !/[;&|<>`]|\$\(/.test(key);
+  }
+  return false;
+}
+
 function permissionCommandCandidates(toolName: string, command: string, action: PermissionRule["action"]): string[] {
   if (toolName !== "bash") return [command];
   const analysis = analyzeBashCommand(command);

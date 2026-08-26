@@ -86,6 +86,11 @@ export async function createConnectionPiAiRoute(input: {
   if (configuredModel && !configuredModel.enabled) throwWithHealthDegradation(input.channel, "connection_model_disabled");
   const routeModelId = stripMatchingConnectionProviderPrefix(input.channel, input.modelId);
   const oauth = await resolveConnectionOAuthAuth(input.channel.id, input.signal).catch((error: unknown) => {
+    // review P1:用户主动停止 run(abort)≠ 渠道故障,不得误标红徽章;
+    // single-flight 下 A run 的 abort reject 还会击中并发等待的 B run,更须排除。
+    if (input.signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+      throw error;
+    }
     // OAuth refresh 运行期失败同样降级徽章（#595）：凭据吊销/过期不该只进 run 错误
     throwWithHealthDegradation(
       input.channel,

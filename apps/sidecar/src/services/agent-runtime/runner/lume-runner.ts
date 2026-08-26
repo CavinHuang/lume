@@ -682,10 +682,13 @@ export class LumeRunner {
     await this.fireRunAfterFailure(errorMessage);
     // F3:查询流未启动(或未交付终值)的失败,投影链不拥有终值——补发 run.end{error};
     // 流已交付终值则跳过,避免同一 run 双终值。
-    await this.publishRunEndIfMissing("error", errorMessage);
+    // #559 review P1:T7c 后 web 主上屏单源是总线 run.end(lifecycle-event-adapter
+    // 取 detail.result),必须在此过人性化层;fromActiveRun 抑制使 emit.onError 的
+    // humanized 文本到不了主聊天流。持久化面(observer/finalizeResult)另持原文保真。
+    const userFacingError = humanizeRuntimeErrorMessage(errorMessage);
+    await this.publishRunEndIfMissing("error", userFacingError);
     await this.observer.flush();
-    // #559:持久化与日志保真留原文,仅上屏/透传面走人性化层
-    this.emit.onError(humanizeRuntimeErrorMessage(errorMessage));
+    this.emit.onError(userFacingError);
     return this.finalizeResult({ status: "errored", errorMessage });
   }
 

@@ -1,5 +1,5 @@
 import type { LumeToolDescriptor } from "../tools/tool-types";
-import { buildPermissionFingerprint } from "./permission-rules";
+import { allowsCommandScopeGrant, buildPermissionFingerprint } from "./permission-rules";
 import type { AgentToolPermissionAllowScope } from "@lume/shared";
 
 export interface PermissionSessionGrantInput {
@@ -39,6 +39,9 @@ function commandScopeFingerprint(fingerprint: string): string | null {
   if (!parts) return null;
   const command = parts.key.trim();
   if (!command) return null;
+  // review P1:shell 连接符后缀(`&&`/`||`/`;`)会以空白开头命中词边界,
+  // bash 类指纹必须 simple/只读才给前缀档,否则调用方降级 exact
+  if (!allowsCommandScopeGrant(parts.name, parts.key)) return null;
   return `${PREFIX_SCOPE_MARK}${parts.name}:${command}`;
 }
 

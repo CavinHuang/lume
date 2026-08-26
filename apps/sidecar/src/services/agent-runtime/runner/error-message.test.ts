@@ -42,4 +42,18 @@ describe("humanizeRuntimeErrorMessage", () => {
   test("未识别的正常错误消息透传不误伤", () => {
     expect(humanizeRuntimeErrorMessage("工具权限确认超时: Bash")).toBe("工具权限确认超时: Bash");
   });
+
+  test("review P0:「内部前缀+错误码」组合形态必须命中映射", () => {
+    expect(humanizeRuntimeErrorMessage("Agent Runtime 执行失败: connection_disabled")).toContain("连接配置");
+    expect(humanizeRuntimeErrorMessage("Agent Runtime 执行失败: connection_api_key_unavailable")).toContain("API Key");
+    expect(humanizeRuntimeErrorMessage("runtime-core: pi-ai routing exhausted without a response")).toContain("渠道");
+  });
+
+  test("review F5:「未知错误」字面量给兜底指引", () => {
+    expect(humanizeRuntimeErrorMessage("未知错误")).toContain("重试");
+  });
+
+  test("review F4:runtime-core 前缀剥离带词边界,不误伤连字符标识", () => {
+    expect(humanizeRuntimeErrorMessage("runtime-core-internal metric dump")).toBe("runtime-core-internal metric dump");
+  });
 });

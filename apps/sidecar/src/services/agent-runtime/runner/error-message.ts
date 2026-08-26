@@ -43,22 +43,28 @@ const INTERNAL_PREFIXES = [
   /^Agent Runtime 执行失败[:：]\s*/u,
   /^Agent SDK 执行失败[:：]\s*/u,
   /^Agent SDK 执行失败\s*$/u,
-  /^runtime-core[:：]?\s*/u,
+  // review F4:带词边界,不误伤 runtime-core-xxx 这类以它为前缀的其他标识
+  /^runtime-core(?::|\s|$)\s*/u,
 ];
 
 export function humanizeRuntimeErrorMessage(message: string): string {
   const raw = message.trim();
-  if (!raw || raw === "Unknown sidecar error") return FALLBACK_GUIDANCE;
+  if (!raw || raw === "Unknown sidecar error" || raw === "未知错误")
+    return FALLBACK_GUIDANCE;
 
-  for (const rule of RULES) {
-    if (rule.match(raw)) return rule.render(raw);
-  }
-
+  // review P0:先剥内部前缀再跑规则——attempt 补发出口的实际输入是
+  // 「Agent Runtime 执行失败: connection_disabled」这类组合形态,
+  // 若先匹配 RULES 则带前缀形态永不命中,裸码会透出上屏。
   let stripped = raw;
   for (const prefix of INTERNAL_PREFIXES) {
     stripped = stripped.replace(prefix, "");
   }
-  const trimmed = stripped.trim();
+  const normalized = stripped.trim();
   // 剥完只剩空壳（如裸的「Agent SDK 执行失败」），给兜底指引而非无因报错
-  return trimmed || FALLBACK_GUIDANCE;
+  if (!normalized) return FALLBACK_GUIDANCE;
+
+  for (const rule of RULES) {
+    if (rule.match(normalized)) return rule.render(normalized);
+  }
+  return normalized;
 }

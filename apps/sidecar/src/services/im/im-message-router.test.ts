@@ -283,6 +283,40 @@ describe("im-message-router", () => {
     expect(rebound?.threadId).toBe("thread-new-1");
   });
 
+  test("review F2 钉:trashed 线程与已硬删线程(meta undefined)同样触发换绑", async () => {
+    for (const [peerId, meta] of [
+      ["user-trashed", { id: "thread-t", status: "trashed" }],
+      ["user-deleted", undefined],
+    ] as const) {
+      upsertImThreadBinding({
+        provider: "weixin",
+        accountId: "account-1",
+        peerKind: "dm",
+        peerId,
+        threadId: "thread-gone",
+        contextToken: `ctx-${peerId}`
+      });
+      const createdThreads: string[] = [];
+      await routeInboundImMessage({
+        provider: "weixin",
+        accountId: "account-1",
+        peerKind: "dm",
+        peerId,
+        text: "hello",
+        contextToken: `ctx-${peerId}`
+      }, {
+        getThreadMeta: () => meta as never,
+        createThread() {
+          const id = `thread-rebind-${createdThreads.length + 1}`;
+          createdThreads.push(id);
+          return { id };
+        },
+        sendMessage: () => undefined,
+      });
+      expect(createdThreads).toEqual(["thread-rebind-1"]);
+    }
+  });
+
   test("rejects Weixin /approve commands when IM text approval is disabled", async () => {
     updateLumeConfigSection({
       source: "user",
