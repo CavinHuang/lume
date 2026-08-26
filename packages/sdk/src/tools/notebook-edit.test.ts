@@ -1,11 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
-<<<<<<< HEAD
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { realpathSync } from "node:fs";
-=======
 import { realpathSync } from "node:fs";
 import { mkdtemp, readFile, rm, utimes, writeFile } from "node:fs/promises";
->>>>>>> upstream/main
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { NotebookEditTool } from "./notebook-edit.js";
@@ -116,13 +111,8 @@ describe("NotebookEditTool insert anchoring", () => {
     const summary = JSON.parse(String(result.content));
     expect(summary.cell_id).toBe("a");
     expect(summary.new_source).toBe("# next");
-<<<<<<< HEAD
-    // #728：notebook_path 回显走 realpath 权威口径（与 read 缓存键同侧），macOS
-    // tmpdir 的 /var→/private/var symlink 前缀下断言须对齐 canonical 值
-=======
     // 缓存键与 Read 同口径后(#663),summary 回显 realpath 规范化路径
     // (macOS tmpdir 的 /var → /private/var);无 symlink 时与输入逐字相等。
->>>>>>> upstream/main
     expect(summary.notebook_path).toBe(realpathSync(filePath));
     expect(summary).not.toHaveProperty("original_file");
     expect(summary).not.toHaveProperty("updated_file");
