@@ -1,4 +1,4 @@
-import { Braces, Camera, CircleAlert, FileDiff, FolderOpen, Globe, List, LoaderCircle, MessageSquare, Mic, Package, Plus, Volume2, X, type LucideIcon } from 'lucide-react'
+import { Braces, Camera, CircleAlert, FileDiff, FolderOpen, Globe, Handshake, List, LoaderCircle, MessageSquare, Mic, Package, Plus, Volume2, X, type LucideIcon } from 'lucide-react'
 import { useEffect, useMemo, useRef } from 'react'
 import { Button } from '@/components/ui/button'
 import {
@@ -204,6 +204,9 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
                         : <FileTypeIcon filename={rightPanelFileTargetName(item.tab.target)} size={14} />
                     : null}
                 <span className="min-w-0 flex-1 truncate text-left">{item.label}</span>
+                {item.kind === 'browser' && item.tab.handoffStatus && (
+                  <Handshake size={11} className="shrink-0 text-[var(--lume-text-muted)]" aria-label={item.tab.handoffStatus === 'deliverable' ? '任务交付页面' : '任务交接页面'} />
+                )}
                 {item.kind === 'browser' && item.tab.mediaState?.camera && <Camera size={11} className="text-red-500" aria-label="摄像头使用中" />}
                 {item.kind === 'browser' && item.tab.mediaState?.microphone && <Mic size={11} className="text-red-500" aria-label="麦克风使用中" />}
                 {item.kind === 'browser' && item.tab.mediaState?.audible && <Volume2 size={11} className="text-muted-foreground" aria-label="正在播放声音" />}
