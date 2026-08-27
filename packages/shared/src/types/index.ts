@@ -5,6 +5,7 @@
 export * from "./runtime";
 export * from "./channel";
 export * from "./file-ref";
+export * from "./guanlan";
 export * from "./agent";
 export * from "./agent-events";
 export * from "./sdk-protocol";

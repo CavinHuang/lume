@@ -7,6 +7,7 @@ import * as https from "node:https";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { getConfigDir } from "./config-paths";
+import { parseGuanlanSearchItems, type GuanlanSearchItem } from "@lume/shared";
 
 const PYTHON_BUILD_DATE = "20260414";
 const PYTHON_VERSION = "3.11.15";
@@ -14,14 +15,8 @@ const DEFAULT_TIMEOUT_MS = 20_000;
 const MAX_STDERR_CHARS = 2_000;
 const MAX_STDOUT_CHARS = 200_000;
 
-export interface GuanlanSearchResult {
-  title: string;
-  url: string;
-  snippet?: string;
-  sourceType?: string;
-  evidenceRole?: string;
-  domain?: string;
-}
+/** #531 复审 M2：解析与结果类型单源化到 @lume/shared，本模块只保留运行时管理。 */
+export type GuanlanSearchResult = GuanlanSearchItem;
 
 export interface GuanlanRuntimeStatus {
   ok: boolean;
@@ -168,32 +163,7 @@ export function runGuanlanSearch(input: GuanlanSearchInput): Promise<GuanlanSear
 }
 
 export function parseGuanlanSearchOutput(output: string): GuanlanSearchResult[] {
-  const payload = parseJson(output);
-  const items = Array.isArray(payload)
-    ? payload
-    : Array.isArray((payload as { results?: unknown[] } | null)?.results)
-      ? (payload as { results: unknown[] }).results
-      : [];
-
-  return items
-    .map(normalizeSearchResult)
-    .filter((item): item is GuanlanSearchResult => !!item);
-}
-
-function normalizeSearchResult(item: unknown): GuanlanSearchResult | null {
-  if (!item || typeof item !== "object") return null;
-  const record = item as Record<string, unknown>;
-  const title = readString(record.title) || readString(record.name);
-  const url = readString(record.url) || readString(record.link);
-  if (!title || !url) return null;
-  return {
-    title,
-    url,
-    ...(readString(record.snippet) || readString(record.content) ? { snippet: readString(record.snippet) || readString(record.content) } : {}),
-    ...(readString(record.source_type) ? { sourceType: readString(record.source_type) } : {}),
-    ...(readString(record.evidence_role) ? { evidenceRole: readString(record.evidence_role) } : {}),
-    ...(readString(record.domain) ? { domain: readString(record.domain) } : {})
-  };
+  return parseGuanlanSearchItems(output);
 }
 
 function getPythonCandidates(): string[] {
@@ -335,18 +305,6 @@ async function downloadFile(url: string, destination: string): Promise<void> {
     };
     visit(url, 0);
   });
-}
-
-function parseJson(output: string): unknown {
-  try {
-    return JSON.parse(output);
-  } catch {
-    return null;
-  }
-}
-
-function readString(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
 function clampLimit(limit: number | undefined): number {

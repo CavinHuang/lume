@@ -4,6 +4,7 @@
 
 import { spawn } from 'node:child_process'
 import { existsSync } from 'node:fs'
+import { parseGuanlanSearchItems } from '@lume/shared'
 import { dirname, join } from 'node:path'
 import { defineTool } from './types.js'
 import { ensureNetworkAllowed } from '../utils/pathing.js'
@@ -265,34 +266,10 @@ export function truncateRawText(text: string, maxChars: number): string {
   return text.length > maxChars ? `${text.slice(0, maxChars)}...(truncated)` : text
 }
 
+// #531 复审 M2：解析单源化到 @lume/shared 的 parseGuanlanSearchItems（超集类型，
+// 可结构赋值给本域 SearchResult），SDK 不再维护自己的解析副本。
 export function parseGuanlanSearchOutput(output: string): SearchResult[] {
-  let payload: unknown
-  try {
-    payload = JSON.parse(output)
-  } catch {
-    return []
-  }
-  const items = Array.isArray(payload)
-    ? payload
-    : Array.isArray((payload as { results?: unknown[] } | null)?.results)
-      ? (payload as { results: unknown[] }).results
-      : []
-
-  return items
-    .map((item) => {
-      if (!item || typeof item !== 'object') return null
-      const record = item as Record<string, unknown>
-      const title = readResultString(record.title) || readResultString(record.name)
-      const url = readResultString(record.url) || readResultString(record.link)
-      if (!title || !url) return null
-      const snippet = readResultString(record.snippet) || readResultString(record.content)
-      return { title, url, ...(snippet ? { snippet } : {}) }
-    })
-    .filter((item): item is SearchResult => !!item)
-}
-
-function readResultString(value: unknown): string | undefined {
-  return typeof value === 'string' && value.trim() ? value.trim() : undefined
+  return parseGuanlanSearchItems(output)
 }
 
 export function clampProviderLimit(numResults: number): number {
