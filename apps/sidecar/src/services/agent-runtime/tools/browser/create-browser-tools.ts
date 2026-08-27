@@ -191,16 +191,22 @@ async function executeTool(
     if (!tabId) throw new Error("browser_internal_error")
     session.activeTabId = tabId
     session.snapshot = undefined
+    // #604①：新 tab 必须出现在下一次 list 结果里
+    session.tabsCache = undefined
     return { active_tab_id: tabId, tab: createdTab?.tabId ? createdTab : { id: tabId } }
   }
 
-  const tabs = await ownedAgentTabs(broker, dispatch, session.threadId)
+  const tabs = await ownedAgentTabsCached(session, broker, dispatch)
   const activeTab = reconcileActiveTab(session, tabs)
   if (name === "list_tabs") return { active_tab_id: activeTab?.tabId ?? null, tabs }
   if (name === "switch_tab") {
     const tabId = stringValue(args.tab_id)
     const tab = tabId ? tabs.find((candidate) => candidate.tabId === tabId) : undefined
-    if (!tab) throw new Error("tab_not_found")
+    if (!tab) {
+      // 缓存里没有 ≠ 不存在：清缓存让重试基于新列表判断（#604①）
+      session.tabsCache = undefined
+      throw new Error("tab_not_found")
+    }
     session.activeTabId = tab.tabId
     session.snapshot = undefined
     return { active_tab_id: tab.tabId, tab }
@@ -402,6 +408,24 @@ async function executeTool(
   return { active_tab_id: activeTab.tabId, observation: snapshot }
 }
 
+// ponytail: list_tabs TTL 微缓存天花板——外部关 tab 且期间无 snapshot/写动作时，
+// 免审窗口 ≤1s（reconcile 失配自愈兜底）；要消除窗口需 broker 下推 tab 生命周期事件
+/** #604①：list_tabs 不再每动作全量派发——会话 TTL 微缓存（open/reconcile 失配即失效） */
+const BROWSER_TABS_CACHE_TTL_MS = 1_000
+
+async function ownedAgentTabsCached(
+  session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>,
+  broker: BrowserToolBroker,
+  dispatch: (broker: BrowserToolBroker, method: string, params?: Record<string, unknown>) => Promise<unknown>,
+): Promise<BrowserTabDescriptor[]> {
+  if (session.tabsCache && Date.now() - session.tabsCache.fetchedAt < BROWSER_TABS_CACHE_TTL_MS) {
+    return session.tabsCache.tabs
+  }
+  const tabs = await ownedAgentTabs(broker, dispatch, session.threadId)
+  session.tabsCache = { tabs, fetchedAt: Date.now() }
+  return tabs
+}
+
 async function ownedAgentTabs(
   broker: BrowserToolBroker,
   dispatch: (broker: BrowserToolBroker, method: string, params?: Record<string, unknown>) => Promise<unknown>,
@@ -422,7 +446,11 @@ async function ownedAgentTabs(
 
 function reconcileActiveTab(session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>, tabs: BrowserTabDescriptor[]): BrowserTabDescriptor | undefined {
   const active = session.activeTabId ? tabs.find((tab) => tab.tabId === session.activeTabId) : tabs[0]
-  if (session.activeTabId && !active) session.snapshot = undefined
+  if (session.activeTabId && !active) {
+    // 外部关 tab 的信号：自愈同时让下一次拉取看到新列表（#604①）
+    session.snapshot = undefined
+    session.tabsCache = undefined
+  }
   if (!session.activeTabId) session.activeTabId = active?.tabId
   return active
 }
@@ -732,6 +760,9 @@ function rememberSnapshot(
   }))
   const previous = append && session.snapshot?.snapshotId === snapshotId ? session.snapshot.refs : {}
   session.snapshot = { snapshotId, tabId, generation, refs: { ...previous, ...refs } }
+  // #604①：重新观察即世界变更信号——list 缓存随代际一并失效，保证动作路径
+  // 拿到的描述符 generation 与 snapshot 一致（否则 repeat-guard 误判 stale_target）
+  session.tabsCache = undefined
 }
 
 function actionFailureKey(

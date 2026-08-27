@@ -681,3 +681,72 @@ function agentTab(tabId: string, ownerThreadId: string): BrowserTabDescriptor {
     surface: null,
   }
 }
+
+describe("#604① list_tabs 会话级 TTL 缓存", () => {
+  function harness(tabsProvider: () => BrowserTabDescriptor[]) {
+    const calls: Array<{ method: string }> = []
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push({ method: request.method })
+        if (request.method === "create_tab") return { id: `tab-${calls.length}` }
+        if (request.method === "list_tabs") return { tabs: tabsProvider() }
+        throw new Error("unsupported")
+      },
+    } as any
+    const registry = new BrowserToolSessionRegistry()
+    return {
+      calls,
+      registry,
+      tools: createBrowserMcpTools({ broker, sessionRegistry: registry, threadId: "thread-604" }),
+    }
+  }
+
+  test("TTL 内复用缓存：连续两次 list_tabs 只派发一次", async () => {
+    const h = harness(() => [agentTab("tab-1", "thread-604")])
+    await rawCall(h.tools, "mcp__browser__list_tabs", {})
+    await rawCall(h.tools, "mcp__browser__list_tabs", {})
+    expect(h.calls.filter((c) => c.method === "list_tabs")).toHaveLength(1)
+  })
+
+  test("TTL 过期后重新拉取", async () => {
+    const h = harness(() => [agentTab("tab-1", "thread-604")])
+    await rawCall(h.tools, "mcp__browser__list_tabs", {})
+    const session = h.registry.getOrCreate("thread-604") as any
+    session.tabsCache.fetchedAt -= 2000
+    await rawCall(h.tools, "mcp__browser__list_tabs", {})
+    expect(h.calls.filter((c) => c.method === "list_tabs")).toHaveLength(2)
+  })
+
+  test("open 新 tab 后缓存失效，switch_tab 能看见新 tab", async () => {
+    let expanded = false
+    const h = harness(() => {
+      const tabs = [agentTab("tab-1", "thread-604")]
+      if (expanded) tabs.push(agentTab("tab-2", "thread-604"))
+      return tabs
+    })
+    await rawCall(h.tools, "mcp__browser__list_tabs", {})
+    await rawCall(h.tools, "mcp__browser__open", { url: "https://two.example" })
+    expanded = true
+    // open 后缓存必须失效：switch 才能看见 open 带来的新 tab
+    const result = await rawCall(h.tools, "mcp__browser__switch_tab", { tab_id: "tab-2" })
+    expect(JSON.parse(String(result.content)).active_tab_id).toBe("tab-2")
+  })
+
+  test("外部关闭 active tab：reconcile 失配自愈并清缓存重新拉取", async () => {
+    let includeActive = true
+    const h = harness(() => {
+      const tabs = [agentTab("tab-1", "thread-604")]
+      if (includeActive) tabs.push(agentTab("active-gone", "thread-604"))
+      return tabs
+    })
+    await rawCall(h.tools, "mcp__browser__switch_tab", { tab_id: "active-gone" })
+    const before = h.calls.filter((c) => c.method === "list_tabs").length
+    includeActive = false
+    // TTL 外才会重新拉取；此处直接回拨模拟时间流逝
+    ;(h.registry.getOrCreate("thread-604") as any).tabsCache.fetchedAt -= 2000
+    await rawCall(h.tools, "mcp__browser__list_tabs", {})
+    const after = h.calls.filter((c) => c.method === "list_tabs").length
+    expect(after).toBeGreaterThan(before)
+  })
+})
