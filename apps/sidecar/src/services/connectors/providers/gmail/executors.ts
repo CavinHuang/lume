@@ -979,15 +979,31 @@ function normalizeThread(thread: GmailThreadResource) {
   };
 }
 
-async function hydrateInBatches<T, TResult>(
+async function hydrateInBatches<T, TResult extends T>(
   items: T[],
   hydrate: (item: T) => Promise<TResult>,
   batchSize = detailHydrationBatchSize,
-) {
+): Promise<TResult[]> {
   const hydrated: TResult[] = [];
   for (let index = 0; index < items.length; index += batchSize) {
     const batch = items.slice(index, index + batchSize);
-    hydrated.push(...(await Promise.all(batch.map((item) => hydrate(item)))));
+    // 仅 404(list→get 竞态窗口内消息已被删)把该条降级回 list 自带的轻量骨架;
+    // 认证过期/限流/网络错误等系统性失败必须上抛——静默降级会把整页伪装成
+    // "合法的空摘要"骗过模型
+    hydrated.push(
+      ...(await Promise.all(
+        batch.map(async (item) => {
+          try {
+            return await hydrate(item);
+          } catch (error) {
+            if (error instanceof ProviderRequestError && error.status === 404) {
+              return item as TResult;
+            }
+            throw error;
+          }
+        }),
+      )),
+    );
   }
   return hydrated;
 }

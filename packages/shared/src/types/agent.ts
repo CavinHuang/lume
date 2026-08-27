@@ -157,6 +157,17 @@ export type AgentThreadStatus = 'active' | 'archived' | 'trashed'
 /**
  * Agent 线程轻量索引项
  *
+/** 线程当前生效的项目指令文件信息（GET_PROJECT_INSTRUCTIONS_INFO 返回；未加载时为 null）。 */
+export interface AgentProjectInstructionsInfo {
+  /** 命中文件的词法路径（展示用） */
+  path: string
+  /** 注入正文字符数（已剥 front matter、截断后） */
+  chars: number
+  /** 是否因超出体积上限被截断 */
+  truncated: boolean
+}
+
+/**
  * 存储在 ~/.lume/agent-sessions.json 中，
  * 存储在独立 Agent 线程索引中。
  */
@@ -1166,6 +1177,14 @@ export interface AgentToolPermissionGrantSuggestion {
   label: string
 }
 
+/** Edit/Write 类工具的审批前 diff 预览（#560），sidecar 按工具类型生成 */
+export interface AgentToolPermissionPreview {
+  kind: 'diff'
+  path?: string
+  oldText: string
+  newText: string
+}
+
 export interface AgentToolPermissionRequest {
   threadId: string
   /** 所属 runtime runId，用于 durable interruption / checkpoint 关联。 */
@@ -1185,6 +1204,8 @@ export interface AgentToolPermissionRequest {
   matchedRuleId?: string
   classification?: AgentToolPermissionClassification
   grantSuggestion?: AgentToolPermissionGrantSuggestion
+  /** Edit/Write 类工具的 diff 预览；其余工具缺省走单行 input 摘要。 */
+  preview?: AgentToolPermissionPreview
   /** 当前审批策略是否允许授予“始终允许”。 */
   canAllowAlways?: boolean
   input: Record<string, unknown>
@@ -1205,10 +1226,15 @@ export interface AgentPluginSensitiveRequest {
   capabilityKey: string
 }
 
+/** 「始终允许」的真实作用域档位（#558）：缺省 exact 保持逐字节比对 */
+export type AgentToolPermissionAllowScope = 'exact' | 'command' | 'tool'
+
 export interface AgentToolPermissionResponseInput {
   threadId: string
   requestId: string
   decision: AgentToolPermissionDecision
+  /** allow_always 时的指纹作用域档位；缺省 exact（仅逐字节相同输入免审批）。 */
+  allowAlwaysScope?: AgentToolPermissionAllowScope
   /** 将当前审批会话切到对应权限模式；目前仅支持本线程全部允许。 */
   threadPermissionMode?: 'bypassPermissions'
 }
@@ -1921,6 +1947,8 @@ export const AGENT_IPC_CHANNELS = {
   // 文件系统操作
   /** 获取 thread 工作路径 */
   GET_THREAD_PATH: 'agent:get-thread-path',
+  /** 查询线程当前生效的项目指令文件（CLAUDE.md/AGENTS.md；未加载返回 null） */
+  GET_PROJECT_INSTRUCTIONS_INFO: 'agent:get-project-instructions-info',
   /** 列出目录内容 */
   LIST_DIRECTORY: 'agent:list-directory',
   /** 删除文件/空目录 */
@@ -1981,6 +2009,10 @@ export const AGENT_IPC_CHANNELS = {
   GET_CODING_REPOSITORY_PUBLISH_STATE: 'agent:get-coding-repository-publish-state',
   /** 提交已暂存内容或推送当前分支 */
   APPLY_CODING_REPOSITORY_PUBLISH_ACTION: 'agent:apply-coding-repository-publish-action',
+  /** 按快照还原单次 Coding Run 写过的文件（指纹冲突/已提交边界拒绝覆盖） */
+  REVERT_CODING_RUN: 'agent:revert-coding-run',
+  /** 按快照还原单个 Coding 文件到 Run 前内容 */
+  REVERT_CODING_FILE: 'agent:revert-coding-file',
   /** 只读读取项目绑定目录二进制文件 */
   READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
   /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */

@@ -90,6 +90,7 @@ export {
   FileReadTool,
   FileWriteTool,
   FileEditTool,
+  MultiEditTool,
   GlobTool,
   GrepTool,
   NotebookEditTool,
@@ -97,10 +98,6 @@ export {
   // Web
   WebFetchTool,
   WebSearchTool,
-  GuanlanSearchTool,
-  GuanlanReadTool,
-  GuanlanHotnewsTool,
-  GuanlanResearchTool,
 
   // Agent & Multi-agent
   AgentTool,
@@ -267,6 +264,7 @@ export {
   compactConversation,
   microCompactMessages,
   compactToolResultContent,
+  COMPACTION_BREAKER_THRESHOLD,
 } from './utils/compact.js'
 export type {
   AutoCompactState,

@@ -99,6 +99,10 @@ export interface SkillDefinition {
 
 /**
  * Result of executing a skill.
+ *
+ * status/'forked'/model 字段已删（#575）：Skill 工具不 fork、不做模型覆写，
+ * 旧契约描述的是从未存在的行为。frontmatter 层的 context/model 声明仍在
+ * （SkillInvocationDescriptor 消费），但执行语义只有 inline 一种。
  */
 export interface SkillResult {
   /** Whether execution succeeded */
@@ -107,20 +111,11 @@ export interface SkillResult {
   /** Skill name that was executed */
   skillName: string
 
-  /** Execution status */
-  status: 'inline' | 'forked'
-
   /** Allowed tools override (for inline execution) */
   allowedTools?: string[]
 
   /** Deferred tools activated for inline execution. */
   activatedTools?: string[]
-
-  /** Model override */
-  model?: string
-
-  /** Result text (for forked execution) */
-  result?: string
 
   /** Error message */
   error?: string

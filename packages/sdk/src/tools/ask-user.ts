@@ -341,12 +341,14 @@ export const AskUserQuestionTool: ToolDefinition = {
     } catch (err: any) {
       // An interrupted run is not a user decline; report it as such (#330).
       const aborted = err?.message === 'aborted' || context.abortSignal?.aborted
+      // 其余 handler 异常是问题管道故障（宿主未装配时走 fallback、用户取消走
+      // aborted），不得冒充"用户拒绝"误导模型（#538）
       return {
         type: 'tool_result',
         tool_use_id: '',
         content: aborted
           ? 'Question was cancelled because the run was interrupted before the user answered.'
-          : `User declined to answer questions: ${err.message}`,
+          : `Question pipeline failed before reaching the user (this was NOT a user decline): ${err.message}`,
         is_error: true,
       }
     }

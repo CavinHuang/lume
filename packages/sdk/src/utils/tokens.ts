@@ -1,8 +1,11 @@
 /**
  * Token Estimation & Counting
  *
- * Provides rough token estimation (character-based) and
- * native exact counting when available.
+ * Provides rough token estimation (character-based) and native counting when
+ * available. Native counts use the o200k_base encoding (GPT-4o family), are
+ * exact for inputs ≤8K UTF-16 code units, and become chunked approximations
+ * beyond that (see countTokensNativeChunked below) — consumed only by
+ * thresholds/display, never billing.
  */
 
 import { countStringTokens } from '@lume/natives'
@@ -18,14 +21,17 @@ let messageTokenCache = new WeakMap<object, number>()
 /**
  * Rough token estimation.
  *
- * ASCII-heavy text is roughly 4 chars/token, while CJK and emoji-like
- * codepoints are closer to 1 char/token. This keeps live context estimates from
- * badly undercounting Chinese/Japanese/Korean prompts.
+ * Prefers native tiktoken counting (exact ≤8K UTF-16 code units; chunked approximation for
+ * larger inputs, see countTokensNativeChunked). Falls back to a character
+ * heuristic when natives are unavailable: ASCII-heavy text is roughly
+ * 4 chars/token, while CJK and emoji-like codepoints are closer to 1
+ * char/token — keeps live context estimates from badly undercounting
+ * Chinese/Japanese/Korean prompts.
  */
 export function estimateTokens(text: string): number {
   if (!text) return 0
   try {
-    const nativeCount = countStringTokens(text)
+    const nativeCount = countTokensNativeChunked(text)
     if (nativeCount > 0) return nativeCount
   } catch {
     // Keep @lume/agent-sdk usable without native binaries.
@@ -43,6 +49,27 @@ export function estimateTokens(text: string): number {
   }
 
   return fullTokenChars + Math.ceil(asciiChars / 4)
+}
+
+/**
+ * 原生计数入口的分块保护（#736）：tiktoken 对「单 regex piece 内无换行的长
+ * 游程」近 O(n²)（256KB≈30s，Read 的 1MiB 上限外推 ~10min 同步冻结）。定长
+ * 硬切把单次 encode 规模压回线性安全区——8K code units 下 1MiB 单行实测
+ * ~2.4s，漂移仅 +0.009%（曾试过换行优先切块：空白密集 markdown 反而
+ * +6~10%，因空行游程被人工打断丢失 BPE 合并；定长硬切两项全优故弃之）。
+ * LIMIT 按 JS string 的 UTF-16 code unit 计（非字节）：CJK 文本同单位数下
+ * 实际字节数至多 3×，单次 encode 规模上限实为 ~24KB 字节而非 8KB；该余量
+ * 仍远低于病态区，且更大切块减少 BPE 打断、漂移只减不增，方向安全。
+ * 近似只服务阈值/展示估算，恒保守多计无资源越界风险。
+ */
+const TOKEN_NATIVE_PIECE_LIMIT = 8 * 1024
+
+function countTokensNativeChunked(text: string): number {
+  let total = 0
+  for (let start = 0; start < text.length; start += TOKEN_NATIVE_PIECE_LIMIT) {
+    total += countStringTokens(text.slice(start, start + TOKEN_NATIVE_PIECE_LIMIT))
+  }
+  return total
 }
 
 /**

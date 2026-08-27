@@ -91,9 +91,9 @@ export function summarizeGmailMessage(resource: GmailMessageResource): GmailMess
     messageId: resource.id,
     threadId: resource.threadId,
     labelIds: resource.labelIds ?? [],
-    subject: readHeader(headers, "Subject"),
-    sender: readHeader(headers, "From"),
-    to: readHeader(headers, "To"),
+    subject: decodeMimeWords(readHeader(headers, "Subject")),
+    sender: decodeMimeWords(readHeader(headers, "From")),
+    to: decodeMimeWords(readHeader(headers, "To")),
     messageTimestamp: toMessageTimestamp(resource.internalDate, readHeader(headers, "Date")),
   };
 }
@@ -138,6 +138,74 @@ export function normalizeGmailMessage(resource: GmailMessageResource): Normalize
 
 export function readHeader(headers: GmailMessageHeader[], name: string): string {
   return headers.find((header) => header.name.toLowerCase() === name.toLowerCase())?.value ?? "";
+}
+
+const ENCODED_WORD = /\?([^?\s]+)\?([bBqQ])\?([^?]*)\?=/g;
+
+/** 单个编码词还原为原始字节:B 走 base64(带合法性校验),Q 走 _=空格/=XX=hex。 */
+function encodedWordBytes(encoding: string, text: string): Buffer | null {
+  if (encoding === "B" || encoding === "b") {
+    const buffer = Buffer.from(text, "base64");
+    // Node 的 base64 解码静默忽略非法字符:round-trip 不符或整体解空即视为畸形,
+    // 与 Q 路径的回退语义对齐(原样保留比 mojibake 可诊断)
+    const stripped = text.replace(/=+$/, "");
+    if (buffer.toString("base64").replace(/=+$/, "") !== stripped || buffer.length === 0) {
+      return null;
+    }
+    return buffer;
+  }
+  const bytes: number[] = [];
+  for (let index = 0; index < text.length; index++) {
+    const char = text[index];
+    if (char === "_") {
+      bytes.push(0x20);
+    } else if (char === "=" && /^[0-9A-Fa-f]{2}$/.test(text.slice(index + 1, index + 3))) {
+      bytes.push(parseInt(text.slice(index + 1, index + 3), 16));
+      index += 2;
+    } else {
+      const code = text.charCodeAt(index);
+      if (code > 0x7f) return null;
+      bytes.push(code);
+    }
+  }
+  return Buffer.from(bytes);
+}
+
+/**
+ * RFC 2047 encoded-word 解码(仅收件方向展示):Gmail API 返回的 headers 是 MIME
+ * 源码原值,中文主题形如 =?UTF-8?B?...?= 对模型不可读。仅解 UTF-8/ASCII 系,
+ * 其余 charset 原样保留;发送侧编码见 encodeSubject(回复引用原样回填即合法)。
+ *
+ * 相邻编码词序列(RFC 2047 §6.2 允许编码器在 75 字符词界把多字节字符中切)
+ * 先在字节层拼接再统一 UTF-8 解码——逐词独立解码必产 U+FFFD 花屏。
+ */
+export function decodeMimeWords(value: string): string {
+  if (!value.includes("=?")) {
+    return value;
+  }
+  return value.replace(
+    /(?:=\?[^?\s]+\?[bBqQ]\?[^?]*\?=)(?:\s+=\?[^?\s]+\?[bBqQ]\?[^?]*\?=)*/g,
+    (run) => {
+      const words = [...run.matchAll(ENCODED_WORD)];
+      // ENCODED_WORD 捕获组:[0]=全匹配,[1]=charset,[2]=encoding,[3]=text
+      const decodable = words.every((word) => {
+        const charset = (word[1] ?? "").toLowerCase();
+        return charset === "utf-8" || charset === "utf8" || charset === "us-ascii";
+      });
+      if (!decodable) {
+        return run;
+      }
+      const buffers: Buffer[] = [];
+      for (const word of words) {
+        const bytes = encodedWordBytes(word[2] as string, word[3] ?? "");
+        if (!bytes) {
+          return run;
+        }
+        buffers.push(bytes);
+      }
+      return Buffer.concat(buffers).toString("utf8");
+    },
+  );
 }
 
 export function resolveReplyHeaders(resource: GmailMessageResource): {

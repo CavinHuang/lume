@@ -161,7 +161,8 @@ test('macOS release uses Developer ID when configured and otherwise falls back t
 
 test('update installation keeps renderer IPC pending until the updater takes over', () => {
   const main = readFileSync(resolve(DESKTOP_ROOT, 'src/main.ts'), 'utf8')
-  const handlerStart = main.indexOf("ipcMain.handle('lume:update:install'")
+  // update-install 注册经 handleLogged 包装（IPC 埋点），哨兵同步更新。
+  const handlerStart = main.indexOf("handleLogged('lume:update:install'")
   const handlerEnd = main.indexOf('// Windows 任务栏图标', handlerStart)
   const handler = main.slice(handlerStart, handlerEnd)
 
@@ -453,6 +454,23 @@ test('desktop dev builds desktop-host resources before launching Electron', () =
   assert.match(script, /build-desktop-host-resources\.mjs/)
   assertContainsBefore(script, 'spawnSync("node", [buildDesktopHostResourcesScript]', 'spawn(electronBin')
   assert.match(script, /LUME_COMPUTER_USE_BUNDLE_VARIANT:\s*["']dev["']/)
+})
+
+test('node-repl contract allowlist description matches worker.js (#639 review round-4)', () => {
+  // allowlist（worker.js Set）与 contract 描述的人工枚举是另一对手工同步物；
+  // 加模块忘改描述时在此变红。
+  const workerSource = readFileSync(resolve(DESKTOP_ROOT, 'resources-src', 'node-repl', 'runtime', 'worker.js'), 'utf8')
+  const setBody = workerSource.match(/const ALLOWED_BUILTIN_MODULES = new Set\(\[([\s\S]*?)\]\);/)?.[1] ?? ''
+  const allowed = new Set([...setBody.matchAll(/"(node:[^"]+)"/g)].map((m) => m[1]))
+  assert.ok(allowed.size > 0, 'ALLOWED_BUILTIN_MODULES must exist in worker.js')
+
+  const contract = JSON.parse(readFileSync(resolve(REPO_ROOT, 'crates', 'lume-node-repl-host', 'contracts', 'node-repl-mcp-contract.json'), 'utf8'))
+  const jsDescription = contract.tools.find((tool) => tool.name === 'js').description
+  for (const specifier of allowed) {
+    const short = specifier.replace(/^node:/, '')
+    if (short.includes('/')) continue // 子路径条目在描述中单列，此处只核对主模块名
+    assert.ok(jsDescription.includes(short), `contract js description missing allowed module "${short}"`)
+  }
 })
 
 test('node-repl manifest hashes match the bundled resource files (#639 review)', () => {

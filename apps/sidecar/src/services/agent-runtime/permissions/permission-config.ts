@@ -12,10 +12,7 @@ import type { PermissionRule } from "./permission-types";
 export function resolveConfiguredPermissionRules(
   permissions?: LumeConfigPermissionsSection
 ): PermissionRule[] {
-  return (permissions?.rules ?? []).map((rule) => ({
-    ...rule,
-    scope: rule.scope ?? "workspace"
-  }));
+  return permissions?.rules ?? [];
 }
 
 export function resolveConfiguredPrivateWriteRoots(input: {

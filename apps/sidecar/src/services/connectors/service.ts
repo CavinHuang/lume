@@ -104,14 +104,21 @@ interface PendingAuthorization {
   resolve: (credential: ResolvedCredential & { authType: "oauth2" }) => void;
   reject: (error: Error) => void;
   timer: NodeJS.Timeout;
-  /** 兑换进行中:同 state 的重复回调不得二次兑换(code 重用会触发授权服务器撤销)。 */
-  exchanging?: boolean;
-  /** disconnect/supersede 时若兑换已在途,置位阻止其完成后落盘。 */
-  cancelled?: boolean;
+  /** 授权 URL 尚未产出时终结流程,须一并 settle url promise,否则 START_AUTH 悬挂至 RPC 超时。 */
+  settleUrlIfPending: (error: Error) => void;
+  /** state 命中后置位:同 code 的重复回调不再触碰流程 promise(Google 授权码一次性)。 */
+  consumed?: boolean;
 }
 
 const pendingAuthorizations = new Map<string, PendingAuthorization>();
 const OAUTH_CALLBACK_TIMEOUT_MS = 10 * 60 * 1000;
+
+// 测试 seam:授权流需要复现"listen 尚未回调即失败"的窗口,真实 bind 无法稳定注入。
+let httpServerFactory: typeof createServer = createServer;
+/** @internal 仅测试使用;调用方负责还原默认工厂。 */
+export function setHttpServerFactoryForTest(factory: typeof createServer): void {
+  httpServerFactory = factory;
+}
 
 function requireOAuthAuth(service: string): OAuth2AuthDefinition {
   const auth = getConnector(service).definition.auth.find((entry) => entry.type === "oauth2");
@@ -141,19 +148,35 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
   const auth = requireOAuthAuth(service);
 
   let resolveUrl!: (url: string) => void;
-  const authorizationUrl = new Promise<string>((resolve) => (resolveUrl = resolve));
+  let rejectUrl!: (error: Error) => void;
+  let urlSettled = false;
+  const settleUrlIfPending = (error: Error) => {
+    if (!urlSettled) {
+      urlSettled = true;
+      rejectUrl(error);
+    }
+  };
+  const authorizationUrl = new Promise<string>((resolve, reject) => {
+    resolveUrl = resolve;
+    rejectUrl = reject;
+  });
   const done = new Promise<ResolvedCredential & { authType: "oauth2" }>((resolve, reject) => {
-    const server = createServer((req, res) => void handleOAuthCallback(req, res, service));
-    // 本流的 map 条目(set 于 listen 回调):finish 时校验身份,
-    // 防止 supersede 后旧流的收尾误删新流条目
-    let entry: PendingAuthorization | undefined;
-
+    const server = httpServerFactory((req, res) => void handleOAuthCallback(req, res, service));
+    let finished = false;
+    /** 本流自己的 map 占位:finish 删除前核对身份——孤儿流(占位已被后继 bind 覆盖出局)
+     * 的单次合法终结也不得摘掉在位新流,否则新授权真回调 404、done 悬挂至超时。 */
+    let self: PendingAuthorization | undefined;
     const finish = (fn: () => void) => {
+      // 幂等守卫:finish 只结算一次。迟到的 resolve/reject(流已被顶掉/断开后
+      // 兑换才决算)重入会重放副作用;孤儿流的首次终结同样不得误删他流条目
+      if (finished) return;
+      finished = true;
       clearTimeout(timer);
       server.close();
-      if (entry && pendingAuthorizations.get(service) === entry) {
-        pendingAuthorizations.delete(service);
-      }
+      if (pendingAuthorizations.get(service) === self) pendingAuthorizations.delete(service);
+      // listen 前失败(绑定被拒/supersede)时 url 永不产出,必须同步 settle,
+      // 否则 handler 的 await authorizationUrl 挂死而真实错误丢失
+      settleUrlIfPending(new ConnectorError("oauth_flow_cancelled", "授权流已终止"));
       fn();
     };
     const timer = setTimeout(() => {
@@ -172,7 +195,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       // PKCE S256(RFC 7636):同机进程即便截获 state/授权码,没有 verifier 也换不到 token
       const codeVerifier = randomBytes(48).toString("base64url");
       const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
-      entry = {
+      const record: PendingAuthorization = {
         service,
         state,
         codeVerifier,
@@ -180,8 +203,10 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
         resolve: (credential) => finish(() => resolve(credential)),
         reject: (error) => finish(() => reject(error)),
         timer,
+        settleUrlIfPending,
       };
-      pendingAuthorizations.set(service, entry);
+      self = record;
+      pendingAuthorizations.set(service, record);
       resolveUrl(
         buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state, codeChallenge),
       );
@@ -223,19 +248,18 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       respondPage(false, "OAuth state 不匹配或已过期。若非误开此页,请回到 Lume 重新发起授权。");
       return;
     }
+    if (pending.consumed) {
+      // 同一 code 的第二次回调(成功页加载慢时刷新最常见):Google 授权码一次性,
+      // 二次兑换必 invalid_grant,不能让后到者把已成功的流 reject 掉
+      respondPage(true, "授权正在处理或已完成,请回到 Lume 查看。");
+      return;
+    }
+    pending.consumed = true;
     const code = url.searchParams.get("code");
     if (!code) {
       const reason = url.searchParams.get("error_description") ?? url.searchParams.get("error") ?? "未返回授权码";
       throw new ConnectorError("oauth_denied", `授权被取消: ${reason}`);
     }
-    // 兑换期保留条目仅置 exchanging:同 state 的重复回调在此分支被挡下(code 重用
-    // 会触发 RFC 6749 §4.1.2 的凭证撤销);条目不删,disconnect 才能标记取消在途兑换
-    if (pending.exchanging) {
-      logger.debug("connector oauth callback during exchange (stray request)", { service });
-      respondPage(false, "该授权码正在兑换中,请勿重复打开回调链接。");
-      return;
-    }
-    pending.exchanging = true;
     const config = getConnectorClientConfig(service);
     const auth = requireOAuthAuth(service);
     if (!config) throw new ConnectorError("oauth_client_config_required", "OAuth client 配置丢失");
@@ -254,11 +278,20 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       createError: (message) => new ConnectorError("oauth_token_exchange_failed", message),
     });
 
-    // 兑换在途时用户断开连接:凭证不得落盘,否则「已断开」状态下复活连接
-    if (pending.cancelled) {
-      throw new ConnectorError("oauth_flow_cancelled", "授权已取消,未保存凭证");
+    // 兑换期间流可能已被顶掉/断开(pending 从 map 摘除):盲写会把凭证复活进已终止的流程
+    const respondFlowTerminated = () => {
+      logger.warn("connector oauth result discarded (flow terminated)", { service });
+      respondPage(false, "授权已失效(流程已终止),请回到 Lume 重新发起。");
+    };
+    if (pendingAuthorizations.get(service) !== pending) {
+      respondFlowTerminated();
+      return;
     }
-    await validateAndStoreCredential(service, credential);
+    if (!(await validateAndStoreCredential(service, credential, pending))) {
+      // 流在校验器在途窗口内被终止:done 已随终止路径 reject,此处只补失效页,不得再报成功
+      respondFlowTerminated();
+      return;
+    }
     logger.info("connector oauth flow completed", { service });
     pending.resolve(credential);
     respondPage(true, "授权成功,可以关闭此页面回到 Lume。");
@@ -311,8 +344,13 @@ function configRequestedScopes(service: string, auth: OAuth2AuthDefinition): str
   return auth.scopes;
 }
 
-/** 跑凭证验证器补全 profile(邮箱等),落盘 vault。 */
-async function validateAndStoreCredential(service: string, credential: ResolvedCredential & { authType: "oauth2" }): Promise<void> {
+/** 跑凭证验证器补全 profile(邮箱等),落盘 vault;流在途失配时不落盘并返回 false,由调用方补失效页。 */
+async function validateAndStoreCredential(
+  service: string,
+  credential: ResolvedCredential & { authType: "oauth2" },
+  /** 发起校验时的授权流身份:校验器在途期间流被终止时,迟到结果不得写盘复活(#689)。 */
+  pending: PendingAuthorization,
+): Promise<boolean> {
   const provider = getConnector(service);
   let stored = credential;
   try {
@@ -331,7 +369,11 @@ async function validateAndStoreCredential(service: string, credential: ResolvedC
     // 验证失败不阻断授权:token 本身已兑换成功;但 profile 会落默认值,留痕供排查
     logger.warn("connector oauth2 validator failed", { service, error: error instanceof Error ? error.message : String(error) });
   }
+  // 兑换后 map 检查与本次写盘之间隔着校验器网络 await:断开/超时/被新授权顶掉
+  // 都会把本流摘出 map,此处失配即弃;检查与同步写同处一个 microtask,无再入窗口
+  if (pendingAuthorizations.get(service) !== pending) return false;
   setConnectorOAuthCredential(service, stored);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -352,6 +394,9 @@ function timingSafeStateEqual(received: string, expected: string): boolean {
  * 验证失败抛 ConnectorError,由调用方决定提示。
  */
 export async function saveConnectorCustomCredential(service: string, values: Record<string, string>): Promise<void> {
+  // 连接测试是长 await:期间断开/再次保存时,旧请求不得把过期结果写回
+  const epoch = (saveEpochs.get(service) ?? 0) + 1;
+  saveEpochs.set(service, epoch);
   const provider = getConnector(service);
   // oauth2 型 provider 的凭证只能经授权流写入:直存 customValues 会造出
   // 「UI 已连接、运行时 getConnectorResolvedCredential oauth 优先解析必抛错」的假态。
@@ -375,8 +420,14 @@ export async function saveConnectorCustomCredential(service: string, values: Rec
       };
     }
   }
+  if (saveEpochs.get(service) !== epoch) {
+    throw new ConnectorError("connector_save_superseded", "已有更新的保存/断开操作,本次结果已忽略");
+  }
   setConnectorCustomValues(service, values);
 }
+
+/** 授权码型保存的代际号:validator 在途期间发生断开/再保存,旧请求落盘前失配即弃。 */
+const saveEpochs = new Map<string, number>();
 
 /** 统一解析当前凭证:OAuth 型带过期刷新,授权码型直读。未连接抛错。 */
 export async function getConnectorResolvedCredential(service: string): Promise<ResolvedCredential> {
@@ -476,6 +527,10 @@ export async function refreshConnectorCredential(
 export function disconnectConnector(service: string): void {
   const pending = pendingAuthorizations.get(service);
   if (pending) stopPendingAuthorization(service, new ConnectorError("oauth_flow_cancelled", "授权已取消"));
+  // 使在途的授权码保存失配:连接测试期间断开,旧请求不得把凭证写回。
+  // 必须 bump 而非 delete:归零复用会让断开后的新一轮保存与在途旧保存撞号,
+  // 守卫双双失效(旧保存落盘复活)
+  saveEpochs.set(service, (saveEpochs.get(service) ?? 0) + 1);
   // 断开 ≠ 忘记配置:清凭证但保留用户手填的 OAuth client_id/secret,
   // 否则 Gmail 重连要重新翻 GCP Console 抄一遍
   clearConnectorCredentialData(service);
@@ -484,11 +539,14 @@ export function disconnectConnector(service: string): void {
 function stopPendingAuthorization(service: string, error: Error): void {
   const pending = pendingAuthorizations.get(service);
   if (!pending) return;
-  // 兑换在途时条目仍在 map:标记取消,让兑换完成后拒绝落盘
-  pending.cancelled = true;
+  // 前四步是对 finish 的防御性前置复制(get 与本函数同步无竞态,delete 目标
+  // 即所取者)。末位 pending.reject 是该流 done promise 的唯一结算通道、也是
+  // finish 幂等守卫的置位点——不得删,否则守卫永不生效,重放误删会复活
   clearTimeout(pending.timer);
   pending.server.close();
   pendingAuthorizations.delete(service);
+  // listen 回调触发前的 supersede/断开:url promise 尚未产出,一并终结防悬挂
+  pending.settleUrlIfPending(error);
   pending.reject(error);
 }
 

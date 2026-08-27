@@ -56,6 +56,7 @@ import {
   compactConversation as defaultCompactConversation,
   microCompactMessages as defaultMicroCompactMessages,
   createAutoCompactState,
+  COMPACTION_BREAKER_THRESHOLD,
   type AutoCompactState,
 } from './utils/compact.js'
 import {
@@ -359,7 +360,10 @@ export class QueryEngine {
   private compactState: AutoCompactState
   // Recovery-path breaker, independent of the proactive compaction counter:
   // unrelated proactive failures must not disable overflow self-rescue (#567 item 2).
-  private promptTooLongRecoveryFailures = 0
+  // Both breakers are session-owned via config when the host threads them
+  // through (#725 review R6/R7) — per-run engines would reset them each run
+  // and the breakers could never trip.
+  private promptTooLongRecoveryFailures: number
   private sessionId: string
   private apiTimeMs = 0
   private hookRegistry?: HookRegistry
@@ -392,7 +396,8 @@ export class QueryEngine {
             : tool)
     }
     this.provider = config.provider
-    this.compactState = createAutoCompactState()
+    this.compactState = config.autoCompactState ?? createAutoCompactState()
+    this.promptTooLongRecoveryFailures = config.promptTooLongRecoveryFailures ?? 0
     this.sessionId = config.sessionId || crypto.randomUUID()
     this.hookRegistry = config.hookRegistry
     this.workingDirectory = config.cwd
@@ -498,10 +503,15 @@ export class QueryEngine {
     return this.config.contextWindow ?? getContextWindowSize(this.config.model)
   }
 
+  /** 组装 provider 请求与 token 预算共用的启用集:isEnabled 为假的工具不占 prompt 预算(#700)。 */
+  private enabledTools(): ToolDefinition[] {
+    return this.config.tools.filter((tool) => !tool.isEnabled || tool.isEnabled())
+  }
+
   private estimateToolSchemaTokens(): number {
     // 与 tool-search 的 getDeferredToolTokenCount 同一口径：name + description +
     // inputSchema 全算（#389）。此前漏 inputSchema 导致 contextUsage 低估工具占比。
-    return getDeferredToolTokenCount(this.config.tools)
+    return getDeferredToolTokenCount(this.enabledTools())
   }
 
   private createContextUsage(): ContextUsageSnapshot {
@@ -638,11 +648,13 @@ export class QueryEngine {
         failureReason: result.failureReason,
         retainedTokens: result.retainedTokens,
         retainedMessageCount: result.retainedMessageCount,
-        state: result.state ?? {
-          ...this.compactState,
-          compacted: true,
-          consecutiveFailures: 0,
-        },
+        state: result.state ?? (result.compacted === false
+          ? this.compactState
+          : {
+            ...this.compactState,
+            compacted: true,
+            consecutiveFailures: 0,
+          }),
         metadata: result.metadata,
         usage: result.usage,
       }
@@ -1112,7 +1124,9 @@ export class QueryEngine {
 
       this.turnCount++
       turnsRemaining--
-      const tools = this.config.tools.map(toProviderTool)
+      // 未启用的工具不进 provider 请求:未连接连接器等场景下 24 个工具的
+      // name+schema 是常驻死预算(#700);调用时点的 isEnabled 检查保留作兜底
+      const tools = this.enabledTools().map(toProviderTool)
 
       // Make API call with retry via provider
       let response: CreateMessageResponse
@@ -1271,7 +1285,7 @@ export class QueryEngine {
         // failures (reset to 0 on success) instead of the one-shot `compacted`
         // flag: a tool loop can outgrow the window a second time, and repeated
         // failures trip the breaker on their own.
-        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < 3) {
+        if (isPromptTooLongError(err) && this.promptTooLongRecoveryFailures < COMPACTION_BREAKER_THRESHOLD) {
           try {
             const compacted = yield* this.runCompaction('prompt_too_long', protectedMessageIndex)
             if (compacted) {
@@ -1287,6 +1301,13 @@ export class QueryEngine {
           }
         }
 
+        // 最终错误附恢复尝试上下文（#709 第 5 项）：裸 provider 错误会让人误以为
+        // 重试即可。N 为本引擎实例内累计的恢复失败次数——Lume 生产装配下每次
+        // prompt 新建引擎（N 通常为 1），长生命周期宿主下跨 turn 累计。
+        const errorMessage = err?.message || 'Unknown provider error'
+        const finalMessage = isPromptTooLongError(err) && this.promptTooLongRecoveryFailures > 0
+          ? `${errorMessage} (auto-compaction recovery attempted ${this.promptTooLongRecoveryFailures} time(s) without success)`
+          : errorMessage
         yield {
           type: 'result',
           subtype: 'error_during_execution',
@@ -1294,7 +1315,7 @@ export class QueryEngine {
           ...this.createResultUsageFields(),
           num_turns: this.turnCount,
           cost: this.totalCost,
-          errors: [err?.message || 'Unknown provider error'],
+          errors: [finalMessage],
         }
         return
       }
@@ -1626,6 +1647,7 @@ export class QueryEngine {
         this.workingDirectory = resolve(cwd)
       },
       additionalDirectories: this.config.additionalDirectories,
+      privateWriteRoots: this.config.privateWriteRoots,
       sandbox: this.config.sandbox,
       toolConfig: this.config.toolConfig,
       fileStateCache: this.fileStateCache,
@@ -2293,6 +2315,15 @@ export class QueryEngine {
     return [...this.messages]
   }
 
+  /** Terminal breaker state for the host to thread into the next run's engine (#725 review R6/R7). */
+  getAutoCompactState(): AutoCompactState {
+    return this.compactState
+  }
+
+  getPromptTooLongRecoveryFailures(): number {
+    return this.promptTooLongRecoveryFailures
+  }
+
   /**
    * Get total usage across all turns.
    */
@@ -2320,7 +2351,7 @@ export class QueryEngine {
       source: 'runtime',
       tokens: Math.ceil((skill.name.length + skill.description.length) / 4),
     }))
-    const systemTools = this.config.tools
+    const systemTools = this.enabledTools()
       .filter((tool) => !tool.name.startsWith('mcp__'))
       .map((tool) => ({
         name: tool.name,

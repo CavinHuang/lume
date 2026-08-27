@@ -142,6 +142,15 @@ export const updateAgentThinkingLevel = (value: LumeConfigThinkingLevel, workspa
     summary: 'update agent thinking level',
   })
 
+export const updateAgentProjectInstructionsEnabled = (enabled: boolean, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'agent.projectInstructionsEnabled',
+    value: enabled,
+    summary: enabled ? 'enable project instructions' : 'disable project instructions',
+  })
+
 export const updateAgentFollowUpQueueMode = (value: AgentFollowUpMode, workspaceSlug?: string) =>
   sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
     source: 'user',
@@ -167,6 +176,15 @@ export const updatePermissionsSection = (value: LumeConfigPermissionsSection, wo
     path: 'permissions',
     value,
     summary: 'update permission settings',
+  })
+
+export const updatePermissionClassifierEnabled = (value: boolean, workspaceSlug?: string) =>
+  sidecarCall<LumeEffectiveConfig>('lume-config:update-section', {
+    source: 'user',
+    ...(workspaceSlug ? { workspaceSlug } : {}),
+    path: 'permissions.classifier.enabled',
+    value,
+    summary: 'update permission classifier switch',
   })
 
 export const updateSkillsConfig = (value: LumeConfigSkillsSection, workspaceSlug?: string) =>

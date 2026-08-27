@@ -64,3 +64,48 @@ describe("connector rpc handlers: auth state generations", () => {
     expect(status.lastError).toBeUndefined(); // "授权已取消"不得复活
   });
 });
+
+describe("connector rpc handlers: SAVE_CREDENTIAL authType dispatch", () => {
+  let previousConfigDir: string | undefined;
+  let directory = "";
+  const handlers = createConnectorHandlers();
+
+  beforeEach(() => {
+    previousConfigDir = process.env.LUME_CONFIG_DIR;
+    directory = mkdtempSync(join(tmpdir(), "lume-connector-rpc-save-"));
+    process.env.LUME_CONFIG_DIR = directory;
+    installConnectionVaultKey(Buffer.alloc(32, 13).toString("base64"));
+    setConnectorClientConfig("gmail", {
+      service: "gmail",
+      clientId: "cid",
+      clientSecret: "csecret",
+      extra: {},
+      secretExtra: {},
+    });
+  });
+
+  afterEach(() => {
+    disconnectConnector("gmail");
+    if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+    else process.env.LUME_CONFIG_DIR = previousConfigDir;
+    rmSync(directory, { recursive: true, force: true });
+  });
+
+  test("OAuth 型服务拒绝授权码写入,customValues 不落盘", async () => {
+    const saveHandler = handlers[CONNECTOR_IPC_CHANNELS.SAVE_CREDENTIAL];
+    if (!saveHandler) throw new Error("no handler for SAVE_CREDENTIAL");
+    const result = await saveHandler({
+      service: "gmail",
+      values: { email: "attacker@example.com" },
+    }).then(
+      () => "resolved" as const,
+      (error) => String((error as { message?: string }).message ?? error),
+    );
+    expect(result).toContain("OAuth");
+    // 守卫必须先于落盘:gmail 无 custom_credential,任何 values 都不得进入存储
+    const statusHandler = handlers[CONNECTOR_IPC_CHANNELS.GET_STATUS];
+    if (!statusHandler) throw new Error("no handler for GET_STATUS");
+    const statusAfter = await statusHandler({ service: "gmail" });
+    expect((statusAfter as ConnectorStatus).connected).toBe(false);
+  });
+});

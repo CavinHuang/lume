@@ -43,6 +43,8 @@ export interface AgentRuntimeKernelOptions<TInput extends { threadId: string; us
   onQueuedCountChange?: (threadId: string, queuedCount: number) => void;
   validateQueued?: (dispatch: AgentRuntimeKernelQueuedDispatch<TInput, TEmit>) => Promise<void>;
   onQueuedBlocked?: (dispatch: AgentRuntimeKernelQueuedDispatch<TInput, TEmit>, error: unknown) => void;
+  /** 排队项被 removeQueued 移除时回调：该项的 emit 永远等不到 execute，宿主在此收尾。 */
+  onQueuedRemoved?: (dispatch: AgentRuntimeKernelQueuedDispatch<TInput, TEmit>) => void;
   createQueuedDispatchId?: () => string;
   now?: () => number;
   /**
@@ -179,7 +181,11 @@ export class AgentRuntimeKernel<TInput extends { threadId: string; userMessage: 
     }
     this.touchQueue(threadId);
     this.syncQueuedCount(threadId);
-    return queue[index] ?? null;
+    const removed = queue[index] ?? null;
+    // 被移除项的 emitter 永远等不到 execute/终态回调，宿主须在此收尾，
+    // 否则下游监听（IM 卡片订阅等）随该项永久残留（#725 review S1）。
+    if (removed) this.options.onQueuedRemoved?.(removed);
+    return removed;
   }
 
   prependQueuedDispatches(threadId: string, dispatches: Array<AgentRuntimeKernelQueuedDispatch<TInput, TEmit>>): void {

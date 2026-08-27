@@ -2,12 +2,12 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { AGENT_IPC_CHANNELS, type AgentSendInput, type AgentToolPermissionResponseInput } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, type AgentSendInput, type AgentToolPermissionResponseInput, type CodingRunRevertResult } from "@lume/shared";
 import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import { updateLumeConfigSection } from "../system/lume-config-service";
 import { createImAgentStreamEmitter, routeInboundImMessage } from "./im-message-router";
 import { createImAccount } from "./im-config-manager";
-import { upsertImThreadBinding } from "./im-thread-binding-store";
+import { getImThreadBindingByPeer, upsertImThreadBinding } from "./im-thread-binding-store";
 
 describe("im-message-router", () => {
   let prevConfigDir: string | undefined;
@@ -238,6 +238,90 @@ describe("im-message-router", () => {
         })
       })
     }));
+  });
+
+  test("绑定线程被归档后消息换绑新建会话，不再路由进不可见线程(#588)", async () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "user-stale",
+      threadId: "thread-archived",
+      contextToken: "ctx-stale"
+    });
+
+    const createdThreads: string[] = [];
+    const sent: AgentSendInput[] = [];
+    const notices: string[] = [];
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "user-stale",
+      text: "还在吗",
+      contextToken: "ctx-stale"
+    }, {
+      getThreadMeta: () => ({ id: "thread-archived", status: "archived" } as never),
+      createThread() {
+        const id = `thread-new-${createdThreads.length + 1}`;
+        createdThreads.push(id);
+        return { id };
+      },
+      sendMessage(input) {
+        sent.push(input);
+      },
+      sendBoundTextMessage: async (input) => {
+        notices.push(input.text);
+        return { ok: true };
+      }
+    });
+
+    expect(createdThreads).toEqual(["thread-new-1"]);
+    expect(sent.map((item) => item.threadId)).toEqual(["thread-new-1"]);
+    // 动线 F7 钉:换绑时向 IM 用户告知上下文已清零
+    expect(notices.some((text) => text.includes("新建会话"))).toBeTrue();
+    // 换绑后旧绑定不再指向归档线程
+    const rebound = getImThreadBindingByPeer({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "user-stale"
+    });
+    expect(rebound?.threadId).toBe("thread-new-1");
+  });
+
+  test("review F2 钉:trashed 线程与已硬删线程(meta undefined)同样触发换绑", async () => {
+    for (const [peerId, meta] of [
+      ["user-trashed", { id: "thread-t", status: "trashed" }],
+      ["user-deleted", undefined],
+    ] as const) {
+      upsertImThreadBinding({
+        provider: "weixin",
+        accountId: "account-1",
+        peerKind: "dm",
+        peerId,
+        threadId: "thread-gone",
+        contextToken: `ctx-${peerId}`
+      });
+      const createdThreads: string[] = [];
+      await routeInboundImMessage({
+        provider: "weixin",
+        accountId: "account-1",
+        peerKind: "dm",
+        peerId,
+        text: "hello",
+        contextToken: `ctx-${peerId}`
+      }, {
+        getThreadMeta: () => meta as never,
+        createThread() {
+          const id = `thread-rebind-${createdThreads.length + 1}`;
+          createdThreads.push(id);
+          return { id };
+        },
+        sendMessage: () => undefined,
+      });
+      expect(createdThreads).toEqual(["thread-rebind-1"]);
+    }
   });
 
   test("rejects Weixin /approve commands when IM text approval is disabled", async () => {
@@ -797,5 +881,83 @@ describe("im-message-router", () => {
     expect(second).toEqual({ threadId: "thread-dedup" });
 
     expect(sent.map((item) => item.userMessage)).toEqual(["original", "next"]);
+  });
+
+  test("/revert 权限模型与 IM 审批对齐：白名单外拒绝、白名单内执行(#714)", async () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      threadId: "thread-revert",
+      contextToken: "ctx-r1"
+    });
+    const sent: string[] = [];
+    let revertCalls = 0;
+    const baseDeps = {
+      getThreadMeta: () => ({ id: "thread-revert" }) as never,
+      sendBoundTextMessage(input: { text: string }): Promise<{ ok: true }> {
+        sent.push(input.text);
+        return Promise.resolve({ ok: true });
+      },
+      revertRun: async (): Promise<CodingRunRevertResult> => {
+        revertCalls += 1;
+        return {
+          status: "restored",
+          filesChanged: ["a.ts"],
+          conflicts: [],
+          committedPaths: [],
+          failedFiles: [],
+          nonRewindableFiles: []
+        };
+      }
+    };
+
+    // 默认安全姿态：approverPeerIds 为空 → 拒绝且不执行
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      text: "/revert run-1"
+    }, baseDeps);
+    expect(sent.at(-1)).toContain("没有权限");
+    expect(revertCalls).toBe(0);
+
+    // 白名单命中 → 执行并回复桶计数摘要
+    updateLumeConfigSection({
+      source: "user",
+      path: "permissions.approvals",
+      value: {
+        im: {
+          enabled: true,
+          allowTextApprove: true,
+          accounts: {
+            "account-revert": { approverPeerIds: ["user-revert"] }
+          }
+        }
+      }
+    });
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      text: "/revert run-1"
+    }, baseDeps);
+    expect(revertCalls).toBe(1);
+    expect(sent.at(-1)).toContain("/revert run-1");
+    expect(sent.at(-1)).toContain("已还原 1 个文件");
+
+    // 缺 runId 参数 → 用法提示，不执行
+    await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-revert",
+      peerKind: "dm",
+      peerId: "user-revert",
+      text: "/revert"
+    }, baseDeps);
+    expect(sent.at(-1)).toContain("用法");
+    expect(revertCalls).toBe(1);
   });
 });

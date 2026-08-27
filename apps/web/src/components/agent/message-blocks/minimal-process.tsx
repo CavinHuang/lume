@@ -8,7 +8,7 @@ import { ToolResultRenderer } from '../tool-result-renderers'
 import { SubagentInlinePanel } from '../SubagentInlinePanel'
 import type { RuntimeAssistantBlock, RuntimeToolCallView } from '../runtime-message-view'
 import type { OpenThreadFile } from '../AgentFileReference'
-import { asRecord, asString, formatToolErrorOutput, memoryMutationLabel, summarizeInput } from './tool-summary'
+import { asRecord, asString, displayToolName, formatToolErrorOutput, memoryMutationLabel, summarizeInput } from './tool-summary'
 import { isDelegationToolName } from '../subagent-run-projection'
 
 type MinimalProcessGroupProps = {
@@ -127,7 +127,7 @@ export const MinimalProcessGroup = memo(function MinimalProcessGroup({
     summaryUnits.push(
       <span key="run" className="inline-flex items-center gap-1">
         <span className="size-1.5 animate-pulse rounded-full bg-[var(--lume-accent)]" />
-        {derived.todoActiveForm ?? `正在执行 ${derived.runningTool.toolName}`}
+        {derived.todoActiveForm ?? `正在执行 ${displayToolName(derived.runningTool.toolName)}`}
       </span>,
     )
     summaryUnits.push(
@@ -290,9 +290,9 @@ const MinimalToolCallRow = memo(function MinimalToolCallRow({
         className="flex w-full items-center gap-1.5 py-0.5 text-left text-[11.5px] text-foreground/40 transition-colors hover:text-foreground/60 disabled:hover:text-foreground/40"
       >
         <Icon size={12} className="shrink-0" />
-        <span className="shrink-0 font-medium">{memoryLabel ?? toolCall.toolName}</span>
+        <span className="shrink-0 font-medium">{memoryLabel ?? displayToolName(toolCall.toolName)}</span>
         {toolCall.riskLevel && <span className={cn('shrink-0', riskLevelClassName(toolCall.riskLevel))}>{riskLevelLabel(toolCall.riskLevel)}</span>}
-        <span className="min-w-0 flex-1 truncate">{summarizeInput(input)}</span>
+        <span className="min-w-0 flex-1 truncate">{summarizeInput(input, toolCall.toolName)}</span>
         {toolCall.status === 'failed' && <TriangleAlert size={11} className="shrink-0 text-destructive/70" />}
         {typeof toolCall.durationMs === 'number' && toolCall.durationMs > 0 && (
           <span className="shrink-0 tabular-nums">{formatDurationLabel(toolCall.durationMs)}</span>

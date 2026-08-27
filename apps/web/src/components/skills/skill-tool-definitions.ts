@@ -4,7 +4,6 @@ export type SkillSystemToolGroupId =
   | 'file-write'
   | 'search'
   | 'web'
-  | 'data'
   | 'memory'
   | 'agent'
   | 'task'

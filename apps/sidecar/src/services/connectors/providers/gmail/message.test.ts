@@ -1,5 +1,12 @@
 import { describe, expect, it } from "bun:test";
-import { encodeMimeMessage, normalizeGmailMessage, resolveReplyHeaders, type GmailMessageResource } from "./message";
+import {
+  decodeMimeWords,
+  encodeMimeMessage,
+  normalizeGmailMessage,
+  resolveReplyHeaders,
+  summarizeGmailMessage,
+  type GmailMessageResource,
+} from "./message";
 
 function decodeRaw(input: Parameters<typeof encodeMimeMessage>[0]): string {
   return Buffer.from(encodeMimeMessage(input), "base64url").toString("utf8");
@@ -128,5 +135,58 @@ describe("resolveReplyHeaders thread chain", () => {
     const headers = resolveReplyHeaders({ id: "gmsg4", threadId: "t4", payload: { headers: [] } });
     expect(headers.references).toBe("");
     expect(headers.inReplyTo).toBe("");
+  });
+});
+
+describe("decodeMimeWords (RFC 2047 inbound display)", () => {
+  it("decodes UTF-8 B and Q encoded words", () => {
+    const b = Buffer.from("你好,世界").toString("base64");
+    expect(decodeMimeWords(`=?UTF-8?B?${b}?=`)).toBe("你好,世界");
+    // Q 编码:_ 即空格,=XX hex
+    expect(decodeMimeWords("=?utf-8?Q?Hello_=E4=BD=A0=E5=A5=BD?= there")).toBe("Hello 你好 there");
+  });
+
+  it("folds whitespace between adjacent encoded words", () => {
+    const part = Buffer.from("世界").toString("base64");
+    expect(decodeMimeWords(`Re: =?UTF-8?B?${part}?= =?UTF-8?B?${part}?=`)).toBe("Re: 世界世界");
+  });
+
+  it("keeps non-UTF-8 charsets and plain text untouched", () => {
+    const raw = "=?gb2312?B?xOO6ww==?= plain";
+    expect(decodeMimeWords(raw)).toBe(raw);
+    expect(decodeMimeWords("no encoding here")).toBe("no encoding here");
+  });
+
+  it("summarizeGmailMessage decodes subject for display while reply headers stay raw", () => {
+    const encodedSubject = `=?UTF-8?B?${Buffer.from("会议纪要").toString("base64")}?=`;
+    const resource: GmailMessageResource = {
+      id: "m1",
+      threadId: "t1",
+      payload: { headers: [{ name: "Subject", value: encodedSubject }] },
+    };
+    expect(summarizeGmailMessage(resource).subject).toBe("会议纪要");
+  });
+});
+
+describe("decodeMimeWords multi-byte continuation", () => {
+  it("joins byte-split multi-byte chars across adjacent encoded words without U+FFFD", () => {
+    // "你好世界" = 12 字节,按 7/5 字节中切成两个 B 词(主流编码器 75 字符词界的常态输出)
+    const bytes = Buffer.from("你好世界", "utf8");
+    const first = bytes.subarray(0, 7).toString("base64");
+    const second = bytes.subarray(7).toString("base64");
+    const decoded = decodeMimeWords(`=?UTF-8?B?${first}?= =?UTF-8?B?${second}?=`);
+    expect(decoded).toBe("你好世界");
+    expect(decoded).not.toContain("�");
+  });
+
+  it("falls back to raw for malformed base64 bodies instead of mojibake", () => {
+    const raw = "=?UTF-8?B?!!!not-base64!!!?=";
+    expect(decodeMimeWords(raw)).toBe(raw);
+  });
+
+  it("keeps mixed undecodable runs untouched", () => {
+    const good = Buffer.from("hi").toString("base64");
+    const mixed = `=?UTF-8?B?${good}?= =?gb2312?B?xOO6ww==?=`;
+    expect(decodeMimeWords(mixed)).toBe(mixed);
   });
 });

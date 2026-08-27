@@ -175,6 +175,25 @@ describe("connection provider", () => {
       .rejects.toThrow("connection_api_key_unavailable");
   });
 
+  test("#595 review P1 钉:运行期鉴权失败降级 healthStatus(unavailable)", async () => {
+    const channel = createChannel({
+      name: "OpenAI degraded",
+      provider: "openai",
+      authType: "api-key",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "",
+      models: [{ id: "gpt-test", name: "GPT Test", enabled: true, capabilities: { chat: true } }],
+      enabled: true,
+    });
+    // createChannel 缺省不写 healthStatus(undefined 视作 unknown 档)
+    expect(channel.healthStatus).toBeUndefined();
+
+    await expect(createConnectionPiAiRoute({ channel, modelId: "gpt-test" }))
+      .rejects.toThrow("connection_api_key_unavailable");
+    // 变异基线:删掉 throwWithHealthDegradation 的 updateChannel 调用即红
+    expect(listChannels().find((item) => item.id === channel.id)?.healthStatus).toBe("unavailable");
+  });
+
   test("rejects disabled connections and disabled catalog models at the provider boundary", async () => {
     const disabledConnection = createChannel({
       name: "Disabled",

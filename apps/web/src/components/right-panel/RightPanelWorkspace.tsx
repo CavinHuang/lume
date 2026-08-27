@@ -141,7 +141,8 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       const sources: FileSource[] = method === MEMORY_IPC_CHANNELS.SOURCE_FILES_CHANGED
         ? ['memory']
         : method === AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED
-          ? ['session', 'legacy']
+          // #590:project 根目录已纳入 watcher，外部改动同样置 stale
+          ? ['session', 'legacy', 'project']
           : []
       if (sources.length === 0) return
       setRuntime((current) => Object.fromEntries(Object.entries(current).map(([id, value]) => [id, {

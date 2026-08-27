@@ -30,6 +30,7 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
 } from "@lume/shared";
+import { isBuiltinBrowserToolName } from "@lume/shared";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -86,7 +87,6 @@ import {
   buildPluginIdIndex,
   PLUGIN_MCP_WORKSPACE_SLUG,
 } from "../plugins/plugin-mcp-bridge.js";
-import { clearRuntimeToolDescriptors } from "../tools/tool-descriptor-session";
 import { getThreadFileStateCache } from "../tools/thread-file-state-cache";
 import {
   createCodingRunTracker,
@@ -129,6 +129,8 @@ import {
   applyWorkflowHookEffectsSafely,
 } from "./workflow-hook-safety";
 import { resolvePromptCachePolicy, resolveSdkApiType } from "./request-policy";
+// #289 分层守卫:runtime-core 不得引用上层 runner——humanize 已下沉 shared,直取底层
+import { humanizeRuntimeErrorMessage } from "@lume/shared";
 import {
   getResolvedAgentTools,
 } from "./run-subagent";
@@ -659,7 +661,7 @@ async function assembleSessionContext({
   initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
   subagentDefinition: AgentDefinition | undefined;
 }) {
-  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+  const runtimeSkills = toolset.availableToolNames.some(isBuiltinBrowserToolName)
     && !input.browserAttachments?.length
     ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
     : surfaceSkills;
@@ -1114,6 +1116,30 @@ async function createRuntimeCoreSessionImpl(
     pendingCleanup,
   });
 
+  // #560:MCP 连接失败原本只进 system prompt/日志——本轮静默缺一组工具，直到模型
+  // 回答「我没有这个工具」。组装完成即向线程投影 runtime.warning 给用户。
+  // review P2:reason 可能含 ENOENT 路径等内部细节,过 #559 人性化层再上屏;
+  // id 按 pluginName 固定,web 端 sonner 同 id 自动聚合,坏 server 不每 run 刷屏。
+  for (const diagnostic of [
+    ...(workspaceMcpRuntime.diagnostics ?? []),
+    ...(pluginMcpRuntime.diagnostics ?? []),
+  ]) {
+    try {
+      const message = humanizeRuntimeErrorMessage(`${diagnostic.pluginName}：${diagnostic.reason}`);
+      input.emitRuntimeEvent?.({
+        id: `${input.lumeSessionId}:${runId}:runtime.warning:${diagnostic.pluginName}`,
+        type: "runtime.warning",
+        threadId: input.lumeSessionId,
+        runId,
+        createdAt: new Date().toISOString(),
+        message,
+        source: "mcp"
+      });
+    } catch {
+      // 投影失败不阻断 run 组装
+    }
+  }
+
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     filesRoot: input.filesRoot,
@@ -1275,6 +1301,20 @@ async function createRuntimeCoreSessionImpl(
   // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
   // privateWriteRoots 白名单同源，否则 skills/plugins 等已授权写根会被新加的
   // 无条件复核误拒。
+  //
+  // 但 containment 根集与"additionalDirectories"是两个关注点（#639 复审 P2）：
+  // 后者还会流进系统提示词、checkpoint 快照扫描、相对路径解析与 coding
+  // tracker 工作区根。skills/plugins/.lume 等内部管理目录走 SDK 的
+  // privateWriteRoots 专用通道（只放行写入），不进 additionalDirectories。
+  const privateWriteRoots = resolveConfiguredPrivateWriteRoots({
+    agentCwd: input.cwd,
+    lumeWorkDir: input.lumeWorkDir,
+    filesRoot: input.filesRoot,
+    plansRoot: input.plansRoot,
+    artifactsRoot: input.artifactsRoot,
+    workspaceSlug: input.workspaceSlug,
+    configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
+  });
   const additionalDirectories = [
     ...new Set(
       [
@@ -1289,7 +1329,11 @@ async function createRuntimeCoreSessionImpl(
         }),
         ...(input.additionalDirectories ?? []),
         input.lumeWorkDir,
-        input.artifactsRoot,
+        // artifactsRoot 通常是 lumeWorkDir/artifacts：已被覆盖时跳过，免同树
+        // 双扫进 checkpoint 快照（性能复审）
+        ...(input.artifactsRoot && (!input.lumeWorkDir || !resolve(input.artifactsRoot).startsWith(resolve(input.lumeWorkDir) + "/"))
+          ? [input.artifactsRoot]
+          : []),
       ]
         .filter((directory): directory is string => Boolean(directory))
         .map((directory) => resolve(directory))
@@ -1378,14 +1422,14 @@ async function createRuntimeCoreSessionImpl(
           messageMetadata: input.messageMetadata,
         },
       }),
-    registerGeneratedRuntimeTools: (tools) =>
-      ToolRuntime.registerGeneratedTools({
-        tools,
-        sessionId: input.lumeSessionId,
-      }),
+    // registerGeneratedRuntimeTools 不再需要：生成的 ToolSearch/ExecuteTool 定义自带
+    // runtimeMetadata，canUseTool 直接从定义组装 descriptor（#541 双载体合一）
     ...(input.userMessage?.trim() ? { completionGuard } : {}),
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
+    // 只放行写入的内部管理根（skills/plugins/.lume/plans/files），不进提示词
+    // 与快照（见上方注释）
+    privateWriteRoots,
     contextController: createKernelContextController({
       threadId: input.lumeSessionId,
       model: input.resolvedModel?.id ?? input.resolvedModelId,
@@ -1415,9 +1459,6 @@ async function createRuntimeCoreSessionImpl(
 
   const agent = createAgent(agentOptions);
   pendingCleanup.push(() => agent.close());
-  pendingCleanup.push(() => {
-    clearRuntimeToolDescriptors(input.lumeSessionId);
-  });
   await agent.getInitializationResult();
   const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
 
@@ -1457,9 +1498,9 @@ async function createRuntimeCoreSessionImpl(
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      clearRuntimeToolDescriptors(input.lumeSessionId);
       // file-access-ledger 与线程级 fileStateCache 不随 run 清理（#569）：
       // 跨消息 stale 防护依赖记录存活；清理挂点=线程删除。
+      // descriptor-session 已随 #541 双载体合一删除，无清理挂点。
     },
   };
 

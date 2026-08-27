@@ -114,20 +114,23 @@ export class ThreadEventBus {
       } else {
         // 文件被替换/截断:回退全量并重立水位
         fileEvents = this.readFile(threadId)
-        this.resetReadWatermark(st, threadId)
+        this.resetReadWatermark(st, threadId, fileEvents)
       }
     } else {
+      // #556:同一份文件只读一次,解析结果同时供快照与水位建立——此前 else 分支
+      // 连读两遍(此处 + resetReadWatermark 内部),切线程高频路径双倍解析成本
       fileEvents = this.readFile(threadId)
-      if (st) this.resetReadWatermark(st, threadId)
+      if (st) this.resetReadWatermark(st, threadId, fileEvents)
     }
     const all = [...fileEvents, ...this.pendingEnvelopes(threadId)].sort((a, b) => a.seq - b.seq)
     return afterSeq === undefined ? all : all.filter((e) => e.seq > afterSeq)
   }
 
-  /** 全量读后建立增量水位:offset=文件末尾,maxSeqSeen=最后一条合法行 seq。 */
-  private resetReadWatermark(st: ThreadState, threadId: string): void {
-    const envelopes = this.readFile(threadId)
-    st.maxSeqSeen = envelopes[envelopes.length - 1]?.seq ?? 0
+  /** 全量读后建立增量水位:offset=文件末尾,maxSeqSeen=最后一条合法行 seq。
+   *  可传入调用方已解析的同一份结果复用,避免对同文件二次全量解析(#556)。 */
+  private resetReadWatermark(st: ThreadState, threadId: string, envelopes?: SdkEventEnvelope[]): void {
+    const parsed = envelopes ?? this.readFile(threadId)
+    st.maxSeqSeen = parsed[parsed.length - 1]?.seq ?? 0
     let fd: number | undefined
     try {
       fd = openSync(this.file(threadId), "r")

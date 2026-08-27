@@ -52,12 +52,18 @@ export const CONNECTOR_TOOL_CONFIGS: readonly ConnectorToolConfig[] = [
 ];
 
 function isConnected(service: string): () => boolean {
+  // engine 每轮组装 provider 请求都会调 isEnabled 过滤(#700);凭证读盘解密
+  // 不便宜,2s TTL 内同服务共享一次判定。注入最多延迟 2s 感知连接变化,无害。
+  const TTL_MS = 2_000;
+  let cached: { at: number; value: boolean } | undefined;
   return () => {
+    if (cached && Date.now() - cached.at < TTL_MS) return cached.value;
     try {
-      return hasAnyConnectorCredential(service);
+      cached = { at: Date.now(), value: hasAnyConnectorCredential(service) };
     } catch {
-      return false;
+      cached = { at: Date.now(), value: false };
     }
+    return cached.value;
   };
 }
 
@@ -84,12 +90,6 @@ function describeExecutionError(service: string, actionName: string, error: Exec
 }
 
 function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
-  // 未连接时整组不注入:isEnabled 只拦执行不拦 prompt,未配置用户会白背
-  // 全套 schema 预算。工具集每 run 经 createLumeRuntimeTools 重建,连接
-  // 建立后下一个 run 自然生效,无需重启。
-  if (!isConnected(config.service)()) {
-    return [];
-  }
   let actions;
   try {
     actions = getConnector(config.service).definition.actions;

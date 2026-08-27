@@ -3,22 +3,11 @@ import type { AgentSendInput, AgentToolPolicy, ProviderType } from "@lume/shared
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
 import { applyMemoryToolPolicy, type MemoryToolPolicy } from "../../memory-v2/policy";
 
-export const GUANLAN_TOOL_NAMES = [
-  "guanlan_search",
-  "guanlan_read",
-  "guanlan_hotnews",
-  "guanlan_research"
-] as const;
-
 const TOOL_NAME_ALIASES: Record<string, string> = {
   "apply-patch": "apply_patch",
   glob: "find",
   websearch: "web_search",
   webfetch: "web_fetch",
-  guanlansearch: "guanlan_search",
-  guanlanread: "guanlan_read",
-  guanlanhotnews: "guanlan_hotnews",
-  guanlanresearch: "guanlan_research",
   Agent: "agent_spawn",
   AskUserQuestion: "askuserquestion",
 };
@@ -60,7 +49,6 @@ const TOOL_GROUPS: Record<string, string[]> = {
   "group:memory": ["memory.search", "memory.read"],
   "group:memory-write": ["memory.remember", "memory.forget"],
   "group:web": ["web_search", "web_fetch"],
-  "group:data": [...GUANLAN_TOOL_NAMES],
   "group:planning": ["askuserquestion", "taskcontractwrite"],
   "group:automation": [...AUTOMATION_TOOL_NAMES],
   "group:im": ["send_im_message"],
@@ -147,9 +135,6 @@ export function resolveEffectiveToolPolicies(input: ResolveEffectiveToolPolicyIn
   const workspaceSlug = resolveWorkspaceSlug(input);
   const effectiveConfig = getEffectiveLumeConfig(workspaceSlug);
   const policies: ToolPolicy[] = [];
-  if (effectiveConfig.webSearch?.providers?.guanlan?.enabled !== true) {
-    policies.push({ deny: [...GUANLAN_TOOL_NAMES] });
-  }
   const configPolicy = parsePolicyObject(effectiveConfig.permissions?.toolPolicy);
   if (configPolicy) {
     policies.push(configPolicy);

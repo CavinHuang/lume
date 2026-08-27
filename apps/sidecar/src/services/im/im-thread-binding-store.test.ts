@@ -76,7 +76,7 @@ describe("im-thread-binding-store", () => {
     })?.threadId).toBe("thread-2");
   });
 
-  test("context token updates preserve existing thread and lookup by thread id", () => {
+  test("#588 并发 F6 LWW:同 peer 异 threadId upsert 换绑到最新线程,contextToken 保留", () => {
     upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-1",
@@ -86,6 +86,8 @@ describe("im-thread-binding-store", () => {
       contextToken: "ctx-old"
     });
 
+    // 语义翻转(#588 review F6):并发首消息双建线程时 binding 跟随最新创建,
+    // 避免后建线程成孤儿空壳;/new 先删后插不走本分支
     const updated = upsertImThreadBinding({
       provider: "weixin",
       accountId: "account-1",
@@ -95,8 +97,30 @@ describe("im-thread-binding-store", () => {
       contextToken: "ctx-new"
     });
 
-    expect(updated.threadId).toBe("thread-1");
+    expect(updated.threadId).toBe("thread-replacement");
     expect(updated.contextToken).toBe("ctx-new");
-    expect(getImThreadBindingByThreadId("thread-1")?.key).toBe("weixin/account-1/group/room-1");
+    // 旧线程反查为空(换绑收敛,不双挂)
+    expect(getImThreadBindingByThreadId("thread-1")).toBeNull();
+    expect(getImThreadBindingByThreadId("thread-replacement")?.key).toBe("weixin/account-1/group/room-1");
+  });
+
+  test("#588 空串 threadId 不触发换绑(防御)", () => {
+    upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "group",
+      peerId: "room-guard",
+      threadId: "thread-keep",
+      contextToken: "ctx-a"
+    });
+    const updated = upsertImThreadBinding({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "group",
+      peerId: "room-guard",
+      threadId: "  ",
+      contextToken: "ctx-b"
+    });
+    expect(updated.threadId).toBe("thread-keep");
   });
 });

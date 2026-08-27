@@ -266,7 +266,7 @@ export function createMailActions<const TService extends string>(
   const deleteEmailAction: ProviderActionDefinition<"delete_email"> = defineProviderAction(service, {
     name: "delete_email",
     description: mailText(
-      "Permanently delete one Mail Service message from a folder (IMAP \\Deleted + EXPUNGE — the message does NOT go to a trash folder and cannot be recovered).",
+      "Move one Mail Service message to the Trash folder. The message stays recoverable from Trash until the mailbox purges it.",
     ),
     requiredScopes: [],
     inputSchema: s.object(
@@ -280,7 +280,8 @@ export function createMailActions<const TService extends string>(
     outputSchema: s.requiredObject(mailText("The response returned after deleting one Mail Service email."), {
       folder: nonEmptyStringSchema("The IMAP folder path that contained the message."),
       uid: uidSchema,
-      deleted: s.literal(true, { description: "Whether the message was deleted." }),
+      deleted: s.literal(true, { description: "Whether the message was moved to Trash." }),
+      trashFolder: nonEmptyStringSchema("The Trash folder path the message was moved to."),
     }),
   });
 

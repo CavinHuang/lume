@@ -11,23 +11,28 @@ import { tmpdir } from "node:os";
  * 同进程后续测试文件的串扰面（同 cross-job-skip 先例的隔离惯例）。
  */
 const agentServiceActual = await import("../agent/agent-service");
+type DispatchEmit = { onComplete?: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void };
+let dispatchStub: (input: unknown, emit: DispatchEmit) => Promise<unknown> = async () => {
+  throw new Error("model unavailable (test stub)");
+};
 mock.module("../agent/agent-service", () => ({
   ...agentServiceActual,
-  dispatchAgentRun: async () => {
-    throw new Error("model unavailable (test stub)");
-  }
+  dispatchAgentRun: (input: unknown, emit: DispatchEmit) => dispatchStub(input, emit)
 }));
 
 const { createAutomationJob } = await import("./automation-manager");
-import {
+// 被测模块必须等全部 mock.module 就位后再动态加载——静态 import 会被 hoist 到
+// mock 注册之前，stub 对已绑定真实引用的被测模块不生效（bun mock 时序）
+const {
   listAutomationRuns,
   refreshAutomationRunnerJobs,
   resolveAutomationModelKind,
+  resolveAutomationRunOutcome,
   runAutomationJobNow,
   scheduledJobIdsForTests,
   startAutomationRunner,
   stopAutomationRunner
-} from "./automation-runner-service";
+} = await import("./automation-runner-service");
 
 describe("resolveAutomationModelKind", () => {
   it("routine 系统动作 → routine 模型", () => {
@@ -64,21 +69,27 @@ describe("automation-runner-service", () => {
     rmSync(tempConfigDir, { recursive: true, force: true });
   });
 
-  it("应支持立即执行并写入运行记录", async () => {
+  it("立即执行受理即返回 running 回执，真实运行记录异步落盘(#586)", async () => {
     const job = createAutomationJob({
       name: "手动执行任务",
       schedule: { type: "interval", intervalMs: 60_000 },
       prompt: "测试"
     });
 
-    const run = await runAutomationJobNow({ id: job.id });
-    expect(run.jobId).toBe(job.id);
-    expect(["success", "failed", "skipped"]).toContain(run.status);
-    expect(run.trigger).toBe("manual");
+    const receipt = await runAutomationJobNow({ id: job.id });
+    expect(receipt.jobId).toBe(job.id);
+    expect(receipt.status).toBe("running");
+    expect(receipt.trigger).toBe("manual");
 
-    const runs = listAutomationRuns({ jobId: job.id, limit: 10 });
+    // 受理即返回：真实记录由后台 executeJob 完成后写入，轮询等待落盘
+    let runs = listAutomationRuns({ jobId: job.id, limit: 10 });
+    for (let i = 0; i < 50 && runs.length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      runs = listAutomationRuns({ jobId: job.id, limit: 10 });
+    }
     expect(runs.length).toBeGreaterThanOrEqual(1);
-    expect(runs[0]?.id).toBe(run.id);
+    expect(["success", "failed", "skipped", "running", "waiting_for_user", "waiting_for_approval"]).toContain(runs[0]?.status ?? "");
+    expect(runs[0]?.id ?? "").not.toBe(receipt.id);
   });
 
   it("运行记录文件应使用 jsonl 追加写入", async () => {
@@ -91,9 +102,43 @@ describe("automation-runner-service", () => {
     await runAutomationJobNow({ id: job.id });
 
     const runsPath = join(tempConfigDir, "automation", "runs", "all.jsonl");
+    let lines: string[] = [];
+    for (let i = 0; i < 50; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      if (existsSync(runsPath)) {
+        lines = readFileSync(runsPath, "utf-8").trim().split("\n");
+        if (lines.length >= 2) break;
+      }
+    }
     expect(existsSync(runsPath)).toBeTrue();
-    const lines = readFileSync(runsPath, "utf-8").trim().split("\n");
     expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("正常完成的 run(onComplete 无载荷)记 success(#649 review P1-1 对照)", () => {
+    const outcome = resolveAutomationRunOutcome({
+      runtimeError: null, waitingForUser: false, waitingForApproval: false, turnLimitedStopped: false, threadId: "thread-1"
+    });
+    expect(outcome.status).toBe("success");
+    expect(outcome.message).toContain("任务执行完成");
+  });
+
+  it("触顶停止的 run 如实记 failed 而非假成功(#649 review P1-1)", () => {
+    // 检测挂 onComplete 的 reason——T7a 后 sidecar 生产不再构造 run.turn_limited 事件
+    // (onRuntimeEvent 检测在生产中永不为真);消费分支缺失时触顶 run 会照落「任务执行完成」，
+    // desktop 通知面(只对 failed/waiting_* 弹)对半途而废的无人值守任务永不提醒。
+    const outcome = resolveAutomationRunOutcome({
+      runtimeError: null, waitingForUser: false, waitingForApproval: false, turnLimitedStopped: true, threadId: "thread-1"
+    });
+    expect(outcome.status).toBe("failed");
+    expect(outcome.message).toContain("回合上限");
+  });
+
+  it("#649 round3: repeat_guard 保护停止与 max_turns 同归 failed", () => {
+    // agent-service onComplete 对两种保护性停止都发 reason(max_turns/repeat_guard),
+    // 消费侧对两者都置位 turnLimitedStopped;漏匹配任一 = P1-1 同构假成功
+    expect(resolveAutomationRunOutcome({
+      runtimeError: null, waitingForUser: false, waitingForApproval: false, turnLimitedStopped: true, threadId: "t"
+    }).status).toBe("failed");
   });
 
   it("存量坏 job 不毒化整轮刷新：好 job 正常调度，坏 job 被跳过 (#452)", async () => {

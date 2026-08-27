@@ -2,14 +2,17 @@
 import { getRuntimeSkills, getWorkspaceMcpConfig } from "./agent-workspace-manager";
 import type { MemoryCitationsMode } from "../memory-v2/policy";
 import { BUILTIN_AGENT_ROLES, canonicalizeAgentToolName } from "@lume/shared";
+import { shellKindWithoutDiscovery } from "@lume/agent-sdk";
 import type { AgentDefinition } from "@lume/agent-sdk";
 import type { SessionType as ThreadType } from "@lume/shared";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, basename } from "node:path";
+import os from "node:os";
+import { dirname, join, basename } from "node:path";
 import { getAgentWorkspacePath, getAgentConfigDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 import { renderSkillManifestLines } from "./prompt/context/skill-manifest-builder";
 import { buildProjectInstructionsSection } from "./prompt/context/project-instructions";
+import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { buildMemorySections } from "./prompt/sections/memory-sections";
 import {
   CLAUDE_PLAN_MODE_SECTION,
@@ -222,11 +225,11 @@ export type PermissionMode = "default" | "acceptEdits" | "bypassPermissions" | "
 
 export interface SystemPromptContext {
   workspaceSlug?: string;
+  /** agent 工作目录：用于向上探测项目级指令文件（CLAUDE.md/AGENTS.md） */
+  agentCwd?: string;
   sessionId: string;
   sessionType?: ThreadType;
   chatType?: "direct" | "group" | "channel";
-  /** agent 工作目录：用于向上探测项目级指令文件（CLAUDE.md/AGENTS.md） */
-  agentCwd?: string;
   availableTools?: string[];
   memoryCitationsMode?: MemoryCitationsMode;
   promptMode?: SystemPromptMode;
@@ -289,6 +292,11 @@ export function resolveSystemPromptMode(
   return "full";
 }
 
+/** 项目指令注入开关（agent.projectInstructionsEnabled，缺省 true）。#670 行为告知。 */
+function isProjectInstructionsEnabled(workspaceSlug?: string): boolean {
+  return getEffectiveLumeConfig(workspaceSlug).agent?.projectInstructionsEnabled !== false;
+}
+
 function buildMinimalSections(ctx: SystemPromptContext): string[] {
   const lines: string[] = buildToolingSection(ctx.availableTools);
 
@@ -302,9 +310,11 @@ function buildMinimalSections(ctx: SystemPromptContext): string[] {
 
   lines.push("", buildRuntimeSection(ctx, "minimal"));
 
-  const minimalProjectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
-  if (minimalProjectInstructions) {
-    lines.push("", minimalProjectInstructions);
+  if (isProjectInstructionsEnabled(ctx.workspaceSlug)) {
+    const minimalProjectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+    if (minimalProjectInstructions) {
+      lines.push("", minimalProjectInstructions);
+    }
   }
 
   if (ctx.automationExecution) {
@@ -405,10 +415,13 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
   }
 
   // 项目级指令文件（CLAUDE.md/AGENTS.md，就近覆盖）：低频变更，进稳定 system
-  // 前缀吃 prompt cache；无文件时不产生任何段落，prompt 保持原样
-  const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
-  if (projectInstructions) {
-    sections.push(projectInstructions);
+  // 前缀吃 prompt cache；无文件时不产生任何段落，prompt 保持原样。
+  // 设置开关（agent.projectInstructionsEnabled，缺省 true）关闭时整体跳过注入。
+  if (isProjectInstructionsEnabled(ctx.workspaceSlug)) {
+    const projectInstructions = buildProjectInstructionsSection(ctx.agentCwd);
+    if (projectInstructions) {
+      sections.push(projectInstructions);
+    }
   }
 
   sections.push(buildRuntimeSection(ctx, "full"));
@@ -516,6 +529,13 @@ export function buildDynamicContext(ctx: DynamicContext): string {
 
   if (ctx.agentCwd) {
     sections.push(`<working_directory>${ctx.agentCwd}</working_directory>`);
+    // 环境探测段（#574）：平台/Shell/git/包管理器各一行。按 cwd 做 TTL 缓存，
+    // 避免每回合重建 dynamic context 时重复探测；git 中途 init 的陈旧窗口
+    // 由短 TTL 自愈。
+    const envLines = getEnvironmentProbe(ctx.agentCwd);
+    if (envLines.length > 0) {
+      sections.push(`<environment>\n${envLines.join("\n")}\n</environment>`);
+    }
   }
   if (ctx.lumeWorkDir && ctx.lumeWorkDir !== ctx.agentCwd) {
     sections.push(`<lume_working_directory>${ctx.lumeWorkDir}</lume_working_directory>`);
@@ -542,6 +562,60 @@ export function buildDynamicContext(ctx: DynamicContext): string {
   }
 
   return sections.join("\n\n");
+}
+
+// ─── 环境探测（#574）───────────────────────────────────────────────
+
+const ENV_PROBE_TTL_MS = 5 * 60 * 1000;
+const envProbeCache = new Map<string, { at: number; lines: string[] }>();
+
+function getEnvironmentProbe(cwd: string): string[] {
+  const cached = envProbeCache.get(cwd);
+  if (cached && Date.now() - cached.at < ENV_PROBE_TTL_MS) return cached.lines;
+  const lines: string[] = [];
+  try {
+    lines.push(`平台/系统: ${process.platform} / ${os.type()} ${os.release()}`);
+    // win32 的 bash 发现未决期 fail-closed 读作 bash（权限口径），此处是
+    // 教学信息，措辞必须对冲回退事实，避免与 Bash description 矛盾（#720 review）
+    const shellKind = shellKindWithoutDiscovery();
+    const shellLabel = process.platform === "win32"
+      ? (shellKind === "powershell" ? "PowerShell" : "POSIX bash（若本机未配置 bash，命令实际经 PowerShell 执行）")
+      : "POSIX bash";
+    lines.push(`Shell 方言: ${shellLabel}`);
+    if (isInsideGitRepo(cwd)) lines.push("Git: 工作目录在 git 仓库内");
+    const packageManager = detectPackageManagerMarker(join(cwd));
+    if (packageManager) lines.push(`包管理器: ${packageManager}`);
+  } catch {
+    // 探测失败不阻塞 prompt 构建：environment 段是增强信息不是契约
+  }
+  envProbeCache.set(cwd, { at: Date.now(), lines });
+  return lines;
+}
+
+const PACKAGE_MANAGER_MARKERS: Array<[file: string, name: string]> = [
+  ["bun.lockb", "bun"],
+  ["bun.lock", "bun"],
+  ["pnpm-lock.yaml", "pnpm"],
+  ["yarn.lock", "yarn"],
+  ["package-lock.json", "npm"],
+  ["Cargo.lock", "cargo"],
+  ["go.mod", "go"],
+];
+
+function detectPackageManagerMarker(dir: string): string | undefined {
+  return PACKAGE_MANAGER_MARKERS.find(([file]) => existsSync(join(dir, file)))?.[1];
+}
+
+/** git 探测上溯父目录：monorepo 子目录场景 cwd 本层没有 .git（#720 review） */
+function isInsideGitRepo(startDir: string): boolean {
+  let current = startDir;
+  for (let depth = 0; depth < 16; depth += 1) {
+    if (existsSync(join(current, ".git"))) return true;
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  return false;
 }
 
 function compactPromptText(text?: string, maxLength = 120): string {
