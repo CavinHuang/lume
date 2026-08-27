@@ -93,28 +93,47 @@ async function loadOrBuildIndex(input: {
   candidates: MemoryV2RecallItem[];
   embedTexts: MemoryV2EmbedTexts;
 }): Promise<VectorIndexFile> {
-  const signatures = input.candidates.map(candidateSignature);
   const cached = readIndex(input.indexPath);
-  if (
-    cached
+  const modelMatches = !!cached
     && cached.version === INDEX_VERSION
-    && cached.modelKey === input.modelKey
-    && sameSignatures(cached.docs, signatures)
-  ) {
-    return cached;
-  }
-  const embeddings = await input.embedTexts(input.candidates.map((item) => item.statement));
-  const docs = input.candidates.map((item, index) => ({
-    ...signatures[index]!,
-    item,
-    embedding: embeddings[index] ?? []
-  })).filter((doc) => doc.embedding.length > 0);
+    && cached.modelKey === input.modelKey;
+  // #527-4：签名按 id 走 Map 比对——候选列表顺序不再是重建触发器；
+  // 签名仍含 mtimeMs 作为逐文档失效信号，但只在向量缺失时补嵌该条，
+  // 取消「任一差异→全部候选重嵌入」的全有或全无设计（touch 只伤单条）
+  const cachedById = new Map<string, VectorIndexDoc>(
+    modelMatches ? cached!.docs.map((doc) => [doc.id, doc]) : []
+  );
+  const plan = input.candidates.map((item) => {
+    const signature = candidateSignature(item);
+    const hit = cachedById.get(item.id);
+    const usable =
+      hit && hit.path === signature.path && hit.mtimeMs === signature.mtimeMs;
+    return { item, signature, ...(usable && hit ? { cachedEmbedding: hit.embedding } : {}) };
+  });
+
+  const pending = plan.filter((entry) => !entry.cachedEmbedding);
+  const pendingEmbeddings = pending.length > 0
+    ? await input.embedTexts(pending.map((entry) => entry.item.statement))
+    : [];
+  const embeddingById = new Map<string, number[]>();
+  pending.forEach((entry, index) => {
+    embeddingById.set(entry.signature.id, pendingEmbeddings[index] ?? []);
+  });
+
+  const docs = plan.flatMap((entry) => {
+    const embedding = entry.cachedEmbedding ?? embeddingById.get(entry.signature.id) ?? [];
+    if (embedding.length === 0) return [];
+    return [{ ...entry.signature, item: entry.item, embedding }];
+  });
   const next = {
     version: INDEX_VERSION,
     modelKey: input.modelKey,
     docs
   };
-  writeFileSync(input.indexPath, JSON.stringify(next, null, 2), "utf-8");
+  // 全命中时无需回写（内容与缓存语义等价），避免每次召回白写一遍索引
+  if (pending.length > 0 || !modelMatches) {
+    writeFileSync(input.indexPath, JSON.stringify(next, null, 2), "utf-8");
+  }
   return next;
 }
 
@@ -134,17 +153,6 @@ function candidateSignature(item: MemoryV2RecallItem): Pick<VectorIndexDoc, "id"
     path: item.path,
     mtimeMs: fileMtimeMs(item.path)
   };
-}
-
-function sameSignatures(docs: VectorIndexDoc[], signatures: Array<Pick<VectorIndexDoc, "id" | "path" | "mtimeMs">>): boolean {
-  if (docs.length !== signatures.length) return false;
-  return docs.every((doc, index) => {
-    const signature = signatures[index];
-    return signature
-      && doc.id === signature.id
-      && doc.path === signature.path
-      && doc.mtimeMs === signature.mtimeMs;
-  });
 }
 
 function fileMtimeMs(path: string): number {

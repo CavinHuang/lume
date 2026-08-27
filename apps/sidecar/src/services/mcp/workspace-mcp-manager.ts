@@ -79,6 +79,8 @@ export interface CreateRuntimeToolsOptions {
 interface WorkspaceState {
   sdk: WorkspaceSdkMcpManager;
   knownServerIds: Set<string>;
+  /** #527-9：上次同步时的归一化配置指纹；不变则跳过全量 disconnect/connect */
+  syncedConfigFingerprint?: string;
 }
 
 interface SyncWorkspaceOptions {
@@ -296,6 +298,21 @@ export class WorkspaceMcpManager {
     const config = this.readConfig(workspaceSlug);
     const normalized = this.normalizedConfigs(config);
     const state = this.ensureWorkspaceState(workspaceSlug);
+    // #527-9：配置指纹未变化（readConfig 每次现读，用户改配置必然换指纹）
+    // 时跳过全量同步——callRuntimeTool 等高频入口逐次调用的主成本就在
+    // 这里的遍历 disconnect/connect。指纹仅做跳过判定，漏判只会多做一次
+    // 同步，不会漏同步。
+    const fingerprint = JSON.stringify(normalized);
+    if (state.syncedConfigFingerprint === fingerprint) {
+      // 已配置但掉线的 server 需要借每次入口调用自愈重连，此时不短路
+      const sdkStatus = state.sdk.getStatus();
+      const allConnected = Object.entries(normalized)
+        .filter(([, entry]) => entry.enabled)
+        .every(([serverId]) => sdkStatus[serverId]?.status === "connected");
+      if (allConnected) {
+        return;
+      }
+    }
     const currentIds = new Set(Object.keys(normalized));
     const currentEnabledIds = new Set(Object.entries(normalized)
       .filter(([, entry]) => entry.enabled)
@@ -317,6 +334,7 @@ export class WorkspaceMcpManager {
 
     state.sdk.sync(normalized);
     state.knownServerIds = currentIds;
+    state.syncedConfigFingerprint = fingerprint;
     this.logger.info("MCP workspace synced", {
       workspaceSlug,
       totalServers: currentIds.size,

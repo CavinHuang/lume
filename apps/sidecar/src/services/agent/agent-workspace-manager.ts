@@ -8,6 +8,7 @@ import {
   readFileSync,
   readdirSync,
   rmSync,
+  statSync,
   writeFileSync
 } from "node:fs";
 import { randomUUID } from "node:crypto";
@@ -104,25 +105,55 @@ function backupCorruptIndex(indexPath: string, label: string): void {
   if (backupPath) log.warn("backed up corrupt workspace index", { label, backupPath });
 }
 
-function readIndex(): AgentWorkspacesIndex {
-  const indexPath = getAgentWorkspacesIndexPath();
-  if (!existsSync(indexPath)) {
-    return { version: INDEX_VERSION, workspaces: [] };
-  }
+// #527-3：workspace 索引此前每次读都全量读盘 parse。与 thread 索引同款
+// mtime+size 缓存；cached=true 表示实例为进程内共享，不得外泄或原地修改，
+// 所以 readIndex 出口统一深拷贝（withWorkspaceIndexMutation 同样受益）。
+let indexCache: { path: string; mtimeMs: number; size: number; index: AgentWorkspacesIndex } | null = null;
 
+function readCachedWorkspaceIndex(): { index: AgentWorkspacesIndex; cached: boolean } {
+  const indexPath = getAgentWorkspacesIndexPath();
+  let stat: { mtimeMs: number; size: number } | undefined;
   try {
-    return JSON.parse(readFileSync(indexPath, "utf-8")) as AgentWorkspacesIndex;
+    stat = statSync(indexPath);
+  } catch {
+    stat = undefined;
+  }
+  if (!stat) {
+    indexCache = null;
+    return { index: { version: INDEX_VERSION, workspaces: [] }, cached: false };
+  }
+  if (indexCache && indexCache.path === indexPath
+    && indexCache.mtimeMs === stat.mtimeMs && indexCache.size === stat.size) {
+    return { index: indexCache.index, cached: true };
+  }
+  try {
+    const parsed = JSON.parse(readFileSync(indexPath, "utf-8")) as Partial<AgentWorkspacesIndex>;
+    const index: AgentWorkspacesIndex = {
+      version: typeof parsed.version === "number" ? parsed.version : INDEX_VERSION,
+      workspaces: Array.isArray(parsed.workspaces) ? parsed.workspaces : []
+    };
+    indexCache = { path: indexPath, mtimeMs: stat.mtimeMs, size: stat.size, index };
+    return { index, cached: true };
   } catch (error) {
     log.error("failed to read workspace index", { error, indexPath });
     backupCorruptIndex(indexPath, "Agent 工作区");
-    return { version: INDEX_VERSION, workspaces: [] };
+    indexCache = null;
+    return { index: { version: INDEX_VERSION, workspaces: [] }, cached: false };
   }
+}
+
+function readIndex(): AgentWorkspacesIndex {
+  const { index, cached } = readCachedWorkspaceIndex();
+  if (!cached) return index;
+  return structuredClone(index);
 }
 
 function writeIndex(index: AgentWorkspacesIndex): void {
   const indexPath = getAgentWorkspacesIndexPath();
   try {
     writeJsonAtomic(indexPath, JSON.stringify(index, null, 2));
+    // 与 thread 索引一致：写后显式失效，不依赖 mtime 粒度
+    indexCache = null;
   } catch (error) {
     log.error("failed to write workspace index", { error, indexPath });
     throw new Error("写入 Agent 工作区索引失败");

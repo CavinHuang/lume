@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, expect, test } from "bun:test";
@@ -114,4 +114,54 @@ test("空 candidates → 返回 []（不 embed query）", async () => {
   });
   expect(results).toEqual([]);
   expect(embedded).toBe(false);
+});
+
+// #527-4：候选列表顺序变化不应触发重建（签名比对按 id 走 Map）
+test("顺序打乱 → 不再重嵌入（仅 embed query）", async () => {
+  const pa = touchFile("a.md");
+  const pb = touchFile("b.md");
+  const a = makeCandidate("a", "architecture", pa);
+  const b = makeCandidate("b", "preferences", pb);
+  let candidateEmbeddedCount = 0;
+  const embedTexts: MemoryV2EmbedTexts = async (texts) => {
+    // query 只有一句 "q"；>1 即发生了 candidates 重嵌
+    if (texts.length > 1 || texts[0] !== "q") candidateEmbeddedCount += texts.length;
+    return texts.map(() => [1, 0, 0]);
+  };
+  await searchSemanticRecall({ query: "q", candidates: [a, b], embedTexts, modelKey: "m", maxResults: 5 });
+  await searchSemanticRecall({ query: "q", candidates: [b, a], embedTexts, modelKey: "m", maxResults: 5 });
+  expect(candidateEmbeddedCount).toBe(2); // 仅首轮全部嵌入
+});
+
+// #527-4：touch 单个文件只应重嵌该条，其余向量复用
+test("touch 一个文件 → 只重嵌入该条", async () => {
+  const pa = join(root, "a.md");
+  writeFileSync(pa, "");
+  const b = makeCandidate("b", "preferences", join(root, "b.md"));
+  writeFileSync(join(root, "b.md"), "");
+  let reembeddedStatements: string[] = [];
+  const embedTexts: MemoryV2EmbedTexts = async (texts) =>
+    texts.map((t) => {
+      if (t !== "q") reembeddedStatements.push(t);
+      return [1, 0, 0];
+    });
+  await searchSemanticRecall({
+    query: "q",
+    candidates: [makeCandidate("a", "architecture", pa), b],
+    embedTexts,
+    modelKey: "m",
+    maxResults: 5
+  });
+  reembeddedStatements = [];
+  // 强制 mtime 变化；Windows 上连续写同 mtime 精度有限，显式 futimes 加大步进
+  const future = new Date(Date.now() + 50);
+  utimesSync(pa, future, future);
+  await searchSemanticRecall({
+    query: "q",
+    candidates: [makeCandidate("a", "architecture", pa), b],
+    embedTexts,
+    modelKey: "m",
+    maxResults: 5
+  });
+  expect(reembeddedStatements).toEqual(["architecture"]);
 });

@@ -73,9 +73,11 @@ export async function prepareRuntimeCoreAttempt(
     contextWindowOverrides
   });
   if (!modelResolution) {
+    // #559 残余收口:此处真因是请求与渠道双方均无有效模型(candidates 为空),
+    // 文案与同文件其余错误对齐——不带内部前缀、给出下一步指引。
     return {
       status: "errored",
-      errorMessage: `runtime-core 未找到模型: ${runtime.modelRef ?? `${channel.provider}/${runtime.resolvedModelId}`}`
+      errorMessage: "当前渠道未配置任何可用模型。请到设置 → 连接配置添加模型后重试。"
     };
   }
   // 区分目录真值与 model.maxTokens 的 32768 兜底猜测:createFallbackModel 不读目录,
