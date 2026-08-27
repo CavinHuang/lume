@@ -5,7 +5,9 @@ import type { ReadingBookStatus } from "@lume/shared";
  * weread-reading-profile 三处同型拷贝收敛于此。
  *
  * 语义取强版本：支持 readInfo/progressInfo 嵌套对象探测与
- * finishedDate/readAt/readTime 等完整键位；秒级时间戳(<1e11)统一归一为毫秒。
+ * finishedDate/readAt/readTime 等完整键位；秒级时间戳(<1e11)统一归一为毫秒，
+ * 并施加采信窗口守卫(#531 复审加固——键链含 readTime/readingTime 这类
+ * 时长语义候选，纯靠 ?? 链可能把累计阅读秒数误判成时间戳)。
  * profile 版原先缺这些键位与嵌套探测，导致同一 API 数据源下提取不到
  * 最后阅读时间/进度(#531 P0-1 修复)。
  */
@@ -26,6 +28,15 @@ function pickTimestamp(record: Record<string, unknown>): number | undefined {
 
 const NESTED_PROGRESS_KEYS = ["readInfo", "progressInfo"] as const;
 
+/** 微信读书上线前不可能有真实阅读事件；早于此的值来自时长型键误判（如 readTime=3600 秒）。 */
+const MIN_PLAUSIBLE_READ_MS = Date.UTC(2005, 0, 1);
+const MAX_PLAUSIBLE_READ_MS = 86_400_000;
+
+/** 采信窗口 [2005-01-01, now+1d]：兜住时钟/网关污染与时长型键。 */
+function isPlausibleReadTimestamp(ms: number): boolean {
+  return ms >= MIN_PLAUSIBLE_READ_MS && ms <= Date.now() + MAX_PLAUSIBLE_READ_MS;
+}
+
 export function readWereadTimestamp(
   ...records: Array<Record<string, unknown> | undefined>
 ): number | undefined {
@@ -34,7 +45,10 @@ export function readWereadTimestamp(
     const nestedValue = readNestedTimestamp(record);
     if (typeof nestedValue === "number") return nestedValue;
     const value = pickTimestamp(record);
-    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
+    if (typeof value === "number" && value > 0) {
+      const ms = normalizeWereadTimestamp(value);
+      if (isPlausibleReadTimestamp(ms)) return ms;
+    }
   }
   return undefined;
 }
@@ -106,7 +120,10 @@ function readNestedTimestamp(record: Record<string, unknown>): number | undefine
     const nested = record[key];
     if (!isRecord(nested)) continue;
     const value = pickTimestamp(nested);
-    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
+    if (typeof value === "number" && value > 0) {
+      const ms = normalizeWereadTimestamp(value);
+      if (isPlausibleReadTimestamp(ms)) return ms;
+    }
   }
   return undefined;
 }
