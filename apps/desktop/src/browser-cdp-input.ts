@@ -82,12 +82,13 @@ export async function dispatchBrowserClick(
   sender: BrowserCdpCommandSender,
   point: BrowserCdpPoint,
   clickCount = 1,
-  options: BrowserInputNaturalnessOptions = {},
+  options: BrowserInputNaturalnessOptions & { beforePress?: () => Promise<void> | void } = {},
 ): Promise<void> {
   const sleep = options.sleep ?? defaultSleep
   if (options.natural !== true) {
     await sender.sendCommand("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y })
     for (let count = 1; count <= clickCount; count += 1) {
+      await options.beforePress?.()
       await sender.sendCommand("Input.dispatchMouseEvent", {
         type: "mousePressed",
         x: point.x,
@@ -110,6 +111,7 @@ export async function dispatchBrowserClick(
   await walkPath(sender, pointerPath(options.from ?? driftNear(point), point), sleep)
   for (let count = 1; count <= clickCount; count += 1) {
     if (count > 1) await sleep(rand(60, 140))
+    await options.beforePress?.()
     await sender.sendCommand("Input.dispatchMouseEvent", {
       type: "mousePressed",
       x: point.x,

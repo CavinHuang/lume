@@ -2592,19 +2592,24 @@ export class BrowserRuntime {
   private async dispatchMouse(tab: BrowserTab, method: string, params: Record<string, unknown>): Promise<void> {
     const x = boundedNumber(params.x, 0, 100_000)
     const y = boundedNumber(params.y, 0, 100_000)
+    const generation = tab.generation
     this.showAgentCursor(tab, x, y, method === "click" || method === "doubleClick")
     const from = tab.lastAgentPointer
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const sender = this.expectedAgentInputSender(tab, debuggerRef)
-      // #614:语义 ref 路径携带解析时 URL——注入前最后一刻重验,文档已换则坐标
-      // 作废(盲击新文档不可控),报 stale_target 让模型重观察
-      if (typeof params.documentUrl === "string") {
-        const current = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
-        if (current.result?.value !== params.documentUrl) throw browserError("stale_target")
+      const validateTarget = async (): Promise<void> => {
+        if (typeof params.documentUrl === "string") {
+          const current = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
+          if (current.result?.value !== params.documentUrl) throw browserError("stale_target")
+        }
+        if (tab.generation !== generation) throw browserError("stale_target")
       }
       if (method === "click" || method === "doubleClick") {
-        await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { natural: this.humanizedInput, from })
+        // #614：自然轨迹最长约 520ms；generation/URL 校验必须贴近每次 mousePressed，
+        // 否则路径移动期间的自导航会把旧坐标盲击到新文档。
+        await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { beforePress: validateTarget, natural: this.humanizedInput, from })
       } else {
+        await validateTarget()
         await moveBrowserPointer(sender, { x, y }, { natural: this.humanizedInput, from })
       }
     })
