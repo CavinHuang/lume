@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
+import { createServer as realCreateServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -28,7 +29,8 @@ mock.module("./oauth/oauth-token", () => ({
   },
 }));
 
-const { disconnectConnector, registerConnector, startConnectorAuthorization } = await import("./service");
+const { disconnectConnector, registerConnector, setHttpServerFactoryForTest, startConnectorAuthorization } =
+  await import("./service");
 const { getConnectorCredentialRecord, setConnectorClientConfig } = await import("./credential-store");
 const { installConnectionVaultKey } = await import("../channel/connection-credential-store");
 
@@ -182,5 +184,81 @@ describe("connector oauth flow termination vs in-flight persist (#689)", () => {
     releaseValidator?.();
     expect(await freshPage).toContain("✅");
     expect(getConnectorCredentialRecord("race_mail").oauth).toBeDefined();
+  });
+
+  test("孤儿授权流终结不得摘除在位新流的 map 占位(bind 竞争红队 P2)", async () => {
+    // 假工厂:bind 回调手工触发,回调页经 synthetic req/res 直调 handler,无真实网络
+    const binds: Array<{ fire: () => void }> = [];
+    const invokers: Array<(url: string) => Promise<string>> = [];
+    const serverErrors: Array<() => void> = [];
+    setHttpServerFactoryForTest(((handler: (req: IncomingMessage, res: ServerResponse) => void) => {
+      const errorCbs: Array<(error: Error) => void> = [];
+      let portSeed = 46000 + invokers.length * 10;
+      invokers.push(
+        (url: string) =>
+          new Promise<string>((resolvePage) => {
+            const resStub = {
+              writeHead() {
+                return { end: (body?: string) => resolvePage(body ?? "") };
+              },
+              end(body?: string) {
+                resolvePage(body ?? "");
+              },
+            };
+            void handler({ url } as IncomingMessage, resStub as unknown as ServerResponse);
+          }),
+      );
+      serverErrors.push(() => {
+        for (const cb of errorCbs) cb(new Error("injected listen failure"));
+      });
+      return {
+        on(event: string, cb: (error: Error) => void) {
+          if (event === "error") errorCbs.push(cb);
+        },
+        listen(_port: number, _host: string, callback: () => void) {
+          binds.push({ fire: callback });
+        },
+        close() {},
+        address() {
+          return { port: portSeed++ };
+        },
+      } as unknown as Server;
+    }) as unknown as typeof realCreateServer);
+
+    try {
+      setConnectorClientConfig("race_mail", {
+        service: "race_mail",
+        clientId: "cid",
+        clientSecret: "csecret",
+        extra: {},
+        secretExtra: {},
+      });
+      // 双 START_AUTH 在任一 bind 决算前先后执行:#2 读 map 为空不顶替 → 双活
+      const stale = startConnectorAuthorization("race_mail");
+      stale.done.catch(() => {});
+      const live = startConnectorAuthorization("race_mail");
+      live.done.catch(() => {});
+      binds[0]!.fire(); // A 占位
+      binds[1]!.fire(); // B 覆盖,A 成孤儿(map 只剩 recordB)
+      const liveUrl = new URL(await live.authorizationUrl);
+      const liveState = liveUrl.searchParams.get("state");
+
+      // 孤儿 A 的合法终结(注入 listen 失败):其首次 finish 若无条件 delete,
+      // 摘掉的是 B 的占位——B 的真回调将 404、done 悬挂至超时
+      serverErrors[0]!();
+      await expect(stale.done).rejects.toBeDefined();
+
+      // B 的真回调必须照常走完
+      const pagePromise = invokers[1]!(`/callback?state=${liveState}&code=real`);
+      for (let i = 0; i < 600 && !releaseValidator; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+      }
+      releaseValidator?.();
+      expect(await pagePromise).toContain("✅");
+      await expect(live.done).resolves.toBeDefined();
+      expect(getConnectorCredentialRecord("race_mail").oauth).toBeDefined();
+    } finally {
+      setHttpServerFactoryForTest(realCreateServer);
+    }
   });
 });

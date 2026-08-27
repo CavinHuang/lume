@@ -978,11 +978,14 @@ async function acquirePooledClient(
   try {
     await fresh.connect();
   } catch (error) {
-    // socket 可能尚未建立或已死,直接静默关闭
-    const mapped = mapLibraryError(error, config);
-    bumpPoolMetric("error_destroy", mapped.kind);
-    destroyPooledClient(conn.client);
-    throw mapped;
+    // 监听侧若已在 connect 决算窗口内置位 dead(emit+reject 同达的假想上游),
+    // 计数与补刀都归它——此处不再重复记 error_destroy(事件数口径)
+    if (!conn.dead) {
+      const mapped = mapLibraryError(error, config);
+      bumpPoolMetric("error_destroy", mapped.kind);
+      destroyPooledClient(conn.client);
+    }
+    throw mapLibraryError(error, config);
   }
   bumpPoolMetric("created");
   return conn;
