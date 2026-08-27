@@ -4,10 +4,11 @@
 
 import { readFile, stat } from 'fs/promises'
 import { extname } from 'path'
+import { createHash } from 'node:crypto'
 import { defineTool } from './types.js'
 import { ensurePathAllowed, getUnsafeFilePathReason, resolveInputPath, suggestNearbyPaths } from '../utils/pathing.js'
 import { isNativeAvailable, nativeSummarize } from '@lume/natives'
-import { readTextFile, readTextFileRange } from '../utils/text-file.js'
+import { readTextFileRange, readTextFileWithDigest } from '../utils/text-file.js'
 import { estimateTokens } from '../utils/tokens.js'
 import type { ToolContext } from '../types.js'
 
@@ -43,6 +44,10 @@ const BINARY_EXTENSIONS = new Set([
   '.woff', '.woff2', '.ttf', '.otf',
 ])
 type ReadResult = { data: unknown; is_error?: boolean; _meta?: Record<string, unknown> }
+
+function sha256Hex(bytes: Uint8Array): string {
+  return createHash('sha256').update(bytes).digest('hex')
+}
 
 // ---- 部分读截断信号（#535）----
 // Read 结果的结构化字段会被 normalizeToolCallResult 坍缩为纯文本 content，
@@ -260,7 +265,7 @@ export const FileReadTool = defineTool({
         }
       }
 
-      const textFile = await readTextFile(filePath)
+      const textFile = await readTextFileWithDigest(filePath)
       if (context.abortSignal?.aborted) throw new DOMException('Operation aborted', 'AbortError')
       const content = textFile.content
       const lines = content.length === 0 ? [] : content.split('\n')
@@ -373,7 +378,7 @@ export const FileReadTool = defineTool({
           totalLines: lines.length,
           remainingLines: Math.max(0, lines.length - offset - limit),
         },
-        _meta: { read: { offset, limit, totalLines: lines.length, partial: isPartialView, summarized: false, ...(truncatedWholeRead ? { truncated: true } : {}) } },
+        _meta: { read: { offset, limit, totalLines: lines.length, partial: isPartialView, summarized: false, rawSha256: textFile.rawSha256, ...(truncatedWholeRead ? { truncated: true } : {}) } },
       }
     } catch (err: any) {
       if (err?.name === 'AbortError') return { data: 'Read aborted.', is_error: true }
@@ -417,7 +422,7 @@ async function readImage(
         },
       ],
     },
-    _meta: { read: { kind: 'image', filePath, mediaType, size: bytes.byteLength, ...(dimensions ? { dimensions } : {}), multimodal: true } },
+    _meta: { read: { kind: 'image', filePath, mediaType, size: bytes.byteLength, rawSha256: sha256Hex(bytes), ...(dimensions ? { dimensions } : {}), multimodal: true } },
   }
 }
 
@@ -478,7 +483,7 @@ async function readPdf(
             },
           ],
         },
-        _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, multimodal: true } },
+        _meta: { read: { kind: 'pdf', filePath, size: bytes.byteLength, totalPages, rawSha256: sha256Hex(bytes), multimodal: true } },
       }
     }
 
@@ -525,7 +530,7 @@ async function readNotebook(
   limitInput: unknown,
   context: ToolContext,
 ): Promise<ReadResult> {
-  const textFile = await readTextFile(filePath)
+  const textFile = await readTextFileWithDigest(filePath)
   throwIfAborted(context.abortSignal)
   let notebook: any
   try {
@@ -561,7 +566,7 @@ async function readNotebook(
       content: notebookContent,
     },
     _meta: {
-      read: { kind: 'notebook', filePath, offset, limit, totalCells: notebook.cells.length, partial, summarized: false },
+      read: { kind: 'notebook', filePath, offset, limit, totalCells: notebook.cells.length, partial, summarized: false, rawSha256: textFile.rawSha256 },
     },
   }
 }

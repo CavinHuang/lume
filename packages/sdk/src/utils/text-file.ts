@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { createReadStream, promises as fs } from "node:fs";
 
 export type TextFileEncoding = Extract<BufferEncoding, "utf8" | "utf16le">;
@@ -20,6 +21,21 @@ export interface TextFileRange {
 
 export async function readTextFile(filePath: string): Promise<DecodedTextFile> {
   return decodeTextFile(await fs.readFile(filePath));
+}
+
+/**
+ * #527-8：同一次读盘顺带产出原始字节摘要（BOM/换行归一前的 buffer），
+ * 经 _meta.read.rawSha256 传给 sidecar 账本，Read 后免二次整文件 readFile。
+ * 注意 digest 必须取 raw bytes——账本比对侧 hashFile 也是原始口径。
+ */
+export async function readTextFileWithDigest(
+  filePath: string,
+): Promise<DecodedTextFile & { rawSha256: string }> {
+  const bytes = await fs.readFile(filePath);
+  return {
+    ...decodeTextFile(bytes),
+    rawSha256: createHash("sha256").update(bytes).digest("hex"),
+  };
 }
 
 export async function readTextFileRange(
