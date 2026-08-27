@@ -66,13 +66,15 @@ describe("oauth flow listen failure (#687)", () => {
         emitServerError?.(new Error("EACCES: bind refused"));
         return await flow.authorizationUrl.then(
           () => "resolved" as const,
-          () => "rejected" as const,
+          (error) => String((error as { code?: string }).code),
         );
       })(),
       new Promise<"stuck">((resolve) => setTimeout(() => resolve("stuck"), 1000)),
     ]);
-    // 修复前的实现此处置 "stuck"(url promise 无 reject 通路)
-    expect(outcome).toBe("rejected");
+    // 修复前的实现此处置 "stuck"(url promise 无 reject 通路);#791② 起进一步
+    // 要求 url 一侧拿到真实码而非统一 cancelled,#687 的 await 方能知悉根因
+    expect(outcome).not.toBe("stuck");
+    expect(outcome).toBe("oauth_listen_failed");
 
     // done 同步终结且错误码为 listen 失败
     const doneCode = await flow.done.then(
