@@ -574,6 +574,9 @@ describe("per-account IMAP connection pool (#698)", () => {
     fake.advanceClock(imapIdleReuseTtlMs * 10);
     await protocol.listFolders(account);
     const before = imapPoolMetricsSnapshot();
+    // 冲刷前提显式钉死(#791③):清他例后本行 listFolders 自身会新建恰好一条
+    // 入池,故基线恒为 1;跨用例残留泄漏时红在本行而非末行差值处,定位省一轮
+    expect(before.idle_connections).toBe(1);
 
     // 复用 → pool_hit
     await protocol.getFolderStatus(account, "INBOX");
