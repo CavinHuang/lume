@@ -37,6 +37,98 @@ test("external bridge authenticates a connected native host and correlates reque
   await bridge.close();
 });
 
+test("external bridge accepts responses above the former 2MB frame limit", async () => {
+  const pipe = endpoint();
+  const bridge = new ExternalChromeTransport({ endpoint: pipe, token, pairingId, generation: pairingGeneration, requestTimeoutMs: 2_000 });
+  await bridge.start();
+  const client = connect(pipe);
+  await new Promise<void>((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  const challenge = await readJsonLine(client) as any;
+  const nonceHost = "native-host-large-frame";
+  const hostBuild = "test-build";
+  const transcript = `2|${pairingId}|${pairingGeneration}|${challenge.params.nonceMain}|${nonceHost}|${hostBuild}`;
+  client.write(`${JSON.stringify({ jsonrpc: "2.0", id: "hello", method: "app.hello", params: {
+    pairingId,
+    generation: pairingGeneration,
+    nonceHost,
+    hostBuild,
+    proofHost: hmac(Buffer.from(token, "base64url"), `host\n${transcript}`),
+    appServerProtocolVersion: 2,
+    nativeHostProtocolVersion: 5,
+  } })}\n`);
+  await readJsonLine(client);
+  const key = Buffer.from(hkdfSync("sha256", Buffer.from(token, "base64url"), Buffer.from(`${challenge.params.nonceMain}\0${nonceHost}`), Buffer.from("lume-browser-bridge-v1"), 32));
+
+  const response = bridge.request(request);
+  const outbound = decodeFrame(await readJsonLine(client), key, 1);
+  const data = "x".repeat(2 * 1024 * 1024 + 1);
+  client.write(`${JSON.stringify(encodeFrame({ jsonrpc: "2.0", id: outbound.id, result: { data } }, key, 1))}\n`);
+  assert.equal(((await response) as { data: string }).data.length, data.length);
+  assert.equal(bridge.isAvailable(), true);
+
+  client.destroy();
+  await bridge.close();
+});
+
+test("an oversized outbound request does not disconnect the bridge or consume its sequence", async () => {
+  const pipe = endpoint();
+  const bridge = new ExternalChromeTransport({ endpoint: pipe, token, pairingId, generation: pairingGeneration, requestTimeoutMs: 2_000 });
+  await bridge.start();
+  const client = connect(pipe);
+  await new Promise<void>((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  const challenge = await readJsonLine(client) as any;
+  const nonceHost = "native-host-outbound-limit";
+  const hostBuild = "test-build";
+  const transcript = `2|${pairingId}|${pairingGeneration}|${challenge.params.nonceMain}|${nonceHost}|${hostBuild}`;
+  client.write(`${JSON.stringify({ jsonrpc: "2.0", id: "hello", method: "app.hello", params: {
+    pairingId,
+    generation: pairingGeneration,
+    nonceHost,
+    hostBuild,
+    proofHost: hmac(Buffer.from(token, "base64url"), `host\n${transcript}`),
+    appServerProtocolVersion: 2,
+    nativeHostProtocolVersion: 5,
+  } })}\n`);
+  await readJsonLine(client);
+  const key = Buffer.from(hkdfSync("sha256", Buffer.from(token, "base64url"), Buffer.from(`${challenge.params.nonceMain}\0${nonceHost}`), Buffer.from("lume-browser-bridge-v1"), 32));
+
+  await assert.rejects(
+    bridge.request({ ...request, method: "evaluate:readonly", params: { tabId: "tab-1", script: "x".repeat(2 * 1024 * 1024) } }),
+    /browser bridge message too large/,
+  );
+  assert.equal(bridge.isAvailable(), true);
+
+  const response = bridge.request(request);
+  const outbound = decodeFrame(await readJsonLine(client), key, 1);
+  client.write(`${JSON.stringify(encodeFrame({ jsonrpc: "2.0", id: outbound.id, result: { tabs: [] } }, key, 1))}\n`);
+  assert.deepEqual(await response, { tabs: [] });
+  assert.equal(bridge.isAvailable(), true);
+
+  client.destroy();
+  await bridge.close();
+});
+
+test("external bridge reports disconnected in-flight requests as executed_unknown", async () => {
+  const bridge = new ExternalChromeTransport({ endpoint: endpoint(), token, pairingId, generation: pairingGeneration, requestTimeoutMs: 500 });
+  await bridge.start();
+  const sent: any[] = [];
+  const peer: any = { send: (value: unknown) => sent.push(value), close: () => undefined };
+  (bridge as any).attachPeer(peer);
+  authenticate(peer, sent);
+  const response = bridge.request(request);
+  await new Promise<void>((resolve) => setImmediate(resolve));
+  peer.onClose();
+
+  await assert.rejects(response, (error: Error & { code?: string }) => error.code === "executed_unknown");
+  await bridge.close();
+});
+
 test("external bridge rejects bad authentication and fails pending work on disconnect", async () => {
   let disconnected = false;
   const bridge = new ExternalChromeTransport({ endpoint: endpoint(), token, pairingId, generation: pairingGeneration, requestTimeoutMs: 500, onStateChange: (state) => { if (!state.connected) disconnected = true; } });
@@ -167,4 +259,21 @@ function decodeFrame(envelope: any, key: Buffer, sequence: number): any {
   const counter = Buffer.alloc(8); counter.writeBigUInt64BE(BigInt(sequence));
   assert.equal(envelope.mac, hmac(key, Buffer.concat([counter, payload])));
   return JSON.parse(payload.toString("utf8"));
+}
+
+const socketBuffers = new WeakMap<import("node:net").Socket, Buffer>();
+async function readJsonLine(socket: import("node:net").Socket): Promise<unknown> {
+  while (true) {
+    const buffered = socketBuffers.get(socket) ?? Buffer.alloc(0);
+    const newline = buffered.indexOf(10);
+    if (newline >= 0) {
+      socketBuffers.set(socket, buffered.subarray(newline + 1));
+      return JSON.parse(buffered.subarray(0, newline).toString("utf8"));
+    }
+    const chunk = await new Promise<Buffer>((resolve, reject) => {
+      socket.once("data", resolve);
+      socket.once("error", reject);
+    });
+    socketBuffers.set(socket, Buffer.concat([buffered, chunk]));
+  }
 }

@@ -95,6 +95,7 @@ import {
 import {
   FilePluginStateStore,
   type PluginInstallRecord,
+  type PluginStateFile,
 } from "../agent-runtime/plugins/plugin-state-store";
 import { PluginRegistry } from "../agent-runtime/plugins/plugin-registry";
 import { getPluginPackageService } from "./plugin-package-service";
@@ -116,6 +117,7 @@ import {
 const execFileAsync = promisify(execFile);
 const MARKETPLACE_ASSET_MAX_BYTES = 512 * 1024;
 const MIRROR_CATALOG_MAX_BYTES = 8 * 1024 * 1024;
+const REMOTE_TEXT_MAX_BYTES = 8 * 1024 * 1024;
 // #525-11/漏项:requestRemote 与 readRemoteBody 间的超时 guard 传递通道
 const REMOTE_BODY_GUARD = Symbol("plugin-market-remote-body-guard");
 /** 测试注入 guard 用(同一 symbol 实例才能命中传递通道)。 */
@@ -153,6 +155,45 @@ export async function readBoundedBody(
     }
     return Buffer.concat(chunks);
   } finally {
+    if (guard) clearTimeout(guard.timer);
+  }
+}
+
+export async function writeBoundedBodyToFile(
+  response: Response,
+  target: string,
+  maxBytes: number,
+  oversize: () => Error = () => new PluginMarketError("invalid_manifest", "远程响应超过大小限制"),
+): Promise<number> {
+  const guard = (response as RemoteResponseWithGuard)[REMOTE_BODY_GUARD];
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let failed = false;
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) throw new PluginMarketError("network_failed", "远程响应缺少 body");
+    handle = await open(target, "wx");
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return total;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw oversize();
+      }
+      let offset = 0;
+      while (offset < value.byteLength) {
+        const { bytesWritten } = await handle.write(value, offset, value.byteLength - offset);
+        if (bytesWritten <= 0) throw new Error("远程响应写入停滞");
+        offset += bytesWritten;
+      }
+    }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    await handle?.close().catch(() => undefined);
+    if (failed) await rm(target, { force: true }).catch(() => undefined);
     if (guard) clearTimeout(guard.timer);
   }
 }
@@ -263,6 +304,7 @@ export class PluginMarketService {
     requestRemote: (url, init) => this.requestRemote(url, init),
     fetchText: (url) => this.fetchText(url),
     readRemoteBody: (response, maxBytes, oversize) => this.readRemoteBody(response, maxBytes, oversize),
+    writeRemoteBodyToFile: (response, target, maxBytes, oversize) => writeBoundedBodyToFile(response, target, maxBytes, oversize),
   });
 
   async getMarketCatalog(
@@ -283,6 +325,7 @@ export class PluginMarketService {
     let failedCount = 0;
     const syncTimes: number[] = [];
     const expiryTimes: number[] = [];
+    const pluginState = await this.stateStore().read();
 
     const runtimeConfig = getEffectivePluginRuntimeConfig(input.workspaceSlug);
     const registry = new PluginRegistry({
@@ -302,6 +345,7 @@ export class PluginMarketService {
         input.workspaceSlug,
         "local",
         "installed",
+        pluginState,
       );
       item.id = `installed:${plugin.pluginId}`;
       const source = { type: "local" as const, path: plugin.root };
@@ -361,13 +405,15 @@ export class PluginMarketService {
                 await this.inspectPluginSource(
                   input.workspaceSlug,
                   entry.source,
+                  pluginState,
                 )
               ).normalized;
             const item = this.toMarketItem(
               normalized,
               input.workspaceSlug,
               entry.source.type,
-              await this.resolveInstallState(normalized),
+              this.resolveInstallStateFromSnapshot(normalized, pluginState),
+              pluginState,
             );
             item.id = `${source.id}:${entry.id}`;
             const fingerprint = pluginSnapshotFingerprint(
@@ -974,9 +1020,10 @@ export class PluginMarketService {
   private async inspectPluginSource(
     workspaceSlug: string,
     source: PluginSourceRef,
+    state?: PluginStateFile,
   ): Promise<SidecarInspectPluginResult> {
     if (source.type === "subscribed-market") {
-      return this.inspectPluginSource(workspaceSlug, source.resolved);
+      return this.inspectPluginSource(workspaceSlug, source.resolved, state);
     }
     const normalized =
       source.type === "github"
@@ -988,7 +1035,9 @@ export class PluginMarketService {
       normalized,
       permissionSummary: summarizePermissions(normalized.permissions),
       permissionsHash,
-      installState: await this.resolveInstallState(normalized),
+      installState: state
+        ? this.resolveInstallStateFromSnapshot(normalized, state)
+        : await this.resolveInstallState(normalized),
       enableState: this.resolveEnableState(normalized.pluginId, workspaceSlug),
       diagnostics: normalized.diagnostics as AgentPluginDiagnostic[],
     };
@@ -1089,7 +1138,7 @@ export class PluginMarketService {
         `读取远程文件失败: ${response.status}`,
       );
     }
-    return (await this.readRemoteBody(response)).toString("utf8");
+    return (await this.readRemoteBody(response, REMOTE_TEXT_MAX_BYTES)).toString("utf8");
   }
 
   private async resolveInspectSource(
@@ -1829,7 +1878,13 @@ export class PluginMarketService {
   private async resolveInstallState(
     plugin: NormalizedPlugin,
   ): Promise<"not-installed" | "installed" | "update-available"> {
-    const state = await this.stateStore().read();
+    return this.resolveInstallStateFromSnapshot(plugin, await this.stateStore().read());
+  }
+
+  private resolveInstallStateFromSnapshot(
+    plugin: NormalizedPlugin,
+    state: PluginStateFile,
+  ): "not-installed" | "installed" | "update-available" {
     const record = state.plugins[plugin.pluginId];
     if (!record?.activeVersion) return "not-installed";
     if (record.activeVersion === plugin.version) return "installed";
@@ -1947,8 +2002,9 @@ export class PluginMarketService {
     workspaceSlug: string,
     sourceType: PluginSourceRef["type"],
     installState: PluginMarketItem["installState"] = "not-installed",
+    state?: PluginStateFile,
   ): PluginMarketItem {
-    const installMetadata = this.readInstallMetadata(plugin.pluginId);
+    const installMetadata = this.readInstallMetadata(plugin.pluginId, state);
     return {
       id: `${sourceType}:inline:plugin:${plugin.pluginId}`,
       pluginId: plugin.pluginId,
@@ -1980,15 +2036,17 @@ export class PluginMarketService {
 
   private readInstallMetadata(
     pluginId: string,
+    state?: PluginStateFile,
   ): Pick<
     PluginMarketItem,
     "installedVersion" | "rollbackVersion" | "installedPermissionsHash"
   > {
     try {
-      const raw = JSON.parse(readFileSync(this.config.statePath, "utf-8")) as {
-        plugins?: Record<string, PluginInstallRecord>;
-      };
-      const record = raw.plugins?.[pluginId];
+      const record = state
+        ? state.plugins[pluginId]
+        : (JSON.parse(readFileSync(this.config.statePath, "utf-8")) as {
+            plugins?: Record<string, PluginInstallRecord>;
+          }).plugins?.[pluginId];
       const active = record?.activeVersion;
       if (!active) return {};
       const versions = Object.values(record.versions ?? {}).sort(

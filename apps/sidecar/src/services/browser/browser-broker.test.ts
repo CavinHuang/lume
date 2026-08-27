@@ -30,6 +30,23 @@ test("serial chain keeps working across slot reclamation (#615)", async () => {
   assert.equal([...queues.keys()].some((key) => key.includes("tab-chain")), false);
 });
 
+test("claim snapshots are replaced across turns and cleared on finalize (#525)", async () => {
+  const broker = new BrowserBroker({ request: async (request) => request.method === "openTabs"
+    ? [{ id: `claim-${request.context.browserTurnId}`, tabId: `tab-${request.context.browserTurnId}` }]
+    : { ok: true } });
+  broker.setPluginState({ browserEnabled: true });
+  const snapshots = (broker as unknown as { claimSnapshots: Map<string, unknown> }).claimSnapshots;
+
+  await broker.dispatch({ method: "openTabs", browserSessionId: "session-1", browserTurnId: "turn-1" });
+  assert.equal(snapshots.size, 1);
+  await broker.dispatch({ method: "openTabs", browserSessionId: "session-1", browserTurnId: "turn-2" });
+  assert.equal(snapshots.size, 1);
+  assert.equal([...snapshots.keys()][0]?.includes("turn-2"), true);
+
+  await broker.dispatch({ method: "finalize_tabs", browserSessionId: "session-1", browserTurnId: "turn-2" });
+  assert.equal(snapshots.size, 0);
+});
+
 test("extension backend is absent until browser/chrome plugins, setting, and live host agree", async () => {
   const calls: unknown[] = [];
   const broker = new BrowserBroker({ request: async (request) => { calls.push(request); return { backend: "iab" }; } }, { isAvailable: () => false, request: async () => ({ backend: "extension" }) });
