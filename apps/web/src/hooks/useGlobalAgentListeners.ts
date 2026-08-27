@@ -42,6 +42,7 @@ import {
   type PlanModePhaseChangedEvent,
   type LumeRuntimeEvent,
   type DesktopProactiveProposal,
+  isToolPermissionInterruptionMessage,
 } from '@lume/shared'
 import {
   removePendingToolPermissionEverywhere,
@@ -224,12 +225,9 @@ export function useGlobalAgentListeners() {
           }
           if (
             event.type === 'tool.permission_timeout' ||
-            (event.type === 'tool.failed' && (
-              event.error.message.includes('工具权限确认超时')
-              // 线程删除触发 cancel 时 sidecar 以 deny("用户拒绝执行工具") 收口（#519），
-              // 跨线程展示的横幅同样需要摘除，否则残留至刷新
-              || event.error.message.includes('用户拒绝执行工具')
-            ))
+            // #519/#559 收尾:文本判定改走 shared 哨兵单源——线程删除触发 cancel 时
+            // sidecar 以 deny 前缀收口,跨线程展示的横幅同样需要摘除,否则残留至刷新
+            (event.type === 'tool.failed' && isToolPermissionInterruptionMessage(event.error.message))
           ) {
             // 安全 F4:限定归属线程,防 provider 顺序 id 跨线程互摘横幅
             const requestId = event.type === 'tool.permission_timeout' ? event.requestId : event.toolCallId

@@ -5,7 +5,12 @@
  */
 import { isHardDeniedTool, type CanUseToolFn, type ToolDefinition } from "@lume/agent-sdk";
 import { randomUUID } from "node:crypto";
-import type { AgentToolPermissionPreview, AgentToolPermissionRequest } from "@lume/shared";
+import {
+  TOOL_PERMISSION_TIMEOUT_PREFIX,
+  USER_DENIED_TOOL_PREFIX,
+  type AgentToolPermissionPreview,
+  type AgentToolPermissionRequest,
+} from "@lume/shared";
 import type { PluginPermissions, SensitiveCapabilityKey } from "@lume/agent-sdk";
 import { createLogger } from "../../infra/logger";
 import type {
@@ -982,7 +987,7 @@ export function createCanUseToolHandler(
             toolCallId: permissionRequest.toolUseId,
             requestId: permissionRequest.requestId,
             toolName,
-            message: `工具权限确认超时: ${toolName}`,
+            message: `${TOOL_PERMISSION_TIMEOUT_PREFIX}: ${toolName}`,
           });
         },
         onCancelled: (permissionRequest) => {
@@ -1056,8 +1061,8 @@ export function createCanUseToolHandler(
     return {
       behavior: "deny",
       message: permissionTimedOut
-        ? `工具权限确认超时: ${toolName}`
-        : `用户拒绝执行工具: ${toolName}`,
+        ? `${TOOL_PERMISSION_TIMEOUT_PREFIX}: ${toolName}`
+        : `${USER_DENIED_TOOL_PREFIX}: ${toolName}`,
     };
   };
 }

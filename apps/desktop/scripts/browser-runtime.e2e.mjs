@@ -382,6 +382,8 @@ app.whenReady().then(async () => {
     check(await view.executeJavaScript("document.querySelector('#name').value") === 'Semantic Ref Fill', 'semantic ref fill did not resolve the textbox backend node')
     await view.executeJavaScript("document.querySelector('#name').value = 'Lume Agent'")
     const currentSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    const reusedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    check(reusedSnapshot.snapshot_id === currentSnapshot.snapshot_id, 'unchanged semantic snapshot did not reuse the cached AX tree')
     const currentApplyRef = Object.entries(currentSnapshot.refs).find(([, value]) => value.role === 'button' && value.name === 'Apply')?.[0]
     const scopedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', scope_ref: '@' + currentApplyRef, snapshot_id: currentSnapshot.snapshot_id })
     check(scopedSnapshot.tree.includes('Apply') && !scopedSnapshot.tree.includes('Name'), 'semantic snapshot scope did not isolate the requested ref subtree')
@@ -405,6 +407,7 @@ app.whenReady().then(async () => {
     })
     check(await call('locator:innerText', { tabId: 'fixture-tab', locator: earlyFrameLocator('#frame-result') }) === 'Semantic Frame Agent', 'cross-origin semantic ref did not resolve its backend node')
     const supplementedSnapshot = await call('semanticSnapshot', { tabId: 'fixture-tab', interactive_only: true })
+    check(supplementedSnapshot.snapshot_id !== frameSnapshot.snapshot_id, 'child-frame DOM changes incorrectly reused a stale semantic snapshot')
     const customCardRef = Object.entries(supplementedSnapshot.refs).find(([, value]) => value.role === 'clickable' && value.name === 'Custom card')?.[0]
     check(typeof customCardRef === 'string', 'semantic snapshot did not supplement a cursor-pointer element')
     const annotatedScreenshot = await call('screenshot', {

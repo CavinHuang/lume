@@ -1,5 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { humanizeRuntimeErrorMessage } from "./runtime-error-copy";
+import {
+  humanizeRuntimeErrorMessage,
+  isToolPermissionInterruptionMessage,
+  TOOL_PERMISSION_TIMEOUT_PREFIX,
+  USER_DENIED_TOOL_PREFIX,
+} from "./runtime-error-copy";
 
 describe("humanizeRuntimeErrorMessage", () => {
   test("渠道 snake_case 错误码映射为人话 + 下一步指引", () => {
@@ -40,7 +45,10 @@ describe("humanizeRuntimeErrorMessage", () => {
   });
 
   test("未识别的正常错误消息透传不误伤", () => {
-    expect(humanizeRuntimeErrorMessage("工具权限确认超时: Bash")).toBe("工具权限确认超时: Bash");
+    // 输入用生产同源哨兵常量拼接:humanize 侧对工具权限中断消息保持原文透传,
+    // 是 web 横幅文本匹配的隐含契约(#559 收尾 single-sourcing)
+    const message = `${TOOL_PERMISSION_TIMEOUT_PREFIX}: Bash`;
+    expect(humanizeRuntimeErrorMessage(message)).toBe(message);
   });
 
   test("review P0:「内部前缀+错误码」组合形态必须命中映射", () => {
@@ -57,5 +65,24 @@ describe("humanizeRuntimeErrorMessage", () => {
 
   test("review F4:runtime-core 前缀剥离带词边界,不误伤连字符标识", () => {
     expect(humanizeRuntimeErrorMessage("runtime-core-internal metric dump")).toBe("runtime-core-internal metric dump");
+  });
+});
+
+describe("isToolPermissionInterruptionMessage", () => {
+  test("命中超时与拒绝两种收口形态", () => {
+    expect(isToolPermissionInterruptionMessage(`${TOOL_PERMISSION_TIMEOUT_PREFIX}: Bash`)).toBe(true);
+    expect(isToolPermissionInterruptionMessage(`${USER_DENIED_TOOL_PREFIX}: Write`)).toBe(true);
+  });
+
+  test("普通失败消息不误判", () => {
+    expect(isToolPermissionInterruptionMessage("connection_disabled")).toBe(false);
+    expect(isToolPermissionInterruptionMessage("read ENOENT: /tmp/x")).toBe(false);
+    expect(isToolPermissionInterruptionMessage("")).toBe(false);
+  });
+
+  test("与 humanize 透传约定联动:判定命中的消息原文保留", () => {
+    const message = `${USER_DENIED_TOOL_PREFIX}: Edit`;
+    expect(isToolPermissionInterruptionMessage(message)).toBe(true);
+    expect(humanizeRuntimeErrorMessage(message)).toBe(message);
   });
 });
