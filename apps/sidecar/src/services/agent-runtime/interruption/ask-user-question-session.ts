@@ -10,6 +10,7 @@ import {
   resolveAskUserInterruption,
   updateAskUserApprovalSession
 } from "./ask-user-service";
+import type { LumeInterruption } from "./interruption";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
 import { PendingRequestRegistry } from "./pending-request-registry";
 import { createLogger } from "../../infra/logger";
@@ -165,7 +166,11 @@ export function cancelPendingAskUserQuestionBySession(threadId: string): void {
   );
 }
 
-export function listPendingAskUserQuestionRequests(): AgentAskUserQuestionRequest[] {
+// #527-6：支持调用方传入已扫描的 pending 中断记录，GET_PENDING_INTERACTIVE
+// 聚合路径据此复用单次目录扫描，避免 ask/tool 两路各自全量 readdir
+export function listPendingAskUserQuestionRequests(
+  persistedInterruptions?: LumeInterruption[],
+): AgentAskUserQuestionRequest[] {
   const liveRequests = pendingAskUserQuestionResolvers.list().map(({ meta }) => ({
     ...meta.request,
     threadId: meta.approvalSessionId,
@@ -175,13 +180,16 @@ export function listPendingAskUserQuestionRequests(): AgentAskUserQuestionReques
         : {}
     ))
   }));
-  mergePersistedAskUserRequests(liveRequests);
+  mergePersistedAskUserRequests(liveRequests, persistedInterruptions);
   return liveRequests;
 }
 
-function mergePersistedAskUserRequests(target: AgentAskUserQuestionRequest[]): void {
+function mergePersistedAskUserRequests(
+  target: AgentAskUserQuestionRequest[],
+  persistedInterruptions?: LumeInterruption[],
+): void {
   const seen = new Set(target.map((request) => request.toolUseId));
-  const persisted = listPendingRuntimeCoreInterruptions();
+  const persisted = persistedInterruptions ?? listPendingRuntimeCoreInterruptions();
   for (const interruption of persisted) {
     if (interruption.type !== "ask_user") continue;
     const payload = interruption.payload as AgentAskUserQuestionRequest;

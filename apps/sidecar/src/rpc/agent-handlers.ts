@@ -113,6 +113,7 @@ import {
   submitDesktopActionDecision,
 } from "../services/agent-runtime/interruption/desktop-action-session";
 import { listPendingToolPermissionRequests } from "../services/agent-runtime/interruption/tool-permission-session";
+import { listPendingRuntimeCoreInterruptions } from "../services/agent-runtime/interruption/interruption-pending";
 import {
   getAgentProxyStatus,
   saveAgentProxySettings,
@@ -885,9 +886,12 @@ export function createAgentHandlers(
         params ?? {},
         AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE,
       );
-      const askRequests = listPendingAskUserQuestionRequests();
+      // #527-6：持久化中断只扫一次目录，ask/tool 两路复用（desktop action
+      // 走内存注册表，无磁盘扫描）
+      const persistedInterruptions = listPendingRuntimeCoreInterruptions();
+      const askRequests = listPendingAskUserQuestionRequests(persistedInterruptions);
       const desktopActionRequests = listPendingDesktopActionRequests();
-      const toolRequests = listPendingToolPermissionRequests();
+      const toolRequests = listPendingToolPermissionRequests(persistedInterruptions);
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
       for (const request of desktopActionRequests)
