@@ -32,6 +32,28 @@ import { SUGGESTION_IPC_CHANNELS } from "./suggestion"
 /** 通知类 key：不可作为 renderer RPC method 暴露 */
 const NOTIFICATION_CHANNEL_KEYS = new Set(["CHANGED", "REMINDER_DUE", "EVENTS"])
 
+/**
+ * 通知型通道值(#531 复审分离)：sidecar 经 writeNotification 单向推送
+ * (apps/sidecar/src/index.ts:73)，不经过渲染端→sidecar 的 sidecar_call 准入，
+ * 因此不得进入可调用 method 派生集。逐值显式列举(命名无稳定后缀，
+ * 后缀规则会误伤)；新增推送通道时在此登记。REVIEW 口径见契约测试。
+ */
+export const NOTIFY_ONLY_CHANNEL_VALUES: ReadonlySet<string> = new Set([
+  "agent:ask-user-question",
+  "agent:capabilities-changed",
+  "agent:desktop-action-request",
+  "agent:message-queue-changed",
+  "agent:plan-mode-phase-changed",
+  "agent:skill-improvement-suggested",
+  "agent:subagent-completed",
+  "agent:tool-permission-request",
+  "agent:workspace-files-changed",
+  "desktop-context:proposal-updated",
+  "memory:source-files-changed",
+  "reading:noteGenDone",
+  "reading:noteGenFailed",
+])
+
 const BROWSER_CHANNEL_VALUES = new Set<string>(Object.values(BROWSER_IPC_CHANNELS))
 
 const PUBLIC_CHANNEL_SOURCES = [
@@ -64,7 +86,8 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
         typeof value === "string" &&
         !NOTIFICATION_CHANNEL_KEYS.has(key) &&
         !value.includes(":privileged-") &&
-        !BROWSER_CHANNEL_VALUES.has(value),
+        !BROWSER_CHANNEL_VALUES.has(value) &&
+        !NOTIFY_ONLY_CHANNEL_VALUES.has(value),
     )
     .map(([, value]) => value),
 )

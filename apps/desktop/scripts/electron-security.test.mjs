@@ -21,7 +21,10 @@ import {
   validateRendererSidecarMethod,
 } from "../src/electron-security.ts";
 import { PUBLIC_RENDERER_SIDECAR_METHODS } from "../src/renderer-sidecar-methods.ts";
-import { LOCAL_RENDERER_SIDECAR_METHODS } from '@lume/shared';
+import {
+  LOCAL_RENDERER_SIDECAR_METHODS,
+  NOTIFY_ONLY_CHANNEL_VALUES,
+} from '@lume/shared';
 import {
   createPluginAssetRegistry,
   pluginAssetTokenFromUrl,
@@ -96,10 +99,13 @@ test("renderer sidecar allowlist equals shared derived channels plus local incre
   // 绊住"新增通道常量但 source 列表漏配"；再并上 shared 导出的本地增量，与桌面侧
   // Set 双向 ==：漏配/私加条目（含死条目）两个方向都会红。
   //（#528：RENDERER_BLOCKED_CHANNEL_VALUES 黑名单已随 copy-folder 两条死通道删除。）
+  //（#531 复审：通知型通道经 writeNotification 单向推送不入可调用集，其值清单
+  // 与派生侧共用 shared 单源 NOTIFY_ONLY_CHANNEL_VALUES——本测试的独立性针对
+  // PUBLIC_CHANNEL_SOURCES 漏配，不重复维护推送值枚举。）
   const sharedMethods = Object.entries(sharedIpc)
     .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.entries(value))
-    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value))
+    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value) && !NOTIFY_ONLY_CHANNEL_VALUES.has(value))
     .map(([, value]) => value);
   const expected = new Set([...sharedMethods, ...LOCAL_RENDERER_SIDECAR_METHODS]);
   assert.deepEqual(
