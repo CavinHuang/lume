@@ -522,6 +522,9 @@ export function disconnectConnector(service: string): void {
 function stopPendingAuthorization(service: string, error: Error): void {
   const pending = pendingAuthorizations.get(service);
   if (!pending) return;
+  // 前四步是对 finish 的防御性前置复制(get 与本函数同步无竞态,delete 目标
+  // 即所取者)。末位 pending.reject 是该流 done promise 的唯一结算通道、也是
+  // finish 幂等守卫的置位点——不得删,否则守卫永不生效,重放误删会复活
   clearTimeout(pending.timer);
   pending.server.close();
   pendingAuthorizations.delete(service);
