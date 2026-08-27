@@ -1,7 +1,8 @@
-import { AlertTriangle, X, RotateCcw } from 'lucide-react'
+import { AlertTriangle, X, RotateCcw, Settings2 } from 'lucide-react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { agentErrorMessagesAtom, agentStreamingStatesAtom } from '@/atoms'
+import { agentErrorMessagesAtom, agentStreamingStatesAtom, tabsAtom, activeTabIdAtom, settingsInitialTabAtom } from '@/atoms'
 import { agentSend } from '@/lib/desktop-api'
+import { openSettingsTab } from '@/components/app-shell/LeftSidebar'
 
 import { Button } from '@/components/ui/button'
 interface ErrorBannerProps {
@@ -12,6 +13,9 @@ export function ErrorBanner({ threadId }: ErrorBannerProps) {
   const errorMessages = useAtomValue(agentErrorMessagesAtom)
   const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setStreamingStates = useSetAtom(agentStreamingStatesAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
+  const setSettingsInitialTab = useSetAtom(settingsInitialTabAtom)
 
   const errorMsg = errorMessages[threadId]
 
@@ -29,6 +33,9 @@ export function ErrorBanner({ threadId }: ErrorBannerProps) {
     await agentSend({ threadId, userMessage: '请继续' })
   }
 
+  // 动线 F6:#559 人话指引含「设置 →」时给一键入口,不再让用户自己找
+  const hasSettingsGuidance = Boolean(errorMsg && errorMsg.includes('设置 →'))
+
   return (
     <div className="mx-4 mb-2 rounded-xl border border-destructive/30 bg-destructive/5 p-3">
       <div className="flex items-start gap-2.5">
@@ -37,6 +44,16 @@ export function ErrorBanner({ threadId }: ErrorBannerProps) {
           <p className="text-[13px] font-medium text-destructive">运行出错</p>
           {errorMsg && (
             <p className="text-[12px] text-destructive/70 mt-0.5 break-words">{errorMsg}</p>
+          )}
+          {hasSettingsGuidance && (
+            <Button
+              variant="ghost"
+              onClick={() => openSettingsTab(setTabs, setActiveTabId, setSettingsInitialTab, 'channel')}
+              className="mt-1.5 h-7 gap-1 rounded-md px-2 text-caption text-destructive/80 hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Settings2 size={12} />
+              打开设置
+            </Button>
           )}
         </div>
         <div className="flex items-center gap-1 flex-shrink-0">

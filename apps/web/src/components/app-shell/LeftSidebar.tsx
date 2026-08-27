@@ -211,12 +211,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   }
 
   const openSettings = () => {
-    const settingsId = '__settings__'
-    setActiveTabId(settingsId)
-
-    if (!tabs.find((tab) => tab.id === settingsId)) {
-      setTabs((previous) => [...previous, { id: settingsId, type: 'settings', title: '设置' }])
-    }
+    openSettingsTab(setTabs, setActiveTabId)
   }
 
   useEffect(() => {
@@ -338,7 +333,9 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
           toast.success('已归档')
         } catch (error) {
           console.error('[LeftSidebar] 归档失败:', error)
-          toast.error('归档失败')
+          // 二轮 review(动线 F8):护栏人话文案(如「线程正在运行中，请停止后再归档。」)
+          // 不再被通用文案吞掉
+          toast.error(error instanceof Error ? error.message : '归档失败')
         }
       },
     })
@@ -576,6 +573,21 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
       />
     </>
   )
+}
+
+/** 打开设置 tab(动线 F6):供 ErrorBanner 等组件复用「一键到设置」;可带初始分段深链 */
+export function openSettingsTab(
+  setTabs: (update: (tabs: Tab[]) => Tab[]) => void,
+  setActiveTabId: (id: string) => void,
+  setInitialTab?: (tab: string) => void,
+  initialTab?: string,
+): void {
+  const settingsId = '__settings__'
+  if (setInitialTab && initialTab) setInitialTab(initialTab)
+  setActiveTabId(settingsId)
+  setTabs((previous) => previous.some((tab) => tab.id === settingsId)
+    ? previous
+    : [...previous, { id: settingsId, type: 'settings' as const, title: '设置' }])
 }
 
 export function upsertWelcomeTab(tabs: Tab[], currentWorkspaceId: string | null): Tab[] {

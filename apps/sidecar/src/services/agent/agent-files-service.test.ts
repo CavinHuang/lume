@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -131,7 +131,8 @@ describe("agent-files-service file ops", () => {
 
     const resolved = resolveAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: "./.visible.md" });
     expect(resolved.relativePath).toBe(".visible.md");
-    expect(resolved.absolutePath).toBe(join(projectPath, ".visible.md"));
+    // resolver 返回 canonical（realpath）路径（macOS tmpdir /var→/private/var）
+    expect(resolved.absolutePath).toBe(realpathSync(join(projectPath, ".visible.md")));
 
     const listed = listProjectDirectory(workspace.slug);
     expect(listed.find((entry) => entry.name === ".visible.md")).toMatchObject({
@@ -217,7 +218,8 @@ describe("agent-files-service file ops", () => {
     });
 
     expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
-    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(join(workdir.filesRoot, "brief.md"));
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(realpathSync(join(workdir.filesRoot, "brief.md")));
   });
 
   test("browser uploads resolve only current thread project and session files", () => {
@@ -237,7 +239,11 @@ describe("agent-files-service file ops", () => {
       relativePath: "files/session.txt",
     })).toString("base64url")}`;
 
-    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([projectFile, sessionFile]);
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([
+      realpathSync(projectFile),
+      realpathSync(sessionFile),
+    ]);
     const outside = join(configDir, "outside-upload.txt");
     writeFileSync(outside, "outside", "utf8");
     expect(() => resolveAuthorizedBrowserUploadPaths(thread.id, [outside])).toThrow("不属于当前任务");
@@ -302,9 +308,11 @@ describe("agent-files-service file ops", () => {
     });
     const second = watchAuthorizedFileRef(ref, () => undefined);
     writeFileSync(join(projectPath, "watch.txt"), "after", "utf-8");
+    // 文件监听事件在 CI 高负载下可能晚于 3s 到达(曾实测 flake);放宽到与
+    // 邻近 watcher 用例一致的 15s 超时,失败仍会以 timeout 断言暴露
     expect(await Promise.race([
       changed.then(() => "changed" as const),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 3_000)),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 15_000)),
     ])).toBe("changed");
     expect(unwatchAuthorizedFileRef(first.watchId)).toEqual({ ok: true });
     expect(unwatchAuthorizedFileRef(second.watchId)).toEqual({ ok: true });

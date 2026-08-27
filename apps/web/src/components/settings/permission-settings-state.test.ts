@@ -45,15 +45,15 @@ describe('permission settings state', () => {
 
     expect(draft.permissionMode).toBe('plan')
     expect(draft.rules).toEqual([
-      { id: 'ask-bash', action: 'ask', tool: 'Bash', commandPattern: 'npm\\s+install', pathPattern: '', scope: undefined },
+      { id: 'ask-bash', action: 'ask', tool: 'Bash', commandPattern: 'npm\\s+install', pathPattern: '' },
     ])
   })
 
   test('normalizes editable permission rules', () => {
     expect(normalizePermissionRuleDrafts([
       createPermissionRuleDraft(),
-      { action: 'allow', tool: ' Bash ', commandPattern: ' git\\s+status ', pathPattern: '', scope: undefined },
-      { action: 'deny', tool: 'Write', commandPattern: '', pathPattern: ' src/** ', scope: undefined },
+      { action: 'allow', tool: ' Bash ', commandPattern: ' git\\s+status ', pathPattern: '' },
+      { action: 'deny', tool: 'Write', commandPattern: '', pathPattern: ' src/** ' },
     ])).toEqual([
       { action: 'allow', tool: 'Bash', commandPattern: 'git\\s+status' },
       { action: 'deny', tool: 'Write', pathPattern: 'src/**' },
@@ -68,7 +68,7 @@ describe('permission settings state', () => {
       },
       classifier: { enabled: true },
     }, [
-      { action: 'ask', tool: ' Bash ', commandPattern: ' npm\\s+install ', pathPattern: '', scope: undefined },
+      { action: 'ask', tool: ' Bash ', commandPattern: ' npm\\s+install ', pathPattern: '' },
     ])).toEqual({
       toolPolicy: {
         allow: ['Read'],

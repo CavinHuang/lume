@@ -1,4 +1,5 @@
 import type {
+  AgentToolPermissionAllowScope,
   AgentToolPermissionDecision,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput
@@ -36,10 +37,14 @@ function resolveTimeoutMs(): number {
   return Math.max(15_000, Math.min(60 * 60 * 1000, Math.floor(parsed)));
 }
 
-export function markToolFingerprintAllowed(threadId: string, fingerprint?: string): void {
+export function markToolFingerprintAllowed(
+  threadId: string,
+  fingerprint?: string,
+  scope: AgentToolPermissionAllowScope = "exact"
+): AgentToolPermissionAllowScope {
   const normalized = fingerprint?.trim();
-  if (!normalized) return;
-  runtimePermissionSessionStore.grantFingerprint(threadId, normalized);
+  if (!normalized) return "exact";
+  return runtimePermissionSessionStore.grantFingerprintWithScope(threadId, normalized, scope);
 }
 
 export function markToolPermissionSessionBypassed(...threadIds: Array<string | undefined>): void {
@@ -79,8 +84,17 @@ export function waitForToolPermissionDecision(
   emit: (request: AgentToolPermissionRequest) => void,
   options: {
     onTimeout?: (request: AgentToolPermissionRequest) => void;
+    onCancelled?: (request: AgentToolPermissionRequest) => void;
   } = {}
 ): Promise<AgentToolPermissionDecision | null> {
+  // 二轮复审 P2-3(与上游 #781 预 abort 守卫同款语义):死信号场景不得发审批卡、
+  // 不得持久化——否则 registry 短路 resolve 的持久化清理读不到尚未落盘的 pending
+  // 记录,runContinuation 残留 waiting_for_interruption(desktop 收到死审批卡)。
+  if (signal.aborted) {
+    return Promise.resolve(null);
+  }
+  // 上游合并移植(#781 幽灵审批修复):无决策终结(cancel/abort/超时)路径
+  // 必须通知 UI 摘横幅;幂等性由 Registry settle 单出口守卫保证。
   const promise = pendingToolPermissionResolvers.wait(request.requestId, {
     meta: { threadId: request.threadId, approvalSessionId: request.threadId, request },
     timeoutMs: resolveTimeoutMs(),
@@ -90,6 +104,18 @@ export function waitForToolPermissionDecision(
     supersededValue: () => null,
     onTimeout: () => options.onTimeout?.(request),
     beforeResolve: async (decision) => {
+      // 上游 #781 移植:abort/超时/cancelWhere 等无决策路径同步通知 UI 摘横幅,
+      // 否则审批卡片悬挂到超时(幽灵审批)。
+      if (decision === null) {
+        try {
+          options.onCancelled?.(request);
+        } catch (error) {
+          log.warn("onCancelled callback failed", {
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
       try {
         await resolveToolApprovalInterruption({
           threadId: request.threadId,
@@ -116,7 +142,13 @@ export function waitForToolPermissionDecision(
   return promise;
 }
 
-export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): boolean {
+export interface ToolPermissionSubmitResult {
+  handled: boolean;
+  /** allow_always 实际生效档（宽档被否决时降级 exact），供 UI 如实回执 */
+  effectiveScope?: AgentToolPermissionAllowScope;
+}
+
+export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): ToolPermissionSubmitResult {
   const shouldBypassThread = input.threadPermissionMode === "bypassPermissions" && input.decision !== "deny";
   const meta = pendingToolPermissionResolvers.getMeta(input.requestId);
   if (!meta) {
@@ -135,13 +167,15 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
     if (handled && shouldBypassThread) {
       markToolPermissionSessionBypassed(input.threadId, persisted?.threadId, persisted?.originThreadId);
     }
+    let effectiveScope: AgentToolPermissionAllowScope | undefined;
     if (handled && input.decision === "allow_always" && persisted?.grantSuggestion?.fingerprint) {
-      markToolFingerprintAllowed(
+      effectiveScope = markToolFingerprintAllowed(
         persisted.originThreadId ?? persisted.threadId,
-        persisted.grantSuggestion.fingerprint
+        persisted.grantSuggestion.fingerprint,
+        input.allowAlwaysScope
       );
     }
-    return handled;
+    return { handled, ...(effectiveScope ? { effectiveScope } : {}) };
   }
   if (meta.approvalSessionId !== input.threadId) {
     throw new Error("工具权限确认会话不匹配");
@@ -155,8 +189,17 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
   if (shouldBypassThread) {
     markToolPermissionSessionBypassed(input.threadId, meta.threadId, meta.request.originThreadId);
   }
+  let effectiveScope: AgentToolPermissionAllowScope | undefined;
+  if (input.decision === "allow_always") {
+    // #558:按用户选择的档位写宽指纹（缺省 exact 保持逐字节）
+    effectiveScope = markToolFingerprintAllowed(
+      meta.request.originThreadId ?? meta.threadId,
+      meta.request.grantSuggestion?.fingerprint,
+      input.allowAlwaysScope
+    );
+  }
   pendingToolPermissionResolvers.settle(input.requestId, input.decision);
-  return true;
+  return { handled: true, ...(effectiveScope ? { effectiveScope } : {}) };
 }
 
 export function cancelPendingToolPermissionBySession(threadId: string): void {

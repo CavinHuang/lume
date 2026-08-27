@@ -85,7 +85,8 @@ export async function resolveToolApprovalInterruption(input: {
   const sessionDir = getRuntimeCoreSessionDir(input.threadId);
   const store = createFileBackedLumeInterruptionStore(sessionDir);
   const current = await store.get(toolApprovalInterruptionId(input.requestId));
-  await store.resolve(
+  // resolve 返回 false=记录缺失或已被并发路径（cancel/超时）收口：不得再用 stale 快照写 continuation
+  const migrated = await store.resolve(
     toolApprovalInterruptionId(input.requestId),
     {
       status: approved ? "approved" : "rejected",
@@ -95,6 +96,7 @@ export async function resolveToolApprovalInterruption(input: {
       }
     }
   );
+  if (!migrated) return;
   if (current?.runId) {
     const payload = current.payload as AgentToolPermissionRequest;
     await createFileBackedRunContinuationStore(sessionDir).update(current.runId, {

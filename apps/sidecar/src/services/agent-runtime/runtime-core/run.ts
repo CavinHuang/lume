@@ -129,6 +129,8 @@ import {
   applyWorkflowHookEffectsSafely,
 } from "./workflow-hook-safety";
 import { resolvePromptCachePolicy, resolveSdkApiType } from "./request-policy";
+// #289 分层守卫:runtime-core 不得引用上层 runner——humanize 已下沉 shared,直取底层
+import { humanizeRuntimeErrorMessage } from "@lume/shared";
 import {
   getResolvedAgentTools,
 } from "./run-subagent";
@@ -1114,6 +1116,30 @@ async function createRuntimeCoreSessionImpl(
     sessionDir,
     pendingCleanup,
   });
+
+  // #560:MCP 连接失败原本只进 system prompt/日志——本轮静默缺一组工具，直到模型
+  // 回答「我没有这个工具」。组装完成即向线程投影 runtime.warning 给用户。
+  // review P2:reason 可能含 ENOENT 路径等内部细节,过 #559 人性化层再上屏;
+  // id 按 pluginName 固定,web 端 sonner 同 id 自动聚合,坏 server 不每 run 刷屏。
+  for (const diagnostic of [
+    ...(workspaceMcpRuntime.diagnostics ?? []),
+    ...(pluginMcpRuntime.diagnostics ?? []),
+  ]) {
+    try {
+      const message = humanizeRuntimeErrorMessage(`${diagnostic.pluginName}：${diagnostic.reason}`);
+      input.emitRuntimeEvent?.({
+        id: `${input.lumeSessionId}:${runId}:runtime.warning:${diagnostic.pluginName}`,
+        type: "runtime.warning",
+        threadId: input.lumeSessionId,
+        runId,
+        createdAt: new Date().toISOString(),
+        message,
+        source: "mcp"
+      });
+    } catch {
+      // 投影失败不阻断 run 组装
+    }
+  }
 
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,

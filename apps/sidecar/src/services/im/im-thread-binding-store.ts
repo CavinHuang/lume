@@ -97,8 +97,13 @@ export function upsertImThreadBinding(input: UpsertImThreadBindingInput): ImThre
     const index = config.bindings.findIndex((binding) => binding.key === key);
     if (index >= 0) {
       const existing = config.bindings[index] as ImThreadBinding;
+      // 二轮 review(并发 F6):last-write-wins 换绑——同 peer 双消息竞态双建
+      // 线程时,binding 若定格首写,后建线程会成为孤儿空壳;跟随最新创建收敛。
+      // /new 路径先 delete 再 upsert,不走本分支,语义不受影响。
+      const nextThreadId = input.threadId.trim();
       const updated: ImThreadBinding = {
         ...existing,
+        ...(nextThreadId && nextThreadId !== existing.threadId ? { threadId: nextThreadId } : {}),
         peerName: input.peerName ?? existing.peerName,
         contextToken: input.contextToken ?? existing.contextToken,
         updatedAt: now

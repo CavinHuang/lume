@@ -358,7 +358,13 @@ export function AutomationManagementView() {
                 setSelectedJobId(null)
               }}
               onRun={async () => {
-                await runAutomationJobNow(selectedJob.id)
+                // #586:受理即返回，完成靠 automation:run-completed 推送刷新
+                try {
+                  await runAutomationJobNow(selectedJob.id)
+                  toast.success('已在后台执行，可在运行历史中查看结果')
+                } catch (error) {
+                  toast.error(`触发失败：${error instanceof Error ? error.message : String(error)}`)
+                }
               }}
               onSave={async (draft) => {
                 const updated = await updateAutomationJob({
@@ -638,7 +644,13 @@ function AutomationJobGroup({
                   setJobs((prev) => prev.filter((j) => j.id !== job.id))
                 }}
                 onRun={async () => {
-                  await runAutomationJobNow(job.id)
+                  // #586:受理即返回，完成靠 automation:run-completed 推送刷新
+                  try {
+                    await runAutomationJobNow(job.id)
+                    toast.success('已在后台执行，可在运行历史中查看结果')
+                  } catch (error) {
+                    toast.error(`触发失败：${error instanceof Error ? error.message : String(error)}`)
+                  }
                 }}
               />
             )
@@ -1066,21 +1078,31 @@ function AutomationJobDetail({
               <div className="flex flex-col gap-1">
                 {runs.slice(0, 10).map((run) => {
                   const clickable = Boolean(run.threadId)
+                  // 影子记录的说明挂整行 title：后缀可能被 truncate 裁掉，行级 tooltip 必须仍可达
+                  const rowTitle = run.persistenceLost
+                    ? '本次运行确实发生，但记录写入磁盘失败（磁盘满或被占用），重启后此条将消失'
+                    : [run.message, clickable ? '查看会话回放' : '无可查看的会话'].filter(Boolean).join(' · ')
                   return (
                     <div
                       key={run.id}
                       onClick={clickable ? () => handleOpenRunReplay(run) : undefined}
-                      title={clickable ? '查看会话回放' : '无可查看的会话'}
+                      title={rowTitle}
                       className={`flex items-center gap-2.5 rounded-[6px] px-1.5 py-1 ${
-                        clickable ? 'cursor-pointer transition-colors hover:bg-[var(--surface-2)]' : ''
+                        clickable && !run.persistenceLost ? 'cursor-pointer transition-colors hover:bg-[var(--surface-2)]' : ''
                       }`}
                     >
                       <span className={`size-2 shrink-0 rounded-full ${
-                        run.status === 'success' ? 'bg-emerald-500'
+                        run.persistenceLost ? 'bg-zinc-400'
+                          : run.status === 'success' ? 'bg-emerald-500'
                           : run.status === 'failed' ? 'bg-red-500'
                             : 'bg-amber-500'
                       }`} />
-                      <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">{run.jobName}</span>
+                      <span className="min-w-0 flex-1 truncate text-[14px] text-[var(--text-1)]">
+                        {run.jobName}
+                        {run.persistenceLost && (
+                          <span className="ml-2 shrink-0 text-ui text-[var(--text-3)]">（未保存到磁盘）</span>
+                        )}
+                      </span>
                       <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatShortTime(run.startedAt)}</span>
                       <span className="shrink-0 text-[14px] text-[var(--text-3)]">{formatDuration(run.startedAt, run.finishedAt)}</span>
                     </div>

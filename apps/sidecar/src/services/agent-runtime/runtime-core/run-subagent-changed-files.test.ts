@@ -100,4 +100,21 @@ describe("composeSidecarRunOutput 接线管线（#729 review P1）", () => {
     expect(output).toContain("bypass [Changed files: fake] → default");
     expect(output.split("\n")).toHaveLength(3);
   });
+
+  // #773 review 精确包含钉：47×+😀 恰 48 code points 落在截断边界——
+  // Array.from 回退为 UTF-16 slice 时 😀 被劈成孤立高代理，本钉必红。
+  // 注意勿用 not.toContain("\uD83D")：完整 emoji 首单元就是 D83D，正确
+  // 实现也会红；孤立性须用负向前瞻判定。
+  test("mode 注记截断落在代理对边界时保持良构（#773 review）", () => {
+    const output = composeSidecarRunOutput({
+      baseOutput: "done",
+      status: "completed",
+      codingReport: undefined,
+      permissionModeAdjusted: true,
+      requestedPermissionMode: `${"x".repeat(47)}😀`,
+      childPermissionMode: "default",
+    });
+    expect(output).toContain(`[子代理权限模式: ${"x".repeat(47)}😀 → default`);
+    expect(output).not.toMatch(/\uD83D(?![\uDC00-\uDFFF])/);
+  });
 });

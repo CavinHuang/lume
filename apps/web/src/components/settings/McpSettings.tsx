@@ -332,7 +332,13 @@ export function McpSettings() {
               <Button
                 type="button"
                 variant="outline"
-                onClick={() => void openLumeConfigSourceFile()}
+                onClick={() =>
+                  openLumeConfigSourceFile()
+                    .then((result) => {
+                      if (!result.ok) toast.error('未能调用系统打开器，请手动打开配置文件')
+                    })
+                    .catch(() => toast.error('打开配置文件失败'))
+                }
                 className="lume-action-tile h-8 gap-2 px-3 text-[12px] shadow-none"
               >
                 <ExternalLink size={14} />

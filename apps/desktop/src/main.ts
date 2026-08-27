@@ -93,6 +93,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
+import { MAX_RPC_MESSAGE_BYTES } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -210,6 +211,13 @@ const HEALTHCHECK_TIMEOUT_MS = 45_000
 // (UTF-16 code units)。sidecar 对超限帧静默丢弃且错误响应不带 id,pending
 // 查表必 miss,caller 只能干等 45s 超时——发送端预检让 caller 立即得明确错误。
 const SIDECAR_RPC_MESSAGE_LIMIT_UNITS = 96 * 1024 * 1024
+
+// 长等待档位：首装搜索后端 = Python 下载 120s + 解压 + pip 安装 120s（#552 动线3），
+// 通用 45s 上限必然假失败。仅白名单方法使用，不影响常规 RPC 的故障感知速度。
+const LONG_RPC_TIMEOUT_MS = 300_000
+const LONG_RPC_METHODS = new Set([
+  'general-settings:test-search-backend',
+])
 const SIDECAR_READY_METHOD = 'system.ready'
 const SIDECAR_LOG_METHOD = 'system.log'
 const SIDECAR_LOG_BATCH_METHOD = 'system.log-batch'
@@ -3329,22 +3337,31 @@ function createSidecarHost({ onNotification }) {
       params,
     })
 
+    // 对称预检（#552）：超限消息 sidecar 会静默丢弃，本地先 reject 免得 caller 干等 45s 超时
     if (payload.length > SIDECAR_RPC_MESSAGE_LIMIT_UNITS) {
-      throw new Error(`sidecar request exceeds size limit: ${method}`)
+      writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.payload_too_large', `sidecar RPC payload exceeds size limit: ${method}`, {
+        status: 'error',
+        rpcRequestId: String(requestId),
+        ...correlation,
+        data: { method },
+      })
+      // 该 message 会直达渲染层 toast，用面向用户的中文并给出限额与动作
+      throw new Error(`请求内容超过大小上限（96MB），请减小附件或内容后重试`)
     }
 
     return new Promise((resolveCall, rejectCall) => {
+      const timeoutMs = LONG_RPC_METHODS.has(method) ? LONG_RPC_TIMEOUT_MS : HEALTHCHECK_TIMEOUT_MS
       const timeout = setTimeout(() => {
         pending.delete(requestId)
         writeMainLog('error', 'desktop.sidecar.rpc', 'rpc.timeout', `sidecar RPC timed out: ${method}`, {
           status: 'error',
-          durationMs: HEALTHCHECK_TIMEOUT_MS,
+          durationMs: timeoutMs,
           rpcRequestId: String(requestId),
           ...correlation,
           data: { method },
         })
         rejectCall(new Error(`sidecar request timed out: ${method}`))
-      }, HEALTHCHECK_TIMEOUT_MS)
+      }, timeoutMs)
 
       pending.set(requestId, {
         resolve: resolveCall,

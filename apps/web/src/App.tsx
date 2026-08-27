@@ -110,7 +110,7 @@ export function App() {
         <TooltipProvider>
           <AppInner />
           <ConnectionVaultSetupDialog />
-          <Toaster position="bottom-right" />
+          <Toaster position="bottom-right" aria-label="通知（Alt+T）" />
         </TooltipProvider>
       </ModelMetaProvider>
     </Provider>

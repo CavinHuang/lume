@@ -38,12 +38,14 @@ function makeFakeClient(messageExists: boolean, options?: { folders?: Array<Reco
   return { client, moveTargets, get fetchCount() { return fetchCalls; } };
 }
 
-const credential: MailCredential = {
-  email: "user@qq.com",
+let uidGuardSeq = 0;
+// 池按账号键控且连接跨动作复用:每个用例独立邮箱,避免吃到上一用例留池的 fake 连接
+const credential = (): MailCredential => ({
+  email: `uid-guard-${++uidGuardSeq}@qq.com`,
   authorizationCode: "abcd1234efgh5678",
   imapHost: "imap.qq.com",
   smtpHost: "smtp.qq.com",
-};
+});
 
 // 纯 UID 语义测试与连接期 host-pinning 无关:显式豁免避免默认 pinning 触发真实 DNS
 const config = { displayName: "QQ 邮箱", attachmentFallbackPrefix: "attachment", enforceHostNetworkPolicy: false };
@@ -53,7 +55,7 @@ describe("mail mutation actions probe uid existence first", () => {
     const fake = makeFakeClient(false);
     const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
 
-    await expect(protocol.deleteMessage(credential, "INBOX", 999)).rejects.toMatchObject({
+    await expect(protocol.deleteMessage(credential(), "INBOX", 999)).rejects.toMatchObject({
       kind: "uid_not_found",
     });
     // 探测先于变更:fetchOne 至少被调用一次(注意不可解构 getter——会立即求值成快照)
@@ -64,9 +66,9 @@ describe("mail mutation actions probe uid existence first", () => {
     const { client } = makeFakeClient(false);
     const protocol = createMailProtocol(config, { createImapClient: () => client });
 
-    await expect(protocol.markSeen(credential, "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
-    await expect(protocol.markUnseen(credential, "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
-    await expect(protocol.moveMessage(credential, "INBOX", 999, "Trash")).rejects.toMatchObject({
+    await expect(protocol.markSeen(credential(), "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
+    await expect(protocol.markUnseen(credential(), "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
+    await expect(protocol.moveMessage(credential(), "INBOX", 999, "Trash")).rejects.toMatchObject({
       kind: "uid_not_found",
     });
   });
@@ -75,8 +77,8 @@ describe("mail mutation actions probe uid existence first", () => {
     const { client } = makeFakeClient(true);
     const protocol = createMailProtocol(config, { createImapClient: () => client });
 
-    await expect(protocol.deleteMessage(credential, "INBOX", 1)).resolves.toBe("Trash");
-    await expect(protocol.markSeen(credential, "INBOX", 1)).resolves.toBeUndefined();
+    await expect(protocol.deleteMessage(credential(), "INBOX", 1)).resolves.toBe("Trash");
+    await expect(protocol.markSeen(credential(), "INBOX", 1)).resolves.toBeUndefined();
   });
 });
 
@@ -85,7 +87,7 @@ describe("delete_email moves into Trash instead of hard expunging (#691)", () =>
     const fake = makeFakeClient(true);
     const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
 
-    await expect(protocol.deleteMessage(credential, "INBOX", 1)).resolves.toBe("Trash");
+    await expect(protocol.deleteMessage(credential(), "INBOX", 1)).resolves.toBe("Trash");
     expect(fake.moveTargets).toEqual(["Trash"]);
   });
 
@@ -93,7 +95,7 @@ describe("delete_email moves into Trash instead of hard expunging (#691)", () =>
     const fake = makeFakeClient(true, { folders: [] });
     const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
 
-    await expect(protocol.deleteMessage(credential, "INBOX", 1)).rejects.toMatchObject({
+    await expect(protocol.deleteMessage(credential(), "INBOX", 1)).rejects.toMatchObject({
       kind: "trash_missing",
     });
     // 拒绝路径不得触碰消息本身
@@ -106,7 +108,7 @@ describe("mutation actions verify UIDVALIDITY before writing (#690)", () => {
     const fake = makeFakeClient(true, { uidValidity: 100n });
     const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
 
-    await expect(protocol.markSeen(credential, "INBOX", 1)).rejects.toMatchObject({
+    await expect(protocol.markSeen(credential(), "INBOX", 1)).rejects.toMatchObject({
       kind: "uid_validity_changed",
     });
   });
@@ -114,28 +116,30 @@ describe("mutation actions verify UIDVALIDITY before writing (#690)", () => {
   it("allows a write after a read established the baseline, and rejects after a reset", async () => {
     const fake = makeFakeClient(true, { uidValidity: 100n });
     const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
+    const account = credential();
 
     // 读动作建立基准
-    await protocol.searchSummaries(credential, "INBOX", {}, { limit: 5, peek: true });
-    await expect(protocol.markSeen(credential, "INBOX", 1)).resolves.toBeUndefined();
+    await protocol.searchSummaries(account, "INBOX", {}, { limit: 5, peek: true });
+    await expect(protocol.markSeen(account, "INBOX", 1)).resolves.toBeUndefined();
 
     // 文件夹删除重建:计数器重置后旧 UID 全部作废
     fake.client.resetUidValidity(200n);
-    await expect(protocol.deleteMessage(credential, "INBOX", 1)).rejects.toMatchObject({
+    await expect(protocol.deleteMessage(account, "INBOX", 1)).rejects.toMatchObject({
       kind: "uid_validity_changed",
     });
 
     // 重新 search 后拿到新鲜基准,写恢复放行
-    await protocol.searchSummaries(credential, "INBOX", {}, { limit: 5, peek: true });
-    await expect(protocol.deleteMessage(credential, "INBOX", 1)).resolves.toBe("Trash");
+    await protocol.searchSummaries(account, "INBOX", {}, { limit: 5, peek: true });
+    await expect(protocol.deleteMessage(account, "INBOX", 1)).resolves.toBe("Trash");
   });
 
   it("shares the uid-validity ledger across letter-case variants of one address", async () => {
     const fake = makeFakeClient(true, { uidValidity: 100n });
     const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
+    const account = credential();
 
     // 大小写变体建立基准后,另一变体的写动作不得因「无基准」被误拒(#735 审查)
-    await protocol.searchSummaries({ ...credential, email: "User@QQ.com" }, "INBOX", {}, { limit: 5, peek: true });
-    await expect(protocol.markSeen(credential, "INBOX", 1)).resolves.toBeUndefined();
+    await protocol.searchSummaries({ ...account, email: account.email.toUpperCase() }, "INBOX", {}, { limit: 5, peek: true });
+    await expect(protocol.markSeen(account, "INBOX", 1)).resolves.toBeUndefined();
   });
 });

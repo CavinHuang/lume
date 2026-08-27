@@ -639,6 +639,11 @@ export function deleteAgentThread(id: string): void {
   // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
   clearRuntimeFileAccessLedger(id);
   clearThreadFileStateCache(id);
+  // 审批会话状态随线程删除回收（#519）：grants/bypassed/denials 三 Map 只增不减的清理入口；
+  // pending 审批与 ask-user 等待一并取消，避免悬挂至超时。
+  clearToolPermissionSession(id);
+  cancelPendingAskUserQuestionBySession(id);
+  clearPermissionDenials(id);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 

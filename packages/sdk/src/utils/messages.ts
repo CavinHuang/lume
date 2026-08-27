@@ -80,6 +80,8 @@ export function collectInternalContextBlocks(
 
 const FACT_FIELD_MAX_CHARS = 64
 const FACT_APP_MAX_CHARS = 80
+/** 单条 tool_result 持久化的批量台账事实上限：防异常生产者刷爆持久轨。 */
+const FACT_BATCH_MAX_ENTRIES = 32
 
 /**
  * Normalize a raw computer-use ledger fact into the minimal validated shape
@@ -126,6 +128,15 @@ export function projectPersistedToolResultMeta(meta: unknown): Record<string, un
   const projected: Record<string, unknown> = {}
   const actionFact = normalizeComputerUseActionFact(source.computerUseAction)
   if (actionFact) projected.computerUseAction = actionFact
+  // 批量台账事实（get_window_state / node-repl 桥）逐条验形后随持久轨存活，
+  // 跨压缩边界的动作轨迹不再只剩 singular 最新一条（#725 review R1/R10 遗留）。
+  if (Array.isArray(source.computerUseActions)) {
+    const facts = source.computerUseActions
+      .map(normalizeComputerUseActionFact)
+      .filter((fact): fact is NonNullable<typeof fact> => fact !== null)
+      .slice(0, FACT_BATCH_MAX_ENTRIES)
+    if (facts.length > 0) projected.computerUseActions = facts
+  }
   if (typeof source.toolName === 'string' && source.toolName) projected.toolName = source.toolName
   return Object.keys(projected).length > 0 ? projected : undefined
 }

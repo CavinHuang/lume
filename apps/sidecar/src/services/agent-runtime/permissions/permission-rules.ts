@@ -18,13 +18,25 @@ export function extractPermissionPath(input: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+export function extractPermissionUrl(input: unknown): string | undefined {
+  if (!input || typeof input !== "object") return undefined;
+  const record = input as Record<string, unknown>;
+  const value = record.url ?? record.baseUrl;
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
 export function buildPermissionFingerprint(input: {
   descriptor: LumeToolDescriptor;
   rawInput: unknown;
 }): string {
   const command = extractPermissionCommand(input.rawInput);
   const path = extractPermissionPath(input.rawInput);
-  const key = command ?? path ?? stableStringify(input.rawInput);
+  const url = extractPermissionUrl(input.rawInput);
+  const base = command ?? path ?? stableStringify(input.rawInput);
+  // 二轮 review(安全 F2):url 不入指纹会让 prompt 键控工具(web_fetch 类)
+  // 按相同文本放行任意主机(SSRF/外带)。url 与主键不同时并入;不同 URL 的
+  // 指纹互不为前缀,command 档词边界天然收紧。
+  const key = url && url !== base ? `${base}|${url}` : base;
   return `${input.descriptor.canonicalName}:${key}`;
 }
 
@@ -58,6 +70,36 @@ export function matchPermissionRule(input: {
   }
 
   return true;
+}
+
+/**
+ * shell 连接符/管道/重定向/命令替换字符——command 档的写入侧与匹配侧共用
+ * 同一否决口径（#558 二轮 review P1）。
+ */
+export const COMMAND_CONNECTOR_PATTERN = /[;&|<>`]|\$\(/;
+
+/**
+ * #558 review P1:command 档宽指纹的「前缀+词边界」校验可被 shell 连接符后缀
+ * 绕过（`git status && curl … | sh` 的 rest 以空白开头照样命中）。与规则表
+ * 「unparseable 命令永不获得持久 allow」同一口径：bash 类指纹必须能解析为
+ * simple 单命令或经保守只读子集证明，才允许写 command 前缀档；否则降级 exact。
+ */
+export function allowsCommandScopeGrant(canonicalName: string, key: string): boolean {
+  if (canonicalName !== "bash") return true;
+  const analysis = analyzeBashCommand(key);
+  if (analysis.status === "simple") {
+    // 三轮 CI 实锤(Ubuntu 有 natives):tree-sitter 把「a && b」这类 list
+    // 也判 simple(逐段简单),command 前缀档必须钉死单命令
+    return analysis.commands.length === 1;
+  }
+  if (isReadOnlyShellInput({ command: key })) return true;
+  // 解析器不可用的平台（如部分 Windows 构建 analyzeBashCommand 恒
+  // parse-unavailable）退守字符串级检查：含连接符/管道/重定向/命令替换的
+  // 一律不给前缀档，纯「命令+参数」形态按前缀授予——不把 #558 弄成全灭。
+  if (analysis.status === "parse-unavailable") {
+    return !COMMAND_CONNECTOR_PATTERN.test(key);
+  }
+  return false;
 }
 
 function permissionCommandCandidates(toolName: string, command: string, action: PermissionRule["action"]): string[] {
@@ -107,7 +149,16 @@ function normalizePathSeparators(value: string): string {
 }
 
 function normalizeWhitespace(value: string): string {
-  return value.trim().replace(/\s+/g, " ");
+  // 三轮 review P1:\n 在 bash 中是命令分隔符,此前折叠成普通空格会让
+  // 「npm test\nrm -rf x」与合法参数形态同指纹,写入/匹配双层连接符否诀
+  // 全部落空(仅剩守卫层单点兜底)。换行规范为分号保持分隔语义,使
+  // COMMAND_CONNECTOR_PATTERN 在写/匹两侧自然命中。
+  return value
+    .replace(/\r\n?/g, "\n")
+    .split("\n")
+    .map((line) => line.trim().replace(/\s+/g, " "))
+    .filter((line) => line.length > 0)
+    .join("; ");
 }
 
 function stableStringify(value: unknown): string {

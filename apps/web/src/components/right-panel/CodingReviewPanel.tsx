@@ -179,6 +179,10 @@ export function codingPublishActionDisabledReason(
     if (state.ahead <= 0) return '没有待推送的本地提交'
     return undefined
   }
+  if (options.includeUnstagedChanges && state.worktreeHash === undefined) {
+    // worktree patch 超 16MB 水位时指纹缺席（见 shared 类型 worktreeHash 注释）
+    return '工作区变更超过 16MB 补丁上限，请分次提交'
+  }
   const includedChanges = options.includeUnstagedChanges
     ? state.unstagedCount + state.untrackedCount
     : 0
@@ -1370,7 +1374,10 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
           )}
           {publishState && !publishState.available && (
             <div className="mx-3 mb-3 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-3 py-3 text-[12px] text-[var(--lume-text-secondary)]">
-              {publishState.reason}
+              <div className="flex items-center gap-2">
+                <span className="min-w-0 flex-1">{publishState.reason}</span>
+                {!publishBusy && <Button variant="ghost" size="xs" onClick={() => void loadPublishState()}>重试</Button>}
+              </div>
             </div>
           )}
           {publishState?.available && (
