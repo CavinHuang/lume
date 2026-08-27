@@ -38,6 +38,98 @@ import { FileBackedTaskStore } from "../task/task-store";
 const DEFAULT_FOREGROUND_SUBAGENT_TIMEOUT_MS = 10 * 60 * 1000;
 export const taskExecutorStopHandlers = new Map<string, () => void>();
 
+/** 折叠进度刷新节流窗：瞬态信号，防高频 assistant 帧刷爆总线与 web 渲染。 */
+const SUBAGENT_PROGRESS_THROTTLE_MS = 2_000;
+/** 进度行内文本上限（code points）：状态行单行展示，长输出只留头部。 */
+const SUBAGENT_PROGRESS_DETAIL_CHARS = 80;
+
+export interface SubagentParentProgressReporter {
+  /** 每个 assistant 消息（=一轮）后调用；节流窗口内的帧丢弃。 */
+  report(input: { toolNames: readonly string[]; lastLine?: string }): void;
+  /** 终态帧（幂等）：由调用侧在超时判定后调——超时路径父流已继续，不再补发。 */
+  finalize(status: "completed" | "errored" | "aborted"): void;
+  /** 超时等父流已继续的场景：静默关闭，残余 report 丢弃、不发终态帧。 */
+  close(): void;
+}
+
+/**
+ * 前台子代理折叠进度投影（#560②/#777）：子代理以 childThreadId 独立 run，
+ * 其流事件被 web 按 threadId 过滤，父对话全程只有一张转圈工具卡。此处把
+ * 「轮次/当前工具/最近一行输出」折叠成单帧 task.progress 以 parentThreadId
+ * 经父线程 emitRuntimeEvent 通道发出——web 既有 task_progress 单槽折叠 +
+ * TaskProgressStatusLine 状态行就地消费，终态帧交 useGlobalAgentListeners 收口。
+ * 事件不带 subagentRunId：投影器入口会整帧跳过带该标记的消息。
+ */
+export function createSubagentParentProgressReporter(input: {
+  parentThreadId: string;
+  runId: string;
+  title: string;
+  emit: (event: LumeRuntimeEvent) => void;
+}): SubagentParentProgressReporter {
+  const taskKey = `subagent:${input.runId}`;
+  let turnCount = 0;
+  let lastEmitAt = 0;
+  let sequence = 0;
+  let lastDetail = "";
+  let finalized = false;
+
+  const emitFrame = (
+    status: "running" | "completed" | "failed" | "cancelled",
+    detail: string,
+  ): void => {
+    sequence += 1;
+    input.emit({
+      id: `subagent.progress:${input.runId}:${sequence}`,
+      type: "task.progress",
+      threadId: input.parentThreadId,
+      runId: input.runId,
+      status,
+      currentTaskId: taskKey,
+      tasks: [
+        {
+          id: taskKey,
+          title: input.title,
+          ...(detail ? { description: detail } : {}),
+          // TaskProgressRuntimeTaskStatus 无 cancelled 档，取消归入 skipped
+          status: status === "cancelled" ? "skipped" : status,
+        },
+      ],
+      ...(detail ? { message: detail } : {}),
+      createdAt: new Date().toISOString(),
+    });
+  };
+
+  return {
+    report({ toolNames, lastLine }) {
+      if (finalized) return;
+      turnCount += 1;
+      const now = Date.now();
+      if (now - lastEmitAt < SUBAGENT_PROGRESS_THROTTLE_MS) return;
+      lastEmitAt = now;
+      const parts = [`第 ${turnCount} 轮`];
+      const toolName = toolNames.at(-1);
+      if (toolName) parts.push(toolName);
+      const tail = sanitizeSingleLine((lastLine ?? "").trim());
+      if (tail) {
+        parts.push(Array.from(tail).slice(0, SUBAGENT_PROGRESS_DETAIL_CHARS).join(""));
+      }
+      lastDetail = parts.join(" · ");
+      emitFrame("running", lastDetail);
+    },
+    finalize(status) {
+      if (finalized) return;
+      finalized = true;
+      emitFrame(
+        status === "completed" ? "completed" : status === "aborted" ? "cancelled" : "failed",
+        status === "aborted" ? "已取消" : lastDetail,
+      );
+    },
+    close() {
+      finalized = true;
+    },
+  };
+}
+
 interface ResolvedSubagentModelOverride {
   source: "input" | "config" | "inherit";
   modelRef?: string;
@@ -204,6 +296,8 @@ export async function runSidecarSubagent(input: {
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
+  /** 前台折叠进度发射器（#560②/#777）：仅运行中 report；终态由调用侧 finalize。 */
+  progressReporter?: SubagentParentProgressReporter;
 }): Promise<{
   result: ToolResult;
   status: "completed" | "errored" | "aborted" | "timed_out";
@@ -311,6 +405,10 @@ export async function runSidecarSubagent(input: {
             summary.lastAssistantMessage || lastAssistantMessage;
           toolCalls.length = 0;
           toolCalls.push(...summary.toolCalls);
+          input.progressReporter?.report({
+            toolNames: summary.toolCalls,
+            lastLine: lastAssistantMessage,
+          });
         }
         if (message.type === "result") {
           if (typeof message.result === "string" && message.result.trim()) {
@@ -578,6 +676,13 @@ export function assertTaskRefDiscriminant(
     );
 }
 
+/** 进度状态行标题：子代理 description 为空时的兜底展示。 */
+export function resolveSubagentProgressTitle(toolInput: Record<string, unknown>): string {
+  const description =
+    typeof toolInput.description === "string" ? toolInput.description.trim() : "";
+  return description || "子代理";
+}
+
 export async function runTaskLinkedSubagent(input: {
   toolInput: Record<string, unknown>;
   context: ToolContext;
@@ -618,6 +723,14 @@ export async function runTaskLinkedSubagent(input: {
   );
   let childThreadId: string | undefined;
   let execution: Awaited<ReturnType<typeof runSidecarSubagent>>;
+  // 前台 task-linked 子代理同享折叠进度（#560②/#777）；task-linked 无父 runId，
+  // 与 task-tools 同口径以 parentThreadId 兜底 runId。
+  const progressReporter = createSubagentParentProgressReporter({
+    parentThreadId: input.parentThreadId,
+    runId: input.parentThreadId,
+    title: resolveSubagentProgressTitle(input.toolInput),
+    emit: (event) => input.emitRuntimeEvent?.(event),
+  });
   try {
     const childMeta = getRuntimeHostPorts().createThreadWithModelRef(
       typeof input.toolInput.description === "string"
@@ -661,6 +774,7 @@ export async function runTaskLinkedSubagent(input: {
         messageMetadata: input.messageMetadata,
         fileReferenceBinding: input.fileReferenceBinding,
         onRuntimeEvent: input.emitRuntimeEvent,
+        progressReporter,
         permissionMode: input.permissionMode,
         emitAskUserQuestion: input.emitAskUserQuestion,
         emitBrowserAuthRequest: input.emitBrowserAuthRequest,
@@ -685,6 +799,12 @@ export async function runTaskLinkedSubagent(input: {
     };
   } finally {
     taskExecutorStopHandlers.delete(executorRef);
+  }
+  // 终态帧在超时判定后补发：超时路径父流已继续，静默关闭不再回写
+  if (execution.status !== "timed_out") {
+    progressReporter.finalize(execution.status);
+  } else {
+    progressReporter.close();
   }
   const ack = await input.taskStore.acknowledgeExecutor(
     {
