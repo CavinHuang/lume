@@ -7,6 +7,7 @@ import { buildPermissionFingerprint } from "../permissions/permission-rules";
 import { createFileBackedLumeInterruptionStore } from "./interruption-store";
 import { createFileBackedRunContinuationStore } from "../runtime-core/run-continuation-store";
 import { runtimePermissionSessionStore } from "../permissions/permission-session";
+import { toolGrantMirror } from "../permissions/persisted-grant-store";
 import {
   listPendingToolPermissionRequests,
   markToolFingerprintAllowed,
@@ -714,5 +715,90 @@ describe("tool-permission-session", () => {
         step: "before_model_call"
       }
     });
+  });
+});
+
+describe("#775 提交流持久化（workspace 级）", () => {
+  test("请求携带 workspaceSlug：allow_always 写入持久集并跨线程生效", async () => {
+    toolGrantMirror.clear();
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-persist-ws",
+        requestId: "req-persist-ws",
+        toolUseId: "tool-persist-ws",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        workspaceSlug: "ws-per",
+        grantSuggestion: { fingerprint: "bash:npm run build", label: "允许相同 Bash 调用" },
+        input: { command: "npm run build" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+    const result = submitToolPermissionDecision({
+      threadId: "s-persist-ws",
+      requestId: "req-persist-ws",
+      decision: "allow_always",
+      allowAlwaysScope: "command"
+    });
+    await waitPromise;
+    expect(result.effectiveScope).toBe("command");
+
+    const row = toolGrantMirror.list().find((item) => item.workspaceSlug === "ws-per");
+    expect(row?.fingerprints).toContain(">bash:npm run build");
+    expect(row?.scope).toBe("command");
+
+    // 提交通路写入的持久集必须能被兄弟线程的判定看到
+    const { runtimePermissionSessionStore: persistedStore } = await import("../permissions/permission-session");
+    expect(persistedStore.isGranted({
+      threadId: "another-thread",
+      workspaceSlug: "ws-per",
+      descriptor: {
+        name: "Bash",
+        canonicalName: "bash",
+        source: "sdk",
+        definition: {} as any,
+        metadata: {
+          category: "control",
+          capability: "skill",
+          riskLevel: "high",
+          sideEffects: "none",
+          allowedInPlanMode: false,
+          isReadOnly: false,
+          isConcurrencySafe: false,
+          requiresApprovalByDefault: true
+        }
+      },
+      input: { command: "npm run build --silent" }
+    })).toBeTrue();
+  });
+
+  test("无 workspaceSlug 的请求维持线程内行为，不产生持久行", async () => {
+    toolGrantMirror.clear();
+    const waitPromise = waitForToolPermissionDecision(
+      {
+        threadId: "s-persist-nows",
+        requestId: "req-persist-nows",
+        toolUseId: "tool-persist-nows",
+        toolName: "Bash",
+        risk: "high",
+        reason: "需要确认",
+        grantSuggestion: { fingerprint: "bash:git status", label: "允许相同 Bash 调用" },
+        input: { command: "git status" }
+      },
+      new AbortController().signal,
+      () => {}
+    );
+    const result = submitToolPermissionDecision({
+      threadId: "s-persist-nows",
+      requestId: "req-persist-nows",
+      decision: "allow_always",
+      allowAlwaysScope: "command"
+    });
+    await waitPromise;
+    expect(result.effectiveScope).toBe("command");
+    expect(toolGrantMirror.list()).toHaveLength(0);
+    expect(runtimePermissionSessionStore.isFingerprintGranted("s-persist-nows", "bash:git status --short")).toBeTrue();
   });
 });

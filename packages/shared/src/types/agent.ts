@@ -1191,6 +1191,8 @@ export interface AgentToolPermissionRequest {
   runId?: string
   /** 原始触发线程（用于子任务代理路由） */
   originThreadId?: string
+  /** 授权所属工作区：allow_always 时据此写入 workspace 级持久授权（#775）。 */
+  workspaceSlug?: string
   /** 子任务 runId（用于 Team 面板定位） */
   subagentRunId?: string
   /** 子任务显示名（优先用于 UI 展示） */
@@ -1228,6 +1230,20 @@ export interface AgentPluginSensitiveRequest {
 
 /** 「始终允许」的真实作用域档位（#558）：缺省 exact 保持逐字节比对 */
 export type AgentToolPermissionAllowScope = 'exact' | 'command' | 'tool'
+
+/** workspace 级持久授权记录（#775）：查看/撤销面板与 sidecar 存储共用此形状 */
+export interface AgentToolPermissionGrantRecord {
+  id: string
+  workspaceSlug: string
+  scope: AgentToolPermissionAllowScope
+  toolName: string
+  /**
+   * 已编码匹配串：exact 原串、command `>` 前缀档、tool `*` 工具档。
+   * [0] 恒为基础指纹，供展示摘要。
+   */
+  fingerprints: string[]
+  createdAt: string
+}
 
 export interface AgentToolPermissionResponseInput {
   threadId: string
@@ -1859,6 +1875,10 @@ export const AGENT_IPC_CHANNELS = {
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */
   SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
+  /** 列出 workspace 级持久工具授权（#775 查看/撤销入口） */
+  LIST_TOOL_PERMISSION_GRANTS: 'agent:list-tool-permission-grants',
+  /** 撤销持久工具授权：按 id 或按工作区清空（#775） */
+  REVOKE_TOOL_PERMISSION_GRANT: 'agent:revoke-tool-permission-grant',
   /** 获取当前待处理的交互请求（用于冷启动恢复） */
   GET_PENDING_INTERACTIVE: 'agent:get-pending-interactive',
   /** runtime status 变化通知（sidecar -> web） */
