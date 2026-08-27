@@ -750,3 +750,44 @@ describe("#604① list_tabs 会话级 TTL 缓存", () => {
     expect(after).toBeGreaterThan(before)
   })
 })
+
+describe("#604① 错误驱动失效", () => {
+  test("broker 报 tab_not_found 即清 tabs 缓存，重试立刻见新列表", async () => {
+    let expanded = false
+    const h = (() => {
+      const calls: Array<{ method: string }> = []
+      const broker = {
+        listBackends: () => [{ backend: "iab" }],
+        dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+          calls.push({ method: request.method })
+          if (request.method === "create_tab") return { id: `tab-${calls.length}` }
+          if (request.method === "list_tabs") {
+            const tabs = [agentTab("tab-1", "thread-604e")]
+            if (expanded) tabs.push(agentTab("tab-2", "thread-604e"))
+            return { tabs }
+          }
+          if (request.method === "browser_run_script") throw new Error("tab_not_found")
+          throw new Error("unsupported")
+        },
+      } as any
+      const registry = new BrowserToolSessionRegistry()
+      return {
+        calls,
+        registry,
+        tools: createBrowserMcpTools({ broker, sessionRegistry: registry, threadId: "thread-604e" }),
+        expand: () => { expanded = true },
+      }
+    })()
+
+    await rawCall(h.tools, "mcp__browser__list_tabs", {})
+    await rawCall(h.tools, "mcp__browser__run_script", { script: "1" })
+    // 错误驱动失效已即时清缓存（不必等 TTL 过期）
+    expect(h.registry.getOrCreate("thread-604e").tabsCache).toBeUndefined()
+    const before = h.calls.filter((c) => c.method === "list_tabs").length
+    h.expand()
+    // 刚刷新过的缓存必须被 tab_not_found 失效：下一次立刻看到新列表
+    await rawCall(h.tools, "mcp__browser__switch_tab", { tab_id: "tab-2" })
+    const after = h.calls.filter((c) => c.method === "list_tabs").length
+    expect(after).toBeGreaterThan(before)
+  })
+})

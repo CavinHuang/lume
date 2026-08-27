@@ -123,6 +123,8 @@ export function createBrowserMcpTools(input: {
         } catch (error) {
           const code = browserErrorCode(error)
           if (code === "stale_target" || code === "stale_snapshot_cursor" || code === "tab_not_found" || code === "user_takeover_required") session.snapshot = undefined
+          // #604①：desktop 权威否认该 tab 存在——list 缓存已不可信，立即失效
+          if (code === "tab_not_found") session.tabsCache = undefined
           // #603:结果未知(超时,动作可能已执行)——记指纹供同代际重试闸使用;
           // confirmation_timeout 确定未执行,不入册
           if (code === "executed_unknown" && unknownOutcomeKey) {
