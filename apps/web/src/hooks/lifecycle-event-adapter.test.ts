@@ -128,7 +128,7 @@ test('run.end 三分支:isError → failed;max_turns → turn_limited;正常 →
     threadId: 't1',
     runId: 'r1',
     createdAt: new Date(TS + 1).toISOString(),
-    error: { code: 'runtime_error', message: 'error_during_execution' },
+    error: { code: 'runtime_error', message: '运行过程中发生错误，本次运行已停止。' },
   }])
 
   // max_turns 优先于 isError(error_max_turns 前缀使 isError 为 true)
@@ -466,7 +466,7 @@ test('push run.failed 置 errored 并写错误信息', () => {
   const ctx = createContext()
   consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'push', ctx)
   expect(ctx.streaming).toEqual({ t1: 'errored' })
-  expect(ctx.errors).toEqual({ t1: 'error_during_execution' })
+  expect(ctx.errors).toEqual({ t1: '运行过程中发生错误，本次运行已停止。' })
 })
 
 test('run.failed 错误文案优先取 detail.result(F3 fix round 1)', () => {
@@ -474,10 +474,28 @@ test('run.failed 错误文案优先取 detail.result(F3 fix round 1)', () => {
   // F3 补发终值:stopReason='error',真实错误信息在 result
   consumeBusEnvelope(runEnd(1, { stopReason: 'error', isError: true, result: 'session boom' }), 'push', ctx)
   expect(ctx.errors).toEqual({ t1: 'session boom' })
-  // 无 result 时回落 stopReason(现存 isError 路径,endRun 不产 result)
+  // 无 result 时按 subtype 映射人话(#778:内部枚举不再上屏)
   const ctx2 = createContext()
   consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'push', ctx2)
-  expect(ctx2.errors).toEqual({ t1: 'error_during_execution' })
+  expect(ctx2.errors).toEqual({ t1: '运行过程中发生错误，本次运行已停止。' })
+})
+
+test('run.failed 错误文案 subtype 映射表(#778):已知枚举人话/未知值兜底', () => {
+  const state = createLifecycleAdapterState()
+
+  // 已知 error_* subtype 全集逐项映射
+  const expectCopy = (stopReason: string, message: string) => {
+    const events = adaptLifecycleEvent(runEnd(1, { stopReason, isError: true }), state)
+    expect(events[0]?.type).toBe('run.failed')
+    expect((events[0] as { error?: { message: string } }).error?.message).toBe(message)
+  }
+  expectCopy('error_during_execution', '运行过程中发生错误，本次运行已停止。')
+  expectCopy('error_max_budget_usd', '已达到本次运行的费用上限，运行已停止。')
+  expectCopy('error_max_output_tokens', '输出长度达到上限，运行已停止。')
+  expectCopy('error_max_structured_output_retries', '结构化输出重试次数用尽，运行已停止。')
+
+  // 未知 subtype(未来新增枚举/历史残留)不透传内部码,兜底固定文案
+  expectCopy('error_something_new', '运行失败，请稍后重试。')
 })
 
 test('seq 水位去重:同线程重复/回退 seq 不重复消费', () => {
@@ -695,7 +713,7 @@ test('snapshot run.failed 清残留 streaming→errored 并写错误信息', () 
   ctx.setStreamingStates((prev) => ({ ...prev, t1: 'streaming' }))
   consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'snapshot', ctx)
   expect(ctx.streaming).toEqual({ t1: 'errored' })
-  expect(ctx.errors).toEqual({ t1: 'error_during_execution' })
+  expect(ctx.errors).toEqual({ t1: '运行过程中发生错误，本次运行已停止。' })
 })
 
 test('snapshot 纯消息回放(悬空 run 无终态)不置也不清 streaming(既有保证回归)', () => {
