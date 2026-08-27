@@ -9,7 +9,11 @@ import {
   resolveToolApprovalInterruption,
   updateToolApprovalSession
 } from "./approval-service";
-import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
+import {
+  collectPersistedInterruptionPayloads,
+  listPendingRuntimeCoreInterruptions,
+  toApprovalThreadView
+} from "./interruption-pending";
 import { runtimePermissionSessionStore } from "../permissions/permission-session";
 import { createLogger } from "../../infra/logger";
 
@@ -204,17 +208,12 @@ export function cancelPendingToolPermissionBySession(threadId: string): void {
 }
 
 export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[] {
-  const liveRequests = Array.from(pendingToolPermissionResolvers.values()).map((pending) => ({
-    ...pending.request,
-    threadId: pending.approvalSessionId,
-    ...(pending.request.originThreadId ? {} : (
-      pending.threadId !== pending.approvalSessionId
-        ? { originThreadId: pending.threadId }
-        : {}
-    ))
-  }));
-  mergePersistedToolPermissionRequests(liveRequests);
-  return liveRequests;
+  const liveRequests = toApprovalThreadView(pendingToolPermissionResolvers.values());
+  return collectPersistedInterruptionPayloads(
+    liveRequests,
+    new Set(["tool_approval", "automation_approval"]),
+    (request) => request.requestId
+  );
 }
 
 function findPersistedToolPermissionRequest(threadId: string, requestId: string): AgentToolPermissionRequest | null {

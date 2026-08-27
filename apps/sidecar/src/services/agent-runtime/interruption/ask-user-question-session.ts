@@ -10,7 +10,11 @@ import {
   resolveAskUserInterruption,
   updateAskUserApprovalSession
 } from "./ask-user-service";
-import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
+import {
+  collectPersistedInterruptionPayloads,
+  listPendingRuntimeCoreInterruptions,
+  toApprovalThreadView
+} from "./interruption-pending";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("ask-user-question-session");
@@ -206,27 +210,10 @@ export function cancelPendingAskUserQuestionBySession(threadId: string): void {
 }
 
 export function listPendingAskUserQuestionRequests(): AgentAskUserQuestionRequest[] {
-  const liveRequests = Array.from(pendingAskUserQuestionResolvers.values()).map((pending) => ({
-    ...pending.request,
-    threadId: pending.approvalSessionId,
-    ...(pending.request.originThreadId ? {} : (
-      pending.threadId !== pending.approvalSessionId
-        ? { originThreadId: pending.threadId }
-        : {}
-    ))
-  }));
-  mergePersistedAskUserRequests(liveRequests);
-  return liveRequests;
-}
-
-function mergePersistedAskUserRequests(target: AgentAskUserQuestionRequest[]): void {
-  const seen = new Set(target.map((request) => request.toolUseId));
-  const persisted = listPendingRuntimeCoreInterruptions();
-  for (const interruption of persisted) {
-    if (interruption.type !== "ask_user") continue;
-    const payload = interruption.payload as AgentAskUserQuestionRequest;
-    if (!payload?.toolUseId || seen.has(payload.toolUseId)) continue;
-    seen.add(payload.toolUseId);
-    target.push(payload);
-  }
+  const liveRequests = toApprovalThreadView(pendingAskUserQuestionResolvers.values());
+  return collectPersistedInterruptionPayloads(
+    liveRequests,
+    new Set(["ask_user"]),
+    (request) => request.toolUseId
+  );
 }
