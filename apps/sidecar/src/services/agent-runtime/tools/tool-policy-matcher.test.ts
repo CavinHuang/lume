@@ -14,7 +14,6 @@ describe("tool-policy-matcher", () => {
 
   test("expands product system tool groups used by settings", () => {
     expect(expandRuntimeToolPolicyEntries(["group:automation"])).toEqual([
-      "cron_set",
       "automation_set"
     ]);
     expect(expandRuntimeToolPolicyEntries(["group:im"])).toEqual(["send_im_message"]);

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -48,7 +47,7 @@ export const handleBiorxiv: SpecialHandler = async (
 		const match = parsed.pathname.match(/\/content\/(10\.\d{4,}\/[^\s?#]+)/);
 		if (!match) return null;
 
-		let doi = match[1];
+		let doi = match[1] ?? "";
 		// Remove version suffix if present (e.g., v1, v2)
 		doi = doi.replace(/v\d+$/, "");
 		// Remove trailing .full or .full.pdf

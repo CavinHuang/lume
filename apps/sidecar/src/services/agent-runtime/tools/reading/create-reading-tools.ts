@@ -92,7 +92,7 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
           author: { type: "string" },
           track: { type: "string", enum: ["lume", "co_read", "recommended"] },
           status: { type: "string", enum: ["queued", "reading", "finished", "paused"] },
-          sourceKind: { type: "string", enum: ["weread", "gutenberg", "poetry", "manual", "generated"] },
+          sourceKind: { type: "string", enum: ["weread", "manual", "generated"] },
           sourceId: { type: "string" },
           sourceUrl: { type: "string" },
           excerpt: { type: "string" },
@@ -138,7 +138,7 @@ export function createSdkReadingTools(input: CreateReadingToolsInput = {}): Tool
           quote: { type: "string" },
           originalQuote: { type: "string" },
           excerpt: { type: "string" },
-          sourceKind: { type: "string", enum: ["weread", "gutenberg", "poetry", "manual", "generated"] },
+          sourceKind: { type: "string", enum: ["weread", "manual", "generated"] },
           sourceId: { type: "string" },
           progressPercent: { type: "number", minimum: 0, maximum: 100 },
           tags: { type: "array", items: { type: "string" } },
@@ -465,10 +465,5 @@ function optionalStringArray(value: unknown): string[] | undefined {
 }
 
 function readingSourceKind(value: unknown): ReadingSourceKind {
-  return value === "weread"
-    || value === "gutenberg"
-    || value === "poetry"
-    || value === "generated"
-    ? value
-    : "manual";
+  return value === "weread" || value === "generated" ? value : "manual";
 }

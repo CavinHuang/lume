@@ -2,45 +2,30 @@ import {
   GENERAL_SETTINGS_IPC_CHANNELS,
   GITHUB_RELEASE_IPC_CHANNELS,
   IPC_PROTOCOL_VERSION,
-  LUME_CONFIG_IPC_CHANNELS,
-  SYSTEM_CONFIG_IPC_CHANNELS,
-  UI_STATE_IPC_CHANNELS
+  LUME_CONFIG_IPC_CHANNELS
 } from "@lume/shared";
 import type {
-  NetworkDiagnosticResult,
-  UpdateGeneralSettingsInput,
-  UpdateUiStateInput
+  TestSearchBackendInput,
+  UpdateGeneralSettingsInput
 } from "@lume/shared";
 import { spawn } from "node:child_process";
-import {
-  getGitHubReleaseByTag,
-  getLatestGitHubRelease,
-  listGitHubReleases
-} from "../services/system/github-release-service";
-import { fetchWithProxy } from "../services/infra/proxy-fetch";
+import { getLatestGitHubRelease } from "../services/system/github-release-service";
 import { createLogger } from "../services/infra/logger";
 import { getLumeConfigYamlPath } from "../services/infra/config-paths";
 import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/system/lume-config-service";
-import { getEffectiveSystemConfig, updatePrimarySystemConfigSection } from "../services/system/system-config-service";
 import {
   clearGeneralSettingsCaches,
   getPersistedGeneralSettings,
   updatePersistedGeneralSettings
 } from "../services/system/general-settings-service";
 import { testSearchBackend } from "../services/infra/search-test-service";
-import { getActiveProxyConfig } from "../services/system/proxy-settings-manager";
-import { getPersistedUiState, updatePersistedUiState } from "../services/system/ui-state-service";
 import { getSidecarNativeHealth } from "../services/infra/native-runtime";
 import {
   clearCacheInputSchema,
-  githubReleaseByTagInputSchema,
-  githubReleaseListOptionsSchema,
   lumeConfigEffectiveInputSchema,
   lumeConfigUpdateInputSchema,
-  systemConfigUpdateInputSchema,
   testSearchBackendInputSchema,
-  updateGeneralSettingsInputSchema,
-  updateUiStateInputSchema
+  updateGeneralSettingsInputSchema
 } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
@@ -77,43 +62,6 @@ async function openInSystem(path: string): Promise<boolean> {
   return spawnDetached("xdg-open", [path]);
 }
 
-async function runNetworkDiagnostic(): Promise<NetworkDiagnosticResult> {
-  const targets = [
-    { name: "Jina", url: "https://api.jina.ai/v1/embeddings", method: "POST" as const, body: JSON.stringify({ model: "jina-embeddings-v5-text-small", input: ["hello lume"] }) },
-    { name: "DuckDuckGo", url: "https://duckduckgo.com/html/?q=lume", method: "GET" as const },
-    { name: "Brave", url: "https://api.search.brave.com/res/v1/web/search?q=lume&count=1", method: "GET" as const }
-  ];
-
-  const checks = await Promise.all(targets.map(async (target) => {
-    try {
-      const response = await fetchWithProxy(target.url, {
-        method: target.method,
-        headers: target.method === "POST" ? { "Content-Type": "application/json" } : undefined,
-        body: target.body,
-      });
-      return {
-        name: target.name,
-        url: target.url,
-        ok: response.ok,
-        statusCode: response.status,
-        ...(response.ok ? {} : { error: `HTTP ${response.status}` })
-      };
-    } catch (error) {
-      return {
-        name: target.name,
-        url: target.url,
-        ok: false,
-        error: error instanceof Error ? error.message : String(error)
-      };
-    }
-  }));
-
-  return {
-    proxy: getActiveProxyConfig(),
-    checks
-  };
-}
-
 export function createSystemHandlers(context: SystemHandlersContext): Record<string, RpcHandler> {
   return {
     healthcheck: async () => ({
@@ -124,11 +72,6 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       native: getSidecarNativeHealth()
     }),
     "rpc:list-methods": async () => context.getMethodNames(),
-    [UI_STATE_IPC_CHANNELS.GET]: async () => getPersistedUiState(),
-    [UI_STATE_IPC_CHANNELS.UPDATE]: async (params) =>
-      updatePersistedUiState(
-        validateInput(updateUiStateInputSchema, params, UI_STATE_IPC_CHANNELS.UPDATE) as UpdateUiStateInput
-      ),
     [GENERAL_SETTINGS_IPC_CHANNELS.GET]: async () => getPersistedGeneralSettings(),
     [GENERAL_SETTINGS_IPC_CHANNELS.UPDATE]: async (params) => {
       const input = validateInput(
@@ -180,36 +123,6 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       const opened = await openInSystem(getLumeConfigYamlPath());
       return { ok: opened };
     },
-    [SYSTEM_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
-      const input = validateInput(
-        lumeConfigEffectiveInputSchema,
-        params ?? {},
-        SYSTEM_CONFIG_IPC_CHANNELS.GET_EFFECTIVE
-      );
-      return getEffectiveSystemConfig(input.workspaceSlug);
-    },
-    [SYSTEM_CONFIG_IPC_CHANNELS.UPDATE_SECTION]: async (params) => {
-      const input = validateInput(
-        systemConfigUpdateInputSchema,
-        params,
-        SYSTEM_CONFIG_IPC_CHANNELS.UPDATE_SECTION
-      );
-      log.info("[Agent 设置] 更新系统配置", { path: input.path });
-      return updatePrimarySystemConfigSection(input);
-    },
-    [SYSTEM_CONFIG_IPC_CHANNELS.NETWORK_DIAGNOSTIC]: async () => runNetworkDiagnostic(),
-    [GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE]: async () => getLatestGitHubRelease(),
-    [GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES]: async (params) =>
-      listGitHubReleases(
-        validateInput(githubReleaseListOptionsSchema, params ?? {}, GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES)
-      ),
-    [GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG]: async (params) => {
-      const input = validateInput(
-        githubReleaseByTagInputSchema,
-        params,
-        GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG
-      );
-      return getGitHubReleaseByTag(input.tag);
-    }
+    [GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE]: async () => getLatestGitHubRelease()
   };
 }

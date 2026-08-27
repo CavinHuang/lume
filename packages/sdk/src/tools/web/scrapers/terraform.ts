@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -80,14 +79,14 @@ export const handleTerraform: SpecialHandler = async (
 		// Match module URL: /modules/{namespace}/{name}/{provider}
 		const moduleMatch = parsed.pathname.match(/^\/modules\/([^/]+)\/([^/]+)\/([^/]+)/);
 		if (moduleMatch) {
-			const [, namespace, name, provider] = moduleMatch;
+			const [, namespace = "", name = "", provider = ""] = moduleMatch;
 			return await handleModuleUrl(url, namespace, name, provider, timeout, signal, fetchedAt);
 		}
 
 		// Match provider URL: /providers/{namespace}/{type}
 		const providerMatch = parsed.pathname.match(/^\/providers\/([^/]+)\/([^/]+)/);
 		if (providerMatch) {
-			const [, namespace, type] = providerMatch;
+			const [, namespace = "", type = ""] = providerMatch;
 			return await handleProviderUrl(url, namespace, type, timeout, signal, fetchedAt);
 		}
 

@@ -4,7 +4,7 @@ import { createRoot, type Root } from 'react-dom/client'
 
 mock.restore()
 
-const getPersonaMock = mock(async (_workspaceSlug?: string) => ({
+const getPersonaMock = mock(async () => ({
   markdown: '# Mason\n\n喜欢简洁、有温度的表达。',
   parsed: {
     preferences: ['简洁表达'],
@@ -16,7 +16,7 @@ const getPersonaMock = mock(async (_workspaceSlug?: string) => ({
 const correctPersonaMock = mock(async (_input: { workspaceSlug: string; correction: string }) => ({
   ok: true as const,
 }))
-const regeneratePersonaMock = mock(async (_workspaceSlug?: string) => ({ ok: true as const }))
+const regeneratePersonaMock = mock(async () => ({ ok: true as const }))
 
 const toastSuccessMock = mock((_msg: string, _opts?: unknown) => undefined)
 const toastErrorMock = mock((_msg: string, _opts?: unknown) => undefined)
@@ -32,9 +32,9 @@ mock.module('sonner', () => ({
 
 mock.module('@/lib/desktop-api', () => ({
   // Persona — 实际被测对象
-  getPersona: (...args: unknown[]) => getPersonaMock(...(args as [string?])),
+  getPersona: () => getPersonaMock(),
   correctPersona: (...args: unknown[]) => correctPersonaMock(...(args as [{ workspaceSlug: string; correction: string }])),
-  regeneratePersona: (...args: unknown[]) => regeneratePersonaMock(...(args as [string?])),
+  regeneratePersona: () => regeneratePersonaMock(),
   // 其余 MemorySettings 模块加载时静态导入，但 PersonaCard 不依赖；统一 async stub。
   getMemoryRuntimeConfig: mock(async () => null),
   cancelMemoryJob: mock(async () => null),
@@ -333,7 +333,7 @@ describe('PersonaCard', () => {
       })
 
       expect(getPersonaMock).toHaveBeenCalledTimes(1)
-      expect(getPersonaMock).toHaveBeenCalledWith('workspace')
+      expect(getPersonaMock).toHaveBeenCalledWith()
       expect(container.textContent).toContain('已生成')
       expect(container.textContent).toContain('关于我')
       // Markdown 主体可见
@@ -431,7 +431,7 @@ describe('PersonaCard', () => {
         await flush()
       })
 
-      expect(regeneratePersonaMock).toHaveBeenCalledWith('workspace')
+      expect(regeneratePersonaMock).toHaveBeenCalledWith()
       expect(toastLoadingMock).toHaveBeenCalledWith('正在重新生成关于我...')
       expect(toastSuccessMock).toHaveBeenCalledWith('关于我已重新生成', { id: 'toast-id' })
     } finally {
@@ -515,32 +515,6 @@ describe('PersonaCard', () => {
 
       expect(toastErrorMock).toHaveBeenCalled()
       expect(container.textContent).toContain('未生成')
-    } finally {
-      await act(async () => {
-        root?.unmount()
-        root = null
-        await flush()
-      })
-      cleanup()
-    }
-  })
-
-  test('changing workspaceSlug refetches persona', async () => {
-    const { container, cleanup } = installFakeDom()
-    let root: Root | null = createRoot(container as never)
-    try {
-      await act(async () => {
-        root!.render(<PersonaCard workspaceSlug="workspace-a" />)
-        await flush()
-      })
-      expect(getPersonaMock).toHaveBeenLastCalledWith('workspace-a')
-
-      await act(async () => {
-        root!.render(<PersonaCard workspaceSlug="workspace-b" />)
-        await flush()
-      })
-      expect(getPersonaMock).toHaveBeenLastCalledWith('workspace-b')
-      expect(getPersonaMock.mock.calls.length).toBeGreaterThanOrEqual(2)
     } finally {
       await act(async () => {
         root?.unmount()

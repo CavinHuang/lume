@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import { formatBytes } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
@@ -51,13 +50,13 @@ export const handleDockerHub: SpecialHandler = async (
 		const officialMatch = parsed.pathname.match(/^\/_\/([^/]+)/);
 		if (officialMatch) {
 			namespace = "library";
-			repository = officialMatch[1];
+			repository = officialMatch[1] ?? "";
 		} else {
 			// Regular images: /r/{namespace}/{repository}
 			const repoMatch = parsed.pathname.match(/^\/r\/([^/]+)\/([^/]+)/);
 			if (!repoMatch) return null;
-			namespace = repoMatch[1];
-			repository = repoMatch[2];
+			namespace = repoMatch[1] ?? "";
+			repository = repoMatch[2] ?? "";
 		}
 
 		const fetchedAt = new Date().toISOString();

@@ -368,4 +368,10 @@ describe("runtime-tool-safety", () => {
       behavior: "allow"
     });
   });
+
+  test("automation_set 保持强制确认；cron_set 为 fail-closed 死键（别名复活也不放行）", () => {
+    const expected = { behavior: "confirm", reason: "修改自动化任务会影响未来定时执行，需要用户确认" } as const;
+    expect(evaluateRuntimeToolSafety("automation_set", {})).toEqual(expected);
+    expect(evaluateRuntimeToolSafety("cron_set", {})).toEqual(expected);
+  });
 });

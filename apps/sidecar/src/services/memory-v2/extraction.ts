@@ -1,4 +1,5 @@
 import { toApiTool, type ApiType, type LLMProvider, type NormalizedContentBlock, type NormalizedMessageParam, type ToolDefinition } from "@lume/agent-sdk";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import type { LumeEffectiveConfig } from "@lume/shared";
 import { appendFileSync } from "node:fs";
 import { join } from "node:path";
@@ -450,7 +451,7 @@ function createMemoryExtractionProvider(input: {
     });
   }
   return input.createProvider!({
-    apiType: input.binding ? resolveExtractionApiType(input.binding.channel.provider) : "openai-completions",
+    apiType: input.binding ? resolveProviderApiType({ provider: input.binding.channel.provider }) : "openai-completions",
     apiKey: input.binding ? decryptApiKey(input.binding.channel.id) : "",
     baseURL: input.binding?.channel.baseUrl
   });
@@ -794,13 +795,6 @@ function normalizeKind(value: unknown): MemoryV2Candidate["kind"] | undefined {
     return value;
   }
   return undefined;
-}
-
-function resolveExtractionApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import * as fs from "node:fs/promises";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -36,7 +35,7 @@ function parseYouTubeUrl(url: string): YouTubeUrl | null {
 		// youtube.com/v/VIDEO_ID or youtube.com/embed/VIDEO_ID
 		if (hostname === "youtube.com" || hostname === "m.youtube.com") {
 			const match = parsed.pathname.match(/^\/(v|embed)\/([a-zA-Z0-9_-]{11})/);
-			if (match) return { videoId: match[2] };
+			if (match) return { videoId: match[2] ?? "" };
 		}
 
 		// youtu.be/VIDEO_ID
@@ -269,7 +268,7 @@ export const handleYouTube: SpecialHandler = async (
 				if (subResult.ok) {
 					// Find the downloaded subtitle file
 					const subFiles = await listTmpFiles(tmpBase, ".vtt");
-					if (subFiles.length > 0) {
+					if (subFiles.length > 0 && subFiles[0]) {
 						const vttContent = await fs.readFile(subFiles[0], "utf-8");
 						transcript = cleanVttToText(vttContent);
 						transcriptSource = "manual";
@@ -300,7 +299,7 @@ export const handleYouTube: SpecialHandler = async (
 
 				if (autoResult.ok) {
 					const subFiles = await listTmpFiles(tmpBase, ".vtt");
-					if (subFiles.length > 0) {
+					if (subFiles.length > 0 && subFiles[0]) {
 						const vttContent = await fs.readFile(subFiles[0], "utf-8");
 						transcript = cleanVttToText(vttContent);
 						transcriptSource = "auto-generated";

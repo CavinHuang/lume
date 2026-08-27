@@ -568,14 +568,22 @@ export class MemoryCommandService {
   }
 
   private findJournalRecord(workspaceSlug: string, mutationId: string): MutationJournalRecord | undefined {
+    // #527-5：逐行流式查找、命中即返回——旧实现先 .map(JSON.parse) 解析
+    // 全部历史再 find，undo 路径为一条记录付全部解析成本
     for (const scope of ["global", "workspace"] as const) {
       const paths = getMemoryV2ScopePaths({ scope, workspaceSlug: scope === "workspace" ? workspaceSlug : undefined });
       if (!existsSync(paths.journalDir)) continue;
       for (const name of readdirSync(paths.journalDir)) {
         const path = join(paths.journalDir, name);
-        const records = readFileSync(path, "utf-8").split("\n").filter(Boolean).map((line) => JSON.parse(line) as MutationJournalRecord);
-        const match = records.find((item) => item.receipt.mutationId === mutationId);
-        if (match) return match;
+        for (const line of readFileSync(path, "utf-8").split("\n")) {
+          if (!line || !line.includes(mutationId)) continue;
+          try {
+            const record = JSON.parse(line) as MutationJournalRecord;
+            if (record.receipt.mutationId === mutationId) return record;
+          } catch {
+            continue;
+          }
+        }
       }
     }
     return undefined;
@@ -645,6 +653,9 @@ export function hasMemoryMutationForRun(input: {
       if (!name.endsWith(".jsonl")) continue;
       const records = readFileSync(join(paths.journalDir, name), "utf-8").split("\n").filter(Boolean);
       for (const line of records) {
+        // #527-5：runId 在行内唯一出现，子串预过滤先把绝大多数无关行
+        // 挡在 JSON.parse 之外（后台提取每轮都会走到这里）
+        if (!line.includes(input.runId)) continue;
         try {
           const record = JSON.parse(line) as MutationJournalRecord;
           if (record.receipt.runId === input.runId && (!input.actor || record.receipt.actor === input.actor)) return true;

@@ -1,9 +1,6 @@
 import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { resolve, relative } from "node:path";
-import type { SDKMessage } from "@lume/agent-sdk";
 import type {
-  AgentAskUserQuestionRequest,
-  AgentToolPermissionRequest,
   MemoryDreamAction,
   MemoryDreamResult,
   MemoryDreamResultItem,
@@ -12,6 +9,7 @@ import type {
   MemoryOrganizeProgress
 } from "@lume/shared";
 import { resolveChannelModelBinding } from "../channel/channel-manager";
+import { createSilentAgentEmitter, extractAssistantText } from "./sdk-thread-utils";
 import { createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
@@ -169,7 +167,7 @@ async function runDreamAgent(
             allow: ["memory.search", "memory.read", "memory.evidence.search", "memory.evidence.read", "Read", "Glob", "Grep", "ls"]
           }
         }
-      }, silentEmitter(), { abortSignal });
+      }, createSilentAgentEmitter(), { abortSignal });
     input.signal?.throwIfAborted();
     plan = parseDreamPlan(extractAssistantText(getAgentThreadSDKMessages(child.id)));
   }
@@ -530,32 +528,6 @@ function snapshot(entry: MemoryV2Entry): MemoryMutationEntrySnapshot {
     validTo: entry.frontmatter.valid_to ?? undefined,
     supersedes: entry.frontmatter.supersedes,
     supersededBy: entry.frontmatter.superseded_by ?? undefined
-  };
-}
-
-function extractAssistantText(messages: SDKMessage[]): string {
-  const chunks: string[] = [];
-  for (const message of messages) {
-    const record = message as unknown as Record<string, unknown>;
-    if (message.type === "assistant") {
-      const content = asRecord(record.message)?.content;
-      if (Array.isArray(content)) chunks.push(...content.flatMap((block) => {
-        const value = asRecord(block);
-        return value?.type === "text" && typeof value.text === "string" ? [value.text] : [];
-      }));
-    }
-    if (message.type === "result" && typeof record.result === "string") chunks.push(record.result);
-  }
-  return chunks.join("\n").trim();
-}
-
-function silentEmitter() {
-  return {
-    onComplete: () => undefined,
-    onError: () => undefined,
-    onTitleUpdated: () => undefined,
-    onAskUserQuestion: (_request: AgentAskUserQuestionRequest) => undefined,
-    onToolPermissionRequest: (_request: AgentToolPermissionRequest) => undefined
   };
 }
 

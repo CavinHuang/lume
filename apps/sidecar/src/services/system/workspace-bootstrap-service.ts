@@ -10,7 +10,7 @@
  * - 读取 Bootstrap 文件内容
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { parseAieos, aieosToSystemPrompt } from "./aieos-identity";
 import { fileURLToPath } from "node:url";
@@ -202,22 +202,6 @@ export function writeBootstrapFile(
 
   writeFileSync(filePath, content, 'utf-8');
   log.debug("wrote workspace bootstrap file", { filePath, workspaceSlug, fileType });
-}
-
-/**
- * 删除 Bootstrap 文件
- */
-export function deleteBootstrapFile(workspaceSlug: string, fileType: BootstrapFileType): void {
-  const workspacePath = getAgentWorkspacePath(workspaceSlug);
-  const config = BOOTSTRAP_FILE_CONFIGS.find(c => c.type === fileType);
-  if (!config) return;
-
-  const filePath = join(workspacePath, config.filename);
-
-  if (existsSync(filePath)) {
-    unlinkSync(filePath);
-    log.debug("deleted workspace bootstrap file", { filePath, workspaceSlug, fileType });
-  }
 }
 
 // ===== Bootstrap 创建 =====
@@ -455,62 +439,6 @@ export function readDailyMemoryFiles(workspaceSlug: string, days: number = 2): s
   }
 
   return contents.join('\n\n---\n\n');
-}
-
-/**
- * @deprecated Compatibility formatter for legacy callers that already pass
- * preloaded bootstrap components. Agent runtime prompts are composed by
- * agent/prompt section builders instead, so do not add new prompt policy here.
- */
-export function buildSystemPrompt(components: SystemPromptComponents): string {
-  const sections: string[] = [];
-
-  // 1. 人格定义（最高优先级）
-  if (components.soul) {
-    sections.push(`## Soul\n\n${components.soul}`);
-  }
-
-  // 2. 身份标识
-  if (components.identity) {
-    sections.push(`## Identity\n\n${components.identity}`);
-  }
-
-  // 3. 用户信息
-  if (components.user) {
-    sections.push(`## User\n\n${components.user}`);
-  }
-
-  // 4. 操作指令
-  if (components.workspace) {
-    sections.push(`## Workspace Brief\n\n${components.workspace}`);
-  }
-
-  // 5. 操作指令
-  if (components.agents) {
-    sections.push(`## Workspace Instructions\n\n${components.agents}`);
-  }
-
-  // 6. 工具说明
-  if (components.tools) {
-    sections.push(`## Tools\n\n${components.tools}`);
-  }
-
-  // 7. 长期记忆
-  if (components.memory) {
-    sections.push(`## Long-Term Memory\n\n${components.memory}`);
-  }
-
-  // 8. 每日记忆
-  if (components.dailyMemory) {
-    sections.push(`## Recent Activity\n\n${components.dailyMemory}`);
-  }
-
-  // 9. 心跳任务（如果有）
-  if (components.heartbeat) {
-    sections.push(`## Heartbeat Tasks\n\n${components.heartbeat}`);
-  }
-
-  return sections.join('\n\n---\n\n');
 }
 
 // ===== 导出配置 =====

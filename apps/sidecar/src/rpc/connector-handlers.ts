@@ -13,6 +13,7 @@ import {
   getConnectorCredentialRecord,
   setConnectorClientConfig,
 } from "../services/connectors/credential-store";
+import { imapPoolMetricsSnapshot } from "../services/connectors/mail/protocol";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
 import { z } from "zod";
@@ -151,5 +152,8 @@ export function createConnectorHandlers(): Record<string, RpcHandler> {
       authStates.delete(service);
       return buildStatus(service);
     },
+
+    // 只读诊断出口(#790):进程级池指标计数器 + kind 细分,devtools/支持场景在线验证
+    [CONNECTOR_IPC_CHANNELS.GET_POOL_METRICS]: async () => imapPoolMetricsSnapshot(),
   };
 }

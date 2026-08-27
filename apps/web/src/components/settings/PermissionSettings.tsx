@@ -5,6 +5,7 @@ import { toast } from 'sonner'
 import type {
   LumeConfigPermissionRuleAction,
   LumeEffectiveConfig,
+  AgentToolPermissionGrantRecord,
 } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
@@ -36,6 +37,11 @@ import {
 } from './permission-settings-state'
 
 import { Input } from '@/components/ui/input'
+import {
+  listToolPermissionGrants,
+  revokeToolPermissionGrants,
+} from '@/lib/desktop-api/tool-permission-grants'
+import { ToolPermissionGrantsCard } from './ToolPermissionGrantsCard'
 const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   shield: Shield,
   pencil: Pencil,
@@ -78,6 +84,54 @@ export function PermissionSettings() {
     [selectedWorkspaceSlug, workspaces]
   )
   const scopeLabel = formatPermissionScopeLabel(scopeOptions, scopeValue)
+
+  // #775：「始终允许」workspace 级持久授权（查看/撤销）
+  const [toolGrants, setToolGrants] = React.useState<AgentToolPermissionGrantRecord[]>([])
+  const reloadToolGrants = React.useCallback(async () => {
+    try {
+      const { grants } = await listToolPermissionGrants()
+      setToolGrants(grants)
+    } catch (error) {
+      console.error('[PermissionSettings] load tool grants FAILED:', error)
+      toast.error('加载已授予的工具权限失败')
+    }
+  }, [])
+
+  React.useEffect(() => {
+    void reloadToolGrants()
+  }, [reloadToolGrants])
+
+  const visibleToolGrants = React.useMemo(
+    () => selectedWorkspaceSlug
+      ? toolGrants.filter((grant) => grant.workspaceSlug === selectedWorkspaceSlug)
+      : toolGrants,
+    [selectedWorkspaceSlug, toolGrants],
+  )
+
+  const handleRevokeToolGrant = async (id: string) => {
+    try {
+      await revokeToolPermissionGrants({ ids: [id] })
+      toast.success('已撤销该授权')
+    } catch (error) {
+      console.error('[PermissionSettings] revoke tool grant FAILED:', error)
+      toast.error('撤销授权失败')
+    } finally {
+      void reloadToolGrants()
+    }
+  }
+
+  const handleClearWorkspaceToolGrants = async () => {
+    if (!selectedWorkspaceSlug) return
+    try {
+      const { removed } = await revokeToolPermissionGrants({ workspaceSlug: selectedWorkspaceSlug })
+      toast.success(`已清空 ${removed} 条授权`)
+    } catch (error) {
+      console.error('[PermissionSettings] clear workspace tool grants FAILED:', error)
+      toast.error('清空授权失败')
+    } finally {
+      void reloadToolGrants()
+    }
+  }
 
   const reload = React.useCallback(async () => {
     setLoading(true)
@@ -405,6 +459,13 @@ export function PermissionSettings() {
           </Button>
         </div>
       </SettingsCard>
+
+      <ToolPermissionGrantsCard
+        grants={visibleToolGrants}
+        workspaceSlug={selectedWorkspaceSlug}
+        onRevokeGrant={(id) => void handleRevokeToolGrant(id)}
+        onClearWorkspace={() => void handleClearWorkspaceToolGrants()}
+      />
     </div>
   )
 }

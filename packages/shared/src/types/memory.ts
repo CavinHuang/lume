@@ -785,7 +785,6 @@ export interface MemorySourceFilesPage {
 }
 
 export const MEMORY_IPC_CHANNELS = {
-  SEARCH: "memory:search",
   READ: "memory:read",
   REMEMBER: "memory:remember",
   UNDO_MUTATION: "memory:undo-mutation",

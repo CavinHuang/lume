@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import { buildResult, loadPage, type RenderResult, type SpecialHandler } from "./types.js";
 
@@ -34,20 +33,20 @@ function extractRfcNumber(url: URL): string | null {
 	// https://www.rfc-editor.org/rfc/rfc{number}.txt
 	if (hostname === "www.rfc-editor.org" || hostname === "rfc-editor.org") {
 		const match = pathname.match(/\/rfc\/rfc(\d+)(?:\.(?:html|txt|pdf))?$/i);
-		if (match) return match[1];
+		if (match) return match[1] ?? null;
 	}
 
 	// https://datatracker.ietf.org/doc/rfc{number}/
 	// https://datatracker.ietf.org/doc/html/rfc{number}
 	if (hostname === "datatracker.ietf.org") {
 		const match = pathname.match(/\/doc\/(?:html\/)?rfc(\d+)\/?$/i);
-		if (match) return match[1];
+		if (match) return match[1] ?? null;
 	}
 
 	// https://tools.ietf.org/html/rfc{number}
 	if (hostname === "tools.ietf.org") {
 		const match = pathname.match(/\/html\/rfc(\d+)$/i);
-		if (match) return match[1];
+		if (match) return match[1] ?? null;
 	}
 
 	return null;
@@ -62,7 +61,7 @@ function cleanRfcText(text: string): string {
 	let skipNext = 0;
 
 	for (let i = 0; i < lines.length; i++) {
-		const line = lines[i];
+		const line = lines[i] ?? "";
 
 		// Skip lines we've marked to skip (form feeds and surrounding blank lines)
 		if (skipNext > 0) {

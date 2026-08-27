@@ -15,7 +15,7 @@ export interface ImageOutputInput {
 }
 
 export interface ImageOutputResult {
-  /** 相对线程根目录的路径（前端 READ_THREAD_FILE_DATA 据此读取） */
+  /** 相对线程根目录的路径（据此构建 FileRef，前端经 READ_FILE_REF 读取） */
   threadPath: string;
   filename: string;
   mediaType: string;

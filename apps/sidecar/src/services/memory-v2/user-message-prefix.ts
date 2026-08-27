@@ -1,4 +1,5 @@
 import { searchMemoryV2 } from "./retrieval";
+import { isConversationHistory, mergeRecallItems } from "./recall-items";
 import { parsePersonaProfile, readPersonaRaw } from "./persona";
 import { isProfileRecallItem } from "./profile";
 import {
@@ -9,7 +10,7 @@ import {
   planMemoryV2Query
 } from "./claim";
 import { selectMemoryV2PromptItems } from "./context-selection";
-import type { MemoryV2RecallItem, MemoryV2Scope } from "./types";
+import type { MemoryV2RecallItem } from "./types";
 import { recordMemoryRecallUsage } from "./recall-usage";
 
 const MEMORY_CONTEXT_RE = /^\s*<lume_memory_context>\n[\s\S]*?<\/lume_memory_context>\n\s*/;
@@ -54,7 +55,7 @@ export async function buildMemoryV2UserMessageContext(input: {
     maxItems: promptMaxItems,
     tokenBudget: Math.min(1_200, Math.max(1, Math.floor((input.contextTokenBudget ?? 12_000) * 0.1)))
   });
-  const prefix = buildMemoryUserMessagePrefix(selected, { workspaceSlug: input.workspaceSlug });
+  const prefix = buildMemoryUserMessagePrefix(selected);
   recordMemoryRecallUsage({ workspaceSlug: input.workspaceSlug, items: selected });
   return {
     prefix,
@@ -63,13 +64,8 @@ export async function buildMemoryV2UserMessageContext(input: {
   };
 }
 
-export function buildMemoryUserMessagePrefix(
-  items: MemoryV2RecallItem[],
-  options?: { workspaceSlug?: string }
-): string {
-  const personaSection = options
-    ? buildPersonaProfileSection(resolvePersonaScope(options.workspaceSlug))
-    : null;
+export function buildMemoryUserMessagePrefix(items: MemoryV2RecallItem[]): string {
+  const personaSection = buildPersonaProfileSection();
   if (items.length === 0 && !personaSection) return "";
   const voice = items.filter(isVoiceRecallItem).slice(0, 5);
   const voiceIds = new Set(voice.map((item) => item.id));
@@ -164,24 +160,12 @@ function renderVoiceSection(items: MemoryV2RecallItem[]): string {
 }
 
 /**
- * 解析 persona 段作用域：workspaceSlug 存在 → workspace；否则 global。
- * 与 ensurePersona 默认作用域一致。
- */
-function resolvePersonaScope(workspaceSlug?: string): { scope: MemoryV2Scope; workspaceSlug?: string } {
-  void workspaceSlug;
-  return { scope: "global" };
-}
-
-/**
- * 构建 `<persona_profile>` 段。读取 persona Markdown → 解析 → 取 summary +
+ * 构建 `<persona_profile>` 段。读取 global persona Markdown → 解析 → 取 summary +
  * preferences.slice(0,5) + interactionRules.slice(0,3) 拼段。
  * persona 不存在或解析后无可用字段 → 返回 null（不渲染空段）。
  */
-function buildPersonaProfileSection(input: {
-  scope: MemoryV2Scope;
-  workspaceSlug?: string;
-}): string | null {
-  const md = readPersonaRaw(input.scope, input.workspaceSlug);
+function buildPersonaProfileSection(): string | null {
+  const md = readPersonaRaw();
   if (md === null) return null;
   const profile = parsePersonaProfile(md);
   const lines: string[] = [];
@@ -217,13 +201,6 @@ function isUserProfileClaimItem(item: MemoryV2RecallItem): boolean {
       item.claim.predicate === MEMORY_CLAIM_PREFERRED_NAME
       || item.claim.predicate === MEMORY_CLAIM_IDENTITY
     );
-}
-
-function isConversationHistory(item: MemoryV2RecallItem): boolean {
-  return item.reason === "recent daily memory"
-    || item.reason === "recent run memory"
-    || item.id.includes(":daily:")
-    || item.id.includes(":run:");
 }
 
 function summarizeConversationHistory(value: string): string {
@@ -269,13 +246,4 @@ function safeJsonParse(value: string): Record<string, unknown> | undefined {
 function singleLine(value: string): string {
   const compact = value.replace(/\s+/g, " ").trim();
   return compact.length <= 240 ? compact : `${compact.slice(0, 237)}...`;
-}
-
-function mergeRecallItems(items: MemoryV2RecallItem[]): MemoryV2RecallItem[] {
-  const byId = new Map<string, MemoryV2RecallItem>();
-  for (const item of items) {
-    const existing = byId.get(item.id);
-    if (!existing || item.score > existing.score) byId.set(item.id, item);
-  }
-  return [...byId.values()];
 }

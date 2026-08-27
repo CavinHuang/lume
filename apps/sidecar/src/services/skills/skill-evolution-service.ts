@@ -16,9 +16,10 @@ import {
 } from "@lume/agent-sdk";
 import type { AgentMessage, SkillStorageScope } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import { getAliceUserSkillsDir, getUserSkillsDir, getWorkspaceSkillsDir } from "../infra/config-paths";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
-import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
+import { resolveChatProvider } from "../memory-v2/chat-provider";
 import { isMarketManagedWorkspaceSkill } from "./workspace-skill-editor-service";
 
 export interface WorkspaceSkillInput {
@@ -282,11 +283,15 @@ export function createWorkspaceSkillImprovementModelCall(
 
   const provider = input.createProvider
     ? input.createProvider({
-      apiType: binding ? resolveSkillApiType(binding) : "openai-completions",
+      apiType: binding
+        ? resolveProviderApiType({ family: binding.family, provider: binding.channel.provider })
+        : "openai-completions",
       apiKey: binding ? (input.decryptApiKey ?? decryptApiKey)(binding.channel.id) : "",
       baseURL: binding?.channel.baseUrl
     })
-    : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId });
+    // 注入的 input.resolveBinding 在此分支不生效：resolveChatProvider 固定走真实渠道解析
+    // （生产路径无影响，RPC 层不注入 resolver）
+    : resolveChatProvider(modelRef).provider;
   const model = binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef;
 
   return {
@@ -529,14 +534,6 @@ function resolveSkillImprovementModelRef(input: {
 
 function defaultResolveBinding(modelRef: string): SkillModelBinding | null {
   return resolveChannelModelBinding(modelRef, "chat");
-}
-
-function resolveSkillApiType(binding: SkillModelBinding): ApiType {
-  if (binding.channel.provider === "deepseek") return "deepseek-chat-completions";
-  if (binding.family === "anthropic" || binding.channel.provider === "anthropic" || binding.channel.provider === "anthropic-compatible") {
-    return "anthropic-messages";
-  }
-  return "openai-completions";
 }
 
 function normalizeOptionalString(value: unknown): string | undefined {

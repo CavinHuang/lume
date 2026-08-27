@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, loadPage } from "./types.js";
@@ -52,7 +51,7 @@ export const handleNuGet: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/packages\/([^/]+)(?:\/([^/]+))?/i);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const requestedVersion = match[2] ? decodeURIComponent(match[2]) : null;
 		const fetchedAt = new Date().toISOString();
 
@@ -68,7 +67,8 @@ export const handleNuGet: SpecialHandler = async (
 		if (!index.items?.length) return null;
 
 		// Get the latest page (or fetch it if not inlined)
-		let latestPage = index.items[index.items.length - 1];
+		let latestPage: NuGetRegistrationPage | undefined = index.items[index.items.length - 1];
+		if (!latestPage) return null;
 
 		// If items are not inlined, fetch the page
 		if (!latestPage.items && latestPage["@id"]) {
@@ -113,8 +113,9 @@ export const handleNuGet: SpecialHandler = async (
 		// If no specific version requested or not found, use the latest
 		if (!targetEntry) {
 			const latestItem = latestPage.items[latestPage.items.length - 1];
-			targetEntry = latestItem.catalogEntry;
+			targetEntry = latestItem?.catalogEntry ?? null;
 		}
+		if (!targetEntry) return null;
 
 		// Fetch download stats via search API
 		let totalDownloads: number | null = null;

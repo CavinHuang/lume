@@ -148,7 +148,11 @@ function normalizeParsedIndex(parsed: unknown): AgentThreadsIndex {
   };
 }
 
-function readIndex(): AgentThreadsIndex {
+/**
+ * 读索引并区分返回对象是否为进程内共享缓存实例：
+ * cached=true 时调用方不得原地修改（readIndex/getAgentThreadMeta 据此决定克隆粒度）。
+ */
+function readCachedIndex(): { index: AgentThreadsIndex; cached: boolean } {
   const indexPath = getAgentSessionsIndexPath();
   let stat: { mtimeMs: number; size: number } | undefined;
   try {
@@ -158,24 +162,30 @@ function readIndex(): AgentThreadsIndex {
   }
   if (stat && indexCache && indexCache.path === indexPath
     && indexCache.mtimeMs === stat.mtimeMs && indexCache.size === stat.size) {
-    return structuredClone(indexCache.index);
+    return { index: indexCache.index, cached: true };
   }
   if (!stat) {
     indexCache = null;
-    return { version: INDEX_VERSION, threads: [] };
+    return { index: { version: INDEX_VERSION, threads: [] }, cached: false };
   }
 
   try {
     const index = normalizeParsedIndex(JSON.parse(readFileSync(indexPath, "utf-8")));
     indexCache = { path: indexPath, mtimeMs: stat.mtimeMs, size: stat.size, index };
-    return structuredClone(index);
+    return { index, cached: true };
   } catch (error) {
     log.error("failed to read thread index", { error, indexPath });
     const backupPath = backupCorruptFile(indexPath);
     if (backupPath) log.warn("backed up corrupt thread file", { label: "Agent 线程", backupPath });
     indexCache = null;
-    return { version: INDEX_VERSION, threads: [] };
+    return { index: { version: INDEX_VERSION, threads: [] }, cached: false };
   }
+}
+
+function readIndex(): AgentThreadsIndex {
+  const { index, cached } = readCachedIndex();
+  if (!cached) return index;
+  return structuredClone(index);
 }
 
 function writeIndex(index: AgentThreadsIndex): void {
@@ -264,8 +274,14 @@ export function subscribeThreadListChanged(listener: () => void): () => void {
   };
 }
 
+// #527-3：单条查询只克隆命中的那一条——此前缓存命中仍整索引 structuredClone，
+// 每条用户消息的热路径为 O(全部线程) 深拷贝付费。防护语义不变：返回值仍是
+// 调用方独占副本，共享缓存实例不会被下游污染。
 export function getAgentThreadMeta(id: string): AgentThreadMeta | undefined {
-  return readIndex().threads.find((thread) => thread.id === id);
+  const { index, cached } = readCachedIndex();
+  const thread = index.threads.find((item) => item.id === id);
+  if (!thread) return undefined;
+  return cached ? structuredClone(thread) : thread;
 }
 
 
@@ -605,25 +621,6 @@ export function toggleAgentThreadPin(id: string): AgentThreadMeta {
   return updateAgentThreadMeta(id, { pinned: !meta.pinned });
 }
 
-export function moveAgentThreadToWorkspace(id: string, workspaceId: string): AgentThreadMeta {
-  const targetWorkspace = getAgentWorkspace(workspaceId);
-  if (!targetWorkspace) {
-    throw new Error(`目标工作区不存在: ${workspaceId}`);
-  }
-  ensureWorkspaceAgentAssets(targetWorkspace.slug, targetWorkspace.name);
-  const currentMeta = getAgentThreadMeta(id);
-  if (!currentMeta) {
-    throw new Error(`Agent 线程不存在: ${id}`);
-  }
-  ensureLumeFileContext(currentMeta.fileContextId ?? currentMeta.id);
-
-  return updateAgentThreadMeta(id, {
-    workspaceId: workspaceId,
-    sdkThreadId: undefined,
-    runtimeThreadId: undefined
-  });
-}
-
 export function deleteAgentThread(id: string): void {
   const threadBeforeDelete = getAgentThreadMeta(id);
   const workspaceLock = `workspace:${threadBeforeDelete?.workspaceId ?? "<unassigned>"}`;
@@ -765,10 +762,6 @@ function deleteAgentThreadLocked(id: string): void {
     planningStore.advanceOperation(operationId, { phase: "finalized", status: "completed", recoverable: false, threadId: id });
   }
   log.info("deleted agent thread", { threadId: removed.id });
-}
-
-export function listAgentThreadsForWorkspace(workspaceId: string): AgentThreadMeta[] {
-  return readIndex().threads.filter((thread) => thread.workspaceId === workspaceId);
 }
 
 export function invalidateAgentThreadRuntimeState(threadId: string): void {
@@ -934,19 +927,6 @@ export function emptyTrash(): string[] {
   return toDelete.map((thread) => thread.id);
 }
 
-export function truncateAgentMessagesFrom(threadId: string, messageId: string): AgentMessage[] {
-  const messages = getAgentThreadMessages(threadId);
-  const targetIndex = messages.findIndex((msg) => msg.id === messageId);
-  if (targetIndex === -1) {
-    return messages;
-  }
-
-  const kept = messages.slice(0, targetIndex);
-  replaceAgentThreadTranscript(threadId, kept);
-  return kept;
-}
-
-/** 保留目标消息及其之前的消息，用于 Coding Turn 完整回退。 */
 export function truncateAgentMessagesAfter(threadId: string, messageId: string): {
   messages: AgentMessage[];
   removed: number;
@@ -975,8 +955,6 @@ export async function clearAgentThreadMessages(threadId: string): Promise<{ ok: 
   log.info("cleared thread messages", { threadId, count: messages.length });
   return { ok: true, cleared: messages.length };
 }
-
-export const truncateAgentThreadMessagesFrom = truncateAgentMessagesFrom;
 
 /**
  * 从指定消息处分叉线程：创建新线程，复制截断后的消息

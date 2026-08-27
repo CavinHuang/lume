@@ -1,7 +1,5 @@
 import type { ReadingSearchResult } from "@lume/shared";
-import { GutenbergClient } from "./gutenberg-client";
-import { PoetryClient } from "./poetry-client";
-import type { ReadingSourceBook, ReadingSourceFetch, ReadingSourceResult } from "./types";
+import type { ReadingSourceFetch, ReadingSourceResult } from "./types";
 import { WereadClient } from "./weread-client";
 import { WereadPublicClient } from "./weread-public-client";
 
@@ -19,14 +17,6 @@ export class BookDataService {
     this.fetchImpl = input.fetch;
   }
 
-  async loadWereadShelf(): Promise<ReadingSourceResult<ReadingSourceBook[]>> {
-    return this.trySource(async () => this.createWereadClient().shelf(), []);
-  }
-
-  async loadWereadNotebooks(): Promise<ReadingSourceResult<unknown[]>> {
-    return this.trySource(async () => this.createWereadClient().notebooks(), []);
-  }
-
   async loadWereadBookmarks(bookId: string): Promise<ReadingSourceResult<unknown[]>> {
     return this.trySource(async () => this.createWereadClient().bookmarks(bookId), []);
   }
@@ -35,24 +25,12 @@ export class BookDataService {
     return this.trySource(async () => this.createWereadClient().bestBookmarks(bookId), []);
   }
 
-  async loadWereadPublicReviews(bookId: string, listType = "hot"): Promise<ReadingSourceResult<unknown[]>> {
-    return this.trySource(async () => this.createWereadClient().publicReviews(bookId, listType), []);
-  }
-
   async searchWeread(query: string, limit = 10): Promise<ReadingSourceResult<ReadingSearchResult[]>> {
     return this.trySource(async () => this.createWereadClient().search(query, limit), []);
   }
 
-  async searchGutenberg(query: string, limit = 10): Promise<ReadingSourceResult<ReadingSearchResult[]>> {
-    return this.trySource(async () => new GutenbergClient({ fetch: this.fetchImpl }).search(query, limit), []);
-  }
-
   async searchWereadPublic(query: string, limit = 10): Promise<ReadingSourceResult<ReadingSearchResult[]>> {
     return this.trySource(async () => new WereadPublicClient({ fetch: this.fetchImpl }).search(query, limit), []);
-  }
-
-  async fetchPoem(): Promise<ReadingSourceResult<ReadingSearchResult | null>> {
-    return this.trySource(async () => new PoetryClient({ fetch: this.fetchImpl }).randomPoem(), null);
   }
 
   private createWereadClient(): WereadClient {

@@ -896,7 +896,6 @@ export function shouldAutoContinueTurnLimited(
 /** #566:单条逻辑发送的内部选项——autoContinuationCount/maxContinuations 由续跑循环回填,供收尾段判定与轮次上限。 */
 type AgentSendOptions = {
   appendUserMessage?: boolean;
-  allowResumeRetry?: boolean;
   abortSignal?: AbortSignal;
   autoContinuationCount?: number;
   maxContinuations?: number;
@@ -1188,7 +1187,7 @@ async function prepareAgentSendStage({
 }: {
   input: AgentSendInput;
   emit: AgentStreamEmitter;
-  options: { appendUserMessage?: boolean; allowResumeRetry?: boolean; abortSignal?: AbortSignal };
+  options: { appendUserMessage?: boolean; abortSignal?: AbortSignal };
   threadId: string;
   userMessage: string;
   completeIfAborted: () => boolean;
@@ -1269,7 +1268,6 @@ async function prepareAgentSendStage({
     && input.messageMetadata?.hiddenFromChat !== true
     && !isManualCompactCommand;
   const shouldTryAutoTitle = shouldAppendUserMessage && assistantTurnCountBeforeSend === 0;
-  void options.allowResumeRetry;
   let activeTurnId: string | null = null;
   let activeTurnStartedAt: string | null = null;
   let userSdkMessage: SDKMessage | null = null;

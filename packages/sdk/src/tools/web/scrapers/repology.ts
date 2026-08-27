@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import { buildResult, loadPage, type RenderResult, type SpecialHandler } from "./types.js";
 
@@ -116,7 +115,7 @@ export const handleRepology: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/project\/([^/]+)/);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from Repology API
@@ -158,7 +157,8 @@ export const handleRepology: SpecialHandler = async (
 		// If no newest found, find the highest version
 		if (newestVersions.size === 0) {
 			const versions = packages.map(p => p.version);
-			if (versions.length > 0) newestVersions.add(versions[0]);
+			const firstVersion = versions[0];
+			if (firstVersion) newestVersions.add(firstVersion);
 		}
 
 		// Group packages by status for counting

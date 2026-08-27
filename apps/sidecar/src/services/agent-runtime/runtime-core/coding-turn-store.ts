@@ -42,37 +42,6 @@ export async function createCodingTurnRecord(
   return record;
 }
 
-export async function getCodingTurnRecord(
-  sessionDir: string,
-  turnId: string,
-): Promise<CodingTurnRecord | null> {
-  return (await readStore(sessionDir)).turns.find((turn) => turn.turnId === turnId) ?? null;
-}
-
-export async function listCodingTurnRecords(sessionDir: string): Promise<CodingTurnRecord[]> {
-  return (await readStore(sessionDir)).turns.sort((a, b) => a.startedAt.localeCompare(b.startedAt));
-}
-
-export async function updateCodingTurnRecord(
-  sessionDir: string,
-  turnId: string,
-  patch: Partial<Omit<CodingTurnRecord, "turnId" | "threadId" | "userMessageId" | "startedAt">>,
-): Promise<CodingTurnRecord | null> {
-  const payload = await readStore(sessionDir);
-  const index = payload.turns.findIndex((turn) => turn.turnId === turnId);
-  if (index < 0) return null;
-  const current = payload.turns[index]!;
-  const next: CodingTurnRecord = {
-    ...current,
-    ...patch,
-    runIds: patch.runIds ? [...new Set(patch.runIds)] : current.runIds,
-    changedFiles: patch.changedFiles ?? current.changedFiles,
-  };
-  payload.turns[index] = next;
-  await writeStore(sessionDir, payload);
-  return next;
-}
-
 function isCodingTurnRecord(value: unknown): value is CodingTurnRecord {
   if (!value || typeof value !== "object") return false;
   const record = value as Partial<CodingTurnRecord>;

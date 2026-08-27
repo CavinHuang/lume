@@ -13,7 +13,6 @@ import {
   getLumeConfigAuditPath,
   getLumeConfigYamlPath,
   getWorkspaceMetaPath,
-  getWorkspaceLongTermMemoryPath,
   getWorkspaceResourcesPath
 } from "./config-paths";
 
@@ -65,7 +64,6 @@ describe("config-paths", () => {
 
     const resources = getWorkspaceResourcesPath("demo");
     const meta = getWorkspaceMetaPath("demo");
-    const longTermMemory = getWorkspaceLongTermMemoryPath("demo");
     const threadRoot = getAgentThreadRootPath("demo", "thread-1");
     const threadFiles = getAgentThreadFilesPath("demo", "thread-1");
     const threadArtifacts = getAgentThreadArtifactsPath("demo", "thread-1");
@@ -73,7 +71,6 @@ describe("config-paths", () => {
 
     expect(resources.endsWith(join("agent-workspaces", "demo", "resources"))).toBeTrue();
     expect(meta.endsWith(join("agent-workspaces", "demo", ".meta"))).toBeTrue();
-    expect(longTermMemory.endsWith(join("agent-workspaces", "demo", "MEMORY.md"))).toBeTrue();
     expect(threadRoot.endsWith(join("agent-workspaces", "demo", "threads", "thread-1"))).toBeTrue();
     expect(threadFiles.endsWith(join("agent-workspaces", "demo", "threads", "thread-1", "files"))).toBeTrue();
     expect(threadArtifacts.endsWith(join("agent-workspaces", "demo", "threads", "thread-1", "artifacts"))).toBeTrue();

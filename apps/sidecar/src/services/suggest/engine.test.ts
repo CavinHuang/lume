@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
   DEFAULT_SUGGEST_OPTIONS,
-  defaultTypeWeights,
   evaluateSuggestions,
 } from "./engine";
+import { DEFAULT_TYPE_WEIGHTS } from "@lume/shared";
 import type { SuggestionTypeWeights } from "@lume/shared";
 
 const um = (content: string) => [{ role: "user", content }] as const;
@@ -190,19 +190,10 @@ describe("默认参数", () => {
     expect(DEFAULT_SUGGEST_OPTIONS.maxPerSession).toBe(2);
   });
 
-  test("defaultTypeWeights 初始权重", () => {
-    const w = defaultTypeWeights();
-    expect(w.correction).toBe(1.0);
-    expect(w.followup).toBe(1.0);
-    expect(w.automation).toBe(1.0);
-    expect(w.skill).toBe(0.8);
-    expect(w.todo).toBe(0.9);
-  });
-
   test("todo 默认权重不会死锁（0.72 × 0.9 = 0.648 > 0.6）", () => {
     const out = evaluateSuggestions(um("还差一点没做完"), {
       seenKeys: new Set(),
-      typeWeights: defaultTypeWeights(),
+      typeWeights: DEFAULT_TYPE_WEIGHTS,
     });
     expect(out.candidates.find((c) => c.kind === "todo")).toBeDefined();
   });

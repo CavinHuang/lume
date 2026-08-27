@@ -29,9 +29,6 @@ export interface AieosIdentity {
     fears?: string[];
   };
   capabilities?: { skills?: string[]; tools?: string[] };
-  physicality?: { appearance?: string; avatar_description?: string };
-  history?: { origin_story?: string; education?: string[]; occupation?: string };
-  interests?: { hobbies?: string[]; favorites?: Record<string, string>; lifestyle?: string };
 }
 
 function toText(val: unknown): string | undefined {
@@ -59,9 +56,6 @@ export function parseAieos(json: string): AieosIdentity {
     const ling = raw.linguistics as Record<string, unknown> | undefined;
     const mot = raw.motivations as Record<string, unknown> | undefined;
     const cap = raw.capabilities as Record<string, unknown> | undefined;
-    const phys = raw.physicality as Record<string, unknown> | undefined;
-    const hist = raw.history as Record<string, unknown> | undefined;
-    const inter = raw.interests as Record<string, unknown> | undefined;
 
     const names = id?.names as Record<string, unknown> | undefined;
     const ocean = (psych?.ocean ?? (psych?.traits as Record<string, unknown> | undefined)?.ocean) as Record<string, unknown> | undefined;
@@ -102,13 +96,7 @@ export function parseAieos(json: string): AieosIdentity {
         long_term_goals: toList(mot.long_term_goals ?? (mot.goals as Record<string, unknown> | undefined)?.long_term),
         fears: toList(mot.fears)
       } : undefined,
-      capabilities: cap ? { skills: toList(cap.skills), tools: toList(cap.tools) } : undefined,
-      physicality: phys ? { appearance: toText(phys.appearance), avatar_description: toText(phys.avatar_description) } : undefined,
-      history: hist ? { origin_story: toText(hist.origin_story), education: toList(hist.education), occupation: toText(hist.occupation) } : undefined,
-      interests: inter ? {
-        hobbies: toList(inter.hobbies),
-        lifestyle: toText(inter.lifestyle)
-      } : undefined
+      capabilities: cap ? { skills: toList(cap.skills), tools: toList(cap.tools) } : undefined
     };
   } catch {
     return {};

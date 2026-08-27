@@ -131,9 +131,10 @@ describe("runtime-core run loop", () => {
       }
     });
 
+    // #559:上屏文案不带内部前缀，给原因 + 下一步指引
     expect(result).toEqual({
       status: "errored",
-      errorMessage: "runtime-core 未检测到可渲染输出。"
+      errorMessage: "本轮未产生任何输出。请重新发送消息重试；若持续出现，请到设置 → 诊断日志查看详情。"
     });
   });
 

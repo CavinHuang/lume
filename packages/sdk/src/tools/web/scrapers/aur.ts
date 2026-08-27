@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, loadPage } from "./types.js";
@@ -50,7 +49,7 @@ export const handleAur: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/packages\/([^/?#]+)/);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from AUR RPC API

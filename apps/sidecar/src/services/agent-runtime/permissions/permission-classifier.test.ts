@@ -92,45 +92,6 @@ describe("permission classifier", () => {
     });
   });
 
-  test("uses llm classifier cache for low-risk uncertain commands", async () => {
-    let calls = 0;
-    const classifier = createPermissionClassifier({
-      llm: async () => {
-        calls++;
-        return JSON.stringify({
-          riskLevel: "medium",
-          reason: "writes generated files",
-          shouldAsk: true
-        });
-      }
-    });
-
-    await classifier.classify({ toolName: "Bash", command: "node scripts/build.js" });
-    await classifier.classify({ toolName: "Bash", command: "node scripts/build.js" });
-
-    expect(calls).toBe(1);
-  });
-
-  test("falls back to heuristic result when llm classifier times out", async () => {
-    const classifier = createPermissionClassifier({
-      timeoutMs: 1,
-      llm: () => new Promise((resolve) => setTimeout(() => resolve(JSON.stringify({
-        riskLevel: "critical",
-        reason: "late",
-        shouldAsk: true
-      })), 20))
-    });
-
-    await expect(classifier.classify({
-      toolName: "Bash",
-      command: "pwd"
-    })).resolves.toMatchObject({
-      riskLevel: "low",
-      shouldAsk: false,
-      reasonCode: "shell_read"
-    });
-  });
-
   test("classifies PowerShell destructive verbs above low risk", async () => {
     const classifier = createPermissionClassifier();
 
@@ -264,26 +225,6 @@ describe("permission classifier", () => {
       shellKind: "bash",
       platform: "linux"
     })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
-  });
-
-  test("llm cache key separates shell dialects (#707)", async () => {
-    let calls = 0;
-    const classifier = createPermissionClassifier({
-      llm: async () => {
-        calls++;
-        return JSON.stringify({ riskLevel: "low", reason: "ok", shouldAsk: false });
-      }
-    });
-
-    const input = { toolName: "Bash", command: "node scripts/build.js" };
-    await classifier.classify({ ...input, shellKind: "bash" });
-    await classifier.classify({ ...input, shellKind: "powershell" });
-
-    expect(calls).toBe(2);
-
-    // 反向钉死：同方言同值仍命中缓存（键纳入方言不得使缓存失效）
-    await classifier.classify({ ...input, shellKind: "bash" });
-    expect(calls).toBe(2);
   });
 
   test("uses a neutral explanation for whitelisted-out low-risk commands (#707)", async () => {

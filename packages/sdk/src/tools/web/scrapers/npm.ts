@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -19,11 +18,11 @@ export const handleNpm: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/package\/(.+?)(?:\/|$)/);
 		if (!match) return null;
 
-		let packageName = decodeURIComponent(match[1]);
+		let packageName = decodeURIComponent(match[1] ?? "");
 		// Handle scoped packages: /package/@scope/name
 		if (packageName.startsWith("@")) {
 			const scopeMatch = parsed.pathname.match(/^\/package\/(@[^/]+\/[^/]+)/);
-			if (scopeMatch) packageName = decodeURIComponent(scopeMatch[1]);
+			if (scopeMatch) packageName = decodeURIComponent(scopeMatch[1] ?? "");
 		}
 
 		const fetchedAt = new Date().toISOString();
