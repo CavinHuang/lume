@@ -90,4 +90,49 @@ describe("session-store appendMessage/appendMessages", () => {
       rmSync(cwd, { recursive: true, force: true });
     }
   });
+
+  // #527 三审①（缓存）：连续单条快路径下 tail 计数不得漂移丢行
+  test("连续多次单条 append 全部落盘且 json/jsonl 行数一致", () => {
+    const { agentDir, cwd, manager } = setup();
+    try {
+      for (let i = 0; i < 6; i += 1) {
+        manager.appendMessage({ role: "user", content: `m${i}` });
+      }
+      const lines = parseJsonlLines(readJsonl(manager.getSessionDir()));
+      expect(lines).toHaveLength(6);
+      const stored = JSON.parse(
+        readFileSync(join(manager.getSessionDir(), "transcript.json"), "utf-8")
+      ) as { metadata?: { messageCount?: number }; messages?: unknown[] };
+      expect(stored.metadata?.messageCount).toBe(6);
+      expect(stored.messages).toHaveLength(6);
+    } finally {
+      rmSync(agentDir, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // #527 三审①（缓存）：外部改写 transcript.json 后追加须冷读保留外部改动
+  test("外部修改 json 元数据后 append 不回冲", () => {
+    const { agentDir, cwd, manager } = setup();
+    try {
+      manager.appendMessage({ role: "user", content: "first" });
+      const sessionDir = manager.getSessionDir();
+      const raw = readFileSync(join(sessionDir, "transcript.json"), "utf-8");
+      const mutated = (JSON.parse(raw) as Record<string, unknown>);
+      const metadata = mutated.metadata as Record<string, unknown>;
+      metadata.tag = "external-tag";
+      writeFileSync(join(sessionDir, "transcript.json"), JSON.stringify(mutated), "utf-8");
+
+      manager.appendMessage({ role: "user", content: "second" });
+      const after = JSON.parse(
+        readFileSync(join(sessionDir, "transcript.json"), "utf-8")
+      ) as { metadata?: { tag?: string }; sessionMessages?: unknown[] };
+      // 快照失效→冷读→外部 tag 进入后续写入的基线
+      expect(after.metadata?.tag).toBe("external-tag");
+      expect(after.sessionMessages).toHaveLength(2);
+    } finally {
+      rmSync(agentDir, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
 });
