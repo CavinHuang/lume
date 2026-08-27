@@ -11,7 +11,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
@@ -124,7 +124,7 @@ rpcTransport.onClose(() => {
   for (const [requestId, pending] of [...pendingBrowserMainRequests]) {
     pendingBrowserMainRequests.delete(requestId);
     clearTimeout(pending.timeout);
-    pending.reject(Object.assign(new Error("browser transport disconnected"), { code: "browser_unavailable" }));
+    pending.reject(Object.assign(new Error("browser transport disconnected"), { code: RPC_ERROR_CODES.BROWSER_UNAVAILABLE }));
   }
 });
 
@@ -199,7 +199,7 @@ async function handleRpcLine(line: string): Promise<void> {
   // 统一 chokepoint：超限消息不进 JSON.parse（防解析期超量内存分配）
   if (line.length > MAX_RPC_MESSAGE_UNITS) {
     writeResponse({
-      error: { code: "E_MESSAGE_TOO_LARGE", message: "RPC message exceeds size limit." }
+      error: { code: RPC_ERROR_CODES.MESSAGE_TOO_LARGE, message: "RPC message exceeds size limit." }
     });
     return;
   }
@@ -208,7 +208,7 @@ async function handleRpcLine(line: string): Promise<void> {
     payload = JSON.parse(line) as JsonRpcRequest;
   } catch {
     writeResponse({
-      error: { code: "E_BAD_JSON", message: "Invalid JSON payload." }
+      error: { code: RPC_ERROR_CODES.BAD_JSON, message: "Invalid JSON payload." }
     });
     return;
   }
@@ -240,7 +240,7 @@ async function handleRpcLine(line: string): Promise<void> {
     writeResponse({
       id: payload.id,
       error: {
-        code: "E_BAD_REQUEST",
+        code: RPC_ERROR_CODES.BAD_REQUEST,
         message: "Missing method."
       }
     });
@@ -273,7 +273,7 @@ async function handleRpcLine(line: string): Promise<void> {
       if (payload.id !== undefined) {
         writeResponse({
           id: payload.id,
-          error: { code: "connection_vault_key_invalid", message: error instanceof Error ? error.message : String(error) },
+          error: { code: RPC_ERROR_CODES.CONNECTION_VAULT_KEY_INVALID, message: error instanceof Error ? error.message : String(error) },
         });
       }
     }
@@ -282,24 +282,10 @@ async function handleRpcLine(line: string): Promise<void> {
 
   if (method === "system.secret-encryption-key") {
     // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
-    // error 响应，否则 desktop 启动关键路径上的 await 要等满 RPC 超时上限才降级
-    try {
-      installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
-      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
-    } catch (error) {
-      if (payload.id !== undefined) {
-        writeResponse({
-          id: payload.id,
-          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
-        });
-      }
-    }
-    return;
-  }
-
-  if (method === "system.secret-encryption-key") {
-    // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
-    // error 响应，否则 desktop 启动关键路径上的 await 要等满 45s 超时才降级
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 RPC 超时上限才降级。
+    // (#783 review 修复:此前存在两个同名分支,前者命中即 return 使含
+    // migrateLegacySecretCiphertexts 的版本永不可达,#637 弱密文升级从未执行——
+    // 仅保留本超集分支,行为零差异、恢复升级链路)
     try {
       installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
       // #637：密钥就位后立即把存量弱种子密文升级为 v2（失败不阻断注入应答）
@@ -316,7 +302,7 @@ async function handleRpcLine(line: string): Promise<void> {
       if (payload.id !== undefined) {
         writeResponse({
           id: payload.id,
-          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+          error: { code: RPC_ERROR_CODES.SECRET_ENCRYPTION_KEY_INVALID, message: error instanceof Error ? error.message : String(error) },
         });
       }
     }
@@ -354,7 +340,7 @@ async function handleRpcLine(line: string): Promise<void> {
     writeResponse({
       id: payload.id,
       error: {
-        code: "E_NOT_IMPLEMENTED",
+        code: RPC_ERROR_CODES.NOT_IMPLEMENTED,
         message: `Method not implemented: ${method}`
       }
     });
