@@ -97,6 +97,10 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     };
   }
   if (context.browserBroker) {
+    // review 留痕:browser:* 域有意不入 #522 validateInput 收口体系——入参
+    // 形状由 browser-broker 逐字段守卫(browser-reference-candidates/grant
+    // 系列的 per-call guard)与反向 MAC/序号契约兜底,render:result 对端即
+    // renderer 自身。如需统一收口须连 broker 守卫一并上移。
     handlers["browser:settings"] = async (params) => {
       if (!params || typeof params !== "object") throw new Error("invalid browser settings");
       const settingsParams = params as { extensionBackendEnabled?: unknown; browserEnabled?: unknown; browserUseEnabled?: unknown };

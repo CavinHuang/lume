@@ -21,7 +21,8 @@ export interface LumeRpcErrorShape {
 }
 
 /**
- * 稳定跨进程错误码台账。当前收敛范围:RPC 传输协议层(E_* 分帧/分派)、
+ * 稳定跨进程错误码台账。当前收敛范围:RPC 传输协议层(E_* 分帧/解析/分派/
+ * 入参校验)、
  * desktop 启动关键路径密钥注入与 browser 通道可用性三类 sidecar 出站位点;
  * 业务域 handler 合成的错误形状(MCP/插件市场/连接器等)仍在各自定义点,
  * 按域渐进收编。新增出站 code 一律在此登记;勿依赖 name 兜底值。
@@ -43,7 +44,7 @@ export const RPC_ERROR_CODES = {
   CONNECTION_VAULT_KEY_INVALID: "connection_vault_key_invalid",
   /** 密文加密密钥注入被拒(desktop 启动关键路径) */
   SECRET_ENCRYPTION_KEY_INVALID: "secret_encryption_key_invalid",
-  /** desktop 浏览器主进程通道断开/不可用 */
+  /** desktop 浏览器主进程通道断开/不可用。与 shared browser-runtime.ts 的 BrowserErrorCode "browser_unavailable" 同字符串双域,改须核对彼侧白名单 */
   BROWSER_UNAVAILABLE: "browser_unavailable",
 } as const;
 

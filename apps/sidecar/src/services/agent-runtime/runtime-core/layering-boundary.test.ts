@@ -43,6 +43,9 @@ interface ImportClause {
 
 // 覆盖:import/export-import、动态 import()、export *(可带 as 别名)与
 // export {...}/export type {...} from(#503:此前 export-from 形式不可见)。
+// 已知盲区(round1 review 披露):require() 形态(index.ts 自身在用)与
+// specifier 为变量的动态 import 不可见——本守卫本质是存量快照冻结器,
+// 新增越界须走这两形态才能绕过,code review 时人工留意。
 const IMPORT_RE =
   /(?:^|\n)\s*(?:export\s+)?import\s+(type\s+)?(?:([\w*${}\s,]+?)\s+from\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|(?:^|\n)\s*export\s+(type\s+)?(\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s+from\s+["']([^"']+)["']/g;
 
