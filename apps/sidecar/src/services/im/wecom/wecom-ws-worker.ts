@@ -4,6 +4,7 @@ import type { ImWorker } from "../provider-registry";
 import type { ImRuntimeAccount } from "../im-config-manager";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { getImMirrorEntryByChat } from "../im-mirror-store";
 import { registerWecomClient, unregisterWecomClient } from "./wecom-client-pool";
 import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
@@ -34,14 +35,19 @@ interface WecomTextBody {
 export function parseWecomEvent(
   frame: unknown,
   account: ImRuntimeAccount,
+  /** #544 镜像群谓词：命中即免 @ 放行（无公共上游，各 worker 各自插桩） */
+  isMirrorChat?: (peerId: string) => boolean,
 ): InboundImRouteMessage | null {
   const f = frame as { body?: WecomTextBody; headers?: { req_id?: string } } | null | undefined;
   const body = f?.body;
   if (!body) return null;
   const rawText = body.text?.content?.trim();
   if (!rawText) return null;
-  // 群聊 @ 门控（#405，启发式同 feishu/dingtalk）
-  if (body.chattype === "group" && !rawText.includes("@")) return null;
+  const peerId = body.chatid ?? body.from?.userid ?? "unknown";
+  // 群聊 @ 门控（#405，启发式同 feishu/dingtalk）；镜像群豁免（#544）
+  if (body.chattype === "group" && !rawText.includes("@") && !(isMirrorChat?.(peerId) ?? false)) {
+    return null;
+  }
   // 企微 @ 机器人前缀清理
   const text = rawText.replace(/^@\S+\s*/, "").trim() || rawText;
   return {
@@ -51,7 +57,7 @@ export function parseWecomEvent(
     workspaceId: account.workspaceId,
     peerKind: body.chattype === "group" ? "group" : "dm",
     // 单聊无 chatid → 以 userid 作为 sendMessage 的会话标识(SDK 文档:单聊填 userid)
-    peerId: body.chatid ?? body.from?.userid ?? "unknown",
+    peerId,
     senderId: body.from?.userid,
     text,
     messageId: f?.headers?.req_id,
@@ -130,7 +136,11 @@ export function createWecomWsWorker(input: CreateWecomWsWorkerInput): ImWorker {
       registerWecomClient(input.account.id, wsClient);
       wsClient.on("message.text", (data) => {
         try {
-          const parsed = parseWecomEvent(data, input.account);
+          const parsed = parseWecomEvent(
+            data,
+            input.account,
+            (peerId) => getImMirrorEntryByChat(input.account.id, peerId) !== null
+          );
           if (parsed) {
             log.info("收到企微消息", { accountId: input.account.id, peerId: parsed.peerId });
             void routeMessage(parsed).catch((error: unknown) => {

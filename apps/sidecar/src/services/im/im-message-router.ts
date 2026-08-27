@@ -40,6 +40,9 @@ import {
 } from "./im-thread-binding-store";
 import { sendBoundImTextMessage, type SendBoundImTextMessageInput } from "./im-send-service";
 import { resolveMediaContents } from "./im-media-resolver";
+import { getImMirrorEntryByChat } from "./im-mirror-store";
+import type { ImMirrorEntryPublic } from "@lume/shared";
+import { getImProvider } from "./provider-registry";
 import { createImRunCardSession, type ImRunCardSession } from "./im-run-card-session";
 import { getFeishuQuotedMessage } from "./feishu/feishu-api";
 import { redactSensitiveText } from "./im-log-redaction";
@@ -103,6 +106,12 @@ export interface ImMessageRouterDeps {
   ) => Promise<{ senderId?: string; text: string } | null>;
   /** /revert 快照还原执行器（#714）；默认走 runtime-core checkpoint 服务 */
   revertRun?: (input: { threadId: string; runId: string }) => Promise<CodingRunRevertResult>;
+  /** #544 镜像群回执文本出口（测试注入）；默认走 provider.sendText 直投镜像群 */
+  sendMirrorText?: (
+    entry: ImMirrorEntryPublic,
+    message: InboundImRouteMessage,
+    text: string
+  ) => Promise<void>;
 }
 
 type ImAgentStreamEmitter = {
@@ -976,6 +985,13 @@ export async function routeInboundImMessage(
     existing = null;
     staleRebind = true;
   }
+  // #544 反向续聊：镜像群消息免 @ 直接路由回原桌面线程（不建绑定、不写 source meta）
+  if (message.peerKind === "group") {
+    const mirrorEntry = getImMirrorEntryByChat(message.accountId, message.peerId);
+    if (mirrorEntry) {
+      return routeMirrorInboundMessage(message, mirrorEntry, deps);
+    }
+  }
   const approvalCommand = parseImApprovalCommand(message.text);
   if (existing && approvalCommand.type !== "none") {
     log.info("处理审批命令", { peerId: message.peerId, requestId: approvalCommand.type === "command" ? approvalCommand.requestId : undefined });
@@ -1021,8 +1037,21 @@ export async function routeInboundImMessage(
   }
 
   await updateThreadSourceMeta(binding.threadId, message, deps);
+  await submitInboundImText(message, binding.threadId, deps);
 
+  return { threadId: binding.threadId };
+}
 
+/**
+ * 提交段（#544 抽取参数化）：媒体解析 → planning 上下文 → sendMessage 全链。
+ * 既有 DM 路由与镜像群回流共用；threadId 由调用方决定。镜像路径绝不回写
+ * 绑定与 source meta（自环不变量，见 routeInboundImMessage 镜像分支注释）。
+ */
+async function submitInboundImText(
+  message: InboundImRouteMessage,
+  threadId: string,
+  deps: ImMessageRouterDeps
+): Promise<void> {
   const sendMessage = deps.sendMessage ?? defaultSendMessage;
 
   // Resolve media contents: download images/files into the thread attachment
@@ -1031,7 +1060,7 @@ export async function routeInboundImMessage(
   const messageContents = message.contents ?? [];
   const workspaceSlug = message.workspaceId ? getAgentWorkspace(message.workspaceId)?.slug : undefined;
   const cdnBaseUrl = getImAccount(message.accountId)?.baseUrl;
-  const saveMedia = buildImSaveMedia(workspaceSlug, binding.threadId);
+  const saveMedia = buildImSaveMedia(workspaceSlug, threadId);
   const resolvedContents = messageContents.length > 0
     ? await resolveMediaContents(messageContents, { saveMedia, cdnBaseUrl })
     : [];
@@ -1040,7 +1069,7 @@ export async function routeInboundImMessage(
   const submissionId = randomUUID();
   registerPlanningExecutionContext({
     surface: "im",
-    threadId: binding.threadId,
+    threadId,
     clientSubmissionId: submissionId,
     ...(message.workspaceId ? { workspaceId: message.workspaceId } : {})
   });
@@ -1060,7 +1089,7 @@ export async function routeInboundImMessage(
     : null;
 
   await sendMessage({
-    threadId: binding.threadId,
+    threadId,
     userMessage: buildImUserMessage(message, quoted),
     messageAttachments: mediaAttachments.length > 0 ? mediaAttachments : undefined,
     workspaceId: message.workspaceId,
@@ -1101,8 +1130,70 @@ export async function routeInboundImMessage(
   if (message.messageId) {
     rememberImMessage(message.provider, message.accountId, message.messageId);
   }
+}
 
-  return { threadId: binding.threadId };
+/** 镜像群回执默认出口：provider.sendText 直投镜像群（account 凭据实时解密）。 */
+async function sendMirrorGroupTextDefault(
+  entry: ImMirrorEntryPublic,
+  message: InboundImRouteMessage,
+  text: string
+): Promise<void> {
+  try {
+    await getImProvider(message.provider).sendText({
+      account: getImRuntimeAccount(entry.accountId),
+      peerId: entry.chatId,
+      peerKind: "group",
+      text
+    });
+  } catch (error) {
+    log.warn("镜像群回执发送失败", {
+      chatId: entry.chatId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  }
+}
+
+/**
+ * #544 镜像群入站分支：只开放最小命令面——/stop 停原线程；其余斜杠命令回引导文案；
+ * 纯文本直接续聊原线程。全程不调 upsertImThreadBinding / updateThreadSourceMeta。
+ */
+async function routeMirrorInboundMessage(
+  message: InboundImRouteMessage,
+  entry: ImMirrorEntryPublic,
+  deps: ImMessageRouterDeps
+): Promise<{ threadId: string }> {
+  log.info("镜像群消息回流", {
+    provider: message.provider,
+    chatId: entry.chatId,
+    threadId: entry.threadId.slice(0, 8)
+  });
+  const reply = (text: string) =>
+    (deps.sendMirrorText ?? sendMirrorGroupTextDefault)(entry, message, text);
+
+  const command = parseImCommand(message.text);
+  if (command.type !== "none") {
+    if (command.type === "stop") {
+      try {
+        await (deps.stopThread ?? stopAgent)(entry.threadId);
+        await reply("已停止该会话的运行。");
+      } catch (error) {
+        log.warn("镜像群 /stop 执行失败", {
+          threadId: entry.threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+        await reply("停止失败，请到桌面端操作。");
+      }
+    } else {
+      await reply("镜像群仅支持直接回复续聊；/stop 可停止运行，其余命令请到桌面端或与机器人私聊使用。");
+    }
+    if (message.messageId) {
+      rememberImMessage(message.provider, message.accountId, message.messageId);
+    }
+    return { threadId: entry.threadId };
+  }
+
+  await submitInboundImText(message, entry.threadId, deps);
+  return { threadId: entry.threadId };
 }
 
 /** Build a saveMedia callback that persists downloaded IM media into the thread attachment directory. */

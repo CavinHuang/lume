@@ -243,3 +243,24 @@ describe("createWecomWsWorker 断线宽限", () => {
     expect(statusWrites).toEqual([]);
   });
 });
+
+describe("parseWecomEvent #544 镜像群免 @", () => {
+  const groupFrame = {
+    headers: { req_id: "r1" },
+    body: { chatid: "gid", chattype: "group", from: { userid: "u1" }, text: { content: "普通群聊" } },
+  };
+
+  it("镜像谓词命中：群聊消息免 @ 放行", () => {
+    const msg = parseWecomEvent(groupFrame, makeAccount(), () => true);
+    expect(msg?.peerKind).toBe("group");
+    expect(msg?.peerId).toBe("gid");
+  });
+
+  it("恒假谓词仍按门控丢弃", () => {
+    expect(parseWecomEvent(groupFrame, makeAccount(), () => false)).toBeNull();
+  });
+
+  it("默认不传谓词行为不变（回归钉死）", () => {
+    expect(parseWecomEvent(groupFrame, makeAccount())).toBeNull();
+  });
+});
