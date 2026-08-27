@@ -198,22 +198,32 @@ async function executeTool(
     return { active_tab_id: tabId, tab: createdTab?.tabId ? createdTab : { id: tabId } }
   }
 
-  const tabs = await ownedAgentTabsCached(session, broker, dispatch)
-  const activeTab = reconcileActiveTab(session, tabs)
-  if (name === "list_tabs") return { active_tab_id: activeTab?.tabId ?? null, tabs }
-  if (name === "switch_tab") {
-    const tabId = stringValue(args.tab_id)
-    const tab = tabId ? tabs.find((candidate) => candidate.tabId === tabId) : undefined
-    if (!tab) {
-      // 缓存里没有 ≠ 不存在：清缓存让重试基于新列表判断（#604①）
-      session.tabsCache = undefined
-      throw new Error("tab_not_found")
+  // #604:全量 list_tabs 前置往返只服务于列表/切换语义与会话首个动作初始化。
+  // 其余动作的存活/归属/代际时效校验 desktop 侧已全部内联(requireTab 的
+  // tab_not_found/action_denied + 动作队列内 generation 复查的 stale_target +
+  // resolveSemanticRefTarget 以实时 tab.generation 比对 entry.generation),
+  // 结构化错误码原样回传——免掉每次动作的固定跨进程往返;剩余三类拉取点
+  // 由 TTL 微缓存(#816)继续服务。
+  if (name === "list_tabs" || name === "switch_tab" || !session.activeTabId) {
+    const tabs = await ownedAgentTabsCached(session, broker, dispatch)
+    const activeTab = reconcileActiveTab(session, tabs)
+    if (name === "list_tabs") return { active_tab_id: activeTab?.tabId ?? null, tabs }
+    if (name === "switch_tab") {
+      const tabId = stringValue(args.tab_id)
+      const tab = tabId ? tabs.find((candidate) => candidate.tabId === tabId) : undefined
+      if (!tab) {
+        // 缓存里没有 ≠ 不存在:清缓存让重试基于新列表判断(#604①)
+        session.tabsCache = undefined
+        throw new Error("tab_not_found")
+      }
+      session.activeTabId = tab.tabId
+      session.snapshot = undefined
+      return { active_tab_id: tab.tabId, tab }
     }
-    session.activeTabId = tab.tabId
-    session.snapshot = undefined
-    return { active_tab_id: tab.tabId, tab }
+    if (!activeTab) throw new Error("tab_not_found")
   }
-  if (!activeTab) throw new Error("tab_not_found")
+  // desktop 侧兜底完备后的轻量引用:下游只消费 tabId
+  const activeTab = { tabId: session.activeTabId! } as BrowserTabDescriptor
   if (name === "dialog") {
     // broker 对 tab_get_js_dialog 的返回归一化为 { dialog }，须解包
     const dialogResult = asRecord(await dispatch(broker, "tab_get_js_dialog", { tabId: activeTab.tabId }))
@@ -285,7 +295,7 @@ async function executeTool(
     return observeAfterMutation(activeTab.tabId, action, broker, dispatch, session)
   }
   if (name === "upload") {
-    const target = semanticTarget(session, activeTab, args.ref)
+    const target = semanticTarget(session, activeTab.tabId, args.ref)
     const files = Array.isArray(args.files) ? args.files.filter((value): value is string => Boolean(stringValue(value))) : []
     if (!files.length || files.length > 20) throw new Error("invalid_browser_request")
     const timeoutMs = boundedTimeout(args.timeout_ms)
@@ -342,7 +352,7 @@ async function executeTool(
         ...downloadMetadata(resolved),
       }
     }
-    const target = semanticTarget(session, activeTab, args.ref)
+    const target = semanticTarget(session, activeTab.tabId, args.ref)
     const timeoutMs = boundedTimeout(args.timeout_ms)
     const downloadPromise = dispatch(broker, "playwright_wait_for_download", { tabId: activeTab.tabId, timeout_ms: timeoutMs })
     const [download, click] = await Promise.all([
@@ -372,7 +382,7 @@ async function executeTool(
     return observeAfterMutation(activeTab.tabId, { click, download_id: downloadId, file_ref: fileRef, state: "completed", ...downloadMetadata(resolved) }, broker, dispatch, session)
   }
   if (name === "fill_secret") {
-    const target = semanticTarget(session, activeTab, args.ref)
+    const target = semanticTarget(session, activeTab.tabId, args.ref)
     const secretId = stringValue(args.secret_id)
     if (!secretId) throw new Error("invalid_browser_request")
     const action = await dispatch(broker, "browser_fill_secret", {
@@ -386,7 +396,7 @@ async function executeTool(
     return observeAfterMutation(activeTab.tabId, action, broker, dispatch, session)
   }
   if (isActionTool(name)) {
-    const target = semanticTarget(session, activeTab, args.ref)
+    const target = semanticTarget(session, activeTab.tabId, args.ref)
     const action = await dispatch(broker, actionBrokerMethod(name, args), {
       tabId: activeTab.tabId,
       locator: target.locator,
@@ -625,12 +635,14 @@ function refSchema(): Record<string, unknown> {
 
 function semanticTarget(
   session: ReturnType<BrowserToolSessionRegistry["getOrCreate"]>,
-  tab: BrowserTabDescriptor,
+  tabId: string,
   value: unknown,
 ): { locator: { version: 1; steps: Array<Record<string, unknown>> }; ref: { name: string; nth?: number; role: string }; refId: string; snapshotId: string } {
   const key = stringValue(value)?.replace(/^@/, "")
   const snapshot = session.snapshot
-  if (!key || !snapshot || snapshot.tabId !== tab.tabId || snapshot.generation !== tab.generation) throw new Error("stale_target")
+  // 代际时效不再前置校验(#604):desktop resolveSemanticRefTarget 以实时
+  // tab.generation 比对 entry.generation,快照过期一律 stale_target 原样回传
+  if (!key || !snapshot || snapshot.tabId !== tabId) throw new Error("stale_target")
   const ref = snapshot.refs[key]
   if (!ref) throw new Error("stale_target")
   return {
