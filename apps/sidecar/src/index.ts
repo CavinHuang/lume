@@ -288,7 +288,9 @@ async function handleRpcLine(line: string): Promise<void> {
     // 仅保留本超集分支,行为零差异、恢复升级链路)
     try {
       installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
-      // #637：密钥就位后立即把存量弱种子密文升级为 v2（失败不阻断注入应答）
+      // #637：密钥就位后把存量弱种子密文升级为 v2。注:该 async 函数体内全为
+      // 同步 IO,迁移实际同步完成后才回 ok 应答(常态 <10ms、首启数十 ms,
+      // 锁忙等 fail-fast 上限 300ms 且被内层 catch 吞);幂等,v2 前缀跳过。
       void migrateLegacySecretCiphertexts().catch((error) => {
         writeLogRecord({
           level: "warn",
