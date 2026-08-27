@@ -208,9 +208,10 @@ type BrowserCdpDebugger = {
   sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>
 }
 
-// #604：effect 检测的 DOM 指纹——DOM revision 之外并入原生控件 IDL 状态串（checked/selectedIndex/value
-// 是 property 不写 attribute，翻转零 mutation，却会被序列化成 [checked] 等状态进语义树）。
-// 只遍历表单控件（非全表），300ms 轮询窗口内成本可忽略，不回归 #605；open shadow 检测只进快照帧脚本。
+// #604：effect 检测的 DOM 指纹——DOM revision 之外并入三类零 mutation 信号却进语义树的状态：
+// 原生控件 IDL 串（checked/selectedIndex/value 是 property 不写 attribute）、内建 closed shadow
+// （video/audio 媒体状态）、视口尺寸（media query 随 viewport:set 翻转驱动元素显隐，observer 无信号）。
+// 只遍历表单控件/媒体元素（非全表），300ms 轮询窗口内成本可忽略，不回归 #605。
 const BROWSER_DOM_FINGERPRINT_SCRIPT = `(() => {
   const key = "__lumeBrowserActionEffect";
   const root = globalThis;
@@ -227,29 +228,14 @@ const BROWSER_DOM_FINGERPRINT_SCRIPT = `(() => {
   const media = Array.from(document.querySelectorAll("video, audio"))
     .map((el) => (el.paused ? 1 : 0) + "-" + Math.round(el.currentTime * 10) + "-" + (el.muted ? 1 : 0))
     .join(",");
-  return root[key].revision + "|" + controls + "|" + media;
+  return root[key].revision + "|" + controls + "|" + media + "|" + innerWidth + "x" + innerHeight;
 })()`
 
 // #604：快照复用的帧级指纹——effect 指纹之外加 open shadow 检测（零信号内容，检出即判该帧
-// 不可信；closed shadow 无法探测，由复用 TTL 兜底）。仅快照请求频率执行，轮询不走此脚本。
+// 不可信；第三方 closed shadow 无法探测，由复用 TTL 兜底）。仅快照请求频率执行，轮询不走此脚本。
 const BROWSER_SEMANTIC_FRAME_REVISION_SCRIPT = `(() => {
-  const key = "__lumeBrowserActionEffect";
-  const root = globalThis;
-  if (!root[key]) {
-    const state = { revision: 0 };
-    const observer = new MutationObserver(() => { state.revision += 1; });
-    observer.observe(document, { attributes: true, characterData: true, childList: true, subtree: true });
-    root[key] = state;
-  }
   for (const el of document.querySelectorAll("*")) if (el.shadowRoot) return null;
-  const controls = Array.from(document.querySelectorAll("input, select, textarea"))
-    .map((el) => (el.checked ? 1 : 0) + "-" + (el.selectedIndex >>> 0) + "-" + String(el.value ?? "").length)
-    .join(",");
-  // 内建 closed shadow（video/audio 媒体控件）状态进 AX 树但零 mutation 信号——并入指纹
-  const media = Array.from(document.querySelectorAll("video, audio"))
-    .map((el) => (el.paused ? 1 : 0) + "-" + Math.round(el.currentTime * 10) + "-" + (el.muted ? 1 : 0))
-    .join(",");
-  return root[key].revision + "|" + controls + "|" + media;
+  return (${BROWSER_DOM_FINGERPRINT_SCRIPT})();
 })()`
 
 type BrowserAuthSession = {
