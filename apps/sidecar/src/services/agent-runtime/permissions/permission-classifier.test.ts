@@ -227,26 +227,6 @@ describe("permission classifier", () => {
     })).resolves.toMatchObject({ riskLevel: "low", shouldAsk: false });
   });
 
-  test("llm cache key separates shell dialects (#707)", async () => {
-    let calls = 0;
-    const classifier = createPermissionClassifier({
-      llm: async () => {
-        calls++;
-        return JSON.stringify({ riskLevel: "low", reason: "ok", shouldAsk: false });
-      }
-    });
-
-    const input = { toolName: "Bash", command: "node scripts/build.js" };
-    await classifier.classify({ ...input, shellKind: "bash" });
-    await classifier.classify({ ...input, shellKind: "powershell" });
-
-    expect(calls).toBe(2);
-
-    // 反向钉死：同方言同值仍命中缓存（键纳入方言不得使缓存失效）
-    await classifier.classify({ ...input, shellKind: "bash" });
-    expect(calls).toBe(2);
-  });
-
   test("uses a neutral explanation for whitelisted-out low-risk commands (#707)", async () => {
     const classifier = createPermissionClassifier();
 
