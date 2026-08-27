@@ -220,6 +220,18 @@ function parseJsonlSessionMessages(jsonl: string): SessionMessage[] {
   return messages
 }
 
+/** transcript.jsonl 权威会话消息 → 规范化 messages 投影（#527 三审①收官抽用） */
+function deriveMessagesFromSessionMessages(
+  sessionMessages: SessionMessage[],
+): NormalizedMessageParam[] {
+  return sessionMessages
+    .filter(
+      (message): message is SessionMessage & { role: NormalizedMessageParam['role'] } =>
+        message.role === 'user' || message.role === 'assistant' || message.role === 'runtime',
+    )
+    .map((message) => ({ role: message.role, content: message.content as NormalizedMessageParam['content'] }))
+}
+
 /**
  * transcript.json 半截损坏时，用逐行独立的 transcript.jsonl 兜底重建，
  * 避免 resume 静默弃恢复（#293/#306）。
@@ -232,12 +244,7 @@ async function rebuildSessionFromJsonl(
     const jsonl = await readFile(getTranscriptJsonlPath(sessionDir), 'utf-8')
     const sessionMessages = parseJsonlSessionMessages(jsonl)
     if (sessionMessages.length === 0) return null
-    const messages = sessionMessages
-      .filter(
-        (message): message is SessionMessage & { role: NormalizedMessageParam['role'] } =>
-          message.role === 'user' || message.role === 'assistant' || message.role === 'runtime',
-      )
-      .map((message) => ({ role: message.role, content: message.content as NormalizedMessageParam['content'] }))
+    const messages = deriveMessagesFromSessionMessages(sessionMessages)
     return {
       metadata: normalizeSessionMetadata(sessionId, {
         createdAt: sessionMessages[0]?.timestamp,
@@ -258,9 +265,15 @@ export async function loadSession(sessionId: string): Promise<SessionData | null
   if (!existingPath) return null
 
   let parsed: SessionData | null
+  // #527 三审①收官：slim json（仅元数据投影）特征——不含任何消息数组。
+  // 此形态下 messages 必须由状态源派生；fat json 的正典 messages 可能比
+  // 可派生子集更丰富（如 resume 所需的 tool_result），一律保留不覆盖。
+  let jsonCarriedMessagePayload = true
   try {
     const content = await readFile(getTranscriptJsonPath(existingPath), 'utf-8')
-    parsed = normalizeSessionData(sessionId, JSON.parse(content) as SessionData)
+    const raw = JSON.parse(content) as Partial<SessionData>
+    jsonCarriedMessagePayload = Array.isArray(raw.sessionMessages) || Array.isArray(raw.messages)
+    parsed = normalizeSessionData(sessionId, raw)
   } catch {
     // transcript.json 缺失或半截损坏 → jsonl 兜底；两者皆不可用才放弃。
     parsed = await rebuildSessionFromJsonl(existingPath, sessionId)
@@ -271,6 +284,10 @@ export async function loadSession(sessionId: string): Promise<SessionData | null
     const sessionMessages = parseJsonlSessionMessages(jsonl)
     if (sessionMessages.length > 0) {
       parsed.sessionMessages = sessionMessages
+      if (!jsonCarriedMessagePayload) {
+        parsed.messages = deriveMessagesFromSessionMessages(sessionMessages)
+        parsed.metadata.messageCount = parsed.messages.length
+      }
     }
   } catch {
     // Older sessions may not have jsonl transcripts yet.
