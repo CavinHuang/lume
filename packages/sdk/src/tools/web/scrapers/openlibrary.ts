@@ -196,7 +196,7 @@ async function fetchEdition(editionId: string, timeout: number, signal?: AbortSi
 	md += `**Open Library:** https://openlibrary.org/books/${editionId}\n`;
 
 	if (edition.works?.length) {
-		const workKey = edition.works[0]?.key.replace("/works/", "") ?? "";
+		const workKey = edition.works[0]?.key?.replace("/works/", "") ?? "";
 		md += `**Work:** https://openlibrary.org/works/${workKey}\n`;
 	}
 

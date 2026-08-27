@@ -140,11 +140,11 @@ function getRecentFilings(company: SecCompany, formTypes: string[], limit = 10):
 			filings.push({
 				accessionNumber,
 				filingDate,
-				reportDate: reportDate ?? '',
-				acceptanceDateTime: acceptanceDateTime ?? '',
+				reportDate: reportDate ?? "",
+				acceptanceDateTime: acceptanceDateTime ?? "",
 				form,
-				primaryDocument: primaryDocument ?? '',
-				primaryDocDescription: primaryDocDescription ?? '',
+				primaryDocument: primaryDocument ?? "",
+				primaryDocDescription: primaryDocDescription ?? "",
 			});
 		}
 	}
