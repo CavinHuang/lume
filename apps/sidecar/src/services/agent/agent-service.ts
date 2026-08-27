@@ -84,6 +84,7 @@ import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
 import { materializeCapabilityReferences } from "./invocable-capability-catalog";
 import { getAgentSubmissionStore } from "./agent-submission-store";
+import { wrapAgentEmitterForMirror } from "../im/mirror/im-mirror-service";
 
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
@@ -850,10 +851,14 @@ export async function dispatchAgentRun(
 ): Promise<AgentRuntimeKernelDispatchResult> {
   // automation 等直调方不经 appendAgentMessage,同样需要事件桥(#549)
   ensureAgentEventsBridge(input.threadId);
-  const result = getAgentRuntimeKernel().dispatch(input, emit, {
-    ...(options?.priority ? { priority: options.priority } : {}),
-    ...(options?.appendUserMessage === false ? { executeHints: { appendUserMessage: false } } : {})
-  });
+  const result = getAgentRuntimeKernel().dispatch(
+    input,
+    wrapAgentEmitterForMirror(input.threadId, emit, input.traceContext?.origin),
+    {
+      ...(options?.priority ? { priority: options.priority } : {}),
+      ...(options?.appendUserMessage === false ? { executeHints: { appendUserMessage: false } } : {})
+    }
+  );
   await getAgentRuntimeKernel().waitForThreadIdle(input.threadId);
   return result;
 }
@@ -1787,6 +1792,8 @@ export function appendAgentMessage(
         }
       }
     : emit;
+  // #544 会话镜像：同一 emitter 搭车驱动镜像群卡片/文本档；off 或不可镜像时原引用直返
+  const emitWithMirror = wrapAgentEmitterForMirror(input.threadId, trackedEmit, traceContext.origin);
   try {
     const dispatchInput: AgentSendInput = {
       ...input,
@@ -1799,7 +1806,7 @@ export function appendAgentMessage(
       // 携带完整 dispatch 字段(与 promote 路径对齐):steer 未被当前 turn 消费时,drain 回 queue 作为下一条 queued 消息跑(消息不丢,startNextQueued/validateQueued/execute 读 input/emit/priority/status/revision)
       runGuidanceStore.addQueuedDispatch({
         input: dispatchInput,
-        emit: trackedEmit,
+        emit: emitWithMirror,
         priority: "user",
         id: dispatchInput.clientSubmissionId ?? randomUUID(),
         threadId: input.threadId,
@@ -1832,7 +1839,7 @@ export function appendAgentMessage(
         .then((module) => module.stopAgentRuntime(input.threadId))
         .catch(() => undefined);
     }
-    const result = getAgentRuntimeKernel().dispatch(dispatchInput, trackedEmit, {
+    const result = getAgentRuntimeKernel().dispatch(dispatchInput, emitWithMirror, {
       priority: options?.priority,
       onExecutionStarted: () => {
         options?.onExecutionStarted?.();

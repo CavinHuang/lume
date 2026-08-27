@@ -150,7 +150,9 @@ export const IM_IPC_CHANNELS = {
   // #544 会话镜像
   MIRROR_GET_SETTINGS: "im-mirror:get-settings",
   MIRROR_SET_OWNER: "im-mirror:set-owner",
-  MIRROR_LIST: "im-mirror:list"
+  MIRROR_LIST: "im-mirror:list",
+  /** 保活通知（sidecar→desktop main 单向推送，NOTIFY_ONLY 显式登记） */
+  MIRROR_STREAM_ACTIVE: "im-mirror:stream-active"
 } as const;
 
 export const IM_PROVIDER_LABELS: Record<ImProvider, string> = {
