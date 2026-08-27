@@ -163,15 +163,17 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
   const done = new Promise<ResolvedCredential & { authType: "oauth2" }>((resolve, reject) => {
     const server = httpServerFactory((req, res) => void handleOAuthCallback(req, res, service));
     let finished = false;
+    /** 本流自己的 map 占位:finish 删除前核对身份——孤儿流(占位已被后继 bind 覆盖出局)
+     * 的单次合法终结也不得摘掉在位新流,否则新授权真回调 404、done 悬挂至超时。 */
+    let self: PendingAuthorization | undefined;
     const finish = (fn: () => void) => {
       // 幂等守卫:finish 只结算一次。迟到的 resolve/reject(流已被顶掉/断开后
-      // 兑换才决算)重入会重放 map delete,误摘后继新流的占位——新授权回调
-      // 直接 404,挂死到 10 分钟超时
+      // 兑换才决算)重入会重放副作用;孤儿流的首次终结同样不得误删他流条目
       if (finished) return;
       finished = true;
       clearTimeout(timer);
       server.close();
-      pendingAuthorizations.delete(service);
+      if (pendingAuthorizations.get(service) === self) pendingAuthorizations.delete(service);
       // listen 前失败(绑定被拒/supersede)时 url 永不产出,必须同步 settle,
       // 否则 handler 的 await authorizationUrl 挂死而真实错误丢失
       settleUrlIfPending(new ConnectorError("oauth_flow_cancelled", "授权流已终止"));
@@ -193,7 +195,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       // PKCE S256(RFC 7636):同机进程即便截获 state/授权码,没有 verifier 也换不到 token
       const codeVerifier = randomBytes(48).toString("base64url");
       const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
-      pendingAuthorizations.set(service, {
+      const record: PendingAuthorization = {
         service,
         state,
         codeVerifier,
@@ -202,7 +204,9 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
         reject: (error) => finish(() => reject(error)),
         timer,
         settleUrlIfPending,
-      });
+      };
+      self = record;
+      pendingAuthorizations.set(service, record);
       resolveUrl(
         buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state, codeChallenge),
       );
