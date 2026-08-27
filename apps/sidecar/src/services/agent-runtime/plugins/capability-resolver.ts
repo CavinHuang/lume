@@ -8,7 +8,7 @@ import {
   type PluginDiagnostic,
   type SkillDefinition,
 } from "@lume/agent-sdk";
-import { parseMcpImportPayload, type McpServerEntry } from "@lume/shared";
+import { parseMcpImportPayload, RPC_ERROR_CODES, type McpServerEntry } from "@lume/shared";
 import type { RegisteredPlugin } from "./plugin-registry.js";
 
 export interface ResolvedSkill {
@@ -97,7 +97,7 @@ async function resolveSkills(
         pluginId: plugin.pluginId,
         version: plugin.version,
         severity: "warning",
-        code: "invalid_manifest",
+        code: RPC_ERROR_CODES.PLUGIN_INVALID_MANIFEST,
         message: `Failed to read skills from ${contribution.root}: ${error instanceof Error ? error.message : String(error)}`,
         path: contribution.root,
       });
@@ -149,7 +149,7 @@ async function resolveHooks(
       pluginId: plugin.pluginId,
       version: plugin.version,
       severity: "warning",
-      code: "invalid_manifest",
+      code: RPC_ERROR_CODES.PLUGIN_INVALID_MANIFEST,
       message: `Failed to read hooks config ${plugin.capabilities.hooksConfigPath}: ${error instanceof Error ? error.message : String(error)}`,
       path: plugin.capabilities.hooksConfigPath,
     });
@@ -220,7 +220,7 @@ async function resolveMcpServers(
       pluginId: plugin.pluginId,
       version: plugin.version,
       severity: "warning",
-      code: "invalid_manifest",
+      code: RPC_ERROR_CODES.PLUGIN_INVALID_MANIFEST,
       message: `Failed to read MCP config ${plugin.capabilities.mcpServersConfigPath}: ${error instanceof Error ? error.message : String(error)}`,
       path: plugin.capabilities.mcpServersConfigPath,
     });
