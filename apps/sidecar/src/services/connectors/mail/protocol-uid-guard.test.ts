@@ -171,7 +171,7 @@ describe("imapflow error shape handling", () => {
   it("classifies folder-missing from serverResponseCode/response, not from message", async () => {
     // 回归钉死:imapflow 的 NO/BAD 错误 message 恒为 "Command failed",
     // 响应码在 serverResponseCode、原文在 response——读 .code/.message 永远不命中
-    const { client } = makeFakeClient(true, IMAPFLOW_FOLDER_MISSING_ERROR);
+    const { client } = makeFakeClient(true, { openError: IMAPFLOW_FOLDER_MISSING_ERROR });
     const protocol = createMailProtocol(config, { createImapClient: () => client });
 
     await expect(protocol.deleteMessage(credential(), "Missing", 1)).rejects.toMatchObject({
