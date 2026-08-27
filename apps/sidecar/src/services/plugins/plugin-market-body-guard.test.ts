@@ -1,6 +1,9 @@
 import { describe, expect, test } from "bun:test";
+import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { PluginMarketError } from "./plugin-market-errors";
-import { readBoundedBody, REMOTE_BODY_GUARD_FOR_TEST } from "./plugin-market-service";
+import { readBoundedBody, REMOTE_BODY_GUARD_FOR_TEST, writeBoundedBodyToFile } from "./plugin-market-service";
 
 // #525-10/11 回归钉死:远程 body 必须经分块上限消费(chunked 无
 // content-length 时 content-length 前检失效,arrayBuffer 后才查=最坏整体入内存),
@@ -26,6 +29,31 @@ describe("readBoundedBody 分块上限与 guard 清理 (#525)", () => {
     const response = streamResponse([new Uint8Array([1, 2]), new Uint8Array([3, 4])]);
     const bytes = await readBoundedBody(response);
     expect(bytes).toEqual(Buffer.from([1, 2, 3, 4]));
+  });
+
+  test("tarball 分块直接写盘，超限时删除半成品", async () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-plugin-body-"));
+    const complete = join(root, "complete.tar.gz");
+    const partial = join(root, "partial.tar.gz");
+    try {
+      const written = await writeBoundedBodyToFile(
+        streamResponse([new Uint8Array([1, 2]), new Uint8Array([3, 4])]),
+        complete,
+        4,
+      );
+      expect(written).toBe(4);
+      expect(readFileSync(complete)).toEqual(Buffer.from([1, 2, 3, 4]));
+
+      await expect(writeBoundedBodyToFile(
+        streamResponse([new Uint8Array(3), new Uint8Array(3)]),
+        partial,
+        4,
+        () => new PluginMarketError("install_failed", "归档超限"),
+      )).rejects.toMatchObject({ code: "install_failed" });
+      expect(existsSync(partial)).toBe(false);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   test("累计字节超上限即中止并抛 oversize 错误", async () => {

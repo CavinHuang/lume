@@ -117,6 +117,7 @@ import {
 const execFileAsync = promisify(execFile);
 const MARKETPLACE_ASSET_MAX_BYTES = 512 * 1024;
 const MIRROR_CATALOG_MAX_BYTES = 8 * 1024 * 1024;
+const REMOTE_TEXT_MAX_BYTES = 8 * 1024 * 1024;
 // #525-11/漏项:requestRemote 与 readRemoteBody 间的超时 guard 传递通道
 const REMOTE_BODY_GUARD = Symbol("plugin-market-remote-body-guard");
 /** 测试注入 guard 用(同一 symbol 实例才能命中传递通道)。 */
@@ -154,6 +155,45 @@ export async function readBoundedBody(
     }
     return Buffer.concat(chunks);
   } finally {
+    if (guard) clearTimeout(guard.timer);
+  }
+}
+
+export async function writeBoundedBodyToFile(
+  response: Response,
+  target: string,
+  maxBytes: number,
+  oversize: () => Error = () => new PluginMarketError("invalid_manifest", "远程响应超过大小限制"),
+): Promise<number> {
+  const guard = (response as RemoteResponseWithGuard)[REMOTE_BODY_GUARD];
+  let handle: Awaited<ReturnType<typeof open>> | undefined;
+  let failed = false;
+  try {
+    const reader = response.body?.getReader();
+    if (!reader) throw new PluginMarketError("network_failed", "远程响应缺少 body");
+    handle = await open(target, "wx");
+    let total = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) return total;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel().catch(() => undefined);
+        throw oversize();
+      }
+      let offset = 0;
+      while (offset < value.byteLength) {
+        const { bytesWritten } = await handle.write(value, offset, value.byteLength - offset);
+        if (bytesWritten <= 0) throw new Error("远程响应写入停滞");
+        offset += bytesWritten;
+      }
+    }
+  } catch (error) {
+    failed = true;
+    throw error;
+  } finally {
+    await handle?.close().catch(() => undefined);
+    if (failed) await rm(target, { force: true }).catch(() => undefined);
     if (guard) clearTimeout(guard.timer);
   }
 }
@@ -264,6 +304,7 @@ export class PluginMarketService {
     requestRemote: (url, init) => this.requestRemote(url, init),
     fetchText: (url) => this.fetchText(url),
     readRemoteBody: (response, maxBytes, oversize) => this.readRemoteBody(response, maxBytes, oversize),
+    writeRemoteBodyToFile: (response, target, maxBytes, oversize) => writeBoundedBodyToFile(response, target, maxBytes, oversize),
   });
 
   async getMarketCatalog(
@@ -1097,7 +1138,7 @@ export class PluginMarketService {
         `读取远程文件失败: ${response.status}`,
       );
     }
-    return (await this.readRemoteBody(response)).toString("utf8");
+    return (await this.readRemoteBody(response, REMOTE_TEXT_MAX_BYTES)).toString("utf8");
   }
 
   private async resolveInspectSource(
