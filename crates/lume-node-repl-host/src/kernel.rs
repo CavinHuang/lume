@@ -1474,20 +1474,41 @@ mod tests {
         assert!(names.contains(&"PATH"));
         // allowlist 声明但进程中不存在的条目被静默跳过，不产生空值注入
         assert!(!names.contains(&"NODE_REPL_TEST_MISSING_VAR"));
+        // #634 review 加固：负向钉死「未声明的现存变量绝不透出」。cargo test 进程
+        // 必注入 CARGO_* 系列（不在任何 baseline）；若白名单机制整体回退为继承全量
+        // 环境，本断言红——此前仅有正向断言时该回退变异存活。
+        if std::env::var_os("CARGO_PKG_NAME").is_some() {
+            assert!(
+                !names.contains(&"CARGO_PKG_NAME"),
+                "undeclared process env must not leak into the kernel allowlist result"
+            );
+        }
     }
 
     #[test]
     fn kernel_env_extra_allowlist_extends_pass_through() {
-        // NODE_REPL_EXTRA_ENV_ALLOWLIST 引用必然存在的 PATH 验证扩展口穿透，
-        // 避免 set_var 污染并行测试进程。
-        let guard = super::env::var("NODE_REPL_EXTRA_ENV_ALLOWLIST").ok();
-        unsafe { super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", "HOME") };
+        // NODE_REPL_EXTRA_ENV_ALLOWLIST 引用 baseline 外的自造变量验证扩展口穿透
+        // （#634 review 加固）：曾用 HOME 作探针，而 HOME 本就在 KERNEL_ENV_BASELINE_
+        // ALLOW 内，删掉扩展口解析行后结果仍含 HOME、测试恒绿（变异存活）。
+        let guard_extra = super::env::var("NODE_REPL_EXTRA_ENV_ALLOWLIST").ok();
+        let guard_canary = super::env::var("NODE_REPL_TEST_EXTRA_CANARY").ok();
+        unsafe { super::env::set_var("NODE_REPL_TEST_EXTRA_CANARY", "canary-value") };
+        unsafe { super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", "NODE_REPL_TEST_EXTRA_CANARY") };
         let entries = collect_kernel_env_entries(&[]);
         let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
-        assert!(names.contains(&"HOME"));
-        match guard {
-            Some(value) => unsafe { super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", value) },
-            None => unsafe { super::env::remove_var("NODE_REPL_EXTRA_ENV_ALLOWLIST") },
+        assert!(
+            names.iter().any(|name| *name == "NODE_REPL_TEST_EXTRA_CANARY"),
+            "extra allowlist entry outside every baseline must pass through"
+        );
+        unsafe {
+            match &guard_extra {
+                Some(value) => super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", value),
+                None => super::env::remove_var("NODE_REPL_EXTRA_ENV_ALLOWLIST"),
+            }
+            match &guard_canary {
+                Some(value) => super::env::set_var("NODE_REPL_TEST_EXTRA_CANARY", value),
+                None => super::env::remove_var("NODE_REPL_TEST_EXTRA_CANARY"),
+            }
         }
     }
 
