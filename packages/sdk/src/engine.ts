@@ -608,7 +608,7 @@ export class QueryEngine {
         contextUsage,
       })
     }
-    return shouldAutoCompact(this.messages as any[], this.config.model, this.compactState, {
+    return shouldAutoCompact(this.messages, this.config.model, this.compactState, {
       contextUsage,
       maxOutputTokens: this.config.maxTokens,
     })
@@ -662,7 +662,7 @@ export class QueryEngine {
     return defaultCompactConversation(
       this.provider,
       this.config.model,
-      this.messages as any[],
+      this.messages,
       this.compactState,
       {
         trigger,
@@ -848,7 +848,7 @@ export class QueryEngine {
         model: this.config.model,
       })
     }
-    return defaultMicroCompactMessages(messages as any[]) as NormalizedMessageParam[]
+    return defaultMicroCompactMessages(messages)
   }
 
   private async buildPermissionMetadata(
@@ -1096,9 +1096,9 @@ export class QueryEngine {
       }
 
       // Micro-compact: truncate large tool results
-      const internalContextBlocks = collectInternalContextBlocks(this.messages as any[])
-      const computerUseActionFacts = renderComputerUseActionFacts(this.messages as any[])
-      const conversationMessages = stripInternalContextBlocks(this.messages as any[])
+      const internalContextBlocks = collectInternalContextBlocks(this.messages)
+      const computerUseActionFacts = renderComputerUseActionFacts(this.messages)
+      const conversationMessages = stripInternalContextBlocks(this.messages)
       const hydratedMessages = await hydrateEphemeralImageReferences(conversationMessages)
       const apiMessages = await this.microCompactForProvider(
         normalizeMessagesForAPI(hydratedMessages) as NormalizedMessageParam[],
@@ -1320,7 +1320,7 @@ export class QueryEngine {
         return
       }
 
-      this.messages = releaseEphemeralImageReferences(this.messages as any[]) as NormalizedMessageParam[]
+      this.messages = releaseEphemeralImageReferences(this.messages)
 
       // Track API timing
       const apiEnd = performance.now()
@@ -2368,14 +2368,14 @@ export class QueryEngine {
     const toolUseNames = new Map<string, string>()
     for (const message of this.messages) {
       if (message.role !== 'assistant' || !Array.isArray(message.content)) continue
-      for (const block of message.content as any[]) {
+      for (const block of message.content) {
         if (block.type === 'tool_use') toolUseNames.set(block.id, block.name)
       }
     }
 
     for (const message of this.messages) {
-      const content = Array.isArray(message.content) ? message.content : [{ type: 'text', text: String(message.content) }]
-      for (const block of content as any[]) {
+      const content = Array.isArray(message.content) ? message.content : [{ type: 'text' as const, text: String(message.content) }]
+      for (const block of content) {
         if (block.type === 'tool_use') {
           const estimated = Math.ceil(JSON.stringify(block).length / 4)
           toolCallTokens += estimated

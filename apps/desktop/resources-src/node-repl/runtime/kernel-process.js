@@ -15,7 +15,21 @@ const bootstrap = (() => {
 const config = parseKernelConfig(process.env.LUME_CUA_KERNEL_CONFIG);
 const bridgeToken = crypto.randomUUID();
 const moduleDirs = splitPathList(process.env.NODE_REPL_NODE_MODULE_DIRS);
-const trustedCodePaths = splitPathList(process.env.NODE_REPL_TRUSTED_CODE_PATHS);
+// #634：trusted 集若覆盖工作目录，cell 的虚拟 referrer（cwd 下
+// .node_repl_cell_*.mjs）将整体落入 trusted 判定，使 builtin 白名单与
+// file 模块信任分流失效——剔除覆盖 cwd 的条目并告警。
+// 比较前归一尾部 separator（根条目如 "/"、"C:\" 经 resolve 后仍带尾分隔符，
+// 否则 startsWith 双分隔符恒假漏判）；Windows 路径大小写不敏感。
+const trustedCodePaths = splitPathList(process.env.NODE_REPL_TRUSTED_CODE_PATHS).flatMap((entry) => {
+    const trimmed = entry.endsWith(path.sep) ? entry.slice(0, -1) : entry;
+    const lowerCase = process.platform === "win32";
+    const cwdCandidate = lowerCase ? bootstrap.workingDir.toLowerCase() : bootstrap.workingDir;
+    const entryCandidate = lowerCase ? trimmed.toLowerCase() : trimmed;
+    const coversCwd = cwdCandidate === entryCandidate || cwdCandidate.startsWith(entryCandidate + path.sep);
+    if (coversCwd)
+        console.error(`node_repl: dropping NODE_REPL_TRUSTED_CODE_PATHS entry "${entry}" because it covers the working directory`);
+    return coversCwd ? [] : [entry];
+});
 const trustedSourceHashes = parseHashes(process.env.NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S);
 const untrustedEnvAllowlist = splitCommaList(process.env.NODE_REPL_UNTRUSTED_ENV_ALLOWLIST);
 const env = Object.fromEntries(Object.entries(process.env).filter((entry) => entry[0] !== "LUME_CUA_KERNEL_CONFIG" && typeof entry[1] === "string"));

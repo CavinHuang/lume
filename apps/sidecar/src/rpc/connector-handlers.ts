@@ -44,11 +44,14 @@ function buildStatus(service: string): ConnectorStatus {
   // 单次读盘解密组装全部字段(GET_SETUP 对每个服务各调一次,避免逐字段重复 IO)
   const record = getConnectorCredentialRecord(service);
   const { oauth, customValues } = record;
+  // oauth2 型服务的 customValues 不算连接(与 hasAnyConnectorCredential 同口径:
+  // 存量毒数据不得让 UI 显示已连接)
+  const supportsCustomOnly = !getConnector(service).definition.authTypes.includes("oauth2");
   return {
     service,
     clientConfigured: !!record.clientConfig?.clientId,
-    connected: oauth !== undefined || customValues !== undefined,
-    accountLabel: oauth ? oauth.profile?.displayName : customValues?.email,
+    connected: oauth !== undefined || (supportsCustomOnly && customValues !== undefined),
+    accountLabel: oauth ? oauth.profile?.displayName : supportsCustomOnly ? customValues?.email : undefined,
     authorizing: authState?.authorizing ?? false,
     lastError: authState?.lastError,
   };
@@ -103,6 +106,8 @@ export function createConnectorHandlers(): Record<string, RpcHandler> {
       // saveConnectorCustomCredential 内部跑连接测试,失败抛 ConnectorError 给 UI
       await saveConnectorCustomCredential(service, values);
       authStates.delete(service);
+      // 在途 OAuth 流的完成回调不得复活刚清理的状态(与 DISCONNECT 同款代际作废)
+      authGenerations.set(service, (authGenerations.get(service) ?? 0) + 1);
       return buildStatus(service);
     },
 

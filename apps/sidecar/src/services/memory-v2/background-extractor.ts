@@ -6,7 +6,8 @@ import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest, type AgentToolPer
 import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-import { emitAgentNotification } from "../agent/agent-notification-service";
+// #580 review fix:出站通知直连 infra 单点,不经 agent 域借道。
+import { getOutboundNotificationWriter } from "../infra/outbound-notification";
 import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
 import {
@@ -485,7 +486,7 @@ function notifyMemorySaved(input: BackgroundMemoryExtractionRequest, receipts: M
     summary,
     details
   };
-  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
 }
 
 function notifyExtractionProgress(
@@ -506,7 +507,7 @@ function notifyExtractionProgress(
     processedItems: progress.processedItems,
     changedItems: progress.changedItems
   };
-  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
 }
 
 function notifyExtractionCompleted(
@@ -527,7 +528,7 @@ function notifyExtractionCompleted(
     summary: `后台提取完成，处理 ${result.scannedItems} 条来源，变更 ${result.changedItems} 条记忆`,
     changedItems: result.changedItems
   };
-  emitAgentNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
 }
 
 function cursorPath(input: Pick<BackgroundMemoryExtractionRequest, "workspaceSlug" | "threadId">): string {

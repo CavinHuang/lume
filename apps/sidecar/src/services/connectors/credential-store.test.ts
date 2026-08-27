@@ -8,6 +8,7 @@ import {
   getConnectorClientConfig,
   getConnectorCustomValues,
   getConnectorOAuthCredential,
+  isVaultCorruption,
   setConnectorClientConfig,
   setConnectorCustomValues,
   setConnectorOAuthCredential,
@@ -191,5 +192,24 @@ describe("connector credential store", () => {
       metadata: {},
     });
     expect(getConnectorOAuthCredential("gmail")?.accessToken).toBe("fresh");
+  });
+});
+
+// 瞬时 IO 错误不得被当成文件损坏:置位 storeUnreadable 会让后续「断开」
+// 走"删坏文件即恢复"路径清掉整个 vault(fail-destructive)。
+describe("isVaultCorruption", () => {
+  test("parse failures count as corruption", () => {
+    expect(isVaultCorruption(new SyntaxError("Unexpected token } in JSON"))).toBe(true);
+    expect(isVaultCorruption(new Error("shape_invalid"))).toBe(true);
+  });
+
+  test("transient IO errors do not count as corruption", () => {
+    const busy = Object.assign(new Error("resource busy or locked"), { code: "EBUSY" });
+    const eio = Object.assign(new Error("input/output error"), { code: "EIO" });
+    const eperm = Object.assign(new Error("operation not permitted"), { code: "EPERM" });
+    expect(isVaultCorruption(busy)).toBe(false);
+    expect(isVaultCorruption(eio)).toBe(false);
+    expect(isVaultCorruption(eperm)).toBe(false);
+    expect(isVaultCorruption("random string")).toBe(false);
   });
 });

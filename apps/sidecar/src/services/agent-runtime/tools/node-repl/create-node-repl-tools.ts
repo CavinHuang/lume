@@ -203,8 +203,10 @@ export function createNodeReplTools(input: {
       },
       runtimeMetadata: {
         ...runtimeMetadata,
+        // #634：任意 node_modules 目录注册后其中的 bare package 将在宿主 realm
+        // 执行（importNative 路径），必须走用户显式授权（high = 必问审批）。
         category: "control",
-        riskLevel: "medium"
+        riskLevel: "high"
       },
       async call(rawArgs, context) {
         const dir = readPath(rawArgs);

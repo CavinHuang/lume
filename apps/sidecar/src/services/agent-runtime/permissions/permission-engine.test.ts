@@ -208,7 +208,7 @@ describe("PermissionEngine", () => {
     // 用户显式 ask 的意图优先于内容证明。用 PS 前缀命令：其只读证明走纯正则
     // （不依赖 natives 语法树），无产物环境与本地双态确定
     const engine = new PermissionEngine({
-      rules: [{ id: "ask-ps", scope: "workspace", tool: "Bash", commandPattern: "^powershell -Command Get-Process$", action: "ask" }]
+      rules: [{ id: "ask-ps", tool: "Bash", commandPattern: "^powershell -Command Get-Process$", action: "ask" }]
     });
     await expect(engine.decide({
       descriptor: bash,
@@ -359,8 +359,8 @@ describe("PermissionEngine", () => {
   test("permission rules use first matching action", async () => {
     const engine = new PermissionEngine({
       rules: [
-        { id: "deny-rm", scope: "workspace", tool: "Bash", commandPattern: "rm\\s+-rf", action: "deny" },
-        { id: "allow-bash", scope: "workspace", tool: "Bash", action: "allow" }
+        { id: "deny-rm", tool: "Bash", commandPattern: "rm\\s+-rf", action: "deny" },
+        { id: "allow-bash", tool: "Bash", action: "allow" }
       ]
     });
 
@@ -378,7 +378,7 @@ describe("PermissionEngine", () => {
 
   test("Bash allow rules match every parsed subcommand and not unparseable shell", async () => {
     const engine = new PermissionEngine({
-      rules: [{ id: "allow-rg", scope: "workspace", tool: "Bash", commandPattern: "^rg\\b", action: "allow" }]
+      rules: [{ id: "allow-rg", tool: "Bash", commandPattern: "^rg\\b", action: "allow" }]
     });
 
     await expect(engine.decide({
@@ -399,7 +399,7 @@ describe("PermissionEngine", () => {
 
   test("PS 方言命令无法被语法树解析，但保守只读子集内允许精确指纹豁免（#571 第 3 项连带）", async () => {
     const engine = new PermissionEngine({
-      rules: [{ id: "allow-ps-get", scope: "workspace", tool: "Bash", commandPattern: "^powershell -Command Get-Process$", action: "allow" }]
+      rules: [{ id: "allow-ps-get", tool: "Bash", commandPattern: "^powershell -Command Get-Process$", action: "allow" }]
     });
 
     // 显式前缀 + 白名单动词：候选集放行，精确指纹命中
@@ -428,8 +428,8 @@ describe("PermissionEngine", () => {
   test("permission rules share Tool Runtime group and wildcard matching", async () => {
     const engine = new PermissionEngine({
       rules: [
-        { id: "deny-fs", scope: "workspace", tool: "group:fs", action: "deny" },
-        { id: "allow-web", scope: "workspace", tool: "web_*", action: "allow" }
+        { id: "deny-fs", tool: "group:fs", action: "deny" },
+        { id: "allow-web", tool: "web_*", action: "allow" }
       ]
     });
     const webSearch = descriptor("web_search", {
@@ -508,7 +508,7 @@ describe("PermissionEngine", () => {
       input: { file_path: ".lume/blocked.json" },
       mode: "default",
       context: { threadId: "thread-1", cwd: "/tmp/project", privateWriteRoots: ["/tmp/project/.lume"] },
-      rules: [{ id: "deny-private", scope: "workspace", tool: "Write", pathPattern: ".lume/**", action: "deny" }]
+      rules: [{ id: "deny-private", tool: "Write", pathPattern: ".lume/**", action: "deny" }]
     })).resolves.toMatchObject({
       status: "deny",
       reasonCode: "rule_deny",

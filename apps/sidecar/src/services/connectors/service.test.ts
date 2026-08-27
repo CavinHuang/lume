@@ -8,11 +8,12 @@ import {
   executeConnectorAction,
   getConnector,
   getConnectorSetup,
+  hasAnyConnectorCredential,
   listConnectors,
   saveConnectorCustomCredential,
   startConnectorAuthorization,
 } from "./service";
-import { deleteConnectorCredential, setConnectorClientConfig } from "./credential-store";
+import { deleteConnectorCredential, setConnectorClientConfig, setConnectorCustomValues } from "./credential-store";
 import { installConnectionVaultKey } from "../channel/connection-credential-store";
 
 describe("connector service", () => {
@@ -62,6 +63,26 @@ describe("connector service", () => {
       saveConnectorCustomCredential("qq_mail", { email: "not-an-email", authorizationCode: "123" }),
     ).rejects.toBeDefined();
     // 正确格式但验证器必然失败的输入在无网络环境下同样被拒;此处只锁格式守卫
+  });
+
+  test("oauth2 型 provider 拒绝直存授权码凭证(防假已连接态)", async () => {
+    try {
+      await saveConnectorCustomCredential("gmail", { email: "x@gmail.com" });
+      expect.unreachable();
+    } catch (error) {
+      expect((error as ConnectorError).code).toBe("connector_auth_unsupported");
+    }
+    // 守卫先于任何状态变更:customValues 未被写入
+    expect(hasAnyConnectorCredential("gmail")).toBe(false);
+  });
+
+  test("oauth2 型存量 customValues 毒数据不计入连接假态(直写存储也屏蔽)", () => {
+    // 正对照:同一存储路径 custom 型写入即计连接——排除"根本没写进去"的空洞绿
+    setConnectorCustomValues("qq_mail", { email: "ok@qq.com", authorizationCode: "abc" });
+    expect(hasAnyConnectorCredential("qq_mail")).toBe(true);
+    // 直写 gmail 模拟防线启用前的历史毒数据:同源数据在 oauth2 口径下仍被拒认
+    setConnectorCustomValues("gmail", { email: "legacy@gmail.com", authorizationCode: "stale" });
+    expect(hasAnyConnectorCredential("gmail")).toBe(false);
   });
 
   test("未配置 OAuth client 时发起授权被拒", () => {

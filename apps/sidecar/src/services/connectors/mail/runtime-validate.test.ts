@@ -10,7 +10,6 @@ mock.module("./config", () => ({
   mailImapPort: 993,
   mailSmtpPort: 465,
   mailMessageFetchByteLimit: 1024,
-  mailAttachmentDownloadByteLimit: 1024,
   mailConnectionTimeoutMs: 1000,
   mailValidationTotalBudgetMs: 60,
 }));

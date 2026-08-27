@@ -168,4 +168,35 @@ describe("interruption-store", () => {
     expect(state?.status).toBe("running");
     expect(state?.pendingInterruptions).toEqual([]);
   });
+
+  test("resolve 拒绝翻转已终态记录（防竞态守卫）", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "lume-interruption-guard-"));
+    const store = createFileBackedLumeInterruptionStore(dir);
+
+    await store.upsert({
+      id: "tool_approval:req-guard",
+      threadId: "thread-1",
+      type: "tool_approval",
+      status: "pending",
+      title: "Approve tool",
+      message: "Bash needs approval",
+      payload: { requestId: "req-guard" },
+      source: { toolCallId: "tool-guard" },
+      createdAt: "2026-04-29T00:00:00.000Z",
+      updatedAt: "2026-04-29T00:00:00.000Z"
+    });
+
+    // 先取消（rejected），随后迟到的 approve 不得翻转终态
+    expect(resolveFileBackedInterruptionSync(dir, "tool_approval:req-guard", {
+      status: "rejected",
+      resolution: { decision: "reject" }
+    })).toBeTrue();
+    expect(resolveFileBackedInterruptionSync(dir, "tool_approval:req-guard", {
+      status: "approved",
+      resolution: { decision: "approve" }
+    })).toBeFalse();
+
+    const current = await store.get("tool_approval:req-guard");
+    expect(current?.status).toBe("rejected");
+  });
 });

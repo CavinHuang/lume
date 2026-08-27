@@ -12,6 +12,14 @@ import {
 } from '@microsoft/mxc-sdk'
 import type { SandboxSettings } from '../types.js'
 
+/**
+ * SandboxPolicy schema version。SDK(mxc-sdk)在 createConfigFromPolicy 入口
+ * 校验该值必须落在其契约窗口内(0.8.0 为 [0.6.0-alpha, 0.9.0-alpha],私有常量),
+ * 越窗运行时抛错;process-sandbox.test.ts 有契约钉,升级 SDK 窗口漂移时单测
+ * 显式失败提醒同步本值。
+ */
+export const SANDBOX_POLICY_VERSION = '0.7.0-alpha'
+
 export interface ProcessSandboxSupport {
   available: boolean
   reason: string
@@ -41,6 +49,8 @@ export function terminateProcessTree(
       stdio: 'ignore',
       windowsHide: true,
     })
+    // Without a listener a spawn error surfaces as an uncaughtException in the sidecar (see #548).
+    taskkill.once('error', () => {})
     taskkill.unref()
     return
   }
@@ -153,7 +163,7 @@ export function spawnWithProcessSandbox(
     throw new Error(`OS process sandbox refused overlapping allowed and denied roots: ${conflictingPath}`)
   }
   const policy: SandboxPolicy = {
-    version: '0.7.0-alpha',
+    version: SANDBOX_POLICY_VERSION,
     filesystem: {
       readonlyPaths,
       readwritePaths,

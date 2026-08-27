@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
-import { buildCommandLine, buildSandboxEnvironment, getProcessSandboxSupport, probeProcessSandbox, pruneMissingMxcDaclRecoveryEntries, spawnWithProcessSandbox } from "./process-sandbox";
+import { createConfigFromPolicy } from "@microsoft/mxc-sdk";
+import { buildCommandLine, buildSandboxEnvironment, getProcessSandboxSupport, probeProcessSandbox, pruneMissingMxcDaclRecoveryEntries, SANDBOX_POLICY_VERSION, spawnWithProcessSandbox } from "./process-sandbox";
 
 // macOS 26+ 收紧了 sandbox-exec：deny file-write* 下 allow subpath 的写入直接
 // Operation not permitted，而 mxc-sdk 仅探测二进制存在即声称 seatbelt 可用——
@@ -71,9 +72,11 @@ describe("OS process sandbox", () => {
     expect(existsSync(recoverable)).toBeTrue();
   });
 
-  // 可见 skip(bun:test 不认 options.skip 对象,须用 skipIf):macOS 26+ 上本
-  // 断言会长期跳过,CI 报表须能区分 skipped 与 passed
-  test.skipIf(!getProcessSandboxSupport().available || !seatbeltUsable)("proves allowed read/write and denied-root enforcement when MXC is supported", async () => {
+  // 可见 skip(bun:test 不认 options.skip 对象,须用 skipIf):macOS 26+ seatbelt
+  // 收紧或平台不支持时本断言会长期跳过,CI 报表须能区分 skipped 与 passed
+  const sandboxExecutable = getProcessSandboxSupport().available && seatbeltUsable;
+
+  test.skipIf(!sandboxExecutable)("proves allowed read/write and denied-root enforcement when MXC is supported", async () => {
     const root = mkdtempSync(join(tmpdir(), "lume-process-sandbox-test-"));
     roots.push(root);
     const allowed = join(root, "allowed");
@@ -90,8 +93,7 @@ describe("OS process sandbox", () => {
     expect(result.verified).toBe(true);
   }, 45_000);
 
-  test("fails closed when an allowed root contains the denied root", () => {
-    if (!getProcessSandboxSupport().available) return;
+  test.skipIf(!sandboxExecutable)("fails closed when an allowed root contains the denied root", () => {
     const root = mkdtempSync(join(tmpdir(), "lume-process-sandbox-overlap-"));
     roots.push(root);
     const denied = join(root, "wiki");
@@ -105,5 +107,18 @@ describe("OS process sandbox", () => {
       filesystem: { denyRead: [denied], denyWrite: [denied] },
       processIsolation: { enabled: true, required: true, readwritePaths: [root], deniedPaths: [denied] }
     })).toThrow("overlapping allowed and denied roots");
+  });
+
+  test("policy version stays inside the SDK contract window", () => {
+    // createConfigFromPolicy 入口校验 version 必须落在 SDK 契约窗口内
+    // (0.8.0 为 [0.6.0-alpha, 0.9.0-alpha],私有常量),越窗运行时抛错。
+    // 此钉跨平台可跑(CI Linux 的 MXC probe 会空转,本钉不会):升级 SDK
+    // 窗口漂移时在此显式失败,提醒同步 SANDBOX_POLICY_VERSION。
+    expect(() => createConfigFromPolicy({
+      version: SANDBOX_POLICY_VERSION,
+      filesystem: { readonlyPaths: [], readwritePaths: [], deniedPaths: [] },
+      network: { allowOutbound: false, allowLocalNetwork: false },
+      ui: { allowWindows: false, clipboard: "none", allowInputInjection: false },
+    }, "process", "LumePolicyVersionPin")).not.toThrow();
   });
 });
