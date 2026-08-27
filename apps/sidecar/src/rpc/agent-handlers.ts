@@ -113,6 +113,11 @@ import {
   submitDesktopActionDecision,
 } from "../services/agent-runtime/interruption/desktop-action-session";
 import { listPendingToolPermissionRequests } from "../services/agent-runtime/interruption/tool-permission-session";
+// #775：持久工具授权查看/撤销面板
+import {
+  ensureToolGrantsHydrated,
+  toolGrantMirror,
+} from "../services/agent-runtime/permissions/persisted-grant-store";
 import {
   getAgentProxyStatus,
   saveAgentProxySettings,
@@ -144,6 +149,8 @@ import {
   submitAskUserQuestionInputSchema,
   submitDesktopActionInputSchema,
   submitToolPermissionInputSchema,
+  listToolPermissionGrantsInputSchema,
+  revokeToolPermissionGrantInputSchema,
   threadRunEventsInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
@@ -1172,6 +1179,33 @@ export function createAgentHandlers(
           : {}),
       });
       return result;
+    },
+    [AGENT_IPC_CHANNELS.LIST_TOOL_PERMISSION_GRANTS]: async (params) => {
+      validateInput(
+        listToolPermissionGrantsInputSchema,
+        params ?? {},
+        AGENT_IPC_CHANNELS.LIST_TOOL_PERMISSION_GRANTS,
+      );
+      // 面板读取前兜底等待启动恢复（生产 imports 已 kick，幂等）
+      await ensureToolGrantsHydrated();
+      return { grants: toolGrantMirror.list() };
+    },
+    [AGENT_IPC_CHANNELS.REVOKE_TOOL_PERMISSION_GRANT]: async (params) => {
+      const input = validateInput(
+        revokeToolPermissionGrantInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REVOKE_TOOL_PERMISSION_GRANT,
+      );
+      await ensureToolGrantsHydrated();
+      if (input.ids?.length) {
+        let removed = 0;
+        for (const id of input.ids) {
+          if (await toolGrantMirror.remove(id)) removed += 1;
+        }
+        return { removed };
+      }
+      const removed = await toolGrantMirror.removeByWorkspace(input.workspaceSlug!);
+      return { removed };
     },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {

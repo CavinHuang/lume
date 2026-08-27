@@ -1506,6 +1506,18 @@ export const submitToolPermissionInputSchema = z.object({
   threadPermissionMode: z.enum(["bypassPermissions"]).optional(),
 });
 
+// #775:持久工具授权查看/撤销面板
+export const listToolPermissionGrantsInputSchema = z.object({});
+
+export const revokeToolPermissionGrantInputSchema = z
+  .object({
+    ids: z.array(idSchema).optional(),
+    workspaceSlug: z.string().min(1).optional(),
+  })
+  .refine((input) => (input.ids?.length ?? 0) > 0 || !!input.workspaceSlug, {
+    message: "需提供 ids 或 workspaceSlug 之一",
+  });
+
 export const pendingInteractiveInputSchema = z.object({
   threadId: z.string().optional(),
 });
