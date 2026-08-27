@@ -57,7 +57,9 @@ mock.module("./adapter", () => ({
 }));
 
 // automation-manager：listAutomationJobs→[]（dedup 空）+ createAutomationJob→spy
+const managerActual = await import("../automation/automation-manager");
 mock.module("../automation/automation-manager", () => ({
+  ...managerActual,
   listAutomationJobs: () => [],
   createAutomationJob: spies.createAutomationJob,
 }));

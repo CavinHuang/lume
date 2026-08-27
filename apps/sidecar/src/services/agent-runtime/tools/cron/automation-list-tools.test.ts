@@ -150,4 +150,25 @@ describe("automation-list-tools", () => {
     expect(result.total).toBe(5);
     expect(result.jobs.length).toBe(3);
   });
+
+  test("system 任务对 agent 工具面不可见(#647 follow-up1)", async () => {
+    createAutomationJob({
+      name: "系统蒸馏任务",
+      prompt: "p",
+      schedule: { type: "interval", intervalMs: 60000 },
+      source: "system",
+      systemAction: "memory_distill_workspace"
+    });
+    createAutomationJob({
+      name: "用户任务",
+      prompt: "p",
+      schedule: { type: "interval", intervalMs: 60000 }
+    });
+
+    const tools = createAutomationListTools({});
+    const result = await callTool(resolveTool(tools, "automation_list"), {}) as { jobs: Array<{ name: string }> };
+    const names = result.jobs.map((job) => job.name);
+    expect(names).toContain("用户任务");
+    expect(names).not.toContain("系统蒸馏任务");
+  });
 });

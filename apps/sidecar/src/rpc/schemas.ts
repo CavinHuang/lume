@@ -1567,6 +1567,8 @@ export const automationCreateInputSchema = z.object({
   triggerModes: z.array(automationTriggerModeSchema).optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
+  // P2-19：此前被 zod 非严格 object 静默剥离，UI 选了存不下来
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1),
 });
@@ -1581,6 +1583,7 @@ export const automationUpdateInputSchema = z.object({
   triggerModes: z.array(automationTriggerModeSchema).optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1).optional(),
 });

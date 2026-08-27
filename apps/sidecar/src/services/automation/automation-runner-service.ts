@@ -8,6 +8,7 @@ import {
   writeFileSync
 } from "node:fs";
 import type {
+  AgentThinkingLevel,
   AutomationJob,
   AutomationListRunsInput,
   AutomationRun,
@@ -43,6 +44,22 @@ type JobDisposer = () => void;
 const jobDisposers = new Map<string, JobDisposer>();
 const runningJobs = new Set<string>();
 let runnerStarted = false;
+// 追账错峰步进：重启/刷新后 overdue 批量补跑若全部 delay=0，会在同一 timer
+// sweep 齐发 N 路无人值守派发（#647 follow-up6）——按首轮刷新内的序数摊开
+const CATCHUP_STAGGER_MS = 1_500;
+// 错峰档位按绝对时刻记账：run 完成触发的 refresh 会 clearSchedules 重排全部
+// timer，若按相对 delay 记，兄弟 job 的错峰会被反复清零并级联立即触发
+const catchUpFireAt = new Map<string, number>();
+
+// 无人值守 run 的 wall-clock 上限：provider 挂死时租约心跳会持续续命、runningJobs
+// 永久占位，后续触发全部合并 skip（#647 follow-up3 / P2-21 残余）。0 = 关闭。
+const DEFAULT_AUTOMATION_RUN_TIMEOUT_MS = 30 * 60_000;
+function automationRunTimeoutMs(): number {
+  const raw = process.env.LUME_AUTOMATION_RUN_TIMEOUT_MS?.trim();
+  if (!raw) return DEFAULT_AUTOMATION_RUN_TIMEOUT_MS;
+  const parsed = Number(raw);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_AUTOMATION_RUN_TIMEOUT_MS;
+}
 
 function appendRun(run: AutomationRun): void {
   // runs.jsonl 写失败（盘满/Windows EBUSY）不得让 fire-and-forget 的 executeJob 变成
@@ -137,6 +154,8 @@ function pickExecutionChannel(job: AutomationJob): { channelId: string; modelId:
       : config.models?.automation?.defaultModelRef;
     modelRef = specific || config.models?.agent?.defaultModelRef;
   }
+  // P2-19：per-job 模型覆盖（UI 选择生效），未配置回落系统默认
+  if (job.defaultModel?.trim()) modelRef = job.defaultModel.trim();
   const binding = resolveChannelModelBinding(modelRef ?? "", "chat");
   if (!binding || !modelRef) {
     throw new Error("未找到可用的 Agent 默认模型，请先在通用设置中配置");
@@ -237,6 +256,8 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   // #566 端到端 review:automation 通道不自动续跑(callerBoundsTurns 门)，触顶即停。
   // 必须如实记为 failed——「任务执行完成」会掩盖半途而废的无人值守任务。
   let turnLimitedStopped = false;
+  const runTimeoutMs = automationRunTimeoutMs();
+  let runTimeoutHandle: ReturnType<typeof setTimeout> | undefined;
 
   try {
     const { channelId, modelId, modelRef } = pickExecutionChannel(job);
@@ -291,7 +312,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     let waitingForUser = false;
     // 经 kernel 派发：与用户消息共用线程互斥与队列，绑定线程忙时排队
     // （background 让位用户）而非并发互踩（#398）。
-    await dispatchAgentRun(
+    const dispatched = dispatchAgentRun(
       {
         threadId,
         userMessage: job.prompt,
@@ -304,10 +325,14 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         // #394）；manual 与缺省 source 一律回落用户权限配置——缺省视为 manual 的
         // fail-closed 口径同时堵住 suggest 等未显式写 source 的内部创建面（#647 P2-23）。
         ...(job.source === "system" ? { permissionMode: "bypassPermissions" as const } : {}),
+        // P2-19：per-job 推理强度透传（此前 schema 剥离不落盘、执行零消费）
+        ...(job.thinkingLevel ? { thinkingLevel: job.thinkingLevel as AgentThinkingLevel } : {}),
         traceContext,
         messageMetadata: {
           automationJobId: job.id,
-          automationTrigger: trigger
+          automationTrigger: trigger,
+          // P2-19：toolResourceIds = 任务可用工具白名单（tool-resolver 经 messageMetadata 消费）
+          ...(job.toolResourceIds?.length ? { toolPolicy: { allow: job.toolResourceIds } } : {})
         }
       },
       {
@@ -336,6 +361,26 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
       },
       { priority: "background", appendUserMessage: false }
     );
+    // wall-clock 兜底：provider 挂死 = 派发 promise 永不 settle（#647 follow-up3）。
+    // waiting_* 在回合结束即 resolve，不受影响；超时先中止 kernel run 再落 failed。
+    await (runTimeoutMs > 0
+      ? Promise.race([
+          dispatched,
+          new Promise<never>((_, reject) => {
+            runTimeoutHandle = setTimeout(() => {
+              const timedOutThreadId = threadId;
+              if (timedOutThreadId) {
+                void import("../agent-runtime/runner/attempt")
+                  .then((module) => module.stopAgentRuntime(timedOutThreadId))
+                  .catch(() => undefined);
+              }
+              reject(new Error(
+                `无人值守运行超过 wall-clock 上限 ${Math.round(runTimeoutMs / 60_000)} 分钟，已强制中止（LUME_AUTOMATION_RUN_TIMEOUT_MS 可调，0 关闭）`
+              ));
+            }, runTimeoutMs);
+          })
+        ])
+      : dispatched);
 
     if (runtimeError) {
       throw new Error(runtimeError);
@@ -349,6 +394,7 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
     runMessage = error instanceof Error ? error.message : String(error);
   } finally {
     clearInterval(heartbeat);
+    if (runTimeoutHandle) clearTimeout(runTimeoutHandle);
     runningJobs.delete(job.id);
     const waitingForInteraction = runStatus === "waiting_for_user" || runStatus === "waiting_for_approval";
     finishAutomationLease(lease, {
@@ -417,11 +463,24 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   });
   const notificationWriter = getOutboundNotificationWriter();
   if (notificationWriter) {
-    notificationWriter("automation:run-completed", {
-      run,
-      jobName: job.name,
-      jobEnabled: latestJob.enabled
-    });
+    // writer 抛错(如 IPC EPIPE)只许丢事件本身——此处位于 executeJob 尾部重调度块
+    // 之前，裸抛会跳过 merged-trigger 重放、整条调度链静默终止（#647 follow-up7）
+    try {
+      notificationWriter("automation:run-completed", {
+        run,
+        jobName: job.name,
+        jobEnabled: latestJob.enabled
+      });
+    } catch (error) {
+      writeLogRecord({
+        level: "warn",
+        context: "automation.runner",
+        event: "automation.notification_write_failed",
+        message: "automation 完成事件投递失败（已忽略，不影响调度）",
+        status: "error",
+        data: { automationJobId: job.id, runId: run.id, error: error instanceof Error ? error.message : String(error) }
+      });
+    }
   }
   if (run.status !== "waiting_for_user" && run.status !== "waiting_for_approval" && job.schedule.type !== "once") {
     const pendingScheduledAt = consumeLatestAutomationTrigger(job.id);
@@ -446,9 +505,9 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
   return run;
 }
 
-function scheduleJob(job: AutomationJob): void {
+function scheduleJob(job: AutomationJob, overdueOrdinal: { n: number } = { n: 0 }): void {
   try {
-    scheduleJobInner(job);
+    scheduleJobInner(job, overdueOrdinal);
   } catch (error) {
     // 单个坏 job（如旧版放行的永假 cron 存量数据）不得毒化整轮刷新：
     // refresh 先 clearSchedules 再遍历，此处抛错会清光其余定时器且每次刷新复现（#452）
@@ -463,7 +522,7 @@ function scheduleJob(job: AutomationJob): void {
   }
 }
 
-function scheduleJobInner(job: AutomationJob): void {
+function scheduleJobInner(job: AutomationJob, overdueOrdinal: { n: number }): void {
   if (!job.enabled) return;
   const runtimeState = readAutomationRuntimeState(job.id);
   // running 态若心跳已超阈（快速重启 <30s 后 fresh lease 不触发启动期 recover），
@@ -492,8 +551,17 @@ function scheduleJobInner(job: AutomationJob): void {
     }
     return;
   }
-  const delay = Math.max(0, Math.min(scheduledAt - now, 2_147_000_000));
+  let delay: number;
+  if (scheduledAt <= now) {
+    const fireAt = catchUpFireAt.get(job.id) ?? now + overdueOrdinal.n++ * CATCHUP_STAGGER_MS;
+    catchUpFireAt.set(job.id, fireAt);
+    delay = Math.max(0, fireAt - Date.now());
+  } else {
+    catchUpFireAt.delete(job.id);
+    delay = Math.min(scheduledAt - now, 2_147_000_000);
+  }
   const timer = setTimeout(() => {
+    catchUpFireAt.delete(job.id);
     const latest = listAutomationJobs().find((item) => item.id === job.id);
     if (!latest?.enabled) return;
     if (scheduledAt - Date.now() > 2_147_000_000) {
@@ -529,8 +597,10 @@ export async function refreshAutomationRunnerJobs(): Promise<void> {
   if (!runnerStarted) return;
   clearSchedules();
   const jobs = listAutomationJobs();
+  // 同一轮刷新内的 overdue 任务共享错峰序数，确保启动追账批量补跑摊开触发
+  const overdueOrdinal = { n: 0 };
   for (const job of jobs) {
-    scheduleJob(job);
+    scheduleJob(job, overdueOrdinal);
   }
 }
 
@@ -546,6 +616,7 @@ export async function startAutomationRunner(): Promise<void> {
 export async function stopAutomationRunner(): Promise<void> {
   runnerStarted = false;
   clearSchedules();
+  catchUpFireAt.clear();
 }
 
 export async function runAutomationJobNow(input: AutomationRunNowInput): Promise<AutomationRun> {

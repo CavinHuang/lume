@@ -117,7 +117,9 @@ mock.module("./rules", () => ({
   loadDedupContext: () => ({ ...state.dedupContext }),
 }));
 
+const managerActual = await import("../automation/automation-manager");
 mock.module("../automation/automation-manager", () => ({
+  ...managerActual,
   createAutomationJob: spies.createAutomationJob,
 }));
 

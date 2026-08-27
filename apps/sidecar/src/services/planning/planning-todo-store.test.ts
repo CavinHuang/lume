@@ -302,4 +302,61 @@ describe("PlanningTodoStore", () => {
       rmSync(root, { recursive: true, force: true });
     }
   });
+
+  test("dueAt 的日期归属按任务自身 dueTimezone 换算(#647 P2-16)", () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-planning-test-"));
+    // 视图时区固定为纽约；同一时刻在东京已是次日——跨时区任务不得按进程时区误入「今天」
+    const now = Date.UTC(2026, 7, 27, 2, 0); // 纽约 08-26 22:00 / 东京 08-27 11:00
+    const store = new PlanningTodoStore({
+      dbPath: join(root, "planning.sqlite"),
+      now: () => now,
+      timezone: () => "America/New_York",
+    });
+    try {
+      store.create({ title: "跨时区任务", dueAt: now, dueTimezone: "Asia/Tokyo" });
+      store.create({ title: "本时区任务", dueAt: now, dueTimezone: "America/New_York" });
+
+      const todayTitles = store.list({ view: "today" }).items.map((todo) => todo.title);
+      const upcomingTitles = store.list({ view: "upcoming" }).items.map((todo) => todo.title);
+      expect(todayTitles).toContain("本时区任务");
+      expect(todayTitles).not.toContain("跨时区任务");
+      expect(upcomingTitles).toContain("跨时区任务");
+    } finally {
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("restoreWorkspaceSnapshot 为 open+dueAt 任务重建 due 提醒(#647 follow-up11)", () => {
+    const root = mkdtempSync(join(tmpdir(), "lume-planning-test-"));
+    const dbPath = join(root, "planning.sqlite");
+    const store = new PlanningTodoStore({
+      dbPath,
+      now: () => 1_700_000_000_000,
+      timezone: () => "Asia/Shanghai",
+    });
+    const countPendingDueReminders = (todoId: string): number => {
+      const db = new Database(dbPath, { readonly: true });
+      try {
+        const row = db.prepare("SELECT COUNT(*) AS n FROM planning_reminder WHERE target_id = ? AND origin = 'todo_due_at' AND status = 'pending'").get(todoId) as { n: number };
+        return row.n;
+      } finally {
+        db.close();
+      }
+    };
+    try {
+      const created = store.create({ title: "项目任务", dueAt: 1_700_050_000_000, dueTimezone: "Asia/Shanghai", workspaceId: "ws-1" }).todo!;
+      expect(countPendingDueReminders(created.id)).toBe(1);
+      // complete 连坐收口 due 提醒（P1-5 语义）→ 误操作恢复后提醒须复活
+      store.complete({ todoId: created.id, expectedRevision: created.revision });
+      expect(countPendingDueReminders(created.id)).toBe(0);
+
+      store.restoreWorkspaceSnapshot([{ ...created, status: "open", completedAt: undefined }], "op-restore");
+
+      expect(countPendingDueReminders(created.id)).toBe(1);
+    } finally {
+      store.close();
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
 });

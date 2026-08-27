@@ -5,6 +5,8 @@
  */
 
 /** 调度类型 */
+import type { LumeConfigThinkingLevel } from "./lume-config"
+
 export type AutomationScheduleType = 'cron' | 'once' | 'interval' | 'manual'
 export type AutomationMisfirePolicy = 'run_latest' | 'skip'
 
@@ -65,7 +67,7 @@ export interface AutomationJob {
   /** 默认模型展示值 */
   defaultModel?: string
   /** 推理强度（off / low / medium / high / max） */
-  thinkingLevel?: string
+  thinkingLevel?: LumeConfigThinkingLevel
   /** 任务可用工具与资源标识 */
   toolResourceIds?: string[]
   /** 执行提示词（后续可扩展为 workflow） */
@@ -103,7 +105,7 @@ export interface AutomationCreateJobInput {
   systemAction?: AutomationSystemAction
   description?: string
   defaultModel?: string
-  thinkingLevel?: string
+  thinkingLevel?: LumeConfigThinkingLevel
   toolResourceIds?: string[]
   prompt: string
 }
@@ -122,7 +124,7 @@ export interface AutomationUpdateJobInput {
   systemAction?: AutomationSystemAction
   description?: string
   defaultModel?: string
-  thinkingLevel?: string
+  thinkingLevel?: LumeConfigThinkingLevel
   toolResourceIds?: string[]
   prompt?: string
 }
