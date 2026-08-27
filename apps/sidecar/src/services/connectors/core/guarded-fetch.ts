@@ -420,6 +420,17 @@ export function isProxyLikeDispatcher(
  * - the screened address set is empty (`lookup` disabled): honoring the option
  *   semantics instead of turning "skip validation" into "always fail".
  */
+// #794①:pinned Agent 按地址集缓存复用——此前每请求每跳 new Agent 击穿
+// keep-alive 连接池,同 host 连续请求反复 TCP+TLS 握手,空闲 fd 靠 undici
+// idle 回收兜底。ponytail: 上限 32 超限整体清空,连接器域 host 数小足够;
+// 出现海量 host 再换 LRU。
+const pinnedAgentCache = new Map<string, unknown>();
+const pinnedAgentCacheLimit = 32;
+
+function pinnedAgentCacheKey(addresses: ResolvedAddress[]): string {
+  return addresses.map((entry) => `${entry.family}:${entry.address}`).sort().join("|");
+}
+
 async function loadPinnedDispatcherFactory(): Promise<
   ((addresses: ResolvedAddress[]) => unknown) | null
 > {
@@ -449,7 +460,13 @@ async function loadPinnedDispatcherFactory(): Promise<
       return undefined;
     }
     if (addresses.length === 0) return undefined;
-    return new module.Agent({ connect: { lookup: createPinnedLookup(addresses) } });
+    const cacheKey = pinnedAgentCacheKey(addresses);
+    const cached = pinnedAgentCache.get(cacheKey);
+    if (cached) return cached;
+    const agent = new module.Agent({ connect: { lookup: createPinnedLookup(addresses) } });
+    if (pinnedAgentCache.size >= pinnedAgentCacheLimit) pinnedAgentCache.clear();
+    pinnedAgentCache.set(cacheKey, agent);
+    return agent;
   };
 }
 
