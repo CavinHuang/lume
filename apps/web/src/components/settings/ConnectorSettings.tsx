@@ -47,18 +47,29 @@ export function ConnectorSettings() {
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [collapsed, setCollapsed] = React.useState(false)
+  // 请求代际:并发 refresh 后发先至时旧快照不得覆盖新状态
+  const refreshGeneration = React.useRef(0)
 
+  // stale-while-revalidate:刷新保留旧列表(卡片不卸载,输入中的表单不丢),
+  // 仅头部按钮转圈;首次加载(列表为空)才显示整块 spinner。
   const refresh = React.useCallback(() => {
+    const generation = ++refreshGeneration.current
     setLoading(true)
     void getConnectorSetups()
       .then((next) => {
+        if (refreshGeneration.current !== generation) return
         setSetups(next)
         setLoadError(null)
       })
       .catch((error) => {
+        if (refreshGeneration.current !== generation) return
         setLoadError(error instanceof Error ? error.message : String(error))
+        // stale-while-revalidate 下有旧列表时错误框不再渲染,必须给显式反馈
+        toast.error(`连接器刷新失败:${error instanceof Error ? error.message : String(error)}`)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (refreshGeneration.current === generation) setLoading(false)
+      })
   }, [])
 
   React.useEffect(() => {
@@ -67,12 +78,14 @@ export function ConnectorSettings() {
 
   return (
     <section className="lume-panel">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3 text-left"
-        onClick={() => setCollapsed((prev) => !prev)}
-      >
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          aria-expanded={!collapsed}
+          aria-controls="connector-settings-body"
+          onClick={() => setCollapsed((prev) => !prev)}
+        >
           <ChevronDown className={`size-4 shrink-0 text-[var(--text-3)] transition-transform ${collapsed ? '-rotate-90' : ''}`} />
           <div className="flex size-8 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
             <Mail size={16} />
@@ -80,36 +93,27 @@ export function ConnectorSettings() {
           <div className="min-w-0">
             <h3 className="text-body-lg font-semibold text-[var(--text-1)]">邮箱连接器</h3>
             <p className="text-ui text-[var(--text-3)]">
-              {loadError ? '加载失败' : `${setups.filter((setup) => setup.connected).length}/${setups.length} 个已连接`}
+              {loadError && setups.length === 0 ? '加载失败' : `${setups.filter((setup) => setup.connected).length}/${setups.length} 个已连接`}
             </p>
           </div>
-        </div>
-        <span
-          className="shrink-0"
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.stopPropagation()
-              refresh()
-            }
-          }}
-        >
-          <Button variant="outline" size="sm" onClick={() => !loading && refresh()} disabled={loading}>
+        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
             {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             刷新
           </Button>
-        </span>
-      </button>
+        </div>
+      </div>
 
       {!collapsed && (
-      <div className="p-4">
+      <div id="connector-settings-body" className="p-4">
         <div className="space-y-2">
-          {loading ? (
+          {setups.length === 0 && loading ? (
             <div className="flex h-28 items-center justify-center text-body text-[var(--text-3)]">
               <Loader2 className="mr-2 size-4 animate-spin" />
               加载中
             </div>
-          ) : loadError ? (
+          ) : setups.length === 0 && loadError ? (
             <div className="lume-subpanel border-dashed p-6 text-center text-body text-[var(--lume-danger)]">
               连接器加载失败:{loadError}
             </div>
@@ -138,15 +142,25 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
   React.useEffect(() => {
     if (setup.authKind !== 'oauth2' || !status.authorizing) return
     wasAuthorizing.current = true
+    let pollFailures = 0
     const timer = setInterval(() => {
       void getConnectorStatus(setup.service)
         .then((next) => {
+          pollFailures = 0
           setStatus((prev) => ({ ...prev, connected: next.connected, authorizing: next.authorizing, lastError: next.lastError }))
           // 授权完成的瞬间拉全量(含 accountLabel),不等用户手动刷新
           if (wasAuthorizing.current && !next.authorizing && next.connected) onChanged()
           if (!next.authorizing) wasAuthorizing.current = false
         })
-        .catch(() => {})
+        .catch((error) => {
+          // 连续失败超阈值停轮询并告知:silent catch 会让徽章停在「授权中…」直到服务端超时
+          pollFailures += 1
+          if (pollFailures === 5) {
+            clearInterval(timer)
+            setStatus((prev) => ({ ...prev, authorizing: false, lastError: '状态轮询失败,请重试或重新发起授权' }))
+            toast.error(`授权状态轮询失败:${error instanceof Error ? error.message : String(error)}`)
+          }
+        })
     }, 2000)
     return () => clearInterval(timer)
   }, [setup.authKind, setup.service, status.authorizing, onChanged])

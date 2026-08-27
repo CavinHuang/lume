@@ -1,5 +1,5 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
-import { createHash, randomBytes } from "node:crypto";
+import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import type {
   CredentialValidators,
   OAuth2AuthDefinition,
@@ -163,15 +163,17 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
   const done = new Promise<ResolvedCredential & { authType: "oauth2" }>((resolve, reject) => {
     const server = httpServerFactory((req, res) => void handleOAuthCallback(req, res, service));
     let finished = false;
+    /** 本流自己的 map 占位:finish 删除前核对身份——孤儿流(占位已被后继 bind 覆盖出局)
+     * 的单次合法终结也不得摘掉在位新流,否则新授权真回调 404、done 悬挂至超时。 */
+    let self: PendingAuthorization | undefined;
     const finish = (fn: () => void) => {
       // 幂等守卫:finish 只结算一次。迟到的 resolve/reject(流已被顶掉/断开后
-      // 兑换才决算)重入会重放 map delete,误摘后继新流的占位——新授权回调
-      // 直接 404,挂死到 10 分钟超时
+      // 兑换才决算)重入会重放副作用;孤儿流的首次终结同样不得误删他流条目
       if (finished) return;
       finished = true;
       clearTimeout(timer);
       server.close();
-      pendingAuthorizations.delete(service);
+      if (pendingAuthorizations.get(service) === self) pendingAuthorizations.delete(service);
       // listen 前失败(绑定被拒/supersede)时 url 永不产出,必须同步 settle,
       // 否则 handler 的 await authorizationUrl 挂死而真实错误丢失
       settleUrlIfPending(new ConnectorError("oauth_flow_cancelled", "授权流已终止"));
@@ -193,7 +195,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       // PKCE S256(RFC 7636):同机进程即便截获 state/授权码,没有 verifier 也换不到 token
       const codeVerifier = randomBytes(48).toString("base64url");
       const codeChallenge = createHash("sha256").update(codeVerifier).digest("base64url");
-      pendingAuthorizations.set(service, {
+      const record: PendingAuthorization = {
         service,
         state,
         codeVerifier,
@@ -202,7 +204,9 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
         reject: (error) => finish(() => reject(error)),
         timer,
         settleUrlIfPending,
-      });
+      };
+      self = record;
+      pendingAuthorizations.set(service, record);
       resolveUrl(
         buildAuthorizationUrl(service, auth, config.clientId, redirectUri, state, codeChallenge),
       );
@@ -237,7 +241,7 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
   };
 
   try {
-    if (url.searchParams.get("state") !== pending.state) {
+    if (!timingSafeStateEqual(url.searchParams.get("state") ?? "", pending.state)) {
       // 杂散请求(浏览器预取/刷新、端口扫描)只对该请求回错误页;
       // reject 整个 pending 流程会让随后到达的真回调扑空
       logger.debug("connector oauth callback state mismatch (stray request)", { service });
@@ -378,6 +382,13 @@ async function validateAndStoreCredential(
 
 const TOKEN_REFRESH_LEEWAY_MS = 60_000;
 
+/** 恒时 state 比较(timingSafeEqual 要求等长,长度不齐直接判不等)。 */
+function timingSafeStateEqual(received: string, expected: string): boolean {
+  const a = Buffer.from(received, "utf8");
+  const b = Buffer.from(expected, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
 /**
  * 保存授权码型凭证(QQ 邮箱等):跑 provider 的连接测试后落盘。
  * 验证失败抛 ConnectorError,由调用方决定提示。
@@ -387,6 +398,12 @@ export async function saveConnectorCustomCredential(service: string, values: Rec
   const epoch = (saveEpochs.get(service) ?? 0) + 1;
   saveEpochs.set(service, epoch);
   const provider = getConnector(service);
+  // oauth2 型 provider 的凭证只能经授权流写入:直存 customValues 会造出
+  // 「UI 已连接、运行时 getConnectorResolvedCredential oauth 优先解析必抛错」的假态。
+  // 不看 validators 是否有 customCredential——混合型下 oauth 优先的 resolver 同样到不了 custom 分支
+  if (provider.definition.authTypes.includes("oauth2")) {
+    throw new ConnectorError("connector_auth_unsupported", `${service} 使用 OAuth 授权,请在设置中完成浏览器授权`);
+  }
   const validator = provider.validators?.customCredential;
   let profile: { accountId: string; displayName: string; grantedScopes: string[] } = {
     accountId: "custom",
@@ -431,7 +448,11 @@ function readCustomProfile(service: string): { accountId: string; displayName: s
 }
 
 export function hasAnyConnectorCredential(service: string): boolean {
-  return getConnectorOAuthCredential(service) !== undefined || getConnectorCustomValues(service) !== undefined;
+  if (getConnectorOAuthCredential(service) !== undefined) return true;
+  // oauth2 型服务的 customValues 不是合法凭证(SAVE_CREDENTIAL 已拒新增;存量毒数据
+  // 来自防线之前的直发 RPC),计入会造出「已连接」假态——运行时 oauth 优先解析必抛错
+  if (getConnector(service).definition.authTypes.includes("oauth2")) return false;
+  return getConnectorCustomValues(service) !== undefined;
 }
 
 /** 进行中的 token 刷新,按 service 单飞:并发命中过期共享同一次刷新,防轮换型 provider 的 refresh token 互踩作废。 */
@@ -518,6 +539,9 @@ export function disconnectConnector(service: string): void {
 function stopPendingAuthorization(service: string, error: Error): void {
   const pending = pendingAuthorizations.get(service);
   if (!pending) return;
+  // 前四步是对 finish 的防御性前置复制(get 与本函数同步无竞态,delete 目标
+  // 即所取者)。末位 pending.reject 是该流 done promise 的唯一结算通道、也是
+  // finish 幂等守卫的置位点——不得删,否则守卫永不生效,重放误删会复活
   clearTimeout(pending.timer);
   pending.server.close();
   pendingAuthorizations.delete(service);
@@ -534,6 +558,7 @@ export async function executeConnectorAction(
   service: string,
   actionName: string,
   input: unknown,
+  signal?: AbortSignal,
 ): Promise<{ ok: boolean; output?: unknown; error?: { code: string; message: string; details?: unknown } }> {
   const provider = getConnector(service);
   const action = provider.definition.actions.find((entry) => entry.name === actionName);
@@ -549,7 +574,7 @@ export async function executeConnectorAction(
         throw error;
       }
     },
-    signal: undefined,
+    signal,
   };
   return executeAction(
     action,

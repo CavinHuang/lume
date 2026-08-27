@@ -73,12 +73,12 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
         // 模拟 imapflow 的 EventEmitter 面:error 监听置 dead 标记是
         // 借出淘汰的依据,mailboxOpen 置选中态是 requireUnselected 的依据
         let mailbox: object | undefined;
-        const errorListeners: Array<() => void> = [];
+        const errorListeners: Array<(error: Error) => void> = [];
         const client = {
           get mailbox() {
             return mailbox;
           },
-          on(event: string, listener: () => void) {
+          on(event: string, listener: (error: Error) => void) {
             if (event === "error") {
               errorListeners.push(listener);
             }
@@ -128,7 +128,7 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
         const withTrigger = Object.assign(client, {
           __emitError: () => {
             for (const listener of errorListeners) {
-              listener();
+              listener(new Error("simulated transport failure"));
             }
           },
         });

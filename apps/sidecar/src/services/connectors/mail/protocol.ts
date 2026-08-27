@@ -5,21 +5,16 @@ import type { LookupFunction, Socket, TcpNetConnectOpts } from "node:net";
 import { ImapFlow } from "imapflow";
 import { simpleParser } from "mailparser";
 import { Buffer } from "node:buffer";
-import { randomUUID } from "node:crypto";
-import { createWriteStream } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
 import { connect as connectSocket } from "node:net";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { Readable } from "node:stream";
-import { pipeline } from "node:stream/promises";
 import nodemailer from "nodemailer";
+import { createLogger } from "../../infra/logger";
 import { resolveGuardedEgressTarget } from "../core/guarded-fetch";
 import { isIpAddress } from "../core/request";
-import { createLogger } from "../../infra/logger";
 import { mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
 import { MailProtocolError } from "./errors";
-import { sanitizeTempFileName } from "./temp-files";
+
+const logger = createLogger("connectors.mail.protocol");
 
 export interface MailCredential {
   email: string;
@@ -207,6 +202,8 @@ interface MailImapClient {
   logout(): Promise<void>;
   close?(): void;
   list(): Promise<unknown[]>;
+  /** imapflow extends EventEmitter;fake 实现可不提供。 */
+  on?(event: "error", listener: (error: Error) => void): unknown;
 }
 
 type RuntimeImapClient = MailImapClient & {
@@ -595,7 +592,16 @@ async function createImapClient(
     logger: false,
   };
 
-  return deps.createImapClient ? deps.createImapClient(clientConfig) : new ImapFlow(clientConfig as ImapFlowOptions);
+  const client = deps.createImapClient
+    ? deps.createImapClient(clientConfig)
+    : new ImapFlow(clientConfig as ImapFlowOptions);
+  // imapflow 的传输层异步错误(socket RST/TLS alert/命令超时中断)在 connect settle
+  // 后经 emit("error") 抛出;EventEmitter 无监听会升级为进程级 uncaughtException,
+  // 累计触发 sidecar 兜底退出——必须常挂兜底监听。
+  client.on?.("error", (error: Error) => {
+    logger.warn("imap client transport error", { error: error.message });
+  });
+  return client;
 }
 
 function createSmtpSocketFactory(host: string, port: number, lookup: LookupFunction, deps: MailProtocolDependencies) {
@@ -978,11 +984,14 @@ async function acquirePooledClient(
   try {
     await fresh.connect();
   } catch (error) {
-    // socket 可能尚未建立或已死,直接静默关闭
-    const mapped = mapLibraryError(error, config);
-    bumpPoolMetric("error_destroy", mapped.kind);
-    destroyPooledClient(conn.client);
-    throw mapped;
+    // 监听侧若已在 connect 决算窗口内置位 dead(emit+reject 同达的假想上游),
+    // 计数与补刀都归它——此处不再重复记 error_destroy(事件数口径)
+    if (!conn.dead) {
+      const mapped = mapLibraryError(error, config);
+      bumpPoolMetric("error_destroy", mapped.kind);
+      destroyPooledClient(conn.client);
+    }
+    throw mapLibraryError(error, config);
   }
   bumpPoolMetric("created");
   return conn;
@@ -1417,6 +1426,9 @@ function isAuthError(error: unknown, code: string | null, lowerMessage: string) 
 function isTimeoutError(code: string | null, lowerMessage: string) {
   return (
     code === "ETIMEDOUT" ||
+    // imapflow 的连接/greeting 阶段超时用自有错误码,消息不含 "timeout" 字样
+    code === "CONNECT_TIMEOUT" ||
+    code === "GREETING_TIMEOUT" ||
     code === "Timeout" ||
     code === "LockTimeout" ||
     lowerMessage.includes("timed out") ||
@@ -1431,14 +1443,25 @@ function isNetworkError(code: string | null) {
 }
 
 function isFolderMissingError(error: unknown) {
-  const message = error instanceof Error ? error.message.toLowerCase() : "";
-  const code = readString(toRecord(error)?.code);
+  // imapflow 对命令 NO/BAD 一律 new Error("Command failed"),服务器响应码只落在
+  // serverResponseCode、原文落在 response——读 .code/.message 永远匹配不上。
+  // 响应码权威:命中即判定;文本匹配仅在响应码缺失时兜底(避免文件夹名本身
+  // 含敏感短语时被其他失败原因误命中)。
+  const record = toRecord(error);
+  const code = (
+    readString(record?.serverResponseCode) ?? readString(record?.code) ?? ""
+  ).toUpperCase();
+  if (code === "NONEXISTENT" || code === "NOTFOUND") return true;
+  if (code) return false;
+  const text = [
+    error instanceof Error ? error.message.toLowerCase() : "",
+    readString(record?.response)?.toLowerCase() ?? "",
+  ].join(" ");
   return (
-    code === "NONEXISTENT" ||
-    code === "NotFound" ||
-    message.includes("not found") ||
-    message.includes("does not exist") ||
-    message.includes("nonexistent")
+    text.includes("[nonexistent]") ||
+    text.includes("not found") ||
+    text.includes("does not exist") ||
+    text.includes("nonexistent")
   );
 }
 

@@ -218,8 +218,13 @@ export function resolveReplyHeaders(resource: GmailMessageResource): {
   return {
     subject: normalizeReplySubject(readHeader(headers, "Subject")),
     to: firstAddress(readHeader(headers, "Reply-To")) || firstAddress(readHeader(headers, "From")),
-    references: readHeader(headers, "References") || readHeader(headers, "Message-ID") || resource.id,
-    inReplyTo: readHeader(headers, "Message-ID") || resource.id,
+    // RFC 5322 惯例:References = 父.References + " " + 父.Message-ID,多级线程链
+    // 才不逐代断格。resource.id 是 Gmail 裸 id,不是合法 <angle@id> 形制,不作兜底;
+    // 无 Message-ID 的消息(API 创建草稿常见)线程归组由发送时的 threadId 保证。
+    references: [readHeader(headers, "References"), readHeader(headers, "Message-ID")]
+      .filter(Boolean)
+      .join(" "),
+    inReplyTo: readHeader(headers, "Message-ID"),
   };
 }
 
