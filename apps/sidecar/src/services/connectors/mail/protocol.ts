@@ -730,14 +730,22 @@ const imapPoolMetrics: ImapPoolMetrics = {
  */
 export interface ImapPoolMetricsSnapshot extends Readonly<ImapPoolMetrics> {
   idle_connections: number;
+  /** error_destroy 的 kind 细分(#784②/#790):watchdog 与 mapLibraryError kind 同表,事件数口径。 */
+  error_destroy_kinds: Record<string, number>;
 }
+
+const imapErrorDestroyKinds = new Map<string, number>();
 
 export function imapPoolMetricsSnapshot(): ImapPoolMetricsSnapshot {
   let idle = 0;
   for (const gate of imapAccountGates.values()) {
     idle += gate.idle.length;
   }
-  return { ...imapPoolMetrics, idle_connections: idle };
+  return {
+    ...imapPoolMetrics,
+    idle_connections: idle,
+    error_destroy_kinds: Object.fromEntries(imapErrorDestroyKinds),
+  };
 }
 
 const poolLogger = createLogger("connectors.mail.protocol");
@@ -749,6 +757,11 @@ const poolLogger = createLogger("connectors.mail.protocol");
  */
 function bumpPoolMetric(metric: keyof ImapPoolMetrics, kind?: string): void {
   imapPoolMetrics[metric] += 1;
+  if (metric === "error_destroy" && kind) {
+    // #784②/#790:本地判定错 vs 网络错占比的论证数据。此前只进 debug 日志,
+    // fileLevel=info 下生产拿不到——改为进程级累计随快照出口。
+    imapErrorDestroyKinds.set(kind, (imapErrorDestroyKinds.get(kind) ?? 0) + 1);
+  }
   poolLogger.debug("imap pool metric", { metric, total: imapPoolMetrics[metric], ...(kind ? { kind } : {}) });
 }
 
