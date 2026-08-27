@@ -54,6 +54,8 @@ function findGroup(
   return store.groups.find((item) => item.groupId === groupId);
 }
 
+// #527-1：旧实现逐 messageId 对全量 messages 做 .find——长会话下为
+// O(组大小×全部消息)。就地构建一次 id 索引后再取，退化为线性。
 function findGroupRecords(
   store: AgentMessageVersionStore,
   groupId: string
@@ -62,8 +64,9 @@ function findGroupRecords(
   if (!group) {
     return [];
   }
+  const byId = new Map(store.messages.map((record) => [record.messageId, record]));
   return group.messageIds
-    .map((messageId) => store.messages.find((record) => record.messageId === messageId))
+    .map((messageId) => byId.get(messageId))
     .filter((record): record is AgentMessageVersionRecord => !!record)
     .sort((a, b) => a.versionIndex - b.versionIndex);
 }
@@ -303,10 +306,14 @@ export function getVisibleAgentMessages(sessionId: string): AgentMessage[] {
   if (!store) {
     return [];
   }
-  return getVisibleLatestRecords(store).map((record) => {
-    const records = findGroupRecords(store, record.groupId);
-    return toAgentMessage(record, records.length);
-  });
+  // #527-1：只需要每组版本数，单遍统计替代「每个可见组都全量扫一遍 messages」
+  const countByGroup = new Map<string, number>();
+  for (const record of store.messages) {
+    countByGroup.set(record.groupId, (countByGroup.get(record.groupId) ?? 0) + 1);
+  }
+  return getVisibleLatestRecords(store).map((record) =>
+    toAgentMessage(record, countByGroup.get(record.groupId) ?? 1)
+  );
 }
 
 export function getAgentMessageVersions(sessionId: string, versionGroupId: string): AgentMessage[] {

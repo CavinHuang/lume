@@ -446,14 +446,10 @@ export function listEntries(input: {
   for (const scope of scopes) {
     if (scope === "workspace" && !input.workspaceSlug) continue;
     const paths = getMemoryV2ScopePaths({ scope, workspaceSlug: input.workspaceSlug });
-    for (const path of listMarkdownFiles(paths.entriesDir)) {
-      try {
-        const entry = readEntryFile(path);
-        if (input.includeStatuses && !input.includeStatuses.includes(entry.frontmatter.status)) continue;
-        entries.push(entry);
-      } catch {
-        continue;
-      }
+    for (const [, doc] of loadMarkdownDocs(paths.entriesDir, readEntryFile)) {
+      const entry = structuredClone(doc) as MemoryV2Entry;
+      if (input.includeStatuses && !input.includeStatuses.includes(entry.frontmatter.status)) continue;
+      entries.push(entry);
     }
   }
   return entries.sort((a, b) => b.frontmatter.updated.localeCompare(a.frontmatter.updated));
@@ -470,14 +466,10 @@ export function listPending(input: {
     if (scope === "workspace" && !input.workspaceSlug) continue;
     const paths = getMemoryV2ScopePaths({ scope, workspaceSlug: input.workspaceSlug });
     for (const dir of [paths.pendingConflictsDir, paths.pendingStaleDir, paths.pendingLowConfidenceDir]) {
-      for (const path of listMarkdownFiles(dir)) {
-        try {
-          const item = readPendingFile(path);
-          if (input.includeStatuses && !input.includeStatuses.includes(item.frontmatter.status)) continue;
-          items.push(item);
-        } catch {
-          continue;
-        }
+      for (const [, doc] of loadMarkdownDocs(dir, readPendingFile)) {
+        const item = structuredClone(doc) as MemoryV2PendingItem;
+        if (input.includeStatuses && !input.includeStatuses.includes(item.frontmatter.status)) continue;
+        items.push(item);
       }
     }
   }
@@ -864,6 +856,62 @@ function listMarkdownFiles(dir: string): string[] {
         return false;
       }
     });
+}
+
+// #527 复核新增：markdown 全目录解析缓存。listEntries/listPending 位于每条
+// 用户消息的召回主链，此前每次调用都 readdir+逐文件 YAML.parse（仓内 bench
+// 注释亦自证）。失效信号 = 「文件名→mtimeMs:size」快照比对：内部写入/删除
+// 与外部进程改动都会改变快照，无需额外失效钩子。命中部分直接复用解析结果；
+// ponytail: 缓存无上限，目录规模=用户记忆条数（通常 <10^3），超规模再议分片
+const markdownDocCache = new Map<string, {
+  snapshot: Map<string, string>;
+  docs: Map<string, unknown>;
+}>();
+
+function markdownStatFingerprint(path: string): string | undefined {
+  try {
+    const stat = statSync(path);
+    return stat.isFile() ? `${stat.mtimeMs}:${stat.size}` : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 返回 dir 下全部 .md 的解析结果 Map<path, doc>。返回的是缓存共享实例，
+ * 调用方对外下发前必须自行 structuredClone（见 listEntries/listPending 用法）。
+ */
+function loadMarkdownDocs<T>(dir: string, parse: (path: string) => T): Map<string, T> {
+  const prev = markdownDocCache.get(dir);
+  const snapshot = new Map<string, string>();
+  const docs = new Map<string, unknown>();
+  const result = new Map<string, T>();
+  if (existsSync(dir)) {
+    for (const name of readdirSync(dir)) {
+      if (!name.endsWith(".md")) continue;
+      const path = join(dir, name);
+      const fingerprint = markdownStatFingerprint(path);
+      if (!fingerprint) continue;
+      snapshot.set(name, fingerprint);
+      const hit = prev?.snapshot.get(name) === fingerprint
+        ? (prev.docs.get(path) as T | undefined)
+        : undefined;
+      if (hit !== undefined) {
+        docs.set(path, hit);
+        result.set(path, hit);
+      } else {
+        try {
+          const doc = parse(path);
+          docs.set(path, doc);
+          result.set(path, doc);
+        } catch {
+          continue;
+        }
+      }
+    }
+  }
+  markdownDocCache.set(dir, { snapshot, docs });
+  return result;
 }
 
 /** entry 文件名格式 {YYYY-MM-DD}-{id}.md；去掉 .md 后缀与 10 字符 date 前缀（+"-"）得 id。 */

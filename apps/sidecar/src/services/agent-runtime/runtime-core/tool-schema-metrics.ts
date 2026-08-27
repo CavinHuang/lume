@@ -17,8 +17,17 @@ export function fingerprintToolSchema(tools: ToolDefinition[]): string {
     .digest("hex");
 }
 
+// #527-13：同一 toolset 实例在一次 run 内会被多处分别估算
+// （assembleSessionContext 与 Impl 配置对象），按数组实例 memo 免重复全量
+// JSON.stringify。WeakMap 键为实例：toolset 重建则自然重算，无过期问题。
+const tokenEstimateCache = new WeakMap<ToolDefinition[], number>();
+
 export function estimateToolSchemaTokens(tools: ToolDefinition[]): number {
-  return tools.reduce(
+  const cached = tokenEstimateCache.get(tools);
+  if (cached !== undefined) {
+    return cached;
+  }
+  const total = tools.reduce(
     (sum, tool) =>
       sum +
       Math.ceil(
@@ -29,4 +38,6 @@ export function estimateToolSchemaTokens(tools: ToolDefinition[]): number {
       ),
     0,
   );
+  tokenEstimateCache.set(tools, total);
+  return total;
 }
