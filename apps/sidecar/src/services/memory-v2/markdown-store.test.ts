@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -32,6 +32,25 @@ afterEach(() => {
 });
 
 describe("memory-v2 markdown store", () => {
+  // #527 复核新增（解析缓存）：命中缓存后，外部直接改盘的内容也必须可见
+  test("listEntries 缓存对外部文件改动保持失效感知", () => {
+    const entry = writeEntry({
+      kind: "decision",
+      targetScope: "global",
+      statement: "before edit",
+      confidence: "high"
+    });
+    expect(listEntries().find((item) => item.frontmatter.id === entry.frontmatter.id)?.statement).toBe("before edit");
+
+    // 绕过 store API 模拟外部进程改写：mtime/size 快照必须触发重解析
+    const raw = readFileSync(entry.path, "utf-8").replace("before edit", "after external edit");
+    const future = new Date(Date.now() + 50);
+    writeFileSync(entry.path, raw, "utf-8");
+    utimesSync(entry.path, future, future);
+
+    expect(listEntries().find((item) => item.frontmatter.id === entry.frontmatter.id)?.statement).toBe("after external edit");
+  });
+
   test("round trips entry frontmatter and filters active entries", () => {
     const entry = writeEntry({
       kind: "decision",
