@@ -13,7 +13,8 @@ import {
 
 const service = "gmail";
 
-const userId = s.string({ description: "Gmail user ID. Omit to use the connected mailbox." });
+// 执行器恒以 "me"(已连接邮箱)调用:enum 收紧让契约诚实,LLM 传其他值本地即拒
+const userId = s.stringEnum(["me"], { description: "Gmail user ID. Omit to use the connected mailbox." });
 const query = s.string({ description: "Gmail search query." });
 const pageToken = s.string({ description: "Opaque pagination token returned by Gmail." });
 const maxResults = s.integer({
@@ -167,12 +168,12 @@ const pageFields = (extra: Record<string, JsonSchema> = {}): Record<string, Json
 
 const recipientFields = (): Record<string, JsonSchema> => ({
   recipientEmail: s.string({ description: "Primary recipient email address." }),
-  to: s.string({ description: "Primary recipient email address." }),
+  to: s.string({ minLength: 1, description: "Primary recipient email address." }),
   extraRecipients: s.array(s.string(), { description: "Additional To recipients." }),
   cc: s.union([s.string(), s.array(s.string())], { description: "Cc recipients." }),
   bcc: s.union([s.string(), s.array(s.string())], { description: "Bcc recipients." }),
   subject: s.string({ description: "Email subject line." }),
-  body: s.string({ description: "Email body content." }),
+  body: s.string({ minLength: 1, description: "Email body content." }),
   messageBody: s.string({ description: "Reply or draft body content." }),
   isHtml: s.boolean({ description: "Whether the body is HTML." }),
   fromEmail: s.string({ description: "Verified Gmail send-as alias." }),
@@ -293,6 +294,7 @@ export const gmailActions: ActionDefinition[] = [
     description: "Send an email from the connected Gmail account.",
     requiredScopes: gmailSendScopes,
     properties: recipientFields(),
+    required: ["to", "body"],
     outputSchema: s.object({ messageId }, { required: ["messageId"], description: "Sent message result." }),
   }),
   action({
@@ -308,7 +310,7 @@ export const gmailActions: ActionDefinition[] = [
     description: "Reply to an existing Gmail thread while preserving Gmail threading.",
     requiredScopes: gmailSendScopes,
     properties: { threadId, ...recipientFields() },
-    required: ["threadId"],
+    required: ["threadId", "body"],
     outputSchema: s.object({ messageId, threadId }, { required: ["messageId"], description: "Thread reply result." }),
   }),
   action({
@@ -326,7 +328,8 @@ export const gmailActions: ActionDefinition[] = [
   }),
   action({
     name: "create_email_draft",
-    description: "Create a Gmail draft with recipients, subject, body, and optional threading.",
+    // 有意零 required:草稿允许半成品(先起稿后补收件人),与 send/reply 的收紧不同
+    description: "Create a Gmail draft with recipients, subject, body, and optional threading. Fields are all optional — drafts may be saved incomplete.",
     requiredScopes: gmailComposeScopes,
     properties: { ...recipientFields(), threadId },
     outputSchema: s.object({ draftId, messageId, threadId }, { required: ["draftId"], description: "Created draft." }),
@@ -335,7 +338,12 @@ export const gmailActions: ActionDefinition[] = [
     name: "list_drafts",
     description: "List Gmail drafts with pagination.",
     requiredScopes: gmailComposeScopes,
-    properties: pageFields({ verbose: s.boolean({ description: "Hydrate each draft." }) }),
+    properties: pageFields({
+      verbose: s.boolean({
+        description:
+          "Hydrate each draft. Non-verbose rows carry only id/threadId; metadata fields are blank placeholders, not empty drafts.",
+      }),
+    }),
     outputSchema: s.object(
       { drafts: s.array(draft), nextPageToken: s.nullable(pageToken) },
       { required: ["drafts"], description: "Draft list result." },
@@ -463,7 +471,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "move_to_trash",
     description: "Move a Gmail message to trash.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ messageId, ...labelMutation() }),
+    properties: withUser({ messageId }),
     required: ["messageId"],
     outputSchema: message,
   }),
@@ -471,7 +479,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "untrash_message",
     description: "Restore a previously trashed Gmail message.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ messageId, ...labelMutation() }),
+    properties: withUser({ messageId }),
     required: ["messageId"],
     outputSchema: message,
   }),
@@ -487,7 +495,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "move_thread_to_trash",
     description: "Move an entire Gmail thread to trash.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ threadId, ...labelMutation() }),
+    properties: withUser({ threadId }),
     required: ["threadId"],
     outputSchema: thread,
   }),
@@ -495,7 +503,7 @@ export const gmailActions: ActionDefinition[] = [
     name: "untrash_thread",
     description: "Restore a previously trashed Gmail thread.",
     requiredScopes: gmailModifyScopes,
-    properties: withUser({ threadId, ...labelMutation() }),
+    properties: withUser({ threadId }),
     required: ["threadId"],
     outputSchema: thread,
   }),
@@ -586,8 +594,9 @@ export const gmailActions: ActionDefinition[] = [
       responseBodyHtml: s.string(),
       restrictToContacts: s.boolean(),
       restrictToDomain: s.boolean(),
-      startTime: s.string(),
-      endTime: s.string(),
+      // Gmail API 的 VacationSettings 时间为 int64 epoch 毫秒
+      startTime: s.integer({ description: "Epoch milliseconds (int64 per Gmail API)." }),
+      endTime: s.integer({ description: "Epoch milliseconds (int64 per Gmail API)." }),
     }),
     outputSchema: gmailObject,
   }),

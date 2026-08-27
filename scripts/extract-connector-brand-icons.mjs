@@ -7,10 +7,16 @@ import { fileURLToPath } from "node:url";
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const bunStore = resolve(REPO_ROOT, "node_modules", ".bun");
 
-function loadSet(prefix) {
+// 从实装包读取精确版本再匹配 store 目录:.bun store 可同存多版本,
+// 无版本锚定的 readdir 顺序匹配在升级后会读到陈留旧集,生成物静默漂移。
+function loadSet(set) {
+  const { version } = JSON.parse(
+    readFileSync(resolve(REPO_ROOT, "apps", "web", "node_modules", "@iconify-json", set, "package.json"), "utf8"),
+  );
+  const prefix = `@iconify-json+${set}@${version}`;
   const dir = readdirSync(bunStore).find((d) => d.startsWith(prefix));
-  if (!dir) throw new Error(`package not found: ${prefix}`);
-  return JSON.parse(readFileSync(resolve(bunStore, dir, "node_modules", "@iconify-json", prefix.replace("@iconify-json+", ""), "icons.json"), "utf8"));
+  if (!dir) throw new Error(`store entry not found: ${prefix}`);
+  return JSON.parse(readFileSync(resolve(bunStore, dir, "node_modules", "@iconify-json", set, "icons.json"), "utf8"));
 }
 
 /** 目标:连接器 service → 图标来源集合与名称。 */
@@ -23,7 +29,7 @@ const cache = new Map();
 const out = [];
 for (const item of WANTED) {
   if (!cache.has(item.set)) {
-    cache.set(item.set, loadSet(`@iconify-json+${item.set}`));
+    cache.set(item.set, loadSet(item.set));
   }
   const store = cache.get(item.set);
   const icon = store.icons[item.name];

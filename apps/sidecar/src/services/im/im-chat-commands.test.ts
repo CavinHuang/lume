@@ -44,6 +44,13 @@ describe("parseImCommand", () => {
     expect(parseImCommand("/stop@my_bot")).toEqual({ type: "stop" });
   });
 
+  test("/revert 携带 runId 参数解析(#714)", () => {
+    expect(parseImCommand("/revert")).toEqual({ type: "revert", args: [] });
+    expect(parseImCommand("/revert run-abc123")).toEqual({ type: "revert", args: ["run-abc123"] });
+    expect(parseImCommand("/Revert@bot run-1")).toEqual({ type: "revert", args: ["run-1"] });
+    expect(formatImHelpText()).toContain("/revert");
+  });
+
   test("非命令与未知斜杠返回 none", () => {
     expect(parseImCommand("你好世界")).toEqual({ type: "none" });
     expect(parseImCommand("/etc/hosts 是什么")).toEqual({ type: "none" });

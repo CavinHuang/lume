@@ -81,11 +81,20 @@ export class PlanningTodoStore {
     const rows = this.#db.prepare(`SELECT * FROM planning_todo${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`).all(...params) as unknown as TodoRow[];
     const timezone = this.#timezone();
     const today = localDate(this.#now(), timezone);
-    const filtered = rows.map(rowToTodo).filter((todo) => {
-      if (input.view === "today") return dueBucket(todo, today, timezone) <= 1;
-      if (input.view === "upcoming") return dueBucket(todo, today, timezone) >= 2;
-      return true;
-    }).sort((left, right) => compareTodos(left, right, today, timezone));
+    // #593①:bucket 逐条预计算——此前 filter 与 sort 比较器内每次重算 dueBucket,
+    // 有 dueAt 的条目反复走 Intl 格式化,O(n log n) 次比较放大成构造风暴
+    const decorated = rows.map(rowToTodo).map((todo) => ({ todo, bucket: dueBucket(todo, today, timezone) }));
+    const filtered = decorated
+      .filter(({ bucket }) => {
+        if (input.view === "today") return bucket <= 1;
+        if (input.view === "upcoming") return bucket >= 2;
+        return true;
+      })
+      .sort((left, right) => left.bucket - right.bucket
+        || priorityWeight(right.todo.priority) - priorityWeight(left.todo.priority)
+        || right.todo.updatedAt - left.todo.updatedAt
+        || left.todo.id.localeCompare(right.todo.id))
+      .map(({ todo }) => todo);
     const offset = input.cursor ? Number.parseInt(input.cursor, 10) : 0;
     const limit = Math.min(Math.max(input.limit ?? 50, 1), 100);
     const items = filtered.slice(Number.isFinite(offset) ? offset : 0, (Number.isFinite(offset) ? offset : 0) + limit);
@@ -393,6 +402,11 @@ function migrate(db: Db): void {
     }
     // #647 P2-14：isTrustedPrimarySubmission/getOperation 按 operation_id 直查的支撑索引（幂等创建）
     db.exec("CREATE INDEX IF NOT EXISTS planning_todo_event_operation ON planning_todo_event(operation_id, seq)");
+    // #593③:审计表无 TTL 单调增长,逐行 JSON.parse(含 before/after 全量快照)的
+    // 信任判定路径随表龄恶化。保留 90 天窗口,打开库时清一次(重启级频率的一次性
+    // 索引范围删除);90 天未推进的 operation 已无恢复意义,listRecoverableOperations
+    // 语义不受影响。
+    db.prepare("DELETE FROM planning_todo_event WHERE created_at < ?").run(Date.now() - 90 * 24 * 60 * 60 * 1000);
     db.exec("COMMIT");
   } catch (error) {
     try { db.exec("ROLLBACK"); } catch { /* preserve the migration error */ }
@@ -497,8 +511,17 @@ function applyPatch(todo: PlanningTodo, patch: PlanningTodoUpdateInput["patch"],
   return next;
 }
 
+// #593①:Intl.DateTimeFormat 构造昂贵且 list/cron 热路径高频调用——formatter 按
+// 时区复用(时区集合极小,缓存无界风险可忽略)
+const localDateFormatters = new Map<string, Intl.DateTimeFormat>();
+
 function localDate(timestamp: number, timezone: string): string {
-  const parts = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" }).formatToParts(timestamp);
+  let formatter = localDateFormatters.get(timezone);
+  if (!formatter) {
+    formatter = new Intl.DateTimeFormat("en-CA", { timeZone: timezone, year: "numeric", month: "2-digit", day: "2-digit" });
+    localDateFormatters.set(timezone, formatter);
+  }
+  const parts = formatter.formatToParts(timestamp);
   const map = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   return `${map.year}-${map.month}-${map.day}`;
 }
@@ -509,13 +532,6 @@ function dueBucket(todo: PlanningTodo, today: string, timezone: string): number 
   if (date < today) return 0;
   if (date === today) return 1;
   return 2;
-}
-
-function compareTodos(left: PlanningTodo, right: PlanningTodo, today: string, timezone: string): number {
-  return dueBucket(left, today, timezone) - dueBucket(right, today, timezone)
-    || priorityWeight(right.priority) - priorityWeight(left.priority)
-    || right.updatedAt - left.updatedAt
-    || left.id.localeCompare(right.id);
 }
 
 function priorityWeight(priority: PlanningTodoPriority): number { return { none: 0, low: 1, medium: 2, high: 3 }[priority]; }

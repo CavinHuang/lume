@@ -35,18 +35,15 @@ describe("Dream runtime tools", () => {
       emitToolPermissionRequest: () => undefined
     });
 
-    expect(tools.availableToolNames.sort()).toEqual([
-      "Glob",
-      "Grep",
-      "Read",
-      "ls",
+    const customNames = tools.customTools.map((tool) => tool.name).sort();
+    expect(customNames).toEqual([
       "memory.evidence.read",
       "memory.evidence.search",
       "memory.read",
       "memory.search"
-    ].sort());
-    expect(tools.availableToolNames).not.toContain("Write");
-    expect(tools.availableToolNames).not.toContain("Bash");
-    expect(tools.availableToolNames).not.toContain("memory.remember");
+    ]);
+    expect(customNames).not.toContain("Write");
+    expect(customNames).not.toContain("Bash");
+    expect(customNames).not.toContain("memory.remember");
   });
 });

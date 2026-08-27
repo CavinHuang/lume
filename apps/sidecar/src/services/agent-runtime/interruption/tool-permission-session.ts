@@ -1,4 +1,5 @@
 import type {
+  AgentToolPermissionAllowScope,
   AgentToolPermissionDecision,
   AgentToolPermissionRequest,
   AgentToolPermissionResponseInput
@@ -11,20 +12,20 @@ import {
 } from "./approval-service";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
 import { runtimePermissionSessionStore } from "../permissions/permission-session";
+import { PendingRequestRegistry } from "./pending-request-registry";
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("tool-permission-session");
 
-const pendingToolPermissionResolvers = new Map<
-  string,
-  {
-    threadId: string;
-    approvalSessionId: string;
-    request: AgentToolPermissionRequest;
-    resolve: (decision: AgentToolPermissionDecision | null) => void | Promise<void>;
-    timeout?: ReturnType<typeof setTimeout>;
-  }
->();
+interface ToolPermissionPendingMeta {
+  threadId: string;
+  approvalSessionId: string;
+  request: AgentToolPermissionRequest;
+}
+
+// #580:Map+timeout+resolve 手写三联收编进 PendingRequestRegistry。
+const pendingToolPermissionResolvers =
+  new PendingRequestRegistry<string, AgentToolPermissionDecision | null, ToolPermissionPendingMeta>();
 
 const DEFAULT_TOOL_PERMISSION_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -36,10 +37,14 @@ function resolveTimeoutMs(): number {
   return Math.max(15_000, Math.min(60 * 60 * 1000, Math.floor(parsed)));
 }
 
-export function markToolFingerprintAllowed(threadId: string, fingerprint?: string): void {
+export function markToolFingerprintAllowed(
+  threadId: string,
+  fingerprint?: string,
+  scope: AgentToolPermissionAllowScope = "exact"
+): AgentToolPermissionAllowScope {
   const normalized = fingerprint?.trim();
-  if (!normalized) return;
-  runtimePermissionSessionStore.grantFingerprint(threadId, normalized);
+  if (!normalized) return "exact";
+  return runtimePermissionSessionStore.grantFingerprintWithScope(threadId, normalized, scope);
 }
 
 export function markToolPermissionSessionBypassed(...threadIds: Array<string | undefined>): void {
@@ -56,15 +61,15 @@ export function clearToolPermissionSession(threadId: string): void {
 }
 
 export function setToolPermissionApprovalSession(requestId: string, approvalSessionId: string): void {
-  const pending = pendingToolPermissionResolvers.get(requestId);
-  if (!pending) return;
+  const meta = pendingToolPermissionResolvers.getMeta(requestId);
+  if (!meta) return;
   const normalized = approvalSessionId.trim();
   if (!normalized) return;
-  pending.approvalSessionId = normalized;
+  pendingToolPermissionResolvers.updateMeta(requestId, { approvalSessionId: normalized });
   void updateToolApprovalSession({
-    originalThreadId: pending.threadId,
+    originalThreadId: meta.threadId,
     approvalThreadId: normalized,
-    request: pending.request
+    request: meta.request
   }).catch((error) => {
     log.warn("Failed to update tool approval session", {
       requestId,
@@ -79,16 +84,38 @@ export function waitForToolPermissionDecision(
   emit: (request: AgentToolPermissionRequest) => void,
   options: {
     onTimeout?: (request: AgentToolPermissionRequest) => void;
+    onCancelled?: (request: AgentToolPermissionRequest) => void;
   } = {}
 ): Promise<AgentToolPermissionDecision | null> {
-  return new Promise((resolve) => {
-    const done = async (decision: AgentToolPermissionDecision | null): Promise<void> => {
-      const pending = pendingToolPermissionResolvers.get(request.requestId);
-      if (pending?.timeout) {
-        clearTimeout(pending.timeout);
+  // 二轮复审 P2-3(与上游 #781 预 abort 守卫同款语义):死信号场景不得发审批卡、
+  // 不得持久化——否则 registry 短路 resolve 的持久化清理读不到尚未落盘的 pending
+  // 记录,runContinuation 残留 waiting_for_interruption(desktop 收到死审批卡)。
+  if (signal.aborted) {
+    return Promise.resolve(null);
+  }
+  // 上游合并移植(#781 幽灵审批修复):无决策终结(cancel/abort/超时)路径
+  // 必须通知 UI 摘横幅;幂等性由 Registry settle 单出口守卫保证。
+  const promise = pendingToolPermissionResolvers.wait(request.requestId, {
+    meta: { threadId: request.threadId, approvalSessionId: request.threadId, request },
+    timeoutMs: resolveTimeoutMs(),
+    signal,
+    timeoutValue: () => null,
+    abortValue: () => null,
+    supersededValue: () => null,
+    onTimeout: () => options.onTimeout?.(request),
+    beforeResolve: async (decision) => {
+      // 上游 #781 移植:abort/超时/cancelWhere 等无决策路径同步通知 UI 摘横幅,
+      // 否则审批卡片悬挂到超时(幽灵审批)。
+      if (decision === null) {
+        try {
+          options.onCancelled?.(request);
+        } catch (error) {
+          log.warn("onCancelled callback failed", {
+            requestId: request.requestId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
       }
-      pendingToolPermissionResolvers.delete(request.requestId);
-      signal.removeEventListener("abort", onAbort);
       try {
         await resolveToolApprovalInterruption({
           threadId: request.threadId,
@@ -96,56 +123,35 @@ export function waitForToolPermissionDecision(
           decision
         });
       } catch (error) {
-        // 持久化失败只降级冷启动恢复能力；resolve 必须仍被执行（在 try 之外），
-        // 否则 timeout 已清除、abort 监听已摘除，等待方将无限悬挂
+        // 持久化失败只降级冷启动恢复能力;resolve 必须仍被执行(Registry 保证)
         log.warn("Failed to resolve tool approval interruption", {
           requestId: request.requestId,
           threadId: request.threadId,
           error: error instanceof Error ? error.message : String(error)
         });
       }
-      resolve(decision);
-    };
-
-    const onAbort = (): void => {
-      void done(null);
-    };
-
-    const existing = pendingToolPermissionResolvers.get(request.requestId);
-    if (existing) {
-      void existing.resolve(null);
     }
-
-    const timeout = setTimeout(() => {
-      options.onTimeout?.(request);
-      void done(null);
-    }, resolveTimeoutMs());
-    if (typeof timeout === "object" && "unref" in timeout && typeof timeout.unref === "function") {
-      timeout.unref();
-    }
-
-    pendingToolPermissionResolvers.set(request.requestId, {
-      threadId: request.threadId,
-      approvalSessionId: request.threadId,
-      request,
-      resolve: done,
-      timeout
-    });
-    signal.addEventListener("abort", onAbort, { once: true });
-    void persistToolApprovalInterruption(request).catch((error) => {
-      log.warn("Failed to persist tool approval interruption", {
-        requestId: request.requestId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
-    emit(request);
   });
+  void persistToolApprovalInterruption(request).catch((error) => {
+    log.warn("Failed to persist tool approval interruption", {
+      requestId: request.requestId,
+      error: error instanceof Error ? error.message : String(error)
+    });
+  });
+  emit(request);
+  return promise;
 }
 
-export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): boolean {
+export interface ToolPermissionSubmitResult {
+  handled: boolean;
+  /** allow_always 实际生效档（宽档被否决时降级 exact），供 UI 如实回执 */
+  effectiveScope?: AgentToolPermissionAllowScope;
+}
+
+export function submitToolPermissionDecision(input: AgentToolPermissionResponseInput): ToolPermissionSubmitResult {
   const shouldBypassThread = input.threadPermissionMode === "bypassPermissions" && input.decision !== "deny";
-  const pending = pendingToolPermissionResolvers.get(input.requestId);
-  if (!pending) {
+  const meta = pendingToolPermissionResolvers.getMeta(input.requestId);
+  if (!meta) {
     const persisted = findPersistedToolPermissionRequest(input.threadId, input.requestId);
     if (input.decision === "allow_always" && persisted?.canAllowAlways === false) {
       throw new Error("当前审批策略不允许始终允许");
@@ -161,55 +167,55 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
     if (handled && shouldBypassThread) {
       markToolPermissionSessionBypassed(input.threadId, persisted?.threadId, persisted?.originThreadId);
     }
+    let effectiveScope: AgentToolPermissionAllowScope | undefined;
     if (handled && input.decision === "allow_always" && persisted?.grantSuggestion?.fingerprint) {
-      markToolFingerprintAllowed(
+      effectiveScope = markToolFingerprintAllowed(
         persisted.originThreadId ?? persisted.threadId,
-        persisted.grantSuggestion.fingerprint
+        persisted.grantSuggestion.fingerprint,
+        input.allowAlwaysScope
       );
     }
-    return handled;
+    return { handled, ...(effectiveScope ? { effectiveScope } : {}) };
   }
-  if (pending.approvalSessionId !== input.threadId) {
+  if (meta.approvalSessionId !== input.threadId) {
     throw new Error("工具权限确认会话不匹配");
   }
-  if (input.decision === "allow_always" && pending.request.canAllowAlways === false) {
+  if (input.decision === "allow_always" && meta.request.canAllowAlways === false) {
     throw new Error("当前审批策略不允许始终允许");
   }
-  if (shouldBypassThread && pending.request.canAllowAlways === false) {
+  if (shouldBypassThread && meta.request.canAllowAlways === false) {
     throw new Error("当前审批策略不允许切换为全部允许");
   }
   if (shouldBypassThread) {
-    markToolPermissionSessionBypassed(input.threadId, pending.threadId, pending.request.originThreadId);
+    markToolPermissionSessionBypassed(input.threadId, meta.threadId, meta.request.originThreadId);
   }
-  void pending.resolve(input.decision);
-  return true;
+  let effectiveScope: AgentToolPermissionAllowScope | undefined;
+  if (input.decision === "allow_always") {
+    // #558:按用户选择的档位写宽指纹（缺省 exact 保持逐字节）
+    effectiveScope = markToolFingerprintAllowed(
+      meta.request.originThreadId ?? meta.threadId,
+      meta.request.grantSuggestion?.fingerprint,
+      input.allowAlwaysScope
+    );
+  }
+  pendingToolPermissionResolvers.settle(input.requestId, input.decision);
+  return { handled: true, ...(effectiveScope ? { effectiveScope } : {}) };
 }
 
 export function cancelPendingToolPermissionBySession(threadId: string): void {
-  for (const [requestId, pending] of pendingToolPermissionResolvers) {
-    if (pending.threadId !== threadId && pending.approvalSessionId !== threadId) continue;
-    void resolveToolApprovalInterruption({
-      threadId: pending.threadId,
-      requestId,
-      decision: null
-    }).catch((error) => {
-      log.warn("Failed to resolve cancelled tool approval interruption", {
-        requestId,
-        error: error instanceof Error ? error.message : String(error)
-      });
-    });
-    void pending.resolve(null);
-    pendingToolPermissionResolvers.delete(requestId);
-  }
+  pendingToolPermissionResolvers.cancelWhere(
+    (meta) => meta.threadId === threadId || meta.approvalSessionId === threadId,
+    () => null
+  );
 }
 
 export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[] {
-  const liveRequests = Array.from(pendingToolPermissionResolvers.values()).map((pending) => ({
-    ...pending.request,
-    threadId: pending.approvalSessionId,
-    ...(pending.request.originThreadId ? {} : (
-      pending.threadId !== pending.approvalSessionId
-        ? { originThreadId: pending.threadId }
+  const liveRequests = pendingToolPermissionResolvers.list().map(({ meta }) => ({
+    ...meta.request,
+    threadId: meta.approvalSessionId,
+    ...(meta.request.originThreadId ? {} : (
+      meta.threadId !== meta.approvalSessionId
+        ? { originThreadId: meta.threadId }
         : {}
     ))
   }));

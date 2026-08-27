@@ -2,14 +2,16 @@ import { argv } from "node:process";
 import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
-import { initProxySettings } from "./services/system/proxy-settings-manager";
+import { initProxySettings, getActiveProxyConfig } from "./services/system/proxy-settings-manager";
+import { setProxyConfigProvider } from "./services/infra/proxy-config-holder";
+import { setOutboundNotificationWriter } from "./services/infra/outbound-notification";
 import {
   startAutomationRunner,
   stopAutomationRunner
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
@@ -19,10 +21,10 @@ import {
   flushLogTransport,
   setLogBatchNotificationWriter,
   writeEmergencyLog,
-  writeLogRecord
-} from "./services/infra/logger";
+  writeLogRecord,
+  setLogFileLevel,} from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
-import { createProcessRpcTransport, MAX_RPC_MESSAGE_BYTES } from "./rpc/process-transport";
+import { createProcessRpcTransport, MAX_RPC_MESSAGE_UNITS } from "./rpc/process-transport";
 import { browserRpcErrorFromPayload, classifyBrowserRequestTimeout, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
@@ -46,6 +48,10 @@ import { installRuntimeHostPorts } from "./services/agent/agent-runtime-ports-bi
 
 // 组合根最先注入 agent-runtime 的宿主端口(#289):任何 RPC/服务调用之前。
 installRuntimeHostPorts();
+// #578 review fix round2:proxy 读取器顶层无条件注入——纯读盘操作不依赖
+// parentPort(stdio smoke/测试形态同样生效);且必须早于 rpcTransport.listen,
+// 否则启动窗口内出站 fetch 会静默降级直连绕过用户代理(fail-open)。
+setProxyConfigProvider(getActiveProxyConfig);
 
 const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
@@ -111,6 +117,17 @@ function browserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: n
     .digest("base64url");
 }
 
+// #611：desktop 死亡/通道断开时批量 reject in-flight 请求——否则全部干等到超时后
+// 误报 executed_unknown（「可能已执行」，而实际包根本没送达）。断连是明确的
+// browser_unavailable（可重试），与业务错误分离。
+rpcTransport.onClose(() => {
+  for (const [requestId, pending] of [...pendingBrowserMainRequests]) {
+    pendingBrowserMainRequests.delete(requestId);
+    clearTimeout(pending.timeout);
+    pending.reject(Object.assign(new Error("browser transport disconnected"), { code: RPC_ERROR_CODES.BROWSER_UNAVAILABLE }));
+  }
+});
+
 function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: number, id: string, body: unknown, mac: unknown): boolean {
   if (typeof mac !== "string" || !browserRpcSecret) return false;
   const expected = Buffer.from(browserRpcMac(direction, sequence, id, body));
@@ -119,6 +136,8 @@ function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", seque
 }
 
 if ((process as typeof process & { parentPort?: unknown }).parentPort) {
+  // #580:出站通知写入器组合根一次注入,取代 agent/automation/desktop-context 三域分散 setter
+  setOutboundNotificationWriter(writeNotification);
   setLogBatchNotificationWriter((batch) => writeNotification("system.log-batch", batch));
   setPersistedSettingsMutationWriter((settings) => new Promise<void>((resolve, reject) => {
     const mutationId = randomUUID();
@@ -137,15 +156,6 @@ if ((process as typeof process & { parentPort?: unknown }).parentPort) {
   }));
 }
 
-const QUIET_RPC_METHODS = new Set([
-  "healthcheck",
-  "general-settings:get",
-  "agent:list-threads",
-  "agent:list-subagent-runs",
-  "agent:get-pending-interactive",
-  "agent:list-workspaces",
-  "model-meta:get"
-]);
 const SLOW_RPC_MS = 2_000;
 // Process-wide reverse-RPC render client. Bridges WebFetch JS-render requests
 // to the desktop PageRenderer. Fed into BOTH the RPC handlers (so render:result
@@ -187,9 +197,9 @@ function envAutostartEnabled(key: string, defaultEnabled: boolean): boolean {
 
 async function handleRpcLine(line: string): Promise<void> {
   // 统一 chokepoint：超限消息不进 JSON.parse（防解析期超量内存分配）
-  if (line.length > MAX_RPC_MESSAGE_BYTES) {
+  if (line.length > MAX_RPC_MESSAGE_UNITS) {
     writeResponse({
-      error: { code: "E_MESSAGE_TOO_LARGE", message: "RPC message exceeds size limit." }
+      error: { code: RPC_ERROR_CODES.MESSAGE_TOO_LARGE, message: "RPC message exceeds size limit." }
     });
     return;
   }
@@ -198,7 +208,7 @@ async function handleRpcLine(line: string): Promise<void> {
     payload = JSON.parse(line) as JsonRpcRequest;
   } catch {
     writeResponse({
-      error: { code: "E_BAD_JSON", message: "Invalid JSON payload." }
+      error: { code: RPC_ERROR_CODES.BAD_JSON, message: "Invalid JSON payload." }
     });
     return;
   }
@@ -230,7 +240,7 @@ async function handleRpcLine(line: string): Promise<void> {
     writeResponse({
       id: payload.id,
       error: {
-        code: "E_BAD_REQUEST",
+        code: RPC_ERROR_CODES.BAD_REQUEST,
         message: "Missing method."
       }
     });
@@ -254,17 +264,33 @@ async function handleRpcLine(line: string): Promise<void> {
   }
 
   if (method === "system.connection-vault-key") {
-    installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
-    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    // 与 system.secret-encryption-key 同型：畸形 key 抛错时回 error 响应，
+    // 不让 desktop 侧 await 等满超时（交叉复审发现 pre-existing 同缺陷）
+    try {
+      installConnectionVaultKey((payload.params as { key?: unknown } | null)?.key);
+      if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    } catch (error) {
+      if (payload.id !== undefined) {
+        writeResponse({
+          id: payload.id,
+          error: { code: RPC_ERROR_CODES.CONNECTION_VAULT_KEY_INVALID, message: error instanceof Error ? error.message : String(error) },
+        });
+      }
+    }
     return;
   }
 
   if (method === "system.secret-encryption-key") {
     // 该分支位于 generic handlers 的 try/catch 之外：畸形 key 抛错时必须回
-    // error 响应，否则 desktop 启动关键路径上的 await 要等满 45s 超时才降级
+    // error 响应，否则 desktop 启动关键路径上的 await 要等满 RPC 超时上限才降级。
+    // (#783 review 修复:此前存在两个同名分支,前者命中即 return 使含
+    // migrateLegacySecretCiphertexts 的版本永不可达,#637 弱密文升级从未执行——
+    // 仅保留本超集分支,行为零差异、恢复升级链路)
     try {
       installSecretEncryptionKey((payload.params as { key?: unknown } | null)?.key);
-      // #637：密钥就位后立即把存量弱种子密文升级为 v2（失败不阻断注入应答）
+      // #637：密钥就位后把存量弱种子密文升级为 v2。注:该 async 函数体内全为
+      // 同步 IO,迁移实际同步完成后才回 ok 应答(常态 <10ms、首启数十 ms,
+      // 锁忙等 fail-fast 上限 300ms 且被内层 catch 吞);幂等,v2 前缀跳过。
       void migrateLegacySecretCiphertexts().catch((error) => {
         writeLogRecord({
           level: "warn",
@@ -278,7 +304,7 @@ async function handleRpcLine(line: string): Promise<void> {
       if (payload.id !== undefined) {
         writeResponse({
           id: payload.id,
-          error: { code: "secret_encryption_key_invalid", message: error instanceof Error ? error.message : String(error) },
+          error: { code: RPC_ERROR_CODES.SECRET_ENCRYPTION_KEY_INVALID, message: error instanceof Error ? error.message : String(error) },
         });
       }
     }
@@ -302,12 +328,21 @@ async function handleRpcLine(line: string): Promise<void> {
     return;
   }
 
+  if (method === "system.log-level") {
+    // main 在 logging 设置热更时下发；无效级别静默忽略（保持当前门槛）。
+    setLogFileLevel((payload.params as { level?: unknown } | null)?.level);
+    if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
+    return;
+  }
+
   const handler = handlers[method];
+  // 关联 ID 提前到 try 外声明，failed 分支同样可用。
+  const correlation = extractCorrelationIds(payload.params);
   if (!handler) {
     writeResponse({
       id: payload.id,
       error: {
-        code: "E_NOT_IMPLEMENTED",
+        code: RPC_ERROR_CODES.NOT_IMPLEMENTED,
         message: `Method not implemented: ${method}`
       }
     });
@@ -318,45 +353,58 @@ async function handleRpcLine(line: string): Promise<void> {
     const startedAt = performance.now();
     const result = await handler(payload.params);
     const durationMs = performance.now() - startedAt;
+    // 与 main 进程 safeLogIpcEvent 同语义：摘要/记录自身的异常不得把成功 RPC 变成失败。
+    const emitRpcLog = (record: Parameters<typeof writeLogRecord>[0]) => {
+      try {
+        writeLogRecord(record);
+      } catch {
+        // ignore：观测异常静默降级。
+      }
+    };
     if (durationMs >= SLOW_RPC_MS) {
-      writeLogRecord({
+      emitRpcLog({
         level: "warn",
         context: "rpc.server",
         event: "rpc.slow",
         message: `slow sidecar RPC: ${method}`,
         durationMs,
+        // correlation 在前：信封的真实请求 ID 不被 params 内的同名字段遮蔽。
+        ...correlation,
         rpcRequestId: String(payload.id),
-        data: { method }
+        data: { method, params: summarizeValue(payload.params) }
       });
     } else if (!QUIET_RPC_METHODS.has(method)) {
-      writeLogRecord({
+      emitRpcLog({
         level: "debug",
         context: "rpc.server",
         event: "rpc.completed",
         message: `sidecar RPC completed: ${method}`,
         status: "ok",
         durationMs,
+        ...correlation,
         rpcRequestId: String(payload.id),
-        data: { method }
+        data: { method, params: summarizeValue(payload.params), result: summarizeValue(result) }
       });
     }
     writeResponse({ id: payload.id, result });
   } catch (error) {
-    writeLogRecord({
-      level: "error",
-      context: "rpc.server",
-      event: "rpc.failed",
-      message: `sidecar RPC failed: ${method}`,
-      status: "error",
-      rpcRequestId: String(payload.id),
-      data: { method, error }
-    });
+    try {
+      writeLogRecord({
+        level: "error",
+        context: "rpc.server",
+        event: "rpc.failed",
+        message: `sidecar RPC failed: ${method}`,
+        status: "error",
+        ...correlation,
+        rpcRequestId: String(payload.id),
+        data: { method, params: summarizeValue(payload.params), error }
+      });
+    } catch {
+      // failed 记录自身异常不得吞掉原始错误响应。
+    }
     writeResponse({
       id: payload.id,
-      error: {
-        code: "E_RPC",
-        message: error instanceof Error ? error.message : "Unknown sidecar error"
-      }
+      error: toLumeRpcErrorShape(error)
     });
   }
 }
@@ -368,7 +416,12 @@ async function handleRpcLine(line: string): Promise<void> {
  */
 function installProcessErrorGuards(): void {
   let uncaughtCount = 0;
-  const UNCAUGHT_EXIT_THRESHOLD = 5;
+  let lastUncaughtSignature = "";
+  // #548 评估结论（round14 需求回溯）：issue 提议的"同类错误去重计数"不采纳——
+// 根因是已知良性异步错误源反复触发，本次已全部封堵（spawn 监听 ×5、downloadFile 全失败路径、
+// worker diag 回传）；去重会弱化止损语义（五个不同严重错误代表系统性恶化，理应退出），
+// 且 stack+emergency 签名已让人工判断"是否同类"成为可能。若未来仍见误触发，修具体错误源而非放宽止损。
+const UNCAUGHT_EXIT_THRESHOLD = 5;
   process.on("unhandledRejection", (reason) => {
     writeLogRecord({
       level: "error",
@@ -378,17 +431,26 @@ function installProcessErrorGuards(): void {
       error: { message: reason instanceof Error ? reason.message : String(reason) }
     });
   });
-  process.on("uncaughtException", (error) => {
+  process.on("uncaughtException", (thrown) => {
     uncaughtCount += 1;
+    // 运行时透传任意 throw 值（throw null/字符串），守卫内部再抛会击穿止损器本身
+    const error = thrown instanceof Error ? thrown : new Error(String(thrown));
+    lastUncaughtSignature = `${error.name}: ${error.message}`;
     writeLogRecord({
       level: "error",
       context: "sidecar.lifecycle",
       event: "sidecar.uncaught_exception",
       message: `uncaught exception (guarded ${uncaughtCount}/${UNCAUGHT_EXIT_THRESHOLD})`,
-      error: { message: error instanceof Error ? error.message : String(error) }
+      // stack 截断首行定位：无它则五条日志都无法还原抛出点（#548 review round5）
+      error: {
+        message: error.message,
+        stack: error.stack?.split("\n").slice(0, 6).join("\n")
+      }
     });
     if (uncaughtCount >= UNCAUGHT_EXIT_THRESHOLD) {
-      writeEmergencyLog(`sidecar exiting after ${uncaughtCount} uncaught exceptions (pid=${process.pid})`);
+      writeEmergencyLog(
+        `sidecar exiting after ${uncaughtCount} uncaught exceptions (pid=${process.pid}, last=${lastUncaughtSignature})`
+      );
       process.exit(1);
     }
   });
@@ -443,12 +505,6 @@ async function boot(): Promise<void> {
       error: { message: error instanceof Error ? error.message : String(error) }
     });
   });
-  // 完成事件写入器恒注册：懒启动路径（run-now/create 等）同样依赖它把
-  // automation:run-completed 推给前端，不能随 autostart 门控一起被跳过（#647 P0-2）。
-  {
-    const { setAutomationNotificationWriter } = await import("./services/automation/automation-runner-service");
-    setAutomationNotificationWriter(writeNotification);
-  }
   // 默认自启：否则 sidecar 重启后既有 enabled 任务全部静默停摆，
   // 只能靠次日日程生成或用户恰好编辑任务才被拉起（#647 P0-1）。
   if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", true)) {
@@ -476,10 +532,6 @@ async function boot(): Promise<void> {
   }
   if (envAutostartEnabled("LUME_DEFAULT_SKILLS_AUTOSTART", false)) {
     seedDefaultSkills();
-  }
-  {
-    const { setDesktopContextNotificationWriter } = await import("./services/desktop-context/desktop-context-runtime");
-    setDesktopContextNotificationWriter(writeNotification);
   }
   if (envAutostartEnabled("LUME_IM_AUTOSTART", true)) {
     void imRuntimeManager.startEnabledAccounts().catch((error) => {
@@ -560,16 +612,28 @@ async function boot(): Promise<void> {
     return stopping;
   };
   process.once("exit", () => { void stopWatcher(); });
-  process.once("SIGINT", async () => {
-    void getNodeReplRuntimeRegistry().shutdownAll?.();
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
+  // 清理阶段任一同步抛错（盘满下 fs 操作真实可现）不得吞掉退出——
+  // 否则信号被完全忽略，desktop 仅等 3s 无 SIGKILL 升级，sidecar 变僵尸进程
+  const gracefulExit = async () => {
+    try {
+      void getNodeReplRuntimeRegistry().shutdownAll?.();
+      await Promise.race([
+        stopWatcher(),
+        new Promise((resolve) => setTimeout(resolve, 60_000))
+      ]);
+    } catch (error) {
+      writeLogRecord({
+        level: "error",
+        context: "sidecar.lifecycle",
+        event: "sidecar.shutdown_cleanup_failed",
+        message: "关停清理阶段异常，强制退出",
+        error: { message: error instanceof Error ? error.message : String(error) }
+      });
+    }
     process.exit(0);
-  });
-  process.once("SIGTERM", async () => {
-    void getNodeReplRuntimeRegistry().shutdownAll?.();
-    await Promise.race([stopWatcher(), new Promise((resolve) => setTimeout(resolve, 60_000))]);
-    process.exit(0);
-  });
+  };
+  process.once("SIGINT", gracefulExit);
+  process.once("SIGTERM", gracefulExit);
 
 }
 

@@ -2,7 +2,7 @@ import { copyFileSync, existsSync, mkdirSync, statSync } from "node:fs";
 import { basename, dirname, extname, join, resolve } from "node:path";
 import type { PromoteFileToWorkspaceInput, PromoteFileToWorkspaceResult } from "@lume/shared";
 import {
-  getAgentSessionWorkspacePath,
+  getAgentThreadRootPath,
   getAgentThreadFilesPath,
   getWorkspaceResourcesPath
 } from "../infra/config-paths";
@@ -40,7 +40,7 @@ export function promoteFileToWorkspace(
   input: PromoteFileToWorkspaceInput
 ): PromoteFileToWorkspaceResult {
   const threadFilesRoot = getAgentThreadFilesPath(input.workspaceSlug, input.threadId);
-  const threadRoot = getAgentSessionWorkspacePath(input.workspaceSlug, input.threadId);
+  const threadRoot = getAgentThreadRootPath(input.workspaceSlug, input.threadId);
   const sourcePath = resolve(input.filePath);
   if (!isWithin(threadFilesRoot, sourcePath) && !isWithin(threadRoot, sourcePath)) {
     throw new Error("只能提升当前任务文件层中的文件");

@@ -32,6 +32,7 @@ export type RuntimeEventType =
   | "permission.resolved"
   | "ask_user.requested"
   | "memory.context.used"
+  | "runtime.warning"
   | "memory.changed"
   | "memory.job.progress"
   | "memory.job.completed"
@@ -210,8 +211,8 @@ export interface ToolPermissionResolvedRuntimeEvent extends RuntimeEventBase {
   toolCallId?: string;
   requestId: string;
   toolName?: string;
-  decision: "allow_once" | "allow_always" | "deny";
-  source: "ui" | "im";
+  decision: "allow_once" | "allow_always" | "deny" | "cancelled";
+  source: "ui" | "im" | "system";
 }
 
 export interface PlanPreviewRuntimeEvent extends RuntimeEventBase {
@@ -593,12 +594,29 @@ export interface CodingRunRevertInput {
   runId: string
 }
 
-/** 快照还原结果：三桶不相交，nonRewindableFiles 为 committed/conflicts/skipped 并集（兼容保留） */
+/** 快照还原结果：四桶不相交，nonRewindableFiles 为 committed/conflicts/skipped/failed 并集（兼容保留） */
 export interface CodingRunRevertResult {
   status: "restored" | "conflict" | "committed_boundary"
   filesChanged: string[]
   conflicts: string[]
   committedPaths: string[]
+  /** 还原时抛错的文件（#714）：逐文件容错折桶，不整批 reject */
+  failedFiles: string[]
+  nonRewindableFiles: string[]
+}
+
+/** 快照还原单文件（REVERT_CODING_FILE）入参 */
+export interface CodingFileRevertInput {
+  threadId: string
+  runId: string
+  path: string
+  rootId?: string
+}
+
+/** 单文件快照还原结果：filesChanged 与 nonRewindableFiles 互斥 */
+export interface CodingFileRevertResult {
+  status: "restored" | "conflict" | "committed_boundary"
+  filesChanged: string[]
   nonRewindableFiles: string[]
 }
 
@@ -657,7 +675,9 @@ export type CodingRepositoryPublishState =
       upstream?: string
       head: string
       indexHash: string
-      worktreeHash: string
+      // 工作区 patch 超 16MB 水位时缺失：仅提交已暂存内容不受影响，
+      // 包含未暂存变更会被 RPC schema 与 service 双层拦截
+      worktreeHash?: string
       stagedCount: number
       unstagedCount: number
       untrackedCount: number
@@ -815,6 +835,13 @@ export interface MemoryContextUsedRuntimeEvent extends RuntimeEventBase {
     claim?: MemoryClaim;
   }>;
   hidden?: boolean;
+}
+
+/** 运行环境级警告（#560）：MCP 连接失败等原本只进 system prompt/日志的可见性投影 */
+export interface RuntimeWarningRuntimeEvent extends RuntimeEventBase {
+  type: "runtime.warning";
+  message: string;
+  source?: string;
 }
 
 export interface MemoryChangedRuntimeEvent extends RuntimeEventBase {
@@ -1023,6 +1050,7 @@ export type LumeRuntimeEvent =
   | RunFailedRuntimeEvent
   | RunCancelledRuntimeEvent
   | MemoryContextUsedRuntimeEvent
+  | RuntimeWarningRuntimeEvent
   | MemoryChangedRuntimeEvent
   | MemoryJobProgressRuntimeEvent
   | MemoryJobCompletedRuntimeEvent

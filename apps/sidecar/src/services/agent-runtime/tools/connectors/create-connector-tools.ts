@@ -12,8 +12,6 @@ interface ConnectorToolConfig {
   /** 注入的动作名;缺省注入全部。 */
   enabledActions?: readonly string[];
   readOnlyActions: ReadonlySet<string>;
-  /** 排除的动作(如依赖 transitFiles 的附件下载)。 */
-  excludedActions?: readonly string[];
 }
 
 const GMAIL_READ_ONLY = new Set([
@@ -49,19 +47,23 @@ export const CONNECTOR_TOOL_CONFIGS: readonly ConnectorToolConfig[] = [
   },
   {
     service: "qq_mail",
-    // download_attachment 依赖 transit 文件存储,首版不暴露
-    excludedActions: ["download_attachment"],
     readOnlyActions: MAIL_READ_ONLY,
   },
 ];
 
 function isConnected(service: string): () => boolean {
+  // engine 每轮组装 provider 请求都会调 isEnabled 过滤(#700);凭证读盘解密
+  // 不便宜,2s TTL 内同服务共享一次判定。注入最多延迟 2s 感知连接变化,无害。
+  const TTL_MS = 2_000;
+  let cached: { at: number; value: boolean } | undefined;
   return () => {
+    if (cached && Date.now() - cached.at < TTL_MS) return cached.value;
     try {
-      return hasAnyConnectorCredential(service);
+      cached = { at: Date.now(), value: hasAnyConnectorCredential(service) };
     } catch {
-      return false;
+      cached = { at: Date.now(), value: false };
     }
+    return cached.value;
   };
 }
 
@@ -76,9 +78,11 @@ type ExecutionError = NonNullable<
  */
 function describeExecutionError(service: string, actionName: string, error: ExecutionError): string {
   const head = `${service}.${actionName} failed (${error.code}): ${error.message}`;
+  // @cfworker/json-schema 的 OutputUnit 形制:{ keyword, instanceLocation, error }——
+  // 字段名与违规原因在 instanceLocation/error 里(没有 instancePath/message)
   const details = Array.isArray(error.details)
-    ? (error.details as Array<{ instancePath?: string; keyword?: string; message?: string }>)
-        .map((unit) => `${unit.instancePath || "(input)"} ${unit.keyword ?? ""} ${unit.message ?? ""}`.trim())
+    ? (error.details as Array<{ instanceLocation?: string; keyword?: string; error?: string }>)
+        .map((unit) => `${unit.instanceLocation || "(input)"} ${unit.keyword ?? ""}: ${unit.error ?? ""}`.trim())
         .filter(Boolean)
         .join("; ")
     : "";
@@ -93,7 +97,7 @@ function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
     return [];
   }
   const enabled =
-    config.enabledActions ?? actions.map((action) => action.name).filter((name) => !config.excludedActions?.includes(name));
+    config.enabledActions ?? actions.map((action) => action.name);
   return actions
     .filter((action) => enabled.includes(action.name))
     .map((action) => ({
@@ -103,8 +107,9 @@ function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
         inputSchema: action.inputSchema as unknown as ToolInputSchema,
         isReadOnly: config.readOnlyActions.has(action.name),
         isConcurrencySafe: config.readOnlyActions.has(action.name),
-        async call(input) {
-          const result = await executeConnectorAction(config.service, action.name, input ?? {});
+        async call(input, context) {
+          // 中断 run 时取消在途 HTTP:副作用型动作(发送/修改)不应在用户中止后继续外发
+          const result = await executeConnectorAction(config.service, action.name, input ?? {}, context.abortSignal);
           if (!result.ok) {
             throw new Error(
               result.error

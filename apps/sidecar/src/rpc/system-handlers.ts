@@ -7,9 +7,7 @@ import {
   UI_STATE_IPC_CHANNELS
 } from "@lume/shared";
 import type {
-  GitHubReleaseListOptions,
   NetworkDiagnosticResult,
-  TestSearchBackendInput,
   UpdateGeneralSettingsInput,
   UpdateUiStateInput
 } from "@lume/shared";
@@ -36,9 +34,11 @@ import { getSidecarNativeHealth } from "../services/infra/native-runtime";
 import {
   clearCacheInputSchema,
   githubReleaseByTagInputSchema,
+  githubReleaseListOptionsSchema,
   lumeConfigEffectiveInputSchema,
   lumeConfigUpdateInputSchema,
   systemConfigUpdateInputSchema,
+  testSearchBackendInputSchema,
   updateGeneralSettingsInputSchema,
   updateUiStateInputSchema
 } from "./schemas";
@@ -51,24 +51,30 @@ interface SystemHandlersContext {
   getMethodNames: () => string[];
 }
 
-function spawnDetached(command: string, args: string[]): void {
-  const child = spawn(command, args, {
-    detached: true,
-    stdio: "ignore"
+/** detached spawn 无 error 监听会踩中 sidecar uncaughtException 五击止损（#548），必须挂 once("error")。 */
+function spawnDetached(command: string, args: string[]): Promise<boolean> {
+  return new Promise((resolve) => {
+    const child = spawn(command, args, {
+      detached: true,
+      stdio: "ignore"
+    });
+    child.once("error", (error) => {
+      log.warn("spawnDetached 失败", { command, error: error.message });
+      resolve(false);
+    });
+    child.once("spawn", () => resolve(true));
+    child.unref();
   });
-  child.unref();
 }
 
-function openInSystem(path: string): void {
+async function openInSystem(path: string): Promise<boolean> {
   if (process.platform === "win32") {
-    spawnDetached("explorer.exe", [path]);
-    return;
+    return spawnDetached("explorer.exe", [path]);
   }
   if (process.platform === "darwin") {
-    spawnDetached("open", [path]);
-    return;
+    return spawnDetached("open", [path]);
   }
-  spawnDetached("xdg-open", [path]);
+  return spawnDetached("xdg-open", [path]);
 }
 
 async function runNetworkDiagnostic(): Promise<NetworkDiagnosticResult> {
@@ -142,7 +148,11 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
         )
       ),
     [GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND]: async (params) => {
-      const input = (params ?? {}) as TestSearchBackendInput;
+      const input = validateInput(
+        testSearchBackendInputSchema,
+        params ?? {},
+        GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND
+      );
       return testSearchBackend(input);
     },
     [LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
@@ -166,8 +176,9 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
       sourcePath: getLumeConfigYamlPath()
     }),
     [LUME_CONFIG_IPC_CHANNELS.OPEN_SOURCE_FILE]: async () => {
-      openInSystem(getLumeConfigYamlPath());
-      return { ok: true };
+      // ok 语义 = 系统打开器 spawn 成功（"拉起"），不等于文件窗口已打开
+      const opened = await openInSystem(getLumeConfigYamlPath());
+      return { ok: opened };
     },
     [SYSTEM_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
       const input = validateInput(
@@ -189,7 +200,9 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
     [SYSTEM_CONFIG_IPC_CHANNELS.NETWORK_DIAGNOSTIC]: async () => runNetworkDiagnostic(),
     [GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE]: async () => getLatestGitHubRelease(),
     [GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES]: async (params) =>
-      listGitHubReleases((params ?? {}) as GitHubReleaseListOptions),
+      listGitHubReleases(
+        validateInput(githubReleaseListOptionsSchema, params ?? {}, GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES)
+      ),
     [GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG]: async (params) => {
       const input = validateInput(
         githubReleaseByTagInputSchema,

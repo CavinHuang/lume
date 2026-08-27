@@ -278,7 +278,7 @@ export const handleDiscogs: SpecialHandler = async (
 			signal,
 			headers: {
 				Accept: "application/json",
-				"User-Agent": "CodingAgent/1.0 +https://github.com/can1357/oh-my-pi",
+				"User-Agent": "lume-fetch/1.0",
 			},
 		});
 

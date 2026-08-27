@@ -453,7 +453,9 @@ describe("file tools", () => {
     expect(result.is_error).toBeFalsy();
     // "alpha\nbeta\n" is exactly two lines; the old range reader counted three
     // and made Read claim a remaining line that does not exist.
-    expect(result._meta?.read).toMatchObject({ totalLines: 2, partial: true });
+    // #649 review P1-5:窗口未截断且覆盖全部行 = 全文读（partial:false），
+    // 否则小文件的显式全读也永远无法解锁写入。
+    expect(result._meta?.read).toMatchObject({ totalLines: 2, partial: false });
     expect(String(result.content)).toContain("beta");
   });
 
@@ -461,9 +463,8 @@ describe("file tools", () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const filePath = join(root, "long.txt");
-    // 600 padded lines exceed both the default 500-line window and a single
-    // stream chunk, so the ranged reader stops early with an unverified count;
-    // .txt is not summarized, so Read takes the ranged path.
+    // Padded lines exceed a single stream chunk, so the ranged reader stops
+    // early with an unverified count when given an explicit window.
     await writeFile(
       filePath,
       Array.from({ length: 600 }, (_, i) => `line-${i} ${"x".repeat(150)}`).join("\n"),
@@ -471,12 +472,143 @@ describe("file tools", () => {
     );
     const cache = new FileStateCache();
 
-    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+    // #564:显式范围走 ranged 路径——窗口凑满提前停读时必须强制 partial 视图
+    const result = await FileReadTool.call({ file_path: filePath, offset: 0, limit: 100 }, { cwd: root, fileStateCache: cache });
 
     expect(result.is_error).toBeFalsy();
     expect(result._meta?.read).toMatchObject({ partial: true, truncated: true });
     // The stale-read guard must not mistake the window for the whole file.
-    expect(cache.get(filePath)?.isPartialView).toBe(true);
+    // Read writes its cache under the canonicalized (realpath) key (#336),
+    // so the lookup must use the same key, not the lexical input path.
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(true);
+  });
+
+  test("#564: summarize 与普通读互不短路（视图键参与 unchanged 判定）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "viewable.ts");
+    await writeFile(
+      filePath,
+      Array.from({ length: 300 }, (_, i) => `function fn${i}() {\n  return ${i}\n}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    const rawRead = await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+    expect(rawRead._meta?.read).toMatchObject({ summarized: false });
+    // 缓存里是 raw 视图时,显式的 summarize 请求不得被 unchanged 短路吞掉
+    // （natives 在测试环境不可用走回退,但 unchanged 判定已按视图键区分）
+    const outlineRead = await FileReadTool.call({ file_path: filePath, summarize: true }, { cwd: root, fileStateCache: cache });
+    expect(outlineRead._meta?.read?.unchanged).toBeUndefined();
+  });
+
+  test("#564: 600 行文件无参 Read 返回全文而非骨架/截断", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "medium.ts");
+    await writeFile(
+      filePath,
+      Array.from({ length: 600 }, (_, i) => `const value${i} = ${i}`).join("\n"),
+      "utf8",
+    );
+
+    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root });
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: false, summarized: false, totalLines: 600 });
+    expect(String(result.content)).toContain("value599");
+    expect(String(result.content)).not.toContain("elided");
+    expect(String(result.content)).not.toContain("[truncated");
+  });
+
+  test("#564: readMaxLines 宿主旋钮可收窄全文直读预算", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "knob.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 20 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+
+    const result = await FileReadTool.call(
+      { file_path: filePath },
+      { cwd: root, fileStateCache: new FileStateCache(), toolConfig: { readMaxLines: 5 } },
+    );
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: true, truncated: true, limit: 5 });
+    expect(String(result.content)).toContain("[truncated: showing lines 1-5 of 20 total");
+  });
+
+  test("#564: 超限全文读截断并带尾部标记", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "huge.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 2500 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: true, truncated: true, totalLines: 2500 });
+    expect(String(result.content)).toContain("[truncated: showing lines 1-2000 of 2500 total");
+    // 缓存键是 realpath 规范化路径(#336),查询须同侧
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(true);
+  });
+
+  test("#649 review P1-5: 超限大文件的显式全覆盖读判全文，解锁 Write/Edit", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "big.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 2500 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    // 无参读被截断 → partial（上面的用例）；显式 offset=0 limit=2500 全覆盖 → full。
+    // 否则该文件不存在任何解锁写入的读法，守卫补救指令不可满足。
+    const result = await FileReadTool.call({ file_path: filePath, offset: 0, limit: 2500 }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBeFalsy();
+    // truncated 键只在真截断时存在（条件展开）
+    expect(result._meta?.read).toMatchObject({ partial: false, totalLines: 2500 });
+    expect(result._meta?.read?.truncated).toBeUndefined();
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(false);
+    expect(String(result.content)).toContain("line-2499");
+
+    // #649 follow-up:summarize 与显式范围同给时范围优先，但必须显式告知 summarize 被忽略
+    const bothGiven = await FileReadTool.call({ file_path: filePath, offset: 0, limit: 100, summarize: true }, { cwd: root, fileStateCache: new FileStateCache() });
+    expect(bothGiven.is_error).toBeFalsy();
+    expect(String(bothGiven.content)).toContain("summarize 参数未生效");
+    expect(String(bothGiven.content)).toContain("line-99");
+  });
+
+  test("#649 round3: 尾窗读(offset>0 延伸到 EOF)仍是 partial 视图——缓存只有片段不得标全文", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "tail.txt");
+    await writeFile(
+      filePath,
+      Array.from({ length: 10 }, (_, i) => `line-${i}`).join("\n"),
+      "utf8",
+    );
+    const cache = new FileStateCache();
+
+    // offset=5 读到文件尾:公式若漏 offset===0 会判全文,后续 Edit 内容比对片段≠全文 → 假性 stale 死锁
+    const result = await FileReadTool.call({ file_path: filePath, offset: 5, limit: 2000 }, { cwd: root, fileStateCache: cache });
+
+    expect(result.is_error).toBeFalsy();
+    expect(result._meta?.read).toMatchObject({ partial: true });
+    // 缓存键是 realpath 规范化路径(#336),查询须同侧
+    expect(cache.get(realpathSync(filePath))?.isPartialView).toBe(true);
+    expect(cache.get(realpathSync(filePath))?.content).not.toContain("line-0");
   });
 
   test("rejects known binary files instead of decoding them as text", async () => {
@@ -507,9 +639,11 @@ describe("file tools", () => {
 
     const result = await FileReadTool.call({ file_path: filePath, offset: 1, limit: 1 }, { cwd: root });
     expect(result.is_error).toBeFalsy();
+    // Read resolves paths through resolveInputPath (#336): the payload echoes
+    // the canonicalized (realpath) path, not the lexical input.
     expect(JSON.parse(result.content as string)).toEqual({
       type: "notebook",
-      file: { filePath, cells: [{ cell_type: "markdown", source: ["# Title\n"] }] },
+      file: { filePath: realpathSync(filePath), cells: [{ cell_type: "markdown", source: ["# Title\n"] }] },
     });
     expect(result._meta?.read).toMatchObject({ kind: "notebook", totalCells: 2, partial: true });
   });
@@ -549,7 +683,8 @@ describe("file tools", () => {
     expect(pageResult._meta?.read).toMatchObject({ kind: "pdf", pages: [1] });
   });
 
-  test("writes through a symlink to its target instead of replacing the link (#367)", { skip: !symlinksSupported }, async () => {
+  // bun:test 不认 options.skip 对象(静默执行),须用 skipIf 才能真正跳过
+  test.skipIf(!symlinksSupported)("writes through a symlink to its target instead of replacing the link (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const cache = new FileStateCache();
@@ -564,7 +699,7 @@ describe("file tools", () => {
     expect(await readFile(join(root, "target.txt"), "utf8")).toBe("after\n");
   });
 
-  test("edits through a symlink while keeping the link intact (#367)", { skip: !symlinksSupported }, async () => {
+  test.skipIf(!symlinksSupported)("edits through a symlink while keeping the link intact (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     const cache = new FileStateCache();
@@ -582,7 +717,7 @@ describe("file tools", () => {
     expect(await readFile(join(root, "target.txt"), "utf8")).toBe("alpha\nupdated\n");
   });
 
-  test("rejects a dangling symlink instead of silently replacing it (#367)", { skip: !symlinksSupported }, async () => {
+  test.skipIf(!symlinksSupported)("rejects a dangling symlink instead of silently replacing it (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     await symlink(join(root, "missing-target.txt"), join(root, "dangling.txt"), "file");
@@ -598,7 +733,7 @@ describe("file tools", () => {
     expect(lstatSync(join(root, "dangling.txt")).isSymbolicLink()).toBe(true);
   });
 
-  test("re-checks the sandbox against a symlink's resolved target (#367)", { skip: !symlinksSupported }, async () => {
+  test.skipIf(!symlinksSupported)("re-checks the sandbox against a symlink's resolved target (#367)", async () => {
     const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
     roots.push(root);
     await mkdir(join(root, "in"));
@@ -670,6 +805,37 @@ describe("file tools", () => {
     expect(result.is_error).toBe(true);
     expect(result.content).toContain("exceeding the 4-byte limit");
     await expect(readFile(filePath)).rejects.toThrow();
+  });
+
+  // #765 review：read 25k token 闸的 PASS 侧覆盖——~80KB 真实形态 markdown
+  // （约 20k tokens，距阈值 -20% 宽边际，免疫分块近似与词表升级漂移）必须
+  // 正常读取而非误拒；同时钉住「分块计数不引入闸门级行为翻转」。
+  test("reads ~80KB markdown under the 25k-token gate without false rejection", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-file-tools-"));
+    roots.push(root);
+    const filePath = join(root, "wide-doc.md");
+    const section = [
+      "## Section heading",
+      "",
+      "Paragraph with `inline code` and a [link](https://example.com/path) plus some prose",
+      "that wraps across a couple of physical lines to resemble real documentation.",
+      "",
+      "- list item with **bold** text",
+      "- another item mentioning `estimateTokens` and chunked counting semantics",
+      "",
+      "```ts",
+      "export function sample(input: string): number {",
+      "  return input.length * 2 + 1;",
+      "}",
+      "```",
+      "",
+    ].join("\n");
+    const content = section.repeat(Math.ceil((75 * 1024) / section.length));
+    await writeFile(filePath, content, "utf8");
+
+    const result = await FileReadTool.call({ file_path: filePath }, { cwd: root });
+    expect(result.is_error).toBeFalsy();
+    expect(String(result.content)).not.toContain("exceeding");
   });
 
   test("writes UTF-16LE files while preserving their BOM", async () => {

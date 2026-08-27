@@ -10,11 +10,13 @@ import {
   type AgentToolPermissionRequest,
   type AgentToolPermissionResponseInput,
   type Channel,
+  type CodingRunRevertResult,
   type ImMessageContent,
   type ImThreadBinding,
   type ImPeerKind,
   type ImProvider,
   type LumeRuntimeEvent,
+  formatCodingRevertSummary,
   IM_PROVIDER_LABELS
 } from "@lume/shared";
 import { randomUUID } from "node:crypto";
@@ -23,6 +25,9 @@ import { createAgentThread, getAgentThreadMeta, updateAgentThreadMeta } from "..
 import { appendAgentMessage, stopAgent, submitAgentToolPermission } from "../agent/agent-service";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 import { saveFilesToAgentSession } from "../agent/agent-files-service";
+import { isAgentRuntimeSessionActive } from "../agent-runtime/runner/attempt";
+import { getRuntimeCoreSessionDir } from "../agent-runtime/runtime-core/session-store";
+import { revertCodingRun } from "../agent-runtime/runtime-core/coding-run-checkpoint-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger, writeLogRecord } from "../infra/logger";
 import { getImAccount, getImRuntimeAccount } from "./im-config-manager";
@@ -96,12 +101,14 @@ export interface ImMessageRouterDeps {
   resolveQuotedMessage?: (
     message: InboundImRouteMessage
   ) => Promise<{ senderId?: string; text: string } | null>;
+  /** /revert 快照还原执行器（#714）；默认走 runtime-core checkpoint 服务 */
+  revertRun?: (input: { threadId: string; runId: string }) => Promise<CodingRunRevertResult>;
 }
 
 type ImAgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" | "stopped" }) => void;
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
@@ -684,6 +691,61 @@ async function routeImChatCommand(
       rememberCommand();
       break;
     }
+    case "revert": {
+      const runId = command.args[0]?.trim();
+      if (!runId || command.args.length > 1) {
+        await reply("用法：/revert <runId>。按快照还原该轮写过的文件（不可逆）。");
+        rememberCommand();
+        break;
+      }
+      // 权限模型与 IM 审批对齐（#714）：仅 approverPeerIds 白名单内的单聊可执行，
+      // 否则任何能私聊到机器人的陌生人都能回滚本机文件
+      const revertPolicy = resolveImApprovalPolicy(binding);
+      if (binding.peerKind === "group") {
+        await reply("群聊不支持 /revert，请在 Lume 桌面端处理。");
+        rememberCommand();
+        break;
+      }
+      if (!revertPolicy.enabled || !canBindingApproveViaIm(binding, revertPolicy)) {
+        await reply("当前会话没有权限执行快照还原，请在 Lume 桌面端处理。");
+        rememberCommand();
+        break;
+      }
+      const revertThreadId = existing?.threadId ?? "";
+      if (!revertThreadId) {
+        await reply("请先发送任意消息建立会话，再使用 /revert。");
+        rememberCommand();
+        break;
+      }
+      if (isAgentRuntimeSessionActive(revertThreadId)) {
+        await reply("任务仍在进行中，请先 /stop 或等待结束后再还原。");
+        rememberCommand();
+        break;
+      }
+      try {
+        const result = await (deps.revertRun ?? ((input: { threadId: string; runId: string }) =>
+          revertCodingRun({ sessionDir: getRuntimeCoreSessionDir(input.threadId), runId: input.runId })))({
+          threadId: revertThreadId,
+          runId
+        });
+        log.info("IM 命令快照还原", { threadId: revertThreadId, runId, restored: result.filesChanged.length });
+        writeLogRecord({
+          level: "info",
+          context: "im-router",
+          event: "coding.revert.im",
+          message: `/revert ${runId} via IM`,
+          threadId: revertThreadId,
+          runId,
+          data: { filesChanged: result.filesChanged.length, failedFiles: result.failedFiles.length }
+        });
+        await reply(`已执行 /revert ${runId}：${formatCodingRevertSummary(result)}`);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await reply(`/revert ${runId} 处理失败：${message}`);
+      }
+      rememberCommand();
+      break;
+    }
     case "model": {
       const allChannels = listAllChannels();
       const enabledChannels = listEnabledChannels(allChannels);
@@ -806,7 +868,11 @@ export function createImAgentStreamEmitter(
       }
     },
     onComplete: (payload) => {
-      // 卡片终态：达到轮次上限/重复护栏单独标注，其余按完成
+      // 卡片终态：达到轮次上限/重复护栏单独标注，用户停止映射中断态，其余按完成
+      if (payload?.reason === "stopped") {
+        cardSession?.finish({ kind: "interrupted" });
+        return;
+      }
       cardSession?.finish({
         kind: payload?.reason === "max_turns" || payload?.reason === "repeat_guard" ? "turn_limited" : "completed"
       });
@@ -859,7 +925,15 @@ export function createImAgentStreamEmitter(
 }
 
 async function defaultSendMessage(input: AgentSendInput): Promise<void> {
-  appendAgentMessage(input, createImAgentStreamEmitter(input.threadId));
+  const emitter = createImAgentStreamEmitter(input.threadId);
+  try {
+    appendAgentMessage(input, emitter);
+  } catch (error) {
+    // 同步段 throw（如 submission 去重命中「已终结」）时 emitter 尚无任何
+    // 终态回调：显式走 onError 让卡片 finish/订阅退订，否则悬挂（#725 review S1-P3）。
+    emitter.onError(error instanceof Error ? error.message : String(error));
+    throw error;
+  }
 }
 
 export async function routeInboundImMessage(
@@ -875,17 +949,27 @@ export async function routeInboundImMessage(
     const existingBinding = getImThreadBindingByPeer(message);
     return { threadId: existingBinding?.threadId ?? "" };
   }
-  // 陈旧绑定守卫：绑定的线程可能已被桌面端删除。不校验则后续路由对不存在线程
-  // 抛错——WS 渠道静默丢消息，微信渠道 cursor 不推进陷入每秒重投死循环
+  // 陈旧绑定守卫：绑定的线程可能已被桌面端删除或归档/入回收站。不校验则后续
+  // 路由对不存在线程抛错——WS 渠道静默丢消息，微信渠道 cursor 不推进陷入
+  // 每秒重投死循环；归档线程则更隐蔽——消息照常回答但桌面列表里看不到(#588)
   let existing = getImThreadBindingByPeer(message);
-  if (existing && !(deps.getThreadMeta ?? getAgentThreadMeta)(existing.threadId)) {
-    log.warn("IM 绑定指向已删除线程，解除绑定并按新会话处理", {
+  // 二轮 review(动线 F7):换绑发生时向 IM 用户补发告知——上下文清零不该无人知道
+  let staleRebind = false;
+  const existingMeta = existing ? (deps.getThreadMeta ?? getAgentThreadMeta)(existing.threadId) : null;
+  // status 缺省视为活跃（存量数据/部分 meta 无该字段），仅明确归档/回收站才换绑
+  if (existing
+    && (!existingMeta
+      || existingMeta.status === "archived"
+      || existingMeta.status === "trashed")) {
+    log.warn("IM 绑定指向已删除/非活跃线程，解除绑定并按新会话处理", {
       provider: message.provider,
       peerId: message.peerId,
-      staleThreadId: existing.threadId
+      staleThreadId: existing.threadId,
+      ...(existingMeta?.status ? { staleStatus: existingMeta.status } : {})
     });
     deleteImThreadBindingByPeer(message);
     existing = null;
+    staleRebind = true;
   }
   const approvalCommand = parseImApprovalCommand(message.text);
   if (existing && approvalCommand.type !== "none") {
@@ -916,6 +1000,20 @@ export async function routeInboundImMessage(
     threadId: thread.id,
     contextToken: message.contextToken
   });
+
+  if (staleRebind) {
+    // 尽力补发,失败不影响消息路由主链路
+    const notify = deps.sendBoundTextMessage ?? sendBoundImTextMessage;
+    void notify({
+      binding,
+      text: "原会话已被桌面端删除或归档，已为你新建会话（上下文从头开始）。"
+    }).catch((error) => {
+      log.warn("换绑告知发送失败", {
+        threadId: binding.threadId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+  }
 
   await updateThreadSourceMeta(binding.threadId, message, deps);
 

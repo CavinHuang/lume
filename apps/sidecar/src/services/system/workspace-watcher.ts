@@ -2,6 +2,7 @@
 import { existsSync, watch } from "node:fs";
 import type { FSWatcher } from "node:fs";
 import { AGENT_IPC_CHANNELS, LUME_CONFIG_IPC_CHANNELS, MEMORY_IPC_CHANNELS } from "@lume/shared";
+import { listAgentWorkspaces } from "../agent/agent-workspace-manager";
 import { getAgentWorkspacesDir, getConfigDir, getLumeConfigYamlPath, getStructuredMemoryDir } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
 
@@ -63,6 +64,14 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     }, DEBOUNCE_MS);
   };
 
+  const emitFilesChanged = (): void => {
+    if (filesTimer) clearTimeout(filesTimer);
+    filesTimer = setTimeout(() => {
+      emit(AGENT_IPC_CHANNELS.WORKSPACE_FILES_CHANGED, {});
+      filesTimer = null;
+    }, DEBOUNCE_MS);
+  };
+
   const emitMemoryChanged = (): void => {
     if (memoryTimer) clearTimeout(memoryTimer);
     memoryTimer = setTimeout(() => {
@@ -98,6 +107,12 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
     }
     try {
       const watcher = watch(targetPath, options, onChange);
+      // review P1:Windows 下被监视目录被删/移走会向 error 事件报 EPERM,
+      // 无监听器即同步 throw 进进程级 uncaught 兜底(累计 5 次退出止损)。
+      // 吞掉记日志:该路径信号失效可接受,不得威胁 sidecar 存活。
+      watcher.on("error", (error) => {
+        log.warn("workspace watcher error", { label, targetPath, error: String(error) });
+      });
       watchers.push(watcher);
       log.debug("watching workspace path", { label, targetPath });
     } catch (error) {
@@ -106,6 +121,17 @@ export function startWorkspaceWatcher(emit: NotificationEmitter): void {
   };
 
   safeWatch(watchDir, { recursive: true }, onWorkspaceChanged, "Lume 工作区");
+  // #590:project 型工作区根在任意盘位，不在托管目录监视内——git pull/切分支/
+  // 外部编辑对文件树零信号，树与 agent 的活磁盘认知分叉。逐个监视真实根目录，
+  // 变更并入同一条 WORKSPACE_FILES_CHANGED 通道。ponytail: 工作区列表为启动时
+  // 快照，中途新增/重定位的项目工作区重启后覆盖；已删路径的残留 watcher 静默
+  // 无事件。已知代价：recursive watch 持有项目根打开句柄，Windows 上该目录树
+  // 在 Lume 运行期间无法重命名/移动/删除（EBUSY「文件夹正在使用」）。
+  for (const workspace of listAgentWorkspaces()) {
+    const projectPath = workspace.projectPath?.trim();
+    if (!projectPath) continue;
+    safeWatch(projectPath, { recursive: true }, () => emitFilesChanged(), `project 工作区 ${workspace.slug}`);
+  }
   safeWatch(getStructuredMemoryDir(), { recursive: true }, () => emitMemoryChanged(), "Lume 全局记忆目录");
   safeWatch(getConfigDir(), { recursive: false }, (_eventType, filename) => {
     if (!filename) return;

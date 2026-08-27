@@ -3,6 +3,7 @@ import {
   compactToolResultContent,
   estimateMessagesTokens,
   estimateTokens,
+  COMPACTION_BREAKER_THRESHOLD,
   type AutoCompactState,
   type AgentContextController,
   type AgentContextCompactionMetadata
@@ -213,7 +214,7 @@ function shouldKernelAutoCompact(input: {
   maxOutputTokens?: number;
   budget: ContextBudgetSnapshot;
 }): boolean {
-  if (input.state.consecutiveFailures >= 3) return false;
+  if (input.state.consecutiveFailures >= COMPACTION_BREAKER_THRESHOLD) return false;
   const reserveTokens = Math.min(
     Math.max(0, input.maxOutputTokens ?? DEFAULT_RESERVED_OUTPUT_TOKENS),
     MAX_RESERVED_OUTPUT_TOKENS

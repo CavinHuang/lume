@@ -50,6 +50,19 @@ describe('createTodoTool', () => {
     expect(res.content).toBe('No active todos.')
   })
 
+  test('empty todos resets the list instead of erroring (#538 reset-to-empty)', async () => {
+    const tool = createTodoTool({ threadId: 't1' })
+    await tool.call({ todos: [item('T1')] })
+    const res = await tool.call({ todos: [] })
+    expect(res.is_error).toBeFalsy()
+    expect(res.content).toBe('No active todos.')
+  })
+
+  test('TodoWrite is marked requiredDuringSkillScope (#542)', () => {
+    const tool = createTodoTool({ threadId: 't1' })
+    expect(tool.runtimeMetadata?.requiredDuringSkillScope).toBe(true)
+  })
+
   test('missing activeForm returns an error', async () => {
     const tool = createTodoTool({ threadId: 't1' })
     const res = await tool.call({

@@ -36,6 +36,7 @@ const FILESYSTEM_TOOLS = new Set([
   "Read",
   "Write",
   "Edit",
+  "MultiEdit",
   "NotebookEdit",
   "Glob",
   "Grep",

@@ -47,18 +47,29 @@ export function ConnectorSettings() {
   const [loadError, setLoadError] = React.useState<string | null>(null)
   const [loading, setLoading] = React.useState(true)
   const [collapsed, setCollapsed] = React.useState(false)
+  // 请求代际:并发 refresh 后发先至时旧快照不得覆盖新状态
+  const refreshGeneration = React.useRef(0)
 
+  // stale-while-revalidate:刷新保留旧列表(卡片不卸载,输入中的表单不丢),
+  // 仅头部按钮转圈;首次加载(列表为空)才显示整块 spinner。
   const refresh = React.useCallback(() => {
+    const generation = ++refreshGeneration.current
     setLoading(true)
     void getConnectorSetups()
       .then((next) => {
+        if (refreshGeneration.current !== generation) return
         setSetups(next)
         setLoadError(null)
       })
       .catch((error) => {
+        if (refreshGeneration.current !== generation) return
         setLoadError(error instanceof Error ? error.message : String(error))
+        // stale-while-revalidate 下有旧列表时错误框不再渲染,必须给显式反馈
+        toast.error(`连接器刷新失败:${error instanceof Error ? error.message : String(error)}`)
       })
-      .finally(() => setLoading(false))
+      .finally(() => {
+        if (refreshGeneration.current === generation) setLoading(false)
+      })
   }, [])
 
   React.useEffect(() => {
@@ -67,50 +78,43 @@ export function ConnectorSettings() {
 
   return (
     <section className="lume-panel">
-      <button
-        type="button"
-        className="flex w-full items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3 text-left"
-        onClick={() => setCollapsed((prev) => !prev)}
-      >
-        <div className="flex min-w-0 items-center gap-2.5">
+      <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] px-4 py-3">
+        <button
+          type="button"
+          className="flex min-w-0 flex-1 items-center gap-2.5 text-left"
+          aria-expanded={!collapsed}
+          aria-controls="connector-settings-body"
+          onClick={() => setCollapsed((prev) => !prev)}
+        >
           <ChevronDown className={`size-4 shrink-0 text-[var(--text-3)] transition-transform ${collapsed ? '-rotate-90' : ''}`} />
           <div className="flex size-8 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
             <Mail size={16} />
           </div>
           <div className="min-w-0">
-            <h3 className="text-[14px] font-semibold text-[var(--text-1)]">邮箱连接器</h3>
-            <p className="text-[12px] text-[var(--text-3)]">
-              {loadError ? '加载失败' : `${setups.filter((setup) => setup.connected).length}/${setups.length} 个已连接`}
+            <h3 className="text-body-lg font-semibold text-[var(--text-1)]">邮箱连接器</h3>
+            <p className="text-ui text-[var(--text-3)]">
+              {loadError && setups.length === 0 ? '加载失败' : `${setups.filter((setup) => setup.connected).length}/${setups.length} 个已连接`}
             </p>
           </div>
-        </div>
-        <span
-          className="shrink-0"
-          onClick={(event) => event.stopPropagation()}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.stopPropagation()
-              refresh()
-            }
-          }}
-        >
-          <Button variant="outline" size="sm" onClick={() => !loading && refresh()} disabled={loading}>
+        </button>
+        <div className="flex shrink-0 items-center gap-2">
+          <Button variant="outline" size="sm" onClick={() => refresh()} disabled={loading}>
             {loading ? <Loader2 className="animate-spin" /> : <RefreshCw />}
             刷新
           </Button>
-        </span>
-      </button>
+        </div>
+      </div>
 
       {!collapsed && (
-      <div className="p-4">
+      <div id="connector-settings-body" className="p-4">
         <div className="space-y-2">
-          {loading ? (
-            <div className="flex h-28 items-center justify-center text-[13px] text-[var(--text-3)]">
+          {setups.length === 0 && loading ? (
+            <div className="flex h-28 items-center justify-center text-body text-[var(--text-3)]">
               <Loader2 className="mr-2 size-4 animate-spin" />
               加载中
             </div>
-          ) : loadError ? (
-            <div className="lume-subpanel border-dashed p-6 text-center text-[13px] text-[var(--lume-danger)]">
+          ) : setups.length === 0 && loadError ? (
+            <div className="lume-subpanel border-dashed p-6 text-center text-body text-[var(--lume-danger)]">
               连接器加载失败:{loadError}
             </div>
           ) : setups.map((setup) => (
@@ -138,15 +142,25 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
   React.useEffect(() => {
     if (setup.authKind !== 'oauth2' || !status.authorizing) return
     wasAuthorizing.current = true
+    let pollFailures = 0
     const timer = setInterval(() => {
       void getConnectorStatus(setup.service)
         .then((next) => {
+          pollFailures = 0
           setStatus((prev) => ({ ...prev, connected: next.connected, authorizing: next.authorizing, lastError: next.lastError }))
           // 授权完成的瞬间拉全量(含 accountLabel),不等用户手动刷新
           if (wasAuthorizing.current && !next.authorizing && next.connected) onChanged()
           if (!next.authorizing) wasAuthorizing.current = false
         })
-        .catch(() => {})
+        .catch((error) => {
+          // 连续失败超阈值停轮询并告知:silent catch 会让徽章停在「授权中…」直到服务端超时
+          pollFailures += 1
+          if (pollFailures === 5) {
+            clearInterval(timer)
+            setStatus((prev) => ({ ...prev, authorizing: false, lastError: '状态轮询失败,请重试或重新发起授权' }))
+            toast.error(`授权状态轮询失败:${error instanceof Error ? error.message : String(error)}`)
+          }
+        })
     }, 2000)
     return () => clearInterval(timer)
   }, [setup.authKind, setup.service, status.authorizing, onChanged])
@@ -203,32 +217,32 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2">
           <ConnectorBrandIcon service={setup.service} size={16} className="shrink-0" />
-          <span className="text-[13px] font-semibold text-[var(--text-1)]">{status.displayName}</span>
+          <span className="text-body font-semibold text-[var(--text-1)]">{status.displayName}</span>
           {status.accountLabel && status.connected ? (
-            <span className="truncate text-[12px] text-[var(--text-3)]">{status.accountLabel}</span>
+            <span className="truncate text-ui text-[var(--text-3)]">{status.accountLabel}</span>
           ) : null}
         </div>
-        <Badge variant="outline" className={`shrink-0 text-[12px] ${statusTone[tone]}`}>{TONE_LABEL[tone]}</Badge>
+        <Badge variant="outline" className={`shrink-0 text-ui ${statusTone[tone]}`}>{TONE_LABEL[tone]}</Badge>
       </div>
 
       {/* 配置指引:OAuth 型渲染注册步骤,custom 型由字段 description 承载 */}
       {!status.connected ? (
         <>
           {status.clientSetup ? (
-            <ol className="mt-2 space-y-0.5 pl-4 text-[12px] leading-5 text-[var(--text-3)] list-decimal">
+            <ol className="mt-2 space-y-0.5 pl-4 text-ui leading-5 text-[var(--text-3)] list-decimal">
               {status.clientSetup.steps.map((step, index) => (
                 <li key={index}>{step}</li>
               ))}
             </ol>
           ) : (
             status.fields.map((field) => (
-              <p key={field.key} className="mt-1.5 text-[12px] leading-5 text-[var(--text-3)]">{field.description}</p>
+              <p key={field.key} className="mt-1.5 text-ui leading-5 text-[var(--text-3)]">{field.description}</p>
             ))
           )}
           {status.clientSetup?.docsUrl ? (
             <button
               type="button"
-              className="mt-1 inline-flex items-center gap-0.5 text-[12px] underline text-[var(--text-3)] hover:text-[var(--text-2)]"
+              className="mt-1 inline-flex items-center gap-0.5 text-ui underline text-[var(--text-3)] hover:text-[var(--text-2)]"
               onClick={() => void openExternal(status.clientSetup!.docsUrl!)}
             >
               打开配置页面 <ExternalLink className="size-3" />
@@ -238,7 +252,7 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
       ) : null}
 
       {status.lastError ? (
-        <p className="mt-2 text-[12px] text-[var(--lume-danger)]">{status.lastError}</p>
+        <p className="mt-2 text-ui text-[var(--lume-danger)]">{status.lastError}</p>
       ) : null}
 
       {status.connected ? (
@@ -251,7 +265,7 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
         <div className="mt-2.5 grid gap-2.5 max-w-md">
           {formFields.map((field) => (
             <div key={field.key} className="grid gap-1">
-              <Label htmlFor={`${setup.service}-${field.key}`} className="text-[12px]">{field.label}</Label>
+              <Label htmlFor={`${setup.service}-${field.key}`} className="text-ui">{field.label}</Label>
               <Input
                 id={`${setup.service}-${field.key}`}
                 type={field.inputType === 'password' ? 'password' : 'text'}

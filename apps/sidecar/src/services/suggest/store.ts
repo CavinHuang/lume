@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
 import { getSuggestionIndexPath } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { createLogger } from "../infra/logger";
 import type {
   SuggestionCandidate,
@@ -37,14 +38,8 @@ function writeJsonAtomic(path: string, payload: string): void {
 }
 
 function backupCorruptIndex(indexPath: string): void {
-  if (!existsSync(indexPath)) return;
-  const backupPath = `${indexPath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(indexPath, backupPath);
-    log.warn("backed up corrupt suggestion index", { backupPath });
-  } catch (error) {
-    log.warn("failed to back up corrupt suggestion index", { error, backupPath });
-  }
+  const backupPath = backupCorruptFile(indexPath);
+  if (backupPath) log.warn("backed up corrupt suggestion index", { backupPath });
 }
 
 function normalizeTypeWeights(raw: unknown): SuggestionTypeWeights {

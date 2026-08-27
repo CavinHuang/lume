@@ -82,12 +82,13 @@ export async function resolveAskUserInterruption(input: {
   toolUseId: string;
   canceled?: boolean;
   answers?: Record<string, string>;
-}): Promise<void> {
+}): Promise<"resolved" | "not_found"> {
   const sessionDir = getRuntimeCoreSessionDir(input.threadId);
   const interruptionId = askUserInterruptionId(input.toolUseId);
   const store = createFileBackedLumeInterruptionStore(sessionDir);
   const current = await store.get(interruptionId);
-  await store.resolve(
+  // resolve 返回 false=记录已被并发路径收口：跳过 continuation 写入（stale 快照不得覆写 run 状态）
+  const migrated = await store.resolve(
     interruptionId,
     {
       status: input.canceled ? "rejected" : "approved",
@@ -99,6 +100,7 @@ export async function resolveAskUserInterruption(input: {
           }
     }
   );
+  if (!migrated) return "not_found";
   if (current?.runId) {
     await createFileBackedRunContinuationStore(sessionDir).update(current.runId, {
       status: "ready_to_resume",
@@ -117,6 +119,7 @@ export async function resolveAskUserInterruption(input: {
         : "AskUserQuestion 已回答，恢复时将注入答案。"
     });
   }
+  return "resolved";
 }
 
 export async function updateAskUserApprovalSession(input: {

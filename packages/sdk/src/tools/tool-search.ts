@@ -44,8 +44,13 @@ export function shouldEnableAutomaticToolSearch(tools: ToolDefinition[], model: 
   return getDeferredToolTokenCount(tools) >= Math.floor(getContextWindowSize(model) * (getAutoToolSearchPercentage() / 100))
 }
 
-export function isToolSearchEnabled(tools: ToolDefinition[], model: string): boolean {
-  const mode = getToolSearchMode()
+export function isToolSearchEnabled(
+  tools: ToolDefinition[],
+  model: string,
+  explicitMode?: ToolSearchMode,
+): boolean {
+  // 宿主显式模式优先于环境变量（#725 review S5）：测试/嵌入场景免 env 操控。
+  const mode = explicitMode ?? getToolSearchMode()
   return mode === 'tst' || (mode === 'tst-auto' && shouldEnableAutomaticToolSearch(tools, model))
 }
 

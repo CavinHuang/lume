@@ -1,18 +1,13 @@
 import { AGENT_IPC_CHANNELS, type SensitiveDiagnosticEnvelope } from "@lume/shared";
 import type { appendAgentMessage } from "./agent-service";
 import { getPersistedGeneralSettings } from "../system/general-settings-service";
+import { getOutboundNotificationWriter } from "../infra/outbound-notification";
 
 type AgentNotificationWriter = (method: string, params: unknown) => void;
 type AgentStreamEmitter = Parameters<typeof appendAgentMessage>[1];
 
-let notificationWriter: AgentNotificationWriter | null = null;
-
-export function setAgentNotificationWriter(writer: AgentNotificationWriter): void {
-  notificationWriter = writer;
-}
-
 export function emitAgentNotification(method: string, params: unknown): void {
-  notificationWriter?.(method, params);
+  getOutboundNotificationWriter()?.(method, params);
 }
 
 export function createAgentNotificationEmitter(input: {
@@ -96,6 +91,7 @@ export function emitDiagnosticContent(
   input: Omit<SensitiveDiagnosticEnvelope, "schemaVersion" | "envelopeType" | "emittedAt" | "leaseVersion">
 ): void {
   const lease = getPersistedGeneralSettings().logging.diagnosticCapture;
+  const notificationWriter = getOutboundNotificationWriter();
   if (!notificationWriter || !lease.enabled || !lease.expiresAt || Date.parse(lease.expiresAt) <= Date.now()) return;
   if (lease.scope?.threadId && input.threadId !== lease.scope.threadId) return;
   if (lease.scope?.traceId && input.traceId !== lease.scope.traceId) return;

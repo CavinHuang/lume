@@ -36,7 +36,7 @@ import {
 } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
-import { createLogger } from "../services/infra/logger";
+import { createLogger, writeLogRecord } from "../services/infra/logger";
 
 const log = createLogger("coding-handlers");
 
@@ -314,9 +314,18 @@ export function createCodingHandlers(): Record<string, RpcHandler> {
       const result = await revertCodingRun({
         sessionDir: getRuntimeCoreSessionDir(input.threadId),
         runId: input.runId,
-        // 审计留痕：RPC 响应因 renderer 崩溃丢失时仍有「改了哪些文件」记录（#572 review）
+        // 审计留痕（#714 升级为结构化 journal）：RPC 响应因 renderer 崩溃丢失时
+        // 仍有「改了哪些文件」的可检索记录，threadId/runId 进日志关联字段
         onFileRestored: (path) => {
-          log.info(`revert restored ${path}`);
+          writeLogRecord({
+            level: "info",
+            context: "coding-handlers",
+            event: "coding.revert.file_restored",
+            message: `revert restored ${path}`,
+            threadId: input.threadId,
+            runId: input.runId,
+            data: { path },
+          });
         },
       });
       // TOCTOU 收口：还原耗时期间用户开新 Run 会与本结果交错写同批文件，
@@ -335,12 +344,15 @@ export function createCodingHandlers(): Record<string, RpcHandler> {
       if (isAgentRuntimeSessionActive(input.threadId)) {
         throw new Error("Coding Run 尚未结束，无法撤销文件改动");
       }
-      const workdir = resolveAgentThreadWorkdir(input.threadId);
+      // 线程存在性守卫（陈旧 threadId 直接拒绝）；rootId 缺省交给服务层
+      // 解析为 record.cwd——此前兜底传 agentCwd 路径会被当作 rootId 哈希查找，
+      // 必然抛「找不到 Coding 根目录」（#714）
+      resolveAgentThreadWorkdir(input.threadId);
       return revertCodingFileFromCheckpoint({
         sessionDir: getRuntimeCoreSessionDir(input.threadId),
         runId: input.runId,
         path: input.path,
-        rootId: input.rootId ?? workdir.agentCwd,
+        ...(input.rootId ? { rootId: input.rootId } : {}),
       });
     },
   };

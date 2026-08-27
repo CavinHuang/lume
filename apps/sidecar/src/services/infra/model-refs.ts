@@ -1,8 +1,50 @@
 import type { Channel } from "@lume/shared";
 
-// 模型引用语法(requested 含 "/" 的 provider/model 形式、trim/lowercase 匹配)在
-// channel/model-selection.ts 另有 parseModelRef/normalizeProviderId 一套;改引用
-// 语义时两处需同步(#504 知识分裂注记)。
+// resolve*/parseModelRef 两族(渠道默认模型 + 引用语法解析)的单一来源
+// (#581:此前 resolve* 族在 runtime-core/model-candidates、parseModelRef 族
+// 在 channel/model-selection 各存一份靠注释人肉同步,#504 已为此付过学费)。
+// kernel 与 channel 域均向下引用本文件,不再互相依赖。
+// 注意:runtime-core/provider-resolution.ts 另有一套 provider 别名表与
+// parseProviderModelRef(语义不同:无 "/" 返回 null、经 KnownProvider 映射),
+// 不在本文件管辖内——改别名前先确认目标解析器。
+
+export interface ModelRef {
+  provider: string;
+  model: string;
+}
+
+const PROVIDER_ALIAS: Record<string, string> = {
+  "z.ai": "zai",
+  "z-ai": "zai",
+  zhipu: "zai",
+  "kimi-code": "kimi-coding"
+};
+
+export function normalizeProviderId(provider: string): string {
+  const normalized = provider.trim().toLowerCase();
+  return PROVIDER_ALIAS[normalized] ?? normalized;
+}
+
+/** 解析 `provider/model` 复合引用;不含 "/" 时回落到 defaultProvider。 */
+export function parseModelRef(raw: string, defaultProvider: string): ModelRef | null {
+  const trimmed = raw.trim();
+  if (!trimmed) {
+    return null;
+  }
+  const slashIndex = trimmed.indexOf("/");
+  if (slashIndex === -1) {
+    return {
+      provider: normalizeProviderId(defaultProvider),
+      model: trimmed
+    };
+  }
+  const provider = normalizeProviderId(trimmed.slice(0, slashIndex));
+  const model = trimmed.slice(slashIndex + 1).trim();
+  if (!provider || !model) {
+    return null;
+  }
+  return { provider, model };
+}
 
 function normalizeLookupKey(value?: string): string {
   return (value ?? "").trim().toLowerCase();
@@ -36,18 +78,21 @@ export function resolveRequestedModelIdForChannel(
     return exactMatch.enabled ? requested : resolveChannelDefaultModelId(channel);
   }
 
+  // 含 "/" 的复合引用(provider/model)视为精确引用,不做 alias/name 匹配。
+  if (requested.includes("/")) {
+    return requested;
+  }
+
   const requestedKey = normalizeLookupKey(requested);
-  if (!requested.includes("/")) {
-    const aliasMatch = channel.models.find((model) => {
-      return (
-        normalizeLookupKey(model.alias) === requestedKey ||
-        normalizeLookupKey(model.name) === requestedKey ||
-        normalizeLookupKey(model.id) === requestedKey
-      );
-    });
-    if (aliasMatch) {
-      return aliasMatch.enabled ? aliasMatch.id : resolveChannelDefaultModelId(channel);
-    }
+  const aliasMatch = channel.models.find((model) => {
+    return (
+      normalizeLookupKey(model.alias) === requestedKey ||
+      normalizeLookupKey(model.name) === requestedKey ||
+      normalizeLookupKey(model.id) === requestedKey
+    );
+  });
+  if (aliasMatch) {
+    return aliasMatch.enabled ? aliasMatch.id : resolveChannelDefaultModelId(channel);
   }
 
   return requested;

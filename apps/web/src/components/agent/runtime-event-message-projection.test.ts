@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test'
-import { projectRuntimeEventMessages, applyRuntimeEventsIncremental, type ProjectionRef } from './runtime-event-message-projection'
+import { projectRuntimeEventMessages, applyRuntimeEventsIncremental, TURN_LIMIT_NOTICE as TURN_LIMIT_NOTICE_TEXT, type ProjectionRef } from './runtime-event-message-projection'
 import { hydrateRuntimeEvents } from '@/hooks/runtime-event-state'
 import type { LumeRuntimeEvent } from '@lume/shared'
 import type { RuntimeMessageView } from './runtime-message-view'
@@ -353,15 +353,15 @@ describe('runtime-event-message-projection', () => {
       {
         id: 'assistant:run-1',
         type: 'assistant',
-        text: '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。',
+        text: '本轮已达到最大执行轮次，当前进度已保存。',
         thinking: '',
         blocks: [{
           type: 'text',
           id: 'text:0',
-          text: '本轮已达到最大执行轮次，当前进度已保存。发送“继续”可接着执行。',
+          text: '本轮已达到最大执行轮次，当前进度已保存。',
         }],
         status: 'completed',
-        tokenCount: 8,
+        tokenCount: 5,
         toolCalls: [],
       },
     ])
@@ -986,6 +986,67 @@ function incrementalProject(events: LumeRuntimeEvent[]): RuntimeMessageView[] {
   }
   return messages
 }
+
+describe('#566 自动续跑边界提示收回', () => {
+  const chainEvents: LumeRuntimeEvent[] = [
+    event({ type: 'message.user.submitted', text: '跑长任务', messageId: 'u1' }),
+    event({ type: 'run.started', runId: 'r1' }),
+    event({ type: 'assistant.delta', runId: 'r1', delta: '干了一半' }),
+    event({ type: 'run.turn_limited', runId: 'r1' }),
+    // 自动续跑：链内下一 run 直接开始（中间无用户消息）
+    event({ type: 'run.started', runId: 'r2' }),
+    event({ type: 'assistant.delta', runId: 'r2', delta: '干完另一半' }),
+  ]
+
+  test('两帧增量路径：同链 run.start 到达后剥掉中间轮提示尾缀（review M2）', () => {
+    // 逐事件增量——turn_limited 与续跑 run.started 落在不同更新帧，钉 stabilize 引用契约下的可见性
+    const events = [
+      ...chainEvents,
+      event({ type: 'run.completed', runId: 'r2', finalMessageId: 'a-final' }),
+    ]
+    let ref: ProjectionRef | null = null
+    let messages: RuntimeMessageView[] = []
+    let boundaryNoticeRef: RuntimeMessageView | undefined
+    for (let i = 1; i <= events.length; i++) {
+      const result = applyRuntimeEventsIncremental(events.slice(0, i), ref)
+      ref = result.ref
+      messages = result.messages
+      if (i === 4) {
+        // 边界帧：提示先出现（用户短暂看到「已达上限」），并留存该帧消息对象引用
+        const notice = messages.find((message) => message.type === 'assistant' && message.text?.includes(TURN_LIMIT_NOTICE_TEXT))
+        expect(notice).toBeDefined()
+        boundaryNoticeRef = notice
+      }
+      if (i === 5) {
+        // 收回帧：提示已剥除（用户不再看到「已达上限」）
+        expect(messages.some((message) => message.type === 'assistant' && message.text?.includes(TURN_LIMIT_NOTICE_TEXT))).toBeFalse()
+      }
+    }
+    // M2 克隆契约：收回必须以「新对象替换」发布，不得原地 mutate 已 flush 的旧帧对象——
+    // stabilize 引用比较命中同引用即短路复用，原地改对 UI 永不可见
+    //（review 变异实证：改回原地 mutate 时全套测试仍绿）。钉死旧帧对象不被改。
+    expect(boundaryNoticeRef?.text).toContain(TURN_LIMIT_NOTICE_TEXT)
+    // 终态收敛后，任何 assistant 视图都不得残留「已达上限」提示
+    expect(messages.some((message) => message.type === 'assistant' && message.text?.includes(TURN_LIMIT_NOTICE_TEXT))).toBeFalse()
+    const r1Views = messages.filter((message) => message.type === 'assistant' && message.text?.includes('干了一半'))
+    // 中间轮视图必须保留（reconcile 合并语义）——不用 if 包裹让实现改动静默跳过断言；
+    // 剥后缀须恰好还原为正文（部分剥离残留元语句也红）
+    expect(r1Views.length).toBeGreaterThan(0)
+    expect(r1Views.at(-1)?.text).toBe('干了一半')
+    const finalAssistant = messages.find((message) => message.id === 'assistant:r2')
+    expect(finalAssistant?.text).toContain('干完另一半')
+  })
+
+  test('用户消息插入则保留提示（手动继续场景）', () => {
+    const messages = projectRuntimeEventMessages([
+      ...chainEvents.slice(0, 4),
+      // 用户消息插在边界与续跑 run.start 之间：提示保留（手动继续语义成立）
+      event({ type: 'message.user.submitted', text: '继续', messageId: 'u2' }),
+      event({ type: 'run.started', runId: 'r3' }),
+    ])
+    expect(messages.some((message) => message.type === 'assistant' && message.text?.includes('本轮已达到最大执行轮次'))).toBeTrue()
+  })
+})
 
 describe('applyRuntimeEventsIncremental 与全量投影等价', () => {
   test('纯 assistant.delta 追加：增量结果 == 全量', () => {
