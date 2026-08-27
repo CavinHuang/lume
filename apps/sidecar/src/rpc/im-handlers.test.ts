@@ -3,7 +3,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { IM_IPC_CHANNELS } from "@lume/shared";
+import type { ImMirrorEntryPublic } from "@lume/shared";
 import { createImHandlers } from "./im-handlers";
+import type { RpcHandler } from "./types";
+import { mkdirSync, writeFileSync } from "node:fs";
+import { getAgentSessionsIndexPath } from "../services/infra/config-paths";
 
 describe("im-handlers", () => {
   let prevConfigDir: string | undefined;
@@ -165,5 +169,134 @@ describe("im-handlers", () => {
     await expect(handlers[IM_IPC_CHANNELS.CANCEL_CLI_AUTH]?.({ sessionKey: "cli-1" }))
       .resolves.toEqual({ ok: true });
     expect(calls).toEqual(["start:dingtalk", "poll:cli-1", "cancel:cli-1"]);
+  });
+});
+
+describe("im-handlers #544 会话镜像", () => {
+  let prevConfigDir: string | undefined;
+  let tempConfigDir = "";
+
+  beforeEach(() => {
+    prevConfigDir = process.env.LUME_CONFIG_DIR;
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-im-rpc-mirror-test-"));
+    process.env.LUME_CONFIG_DIR = tempConfigDir;
+  });
+
+  afterEach(() => {
+    if (prevConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = prevConfigDir;
+    }
+    if (tempConfigDir) {
+      rmSync(tempConfigDir, { recursive: true, force: true });
+      tempConfigDir = "";
+    }
+  });
+
+  function makeHandlers(): Record<string, RpcHandler> {
+    return createImHandlers({
+      runtimeManager: {
+        startEnabledAccounts: async () => undefined,
+        startAccount: async () => undefined,
+        stopAccount: () => undefined,
+        stopAll: () => undefined,
+        getRunningAccountIds: () => []
+      }
+    });
+  }
+
+  async function createAccount(provider: "feishu" | "dingtalk", enabled: boolean): Promise<string> {
+    const created = (await makeHandlers()[IM_IPC_CHANNELS.CREATE_ACCOUNT]?.({
+      provider,
+      label: `${provider} 账号`,
+      token: "secret",
+      accountKey: `cli_${provider}`,
+      enabled
+    })) as { id: string };
+    return created.id;
+  }
+
+  test("三个镜像通道已装配且 GET 默认 off", async () => {
+    const handlers = makeHandlers();
+    expect(handlers[IM_IPC_CHANNELS.MIRROR_GET_SETTINGS]).toBeDefined();
+    expect(handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]).toBeDefined();
+    expect(handlers[IM_IPC_CHANNELS.MIRROR_LIST]).toBeDefined();
+    await expect(handlers[IM_IPC_CHANNELS.MIRROR_GET_SETTINGS]?.({})).resolves.toEqual({
+      enabledMirrorAccountId: null
+    });
+  });
+
+  test("SET_OWNER：非法入参拒绝；不存在账号/未启用/不支持渠道均结构化失败", async () => {
+    const handlers = makeHandlers();
+
+    await expect(handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]?.({ accountId: 42 })).rejects.toThrow();
+
+    const missing = await handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]?.({ accountId: "ghost" });
+    expect(missing).toMatchObject({ ok: false });
+    expect((missing as { error: string }).error).toContain("不存在");
+
+    const disabledId = await createAccount("feishu", false);
+    const disabled = await handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]?.({ accountId: disabledId });
+    expect((disabled as { error: string }).error).toContain("未启用");
+
+    const dingtalkId = await createAccount("dingtalk", true);
+    const unsupported = await handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]?.({ accountId: dingtalkId });
+    expect((unsupported as { error: string }).error).toContain("钉钉");
+
+    // 全程未产生 owner 落盘
+    await expect(handlers[IM_IPC_CHANNELS.MIRROR_GET_SETTINGS]?.({})).resolves.toEqual({
+      enabledMirrorAccountId: null
+    });
+  });
+
+  test("SET_OWNER：首个 feishu 账号成功占位；第二家启用冲突失败且占位不变", async () => {
+    const firstId = await createAccount("feishu", true);
+    const handlers = makeHandlers();
+
+    const first = await handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]?.({ accountId: firstId });
+    expect(first).toMatchObject({ ok: true, settings: { enabledMirrorAccountId: firstId } });
+
+    const secondId = await createAccount("feishu", true);
+    const second = await handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]?.({ accountId: secondId });
+    expect(second).toMatchObject({ ok: false });
+    expect((await handlers[IM_IPC_CHANNELS.MIRROR_GET_SETTINGS]?.({})) as unknown).toMatchObject({
+      enabledMirrorAccountId: firstId
+    });
+  });
+
+  test("LIST 返回映射与线程标题；DELETE 账号联动清映射并归还 owner", async () => {
+    const handlers = makeHandlers();
+    const feishuId = await createAccount("feishu", true);
+    await handlers[IM_IPC_CHANNELS.MIRROR_SET_OWNER]?.({ accountId: feishuId });
+
+    // 直接经 store 造映射（LIST 只读聚合）；线程标题用索引夹具直写（缓存按 mtime 失效）
+    const { upsertImMirrorEntry } = await import("../services/im/im-mirror-store");
+    const threadId = "thr_list_target";
+    mkdirSync(tempConfigDir, { recursive: true });
+    writeFileSync(
+      getAgentSessionsIndexPath(),
+      JSON.stringify({
+        version: 1,
+        threads: [{ id: threadId, title: "镜像目标线程", createdAt: Date.now(), updatedAt: Date.now() }]
+      }),
+      "utf-8"
+    );
+    upsertImMirrorEntry({ threadId, accountId: feishuId, chatId: "oc_l", carrier: "card" });
+
+    const listed = (await handlers[IM_IPC_CHANNELS.MIRROR_LIST]?.({})) as {
+      entries: ImMirrorEntryPublic[];
+      titles: Record<string, string>;
+    };
+    expect(listed.entries).toEqual([{ threadId, accountId: feishuId, chatId: "oc_l", carrier: "card", createdAt: expect.any(Number) }]);
+    expect(listed.titles[threadId]).toBe("镜像目标线程");
+
+    await handlers[IM_IPC_CHANNELS.DELETE_ACCOUNT]?.({ id: feishuId });
+    const afterDelete = (await handlers[IM_IPC_CHANNELS.MIRROR_GET_SETTINGS]?.({})) as {
+      enabledMirrorAccountId: string | null;
+    };
+    expect(afterDelete.enabledMirrorAccountId).toBeNull();
+    const listedAfter = (await handlers[IM_IPC_CHANNELS.MIRROR_LIST]?.({})) as { entries: unknown[] };
+    expect(listedAfter.entries).toEqual([]);
   });
 });

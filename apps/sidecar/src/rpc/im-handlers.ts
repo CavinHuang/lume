@@ -1,5 +1,5 @@
-import { IM_IPC_CHANNELS } from "@lume/shared";
-import type { ImAccountCreateInput, ImAccountUpdateInput, ImWeixinLoginStartInput } from "@lume/shared";
+import { IM_IPC_CHANNELS, IM_MIRROR_TIERS } from "@lume/shared";
+import type { ImAccountCreateInput, ImAccountUpdateInput, ImMirrorSettingsPublic, ImWeixinLoginStartInput } from "@lume/shared";
 import {
   createImAccount,
   deleteImAccount,
@@ -8,6 +8,13 @@ import {
   updateImAccount
 } from "../services/im/im-config-manager";
 import { deleteImThreadBindingsForAccount } from "../services/im/im-thread-binding-store";
+import {
+  getImMirrorSettings,
+  listImMirrorEntries,
+  removeImMirrorEntriesForAccount,
+  setMirrorOwnerAccountId
+} from "../services/im/im-mirror-store";
+import { getAgentThreadMeta } from "../services/agent/agent-thread-manager";
 import { imRuntimeManager, type ImRuntimeManager } from "../services/im/im-runtime-manager";
 import {
   weixinLoginManager,
@@ -24,6 +31,8 @@ import {
   imAccountCreateInputSchema,
   imAccountIdInputSchema,
   imAccountUpdateInputSchema,
+  imMirrorEmptyInputSchema,
+  imMirrorSetOwnerInputSchema,
   imWeixinLoginPollInputSchema,
   imWeixinLoginStartInputSchema
 } from "./schemas";
@@ -82,7 +91,43 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
       runtimeManager.stopAccount(payload.id);
       deleteImAccount(payload.id);
       deleteImThreadBindingsForAccount(payload.id);
+      // #544 镜像联动：清映射，若该账号正承担镜像则一并归还 owner 位
+      removeImMirrorEntriesForAccount(payload.id);
       return { ok: true };
+    },
+    [IM_IPC_CHANNELS.MIRROR_GET_SETTINGS]: async (params) => {
+      validateInput(imMirrorEmptyInputSchema, params, IM_IPC_CHANNELS.MIRROR_GET_SETTINGS);
+      return getImMirrorSettings();
+    },
+    [IM_IPC_CHANNELS.MIRROR_SET_OWNER]: async (params) => {
+      const { accountId } = validateInput(
+        imMirrorSetOwnerInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_SET_OWNER
+      ) as { accountId: string };
+      const fail = (error: string): { ok: false; error: string; settings: ImMirrorSettingsPublic } => ({
+        ok: false,
+        error,
+        settings: getImMirrorSettings()
+      });
+      const account = getImAccount(accountId);
+      if (!account) return fail("IM 账号不存在");
+      if (!account.enabled) return fail("该账号未启用，请先启用后再承担镜像");
+      const tier = IM_MIRROR_TIERS[account.provider];
+      if (tier.tier === "unsupported") return fail(tier.reason ?? "该渠道暂不支持镜像");
+      const current = getImMirrorSettings().enabledMirrorAccountId;
+      if (current && current !== accountId) return fail("已由其他账号承担镜像，请先取消原承担账号");
+      setMirrorOwnerAccountId(accountId);
+      return { ok: true, settings: getImMirrorSettings() };
+    },
+    [IM_IPC_CHANNELS.MIRROR_LIST]: async (params) => {
+      validateInput(imMirrorEmptyInputSchema, params, IM_IPC_CHANNELS.MIRROR_LIST);
+      const entries = listImMirrorEntries();
+      const titles: Record<string, string> = {};
+      for (const entry of entries) {
+        titles[entry.threadId] = getAgentThreadMeta(entry.threadId)?.title ?? "";
+      }
+      return { entries, titles };
     },
     [IM_IPC_CHANNELS.START_ACCOUNT]: async (params) => {
       const payload = validateInput(

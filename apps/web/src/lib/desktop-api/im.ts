@@ -7,6 +7,8 @@ import type {
   ImAccount,
   ImAccountCreateInput,
   ImAccountUpdateInput,
+  ImMirrorEntryPublic,
+  ImMirrorSettingsPublic,
   ImWeixinLoginPollInput,
   ImWeixinLoginPollResult,
   ImWeixinLoginStartInput,
@@ -25,6 +27,23 @@ export const updateImAccount = (id: string, input: ImAccountUpdateInput) =>
 
 export const deleteImAccount = (id: string) =>
   sidecarCall<{ ok: true }>(IM_IPC_CHANNELS.DELETE_ACCOUNT, { id })
+
+// ─── #544 会话镜像 ───
+
+export const getImMirrorSettings = () =>
+  sidecarCall<ImMirrorSettingsPublic>(IM_IPC_CHANNELS.MIRROR_GET_SETTINGS, {})
+
+export const setImMirrorOwner = (accountId: string) =>
+  sidecarCall<{ ok: boolean; error?: string; settings: ImMirrorSettingsPublic }>(
+    IM_IPC_CHANNELS.MIRROR_SET_OWNER,
+    { accountId },
+  )
+
+export const listImMirrors = () =>
+  sidecarCall<{ entries: ImMirrorEntryPublic[]; titles: Record<string, string> }>(
+    IM_IPC_CHANNELS.MIRROR_LIST,
+    {},
+  )
 
 export const startImAccount = (id: string) =>
   sidecarCall<ImAccount | { ok: true }>(IM_IPC_CHANNELS.START_ACCOUNT, { id })

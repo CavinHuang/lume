@@ -624,6 +624,13 @@ export const cliAuthSessionInputSchema = z.object({
   sessionKey: idSchema,
 });
 
+export const imMirrorSetOwnerInputSchema = z.object({
+  accountId: idSchema,
+});
+
+// GET_SETTINGS / LIST 均无入参
+export const imMirrorEmptyInputSchema = z.object({}).strict().optional();
+
 const readingSourceKindSchema = z.enum([
   "weread",
   "manual",
