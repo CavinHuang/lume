@@ -722,4 +722,21 @@ describe("per-account IMAP connection pool (#698)", () => {
     );
     expect(sumDelta).toBe(after.error_destroy - before.error_destroy);
   });
+
+  it("matches pooled candidates case-insensitively on the imap host (#698 终审 P2)", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    // 独立 email ⇒ 独立 gate,免模块级计数器冲刷
+    const account = credential();
+
+    await protocol.getFolderStatus({ ...account, imapHost: "IMAP.QQ.COM" }, "INBOX");
+    const before = imapPoolMetricsSnapshot();
+    // 仅字面量大小写差异不是换源:必须命中而非 miss_host 销毁重建
+    await protocol.getFolderStatus({ ...account, imapHost: "imap.qq.com" }, "INBOX");
+
+    const after = imapPoolMetricsSnapshot();
+    expect(after.pool_hit - before.pool_hit).toBe(1);
+    expect(after.created - before.created).toBe(0);
+    expect(after.miss_host - before.miss_host).toBe(0);
+  });
 });
