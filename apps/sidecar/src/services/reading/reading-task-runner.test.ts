@@ -50,6 +50,21 @@ describe("reading-task-runner", () => {
     });
   });
 
+  test("兜底模板笔记骨架字段完整（#531 复审平替 isReadingNoteSkeletonValid）", async () => {
+    // 模板生成侧失去独立校验器后的守护：骨架四件套不得退化成空串/空数组
+    const result = await runReadingTaskAsync(
+      { trigger: "manual", depth: "seed" },
+      { generateNote: () => ({}) }
+    );
+    expect(result.status).toBe("completed");
+    const [note] = listReadingNotes({ includeHidden: true });
+    const isNonEmptyText = (value: unknown) => typeof value === "string" && value.trim().length > 0;
+    expect(isNonEmptyText(note?.title)).toBe(true);
+    expect(isNonEmptyText(note?.summary)).toBe(true);
+    expect(isNonEmptyText(note?.body)).toBe(true);
+    expect(Array.isArray(note?.tags) && note.tags.length > 0).toBe(true);
+  });
+
   test("creates a seed note from saved source evidence", async () => {
     const book = addReadingBook({
       title: "我在北京送快递",
