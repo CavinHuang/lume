@@ -1,7 +1,11 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { randomBytes } from "node:crypto";
 import { join } from "node:path";
+import { getImThreadBindingsPath } from "../infra/config-paths";
+import { decryptSecret, installSecretEncryptionKey } from "../infra/secret-crypto";
 import {
   createImBindingKey,
   getImThreadBindingByPeer,
@@ -17,6 +21,8 @@ describe("im-thread-binding-store", () => {
     prevConfigDir = process.env.LUME_CONFIG_DIR;
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-im-binding-test-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
+    // 统一 v2 形态：contextToken 断言按 roundtrip 写，不依赖 legacy fallback
+    installSecretEncryptionKey(randomBytes(32).toString("base64"));
   });
 
   afterEach(() => {
@@ -98,7 +104,7 @@ describe("im-thread-binding-store", () => {
     });
 
     expect(updated.threadId).toBe("thread-replacement");
-    expect(updated.contextToken).toBe("ctx-new");
+    expect(updated.contextToken && decryptSecret(updated.contextToken)).toBe("ctx-new");
     // 旧线程反查为空(换绑收敛,不双挂)
     expect(getImThreadBindingByThreadId("thread-1")).toBeNull();
     expect(getImThreadBindingByThreadId("thread-replacement")?.key).toBe("weixin/account-1/group/room-1");
@@ -122,5 +128,47 @@ describe("im-thread-binding-store", () => {
       contextToken: "ctx-b"
     });
     expect(updated.threadId).toBe("thread-keep");
+  });
+
+  test("#598 contextToken（钉钉 sessionWebhook）加密落盘：明文不出现在文件中", () => {
+    const webhook = "https://oapi.dingtalk.com/robot/sendBySession?access_token=sekrit-webhook";
+    upsertImThreadBinding({
+      provider: "dingtalk",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "user-1",
+      threadId: "thread-1",
+      contextToken: webhook
+    });
+
+    const raw = readFileSync(getImThreadBindingsPath(), "utf-8");
+    expect(raw).not.toContain(webhook);
+    expect(raw).not.toContain("sekrit-webhook");
+    const stored = (JSON.parse(raw) as { bindings: Array<{ contextToken?: string }> }).bindings[0]
+      ?.contextToken;
+    expect(stored?.startsWith("enc:v2:")).toBe(true);
+    expect(stored && decryptSecret(stored)).toBe(webhook);
+  });
+
+  test("#598 换绑未传 contextToken 时保留存量密文，不重复加密", () => {
+    const webhook = "https://oapi.dingtalk.com/robot/sendBySession?access_token=sekrit-keep";
+    upsertImThreadBinding({
+      provider: "dingtalk",
+      accountId: "account-2",
+      peerKind: "dm",
+      peerId: "user-2",
+      threadId: "thread-keep-token",
+      contextToken: webhook
+    });
+    const updated = upsertImThreadBinding({
+      provider: "dingtalk",
+      accountId: "account-2",
+      peerKind: "dm",
+      peerId: "user-2",
+      threadId: "thread-keep-token-2"
+    });
+
+    expect(updated.contextToken?.startsWith("enc:v2:")).toBe(true);
+    expect(updated.contextToken && decryptSecret(updated.contextToken)).toBe(webhook);
   });
 });
