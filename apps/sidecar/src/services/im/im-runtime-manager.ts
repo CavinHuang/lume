@@ -47,7 +47,8 @@ function errorMessage(error: unknown): string {
 
 export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}): ImRuntimeManager {
   const workers = new Map<string, ImWorker>();
-  const pendingStarts = new Map<string, Promise<void>>();
+  const pendingStarts = new Map<string, { promise: Promise<void>; lifecycleVersion: number }>();
+  const lifecycleVersions = new Map<string, number>();
   const listAccountsFn = input.listAccounts ?? listImAccounts;
   const getRuntimeAccountFn = input.getRuntimeAccount ?? getImRuntimeAccount;
   const updateAccountFn = input.updateAccount ?? updateImAccount;
@@ -81,11 +82,17 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     async startAccount(accountId: string) {
+      const lifecycleVersion = lifecycleVersions.get(accountId) ?? 0;
       const pending = pendingStarts.get(accountId);
-      if (pending) return pending;
+      if (pending?.lifecycleVersion === lifecycleVersion) return pending.promise;
+      if (pending) {
+        try { await pending.promise; } catch { /* a fresh start may recover from the previous failure */ }
+        return this.startAccount(accountId);
+      }
       let startPromise!: Promise<void>;
       startPromise = (async () => {
         await ensureProvidersLoaded();
+        if ((lifecycleVersions.get(accountId) ?? 0) !== lifecycleVersion) return;
         const existingWorker = workers.get(accountId);
         if (existingWorker?.isRunning()) return;
         if (existingWorker) {
@@ -96,45 +103,59 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
           lastStartedAt: Date.now(),
           lastError: null
         });
+        if ((lifecycleVersions.get(accountId) ?? 0) !== lifecycleVersion) {
+          await recordStopped(accountId, updateAccountFn);
+          return;
+        }
+        let worker: ImWorker | undefined;
         try {
           const account = getRuntimeAccountFn(accountId);
-          const worker = createWorkerFn(account);
+          worker = createWorkerFn(account);
           worker.start();
           workers.set(accountId, worker);
           await updateAccountFn(accountId, {
             status: "running",
             lastError: null
           });
+          if ((lifecycleVersions.get(accountId) ?? 0) !== lifecycleVersion) {
+            if (workers.get(accountId) === worker) stopWorker(accountId, worker, workers);
+            await recordStopped(accountId, updateAccountFn);
+          }
         } catch (error) {
-          await updateAccountFn(accountId, {
-            status: "error",
-            lastError: errorMessage(error)
-          });
+          const cancelled = (lifecycleVersions.get(accountId) ?? 0) !== lifecycleVersion;
+          if (worker && (workers.get(accountId) === worker || !cancelled)) {
+            stopWorker(accountId, worker, workers);
+          }
+          if (cancelled) {
+            await recordStopped(accountId, updateAccountFn);
+            return;
+          }
+          try {
+            await updateAccountFn(accountId, {
+              status: "error",
+              lastError: errorMessage(error)
+            });
+          } catch (updateError) {
+            log.warn("启动失败状态回写失败", { accountId, error: errorMessage(updateError) });
+          }
           throw error;
         }
       })().finally(() => {
-        if (pendingStarts.get(accountId) === startPromise) pendingStarts.delete(accountId);
+        if (pendingStarts.get(accountId)?.promise === startPromise) pendingStarts.delete(accountId);
       });
-      pendingStarts.set(accountId, startPromise);
+      pendingStarts.set(accountId, { promise: startPromise, lifecycleVersion });
       return startPromise;
     },
 
     stopAccount(accountId: string) {
+      lifecycleVersions.set(accountId, (lifecycleVersions.get(accountId) ?? 0) + 1);
       const worker = workers.get(accountId);
-      if (!worker) return;
-      worker.stop();
-      workers.delete(accountId);
-      void Promise.resolve(updateAccountFn(accountId, {
-        status: "stopped",
-        lastStoppedAt: Date.now()
-      })).catch((error: unknown) => {
-        // stopAll 触发时账号可能已被删除（updateImAccount throw），floating reject 会崩进程
-        log.warn("停止状态回写失败", { accountId, error: errorMessage(error) });
-      });
+      if (worker) stopWorker(accountId, worker, workers);
+      void recordStopped(accountId, updateAccountFn);
     },
 
     stopAll() {
-      for (const accountId of Array.from(workers.keys())) {
+      for (const accountId of new Set([...workers.keys(), ...pendingStarts.keys()])) {
         this.stopAccount(accountId);
       }
     },
@@ -143,6 +164,31 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
       return Array.from(workers.keys());
     }
   };
+}
+
+function stopWorker(accountId: string, worker: ImWorker, workers: Map<string, ImWorker>): void {
+  try {
+    worker.stop();
+  } catch (error) {
+    log.warn("停止 worker 失败", { accountId, error: errorMessage(error) });
+  } finally {
+    if (workers.get(accountId) === worker) workers.delete(accountId);
+  }
+}
+
+async function recordStopped(
+  accountId: string,
+  updateAccount: (id: string, input: ImAccountUpdateInput) => unknown | Promise<unknown>
+): Promise<void> {
+  try {
+    await updateAccount(accountId, {
+      status: "stopped",
+      lastStoppedAt: Date.now()
+    });
+  } catch (error) {
+    // stopAll 触发时账号可能已被删除（updateImAccount throw），floating reject 会崩进程
+    log.warn("停止状态回写失败", { accountId, error: errorMessage(error) });
+  }
 }
 
 export const imRuntimeManager = createImRuntimeManager();
