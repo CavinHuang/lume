@@ -16,12 +16,8 @@ function createRegistry(): PendingRequestRegistry<string, string | null, TestMet
 }
 
 type Registry = PendingRequestRegistry<string, string | null, TestMeta>;
-type WaitOverrides = Partial<
-  Omit<Parameters<Registry["wait"]>[1], "signal" | "abortValue" | "timeoutValue" | "supersededValue">
-> & {
-  timeoutValue?: () => string | null;
-  supersededValue?: () => string | null;
-};
+// signal 保持显式位置参数;其余 wait 入参(含三个 value 工厂)均可覆盖。
+type WaitOverrides = Omit<Partial<Parameters<Registry["wait"]>[1]>, "signal">;
 
 function baseInput(signal: AbortSignal, overrides: WaitOverrides = {}) {
   return {
@@ -73,7 +69,7 @@ describe("PendingRequestRegistry", () => {
     expect(registry.list()).toHaveLength(0);
   });
 
-  test("预 abort signal:wait 立即以 abort 值结束,不挂到超时", async () => {
+  test("预 abort signal:wait 立即以 abort 值结束,beforeResolve 以 aborted 理由执行,不挂到超时", async () => {
     const registry = createRegistry();
     const controller = new AbortController();
     controller.abort();
@@ -81,11 +77,28 @@ describe("PendingRequestRegistry", () => {
     const onTimeout = (): void => {
       timedOut = true;
     };
-    const promise = registry.wait("k1", baseInput(controller.signal, { onTimeout }));
+    const cleaned: Array<{ value: string | null; reason: string }> = [];
+    const promise = registry.wait("k1", baseInput(controller.signal, {
+      onTimeout,
+      beforeResolve: (value, reason) => {
+        cleaned.push({ value, reason });
+      }
+    }));
     expect(await promise).toBeNull();
     expect(timedOut).toBe(false);
+    // 核心语义钉死:短路也必须走持久化清理(删除该调用属回归)。
+    expect(cleaned).toEqual([{ value: null, reason: "aborted" }]);
     // 表项不应登记。
     expect(registry.list()).toHaveLength(0);
+  });
+
+  test("updateMeta:Object.assign 原位 mutate,不存在 key 时静默 no-op", () => {
+    const registry = createRegistry();
+    // no-op 不抛。
+    expect(() => registry.updateMeta("missing", { threadId: "t-x" })).not.toThrow();
+    registry.wait("k1", baseInput(new AbortController().signal));
+    registry.updateMeta("k1", { threadId: "t-2" });
+    expect(registry.getMeta("k1")?.threadId).toBe("t-2");
   });
 
   test("superseded 重入:旧等待者以 superseded 值结束且跳过 beforeResolve,新等待者正常", async () => {

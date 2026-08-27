@@ -177,6 +177,8 @@ describe("分层方向守卫(#289)", () => {
   test("#578 登记:域间值导入不得超出存量豁免台账", () => {
     const servicesRoot = join(repositoryRoot, "apps/sidecar/src/services");
     const violations: string[] = [];
+    // 本轮实际命中的边全集:台账活性正控的对照面。
+    const observedEdges = new Set<string>();
     for (const file of listTsFiles(servicesRoot)) {
       if (/\.test\.ts$|\.bench\.ts$/.test(file)) continue;
       const relPath = relative(servicesRoot, file).split("\\").join("/");
@@ -195,12 +197,20 @@ describe("分层方向守卫(#289)", () => {
         );
         if (!paired && !directed) continue;
         const edge = `${relPath} => ${dstDomain}`;
-        if (!legacyEdgeExemptions.has(edge)) {
+        observedEdges.add(edge);
+        // 单向绊线不可被台账中和:命中禁入向即违规,豁免只服务双向对存量。
+        if (directed) {
+          violations.push(`${edge} (单向禁入边,不受豁免保护)`);
+        } else if (!legacyEdgeExemptions.has(edge)) {
           violations.push(edge);
         }
       }
     }
     expect(violations).toEqual([]);
+    // 台账活性正控:每条豁免必须仍对应一条现存活边——判定逻辑回归(恒空
+    // violations)或消环后忘删豁免都会在此变红。
+    const stale = [...legacyEdgeExemptions].filter((entry) => !observedEdges.has(entry));
+    expect(stale).toEqual([]);
   });
 
   // 正控(#503):守卫只断言空违规时,解析器回归会静默瘫痪而 CI 保持绿。

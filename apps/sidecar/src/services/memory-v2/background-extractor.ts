@@ -6,8 +6,7 @@ import { AGENT_IPC_CHANNELS, type AgentAskUserQuestionRequest, type AgentToolPer
 import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
-// #580 review fix:出站通知直连 infra 单点(getOutboundNotificationWriter),
-// 剪断 memory-v2→agent 借道边并同步删除 layering 台账豁免。
+// #580 review fix:出站通知直连 infra 单点,不经 agent 域借道。
 import { getOutboundNotificationWriter } from "../infra/outbound-notification";
 import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";

@@ -4,8 +4,7 @@ import { randomUUID } from "node:crypto";
 import type { SDKMessage } from "@lume/agent-sdk";
 import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryDreamResult, type MemoryOrganizeProgress } from "@lume/shared";
 import { appendAgentThreadSDKMessages } from "../agent/agent-thread-manager";
-// #580 review fix:出站通知直连 infra 单点(getOutboundNotificationWriter),
-// 剪断 memory-v2→agent 借道边并同步删除 layering 台账豁免。
+// #580 review fix:出站通知直连 infra 单点,不经 agent 域借道。
 import { getOutboundNotificationWriter } from "../infra/outbound-notification";
 import { runDreamOrganizer } from "./dream-organizer";
 import { buildDreamEvidenceWindow, type DreamEvidenceCursor } from "./dream-evidence";

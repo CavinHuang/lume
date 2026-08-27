@@ -1,10 +1,7 @@
 /**
- * #522 八个新 RPC 入参 schema 的回归防线(review 补测):
- * 此前这些 handler 走裸 cast,desktop 端载荷形状漂移会静默通过;收口后
- * strict schema "非法即 throw"——若 desktop 发送 schema 外多余字段,合并后
- * 将直接运行时 throw 而 CI 全绿,故逐 schema 钉死"现网最小合法载荷通过 +
- * 多余字段拒绝"。desktopAssistantSettingsInputSchema 为 strip 模式(settings
- * 整体替换语义),验证的是剥离而非拒绝。
+ * #522 八个新 RPC 入参 schema 回归防线(review 补测):strict schema 下
+ * desktop 载荷漂移会运行时 throw 而 CI 全绿,故逐 schema 钉死"合法载荷通过 +
+ * 多余字段拒绝"。
  */
 import { describe, expect, test } from "bun:test";
 import {
@@ -31,9 +28,10 @@ describe("#522 rpc input schemas", () => {
     expect(() => routineGetByDateInputSchema.parse({ date: "d", extra: 1 })).toThrow();
   });
 
-  test("routineTriggerEntry:entryId 合法通过,缺失拒绝", () => {
+  test("routineTriggerEntry:entryId 合法通过,缺失/多余拒绝", () => {
     expect(routineTriggerEntryInputSchema.parse({ entryId: "e-1" })).toEqual({ entryId: "e-1" });
     expect(() => routineTriggerEntryInputSchema.parse({})).toThrow();
+    expect(() => routineTriggerEntryInputSchema.parse({ entryId: "e-1", extra: 1 })).toThrow();
   });
 
   test("testSearchBackend:七值 provider 白名单,枚举外与多余字段拒绝", () => {
@@ -44,22 +42,31 @@ describe("#522 rpc input schemas", () => {
     expect(() => testSearchBackendInputSchema.parse({ provider: "exa", extra: 1 })).toThrow();
   });
 
-  test("githubReleaseList:全 optional 分页项,非正整数拒绝", () => {
+  test("githubReleaseList:全 optional 分页项,int+positive 在两个字段上都钉死", () => {
     expect(githubReleaseListOptionsSchema.parse({})).toEqual({});
     expect(githubReleaseListOptionsSchema.parse({ perPage: 10, page: 2, includePrerelease: true })).toEqual({
       perPage: 10,
       page: 2,
       includePrerelease: true
     });
-    expect(() => githubReleaseListOptionsSchema.parse({ perPage: 0 })).toThrow();
-    expect(() => githubReleaseListOptionsSchema.parse({ perPage: 1.5 })).toThrow();
+    // perPage 与 page 逐一变异(page 此前零拒绝路径)
+    for (const bad of [{ perPage: 0 }, { perPage: 1.5 }, { page: 0 }, { page: -3 }, { page: 0.5 }]) {
+      expect(() => githubReleaseListOptionsSchema.parse(bad)).toThrow();
+    }
+    expect(() => githubReleaseListOptionsSchema.parse({ page: 1, extra: 1 })).toThrow();
   });
 
-  test("agentGenerateTitle:五 optional 字段自由组合,多余字段拒绝", () => {
+  test("agentGenerateTitle:五 optional 字段全量载荷与空对象均通过,多余字段拒绝", () => {
     expect(agentGenerateTitleInputSchema.parse({})).toEqual({});
-    const partial = { sourceText: "s", modelRef: "anthropic/claude" };
-    expect(agentGenerateTitleInputSchema.parse(partial)).toEqual(partial);
-    expect(() => agentGenerateTitleInputSchema.parse({ ...partial, channelId: undefined, extra: 1 })).toThrow();
+    const full = {
+      sourceText: "s",
+      userMessage: "m",
+      modelRef: "anthropic/claude",
+      channelId: "c-1",
+      modelId: "claude"
+    };
+    expect(agentGenerateTitleInputSchema.parse(full)).toEqual(full);
+    expect(() => agentGenerateTitleInputSchema.parse({ ...full, extra: 1 })).toThrow();
   });
 
   test("agentWelcomeSuggestion:双 optional 字段通过,多余字段拒绝", () => {
@@ -68,7 +75,23 @@ describe("#522 rpc input schemas", () => {
     expect(() => agentWelcomeSuggestionInputSchema.parse({ ...input, extra: 1 })).toThrow();
   });
 
-  test("desktopAssistantSettings(strip 模式):必填齐备通过且未知字段被剥离,缺必填拒绝", () => {
+  test("desktopAssistantSettings(strip 模式):最小必填载荷通过(旧快照无 optional 三键),未知字段剥离;缺必填拒绝", () => {
+    // renderer 回传旧版 GET_SETTINGS 快照的真实形态:后加 optional 三键不存在。
+    const minimal = {
+      enabled: false,
+      allowedApps: [],
+      retentionHours: 24,
+      maxStorageBytes: 1024
+    };
+    expect(desktopAssistantSettingsInputSchema.parse(minimal)).toEqual(minimal);
+    expect(desktopAssistantSettingsInputSchema.parse({ ...minimal, attackerKey: "x" }))
+      .not.toHaveProperty("attackerKey");
+    expect(() =>
+      desktopAssistantSettingsInputSchema.parse({ enabled: true, allowedApps: [] })
+    ).toThrow();
+  });
+
+  test("desktopAssistantSettings(strip 模式):完整八键载荷通过且未知字段被剥离,缺必填拒绝", () => {
     const full = {
       enabled: true,
       allowedApps: ["Code.exe"],
