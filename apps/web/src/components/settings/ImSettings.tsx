@@ -4,6 +4,7 @@ import { toast } from 'sonner'
 import {
   ChevronDown,
   KeyRound,
+  Link2,
   Loader2,
   MessageCircle,
   Play,
@@ -13,16 +14,31 @@ import {
   Send,
   Square,
   Trash2,
+  Unlink2,
+  X,
 } from 'lucide-react'
-import { IM_PROVIDER_LABELS, type CliAuthPollResult, type ImAccount, type ImMirrorEntryPublic, type ImMirrorSettingsPublic, type ImProvider } from '@lume/shared'
+import {
+  IM_MIRROR_TIERS,
+  IM_PROVIDER_LABELS,
+  type CliAuthPollResult,
+  type ImAccount,
+  type ImMirrorAttachCandidate,
+  type ImMirrorEntryPublic,
+  type ImMirrorSettingsPublic,
+  type ImProvider,
+} from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
+  attachImMirror,
   cancelCliAuth,
   createImAccount,
   deleteImAccount,
+  detachImMirror,
   getImMirrorSettings,
   listImAccounts,
+  listImMirrorAttachCandidates,
   listImMirrors,
+  listThreads,
   openExternal,
   pollCliAuth,
   pollWeixinLogin,
@@ -117,6 +133,13 @@ export function ImSettings() {
   const [accounts, setAccounts] = React.useState<ImAccount[]>([])
   const [mirrorSettings, setMirrorSettings] = React.useState<ImMirrorSettingsPublic | null>(null)
   const [mirrorEntries, setMirrorEntries] = React.useState<ImMirrorEntryPublic[]>([])
+  const [mirrorTitles, setMirrorTitles] = React.useState<Record<string, string>>({})
+  const [attachPanelAccountId, setAttachPanelAccountId] = React.useState<string | null>(null)
+  const [attachCandidates, setAttachCandidates] = React.useState<ImMirrorAttachCandidate[]>([])
+  const [attachChatId, setAttachChatId] = React.useState('')
+  const [attachThreadId, setAttachThreadId] = React.useState('')
+  const [attachBusy, setAttachBusy] = React.useState(false)
+  const [attachThreads, setAttachThreads] = React.useState<Array<{ id: string; title: string }>>([])
   const [draft, setDraft] = React.useState<ImAccountDraft>(() => createImAccountDraft(defaultWorkspaceId))
   const [loading, setLoading] = React.useState(true)
   const [busyId, setBusyId] = React.useState<string | null>(null)
@@ -144,6 +167,7 @@ export function ImSettings() {
       setAccounts(accountList)
       setMirrorSettings(settings)
       setMirrorEntries(mirrorList.entries)
+      setMirrorTitles(mirrorList.titles)
     } catch (error) {
       console.error('[IM 设置] 加载失败:', error)
       toast.error('加载 IM 账号失败')
@@ -200,6 +224,70 @@ export function ImSettings() {
       toast.error('镜像设置失败')
     } finally {
       setBusyId(null)
+    }
+  }, [])
+
+  // ─── #544 attach 附着档：机器人已在的群 × 桌面线程 显式配对 ───
+  const attachEntryTitle = (threadId: string): string => mirrorTitles[threadId] || threadId.slice(0, 8)
+
+  const openAttachPanel = React.useCallback(async (account: ImAccount) => {
+    setAttachPanelAccountId(account.id)
+    setAttachBusy(true)
+    try {
+      const [candidates, threadList] = await Promise.all([
+        listImMirrorAttachCandidates(account.id),
+        listThreads() as Promise<Array<{ id: string; title: string; updatedAt?: number }>>,
+      ])
+      setAttachCandidates(candidates.candidates)
+      setAttachChatId(candidates.candidates[0]?.peerId ?? '')
+      setAttachThreadId('')
+      setAttachThreads(
+        [...threadList]
+          .sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+          .slice(0, 30)
+          .map((thread) => ({ id: thread.id, title: thread.title || thread.id.slice(0, 8) }))
+      )
+    } catch (error) {
+      console.error('[IM 设置] 附着候选加载失败:', error)
+      toast.error('加载附着候选失败')
+    } finally {
+      setAttachBusy(false)
+    }
+  }, [])
+
+  const handleAttach = React.useCallback(async (account: ImAccount) => {
+    if (!attachChatId || !attachThreadId) {
+      toast.error('请选择群与桌面线程')
+      return
+    }
+    setAttachBusy(true)
+    try {
+      const result = await attachImMirror({ accountId: account.id, chatId: attachChatId, threadId: attachThreadId })
+      if (!result.ok) {
+        toast.error(result.error ?? '附着失败')
+        return
+      }
+      toast.success('已附着：该桌面线程的运行将同步到此群')
+      setAttachPanelAccountId(null)
+      await refresh()
+    } catch (error) {
+      console.error('[IM 设置] 附着失败:', error)
+      toast.error('附着失败')
+    } finally {
+      setAttachBusy(false)
+    }
+  }, [attachChatId, attachThreadId, refresh])
+
+  const handleDetach = React.useCallback(async (threadId: string) => {
+    setAttachBusy(true)
+    try {
+      await detachImMirror(threadId)
+      await refresh()
+    } catch (error) {
+      console.error('[IM 设置] 解除附着失败:', error)
+      toast.error('解除附着失败')
+    } finally {
+      setAttachBusy(false)
     }
   }, [])
 
@@ -474,29 +562,48 @@ export function ImSettings() {
               {formatImAccountsEmptyCopy(accounts)}
             </div>
           ) : accounts.map((account) => (
-            <AccountRow
-              key={account.id}
-              account={account}
-              workspaceName={workspaceNameForAccount(account)}
-              provider={account.provider}
-              busy={busyId === account.id}
-              onToggleEnabled={handleToggleEnabled}
-              onStart={handleStart}
-              onStop={handleStop}
-              onDelete={handleDelete}
-              mirrorEnabled={mirrorSettings?.enabledMirrorAccountId === account.id}
-              mirrorState={resolveImMirrorSwitchState({
-                account,
-                settings: mirrorSettings,
-                ownerLabel: mirrorOwner?.label
-              })}
-              mirrorHint={formatImMirrorRowHint({
-                account,
-                settings: mirrorSettings,
-                mirroredCount
-              })}
-              onToggleMirror={handleToggleMirror}
-            />
+            <React.Fragment key={account.id}>
+              <AccountRow
+                account={account}
+                workspaceName={workspaceNameForAccount(account)}
+                provider={account.provider}
+                busy={busyId === account.id}
+                onToggleEnabled={handleToggleEnabled}
+                onStart={handleStart}
+                onStop={handleStop}
+                onDelete={handleDelete}
+                mirrorEnabled={mirrorSettings?.enabledMirrorAccountId === account.id}
+                mirrorState={resolveImMirrorSwitchState({
+                  account,
+                  settings: mirrorSettings,
+                  ownerLabel: mirrorOwner?.label
+                })}
+                mirrorHint={formatImMirrorRowHint({
+                  account,
+                  settings: mirrorSettings,
+                  mirroredCount
+                })}
+                onToggleMirror={handleToggleMirror}
+              />
+              {IM_MIRROR_TIERS[account.provider].tier === 'attach' && account.enabled && (
+                <AttachPanel
+                  entries={mirrorEntries.filter((entry) => entry.accountId === account.id)}
+                  entryTitle={attachEntryTitle}
+                  open={attachPanelAccountId === account.id}
+                  candidates={attachCandidates}
+                  threads={attachThreads}
+                  chatId={attachChatId}
+                  threadId={attachThreadId}
+                  busy={attachBusy}
+                  onOpen={() => void openAttachPanel(account)}
+                  onChatChange={setAttachChatId}
+                  onThreadChange={setAttachThreadId}
+                  onAttach={() => void handleAttach(account)}
+                  onClose={() => setAttachPanelAccountId(null)}
+                  onDetach={(threadId) => void handleDetach(threadId)}
+                />
+              )}
+            </React.Fragment>
           ))}
           {!loading && accounts.length > 0 && mirrorOwner && (
             <div className="lume-subpanel px-3 py-2 text-[12px] text-[var(--text-3)]">
@@ -819,6 +926,125 @@ function AccountRow({
           <Trash2 />
         </Button>
       </div>
+    </div>
+  )
+}
+
+/** #544 attach 附着档子面板：已有群 × 桌面线程 显式配对（仅 attach 档账号渲染） */
+function AttachPanel({
+  entries,
+  entryTitle,
+  open,
+  candidates,
+  threads,
+  chatId,
+  threadId,
+  busy,
+  onOpen,
+  onChatChange,
+  onThreadChange,
+  onAttach,
+  onClose,
+  onDetach,
+}: {
+  entries: ImMirrorEntryPublic[]
+  entryTitle: (threadId: string) => string
+  open: boolean
+  candidates: ImMirrorAttachCandidate[]
+  threads: Array<{ id: string; title: string }>
+  chatId: string
+  threadId: string
+  busy: boolean
+  onOpen: () => void
+  onChatChange: (chatId: string) => void
+  onThreadChange: (threadId: string) => void
+  onAttach: () => void
+  onClose: () => void
+  onDetach: (threadId: string) => void
+}) {
+  return (
+    <div className="lume-subpanel flex flex-col gap-2 border-t border-dashed px-3 py-2">
+      {entries.map((entry) => (
+        <div key={entry.threadId} className="flex items-center justify-between gap-2 text-[12px] text-[var(--text-3)]">
+          <span className="flex min-w-0 items-center gap-1.5">
+            <Link2 size={12} className="shrink-0" />
+            <span className="truncate">
+              {entryTitle(entry.threadId)} → {entry.chatId}
+            </span>
+          </span>
+          <Button
+            variant="ghost"
+            size="icon-sm"
+            aria-label={`解除附着-${entryTitle(entry.threadId)}`}
+            onClick={() => onDetach(entry.threadId)}
+            disabled={busy}
+            title="解除附着（群与聊天记录保留）"
+          >
+            <Unlink2 />
+          </Button>
+        </div>
+      ))}
+      {open ? (
+        <div className="flex flex-col gap-2">
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+            <span className="text-[12px] text-[var(--text-3)]">群</span>
+            <Select value={chatId} onValueChange={(value) => onChatChange(value ?? '')}>
+              <SelectTrigger className="h-8 w-full bg-[var(--surface-1)] text-[13px]">
+                <span className="truncate text-left">
+                  {candidates.find((candidate) => candidate.peerId === chatId)?.peerName || chatId || '暂无可附着群'}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                {candidates.length === 0 ? (
+                  <SelectItem value="__none__" disabled>
+                    把机器人拉入群并发送一条消息后出现在这里
+                  </SelectItem>
+                ) : (
+                  candidates.map((candidate) => (
+                    <SelectItem key={candidate.peerId} value={candidate.peerId}>
+                      {candidate.peerName || candidate.peerId}
+                    </SelectItem>
+                  ))
+                )}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="grid grid-cols-[auto_minmax(0,1fr)] items-center gap-2">
+            <span className="text-[12px] text-[var(--text-3)]">线程</span>
+            <Select value={threadId} onValueChange={(value) => onThreadChange(value ?? '')}>
+              <SelectTrigger className="h-8 w-full bg-[var(--surface-1)] text-[13px]">
+                <span className="truncate text-left">
+                  {threads.find((thread) => thread.id === threadId)?.title || '选择要镜像的桌面线程'}
+                </span>
+              </SelectTrigger>
+              <SelectContent>
+                {threads.map((thread) => (
+                  <SelectItem key={thread.id} value={thread.id}>
+                    {thread.title}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+          <div className="flex items-center justify-end gap-1">
+            <Button variant="ghost" size="sm" onClick={onClose} disabled={busy}>
+              <X />
+              取消
+            </Button>
+            <Button size="sm" onClick={onAttach} disabled={busy || !chatId || !threadId}>
+              {busy ? <Loader2 className="animate-spin" /> : <Link2 />}
+              附着
+            </Button>
+          </div>
+        </div>
+      ) : (
+        <div>
+          <Button variant="ghost" size="sm" onClick={onOpen} disabled={busy} title="把某个桌面线程的运行同步到机器人已在的群">
+            <Link2 />
+            附着已有群
+          </Button>
+        </div>
+      )}
     </div>
   )
 }

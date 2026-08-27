@@ -24,4 +24,13 @@ describe('ImSettings layout', () => {
     expect(source).toContain('会话镜像已开启')
     expect(source).toContain('formatImMirrorRowHint')
   })
+
+  test('#544 attach: per-account attach panel pairs an existing group with a desktop thread', () => {
+    expect(source).toContain('listImMirrorAttachCandidates')
+    expect(source).toContain('attachImMirror')
+    expect(source).toContain('detachImMirror')
+    expect(source).toContain('附着已有群')
+    expect(source).toContain('解除附着')
+    expect(source).toContain("IM_MIRROR_TIERS[account.provider].tier === 'attach'")
+  })
 })

@@ -7,6 +7,7 @@ import type {
   ImAccount,
   ImAccountCreateInput,
   ImAccountUpdateInput,
+  ImMirrorAttachCandidate,
   ImMirrorEntryPublic,
   ImMirrorSettingsPublic,
   ImWeixinLoginPollInput,
@@ -44,6 +45,21 @@ export const listImMirrors = () =>
     IM_IPC_CHANNELS.MIRROR_LIST,
     {},
   )
+
+export const listImMirrorAttachCandidates = (accountId: string) =>
+  sidecarCall<{ ok: boolean; candidates: ImMirrorAttachCandidate[] }>(
+    IM_IPC_CHANNELS.MIRROR_ATTACH_CANDIDATES,
+    { accountId },
+  )
+
+export const attachImMirror = (input: { accountId: string; chatId: string; threadId: string }) =>
+  sidecarCall<{ ok: boolean; error?: string; entry?: ImMirrorEntryPublic }>(
+    IM_IPC_CHANNELS.MIRROR_ATTACH,
+    input,
+  )
+
+export const detachImMirror = (threadId: string) =>
+  sidecarCall<{ ok: true }>(IM_IPC_CHANNELS.MIRROR_DETACH, { threadId })
 
 export const startImAccount = (id: string) =>
   sidecarCall<ImAccount | { ok: true }>(IM_IPC_CHANNELS.START_ACCOUNT, { id })

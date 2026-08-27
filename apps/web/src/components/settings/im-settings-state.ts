@@ -159,8 +159,8 @@ export function resolveImMirrorSwitchState(input: {
     return { disabled: true, hint: tier.reason ?? '该渠道暂不支持镜像' }
   }
   if (tier.tier === 'attach') {
-    // 附着档：载体与回流链路已就绪，但「已有群 × 桌面线程」配对选择入口未开放
-    return { disabled: true, hint: '附着模式选择入口将在后续版本开放' }
+    // 附着档：开关无意义（不做自动建群），配对走行内「附着已有群」入口
+    return { disabled: true, hint: '附着模式：用下方「附着已有群」选择群与桌面线程配对' }
   }
   if (!input.account.enabled) {
     return { disabled: true, hint: '账号未启用' }
