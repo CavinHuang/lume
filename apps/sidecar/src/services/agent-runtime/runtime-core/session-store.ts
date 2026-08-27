@@ -6,6 +6,7 @@ import {
   readFileSync,
   readdirSync,
   renameSync,
+  statSync,
   writeFileSync
 } from "node:fs";
 import { join } from "node:path";
@@ -131,6 +132,24 @@ function normalizeStoredData(sessionId: string, cwd: string, raw?: Partial<Runti
     messages: Array.isArray(raw?.messages) ? raw.messages : [],
     sessionMessages: Array.isArray(raw?.sessionMessages) ? raw.sessionMessages : []
   };
+}
+
+/**
+ * #527-三审①：进程内会话数据缓存。此前每次 appendMessage 的成本是三条
+ * 「全量读 transcript.json（readStoredData）+ 全量读 transcript.jsonl 数行数
+ * （tryAppend）+ 全量写 transcript.json」中的前两条。缓存以双文件 mtime+size
+ * 校验：外部进程改动任何一侧即失效回退冷读，行为与旧实现一致；自身写后仅
+ * stat 刷新（无额外读）。json 状态源契约不变。
+ */
+interface SessionFileSnapshot {
+  mtimeMs: number;
+  size: number;
+}
+
+interface JsonlTail {
+  bytes: number;
+  lines: number;
+  endsWithNewline: boolean;
 }
 
 function readStoredData(sessionDir: string, sessionId: string, cwd: string): RuntimeCoreStoredData {
@@ -307,11 +326,60 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
   private readonly sessionDir: string;
   private readonly sessionId: string;
   private readonly cwd: string;
+  private snapshot: { json: SessionFileSnapshot | undefined; jsonl: SessionFileSnapshot | undefined } | null = null;
+  private cachedData: RuntimeCoreStoredData | null = null;
+  private jsonlTail: JsonlTail | null = null;
 
   constructor(cwd: string, sessionId: string, agentDir?: string) {
     this.cwd = cwd;
     this.sessionId = sessionId;
     this.sessionDir = getRuntimeCoreSessionDir(sessionId, agentDir);
+  }
+
+  private statOrUndefined(path: string): SessionFileSnapshot | undefined {
+    try {
+      const s = statSync(path);
+      return { mtimeMs: s.mtimeMs, size: s.size };
+    } catch {
+      return undefined;
+    }
+  }
+
+  private snapshotsMatch(
+    current: { json: SessionFileSnapshot | undefined; jsonl: SessionFileSnapshot | undefined },
+  ): boolean {
+    if (!this.snapshot) return false;
+    const same = (a: SessionFileSnapshot | undefined, b: SessionFileSnapshot | undefined) =>
+      a === b || (!!a && !!b && a.mtimeMs === b.mtimeMs && a.size === b.size);
+    return same(current.json, this.snapshot.json) && same(current.jsonl, this.snapshot.jsonl);
+  }
+
+  /** 冷读后建立快照与 jsonl 尾部计数（唯一一次整读 jsonl） */
+  private loadData(): RuntimeCoreStoredData {
+    const current = {
+      json: this.statOrUndefined(getTranscriptJsonPath(this.sessionDir)),
+      jsonl: this.statOrUndefined(getTranscriptJsonlPath(this.sessionDir))
+    };
+    if (!this.snapshotsMatch(current)) {
+      this.snapshot = current;
+      const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
+      const rawJsonl = current.jsonl ? readFileSync(getTranscriptJsonlPath(this.sessionDir), "utf-8") : "";
+      this.jsonlTail = current.jsonl
+        ? {
+            bytes: Buffer.byteLength(rawJsonl, "utf-8"),
+            lines: rawJsonl.split("\n").filter((line) => line.trim().length > 0).length,
+            endsWithNewline: rawJsonl.endsWith("\n")
+          }
+        : { bytes: 0, lines: 0, endsWithNewline: false };
+      this.cachedData = data;
+      return data;
+    }
+    return this.cachedData!;
+  }
+
+  getSessionFile(): string | undefined {
+    const path = getTranscriptJsonlPath(this.sessionDir);
+    return existsSync(path) ? path : undefined;
   }
 
   getSessionId(): string {
@@ -322,17 +390,31 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     return this.sessionDir;
   }
 
-  getSessionFile(): string | undefined {
+  private refreshSnapshot(): void {
+    this.snapshot = {
+      json: this.statOrUndefined(getTranscriptJsonPath(this.sessionDir)),
+      jsonl: this.statOrUndefined(getTranscriptJsonlPath(this.sessionDir))
+    };
+  }
+
+  /** 仅降级路径用：整读一次 jsonl 重测尾部状态 */
+  private remeasureJsonl(): void {
     const path = getTranscriptJsonlPath(this.sessionDir);
-    return existsSync(path) ? path : undefined;
+    const raw = existsSync(path) ? readFileSync(path, "utf-8") : "";
+    this.jsonlTail = {
+      bytes: Buffer.byteLength(raw, "utf-8"),
+      lines: raw.split("\n").filter((line) => line.trim().length > 0).length,
+      endsWithNewline: raw.endsWith("\n")
+    };
   }
 
   appendModelChange(provider: string, modelId: string): void {
-    const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
+    const data = this.loadData();
     data.metadata.model = `${provider}/${modelId}`;
     data.metadata.updatedAt = new Date().toISOString();
-    // 只改元数据，jsonl 内容不变，跳过其全量重写
-    writeTranscriptJson(this.sessionDir, data);
+    // 只改元数据，jsonl 内容不变，跳过其重写；序列化去 pretty（#527 三审①）
+    writeTextAtomic(getTranscriptJsonPath(this.sessionDir), JSON.stringify(data));
+    this.refreshSnapshot();
   }
 
   appendMessage(message: RuntimeCoreAppendMessageInput): string {
@@ -340,7 +422,12 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
   }
 
   appendMessages(messages: RuntimeCoreAppendMessageInput[]): string[] {
-    const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
+    const fastAppendEligible =
+      !!this.jsonlTail && this.snapshotsMatch({
+        json: this.statOrUndefined(getTranscriptJsonPath(this.sessionDir)),
+        jsonl: this.statOrUndefined(getTranscriptJsonlPath(this.sessionDir))
+      });
+    const data = this.loadData();
     const uuids: string[] = [];
     for (const message of messages) {
       const uuid = randomUUID();
@@ -348,15 +435,45 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
       applyStoredMessage(data, message, uuid);
     }
     finalizeStoredData(data);
+    // #527 三审①：json 状态源保持既有契约不变；序列化去 pretty 减半字节
+    writeTextAtomic(getTranscriptJsonPath(this.sessionDir), JSON.stringify(data));
+
     if (messages.length === 1) {
-      // 单条：jsonl 只追加一行（含换行守卫），json 仍为状态源全量写
-      writeTranscriptJson(this.sessionDir, data);
-      if (!tryAppendTranscriptJsonlLine(this.sessionDir, data.sessionMessages[data.sessionMessages.length - 1]!, data.sessionMessages.length - 1)) {
-        rewriteTranscriptJsonl(this.sessionDir, data);
+      const appended = data.sessionMessages[data.sessionMessages.length - 1]!;
+      let appendedViaFastPath = false;
+      if (fastAppendEligible) {
+        try {
+          const tail = this.jsonlTail!;
+          const prefix = tail.bytes > 0 && !tail.endsWithNewline ? "\n" : "";
+          const chunk = `${prefix}${JSON.stringify(appended)}\n`;
+          appendFileSync(getTranscriptJsonlPath(this.sessionDir), chunk, "utf-8");
+          this.jsonlTail = {
+            bytes: tail.bytes + Buffer.byteLength(chunk, "utf-8"),
+            lines: tail.lines + 1,
+            endsWithNewline: true
+          };
+          appendedViaFastPath = true;
+        } catch {
+          appendedViaFastPath = false;
+        }
+      }
+      if (!appendedViaFastPath) {
+        // 旧守卫路径：磁盘真实行数不符时退回全量重写（语义不变）
+        if (!tryAppendTranscriptJsonlLine(this.sessionDir, appended, data.sessionMessages.length - 1)) {
+          rewriteTranscriptJsonl(this.sessionDir, data);
+        }
+        this.remeasureJsonl();
       }
     } else {
       writeStoredData(this.sessionDir, data);
+      const jsonlPayload = data.sessionMessages.map((message) => JSON.stringify(message)).join("\n");
+      this.jsonlTail = {
+        bytes: Buffer.byteLength(jsonlPayload, "utf-8"),
+        lines: data.sessionMessages.length,
+        endsWithNewline: false
+      };
     }
+    this.refreshSnapshot();
     return uuids;
   }
 

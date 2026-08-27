@@ -1,6 +1,7 @@
 import { lstat, mkdir, mkdtemp, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { readFileSync, realpathSync, statSync } from "node:fs";
-import { spawnSync } from "node:child_process";
+import { execFile as execFileCallback } from "node:child_process";
+import { promisify } from "node:util";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -18,6 +19,34 @@ import {
 import { createLogger } from "../../infra/logger";
 
 const log = createLogger("coding-run-checkpoint-service");
+
+// #527-7：checkpoint 全部 git 子进程由 spawnSync 迁异步 execFile——run 收尾与
+// revert 数百文件的场景下，同步 spawn 会冻结事件循环。包装层保留 spawnSync 的
+// {status, stdout} 判定语义（非零退出/超时/ENOENT 一律折为失败态），调用点
+// 只需多一个 await。
+const execFile = promisify(execFileCallback);
+
+async function runGit(
+  args: string[],
+  options: { cwd?: string; maxBuffer?: number; timeout?: number },
+): Promise<{ status: number; stdout: Buffer }> {
+  try {
+    const { stdout } = await execFile("git", args, {
+      ...(options.cwd !== undefined ? { cwd: options.cwd } : {}),
+      encoding: "buffer",
+      windowsHide: true,
+      ...(options.maxBuffer !== undefined ? { maxBuffer: options.maxBuffer } : {}),
+      ...(options.timeout !== undefined ? { timeout: options.timeout } : {}),
+    });
+    return { status: 0, stdout: stdout as Buffer };
+  } catch (error) {
+    const failure = error as { code?: unknown; stdout?: unknown };
+    return {
+      status: typeof failure.code === "number" ? failure.code : -1,
+      stdout: Buffer.isBuffer(failure.stdout) ? failure.stdout : Buffer.alloc(0),
+    };
+  }
+}
 
 const CHECKPOINT_FILE_PREFIX = "coding-checkpoint-";
 const MAX_DIFF_SNAPSHOT_BYTES = 10 * 1024 * 1024;
@@ -153,13 +182,14 @@ export async function persistCodingRunCheckpoint(input: {
   if (Object.keys(checkpoint.files).length === 0) return false;
 
   const afterSnapshots = await captureAfterSnapshots(Object.keys(checkpoint.files));
+  const repositories = await discoverRepositoryRoots(roots);
   const record: CodingRunCheckpointRecord = {
     runId: input.runId,
     cwd: resolve(input.cwd),
     roots,
     baselineCommit: input.baselineCommit,
     baselineCommits: input.baselineCommits,
-    repositories: discoverRepositoryRoots(roots),
+    repositories,
     after: await captureFingerprints(Object.keys(checkpoint.files)),
     afterSnapshots,
     checkpoint,
@@ -241,28 +271,28 @@ function getSnapshotText(snapshot: FileSnapshot): string {
   return snapshot.content ?? "";
 }
 
-function getBeforeSnapshotText(
+async function getBeforeSnapshotText(
   record: CodingRunCheckpointRecord,
   snapshot: FileSnapshot,
   absolutePath: string,
   probe?: GitProbeCache,
-): string {
+): Promise<string> {
   if (!snapshot.unsupported) return getSnapshotText(snapshot);
-  const baselineContent = readBaselineContent(record, absolutePath, probe);
+  const baselineContent = await readBaselineContent(record, absolutePath, probe);
   if (baselineContent !== null) return baselineContent;
   throw new Error("Turn 开始前的文件快照不可预览，且无法从基线提交恢复");
 }
 
-function readBaselineContent(
+async function readBaselineContent(
   record: CodingRunCheckpointRecord,
   absolutePath: string,
   probe?: GitProbeCache,
-): string | null {
-  // #616③:root 发现至多 2 次 spawnSync rev-parse——批量 diff 循环内逐文件裸调
-  // 会以数百次同步 spawn 冻结事件循环;经 probe 按 path 记忆化(#572 同款)
+): Promise<string | null> {
+  // #616③:root 发现至多 2 次 rev-parse——批量 diff 循环内逐文件裸调
+  // 会以数百次 spawn 冻结事件循环;经 probe 按 path 记忆化(#572 同款)
   let gitRoot = probe?.gitRoots.get(resolve(absolutePath));
   if (gitRoot === undefined) {
-    gitRoot = findGitRootForPath(absolutePath);
+    gitRoot = await findGitRootForPath(absolutePath);
     probe?.gitRoots.set(resolve(absolutePath), gitRoot);
   }
   if (!gitRoot) return null;
@@ -275,13 +305,13 @@ function readBaselineContent(
   const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot, canonicalRoot);
   if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
   const gitPath = relative(canonicalRoot, canonicalPath).split(sep).join("/");
-  const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
+  const result = await runGit(["show", `${baselineCommit}:${gitPath}`], {
     cwd: canonicalRoot,
-    encoding: "utf8",
-    windowsHide: true,
     maxBuffer: MAX_DIFF_SNAPSHOT_BYTES,
   });
-  return result.status === 0 ? result.stdout.replace(/\r\n/g, "\n").replace(/\r/g, "\n") : null;
+  return result.status === 0
+    ? result.stdout.toString("utf8").replace(/\r\n/g, "\n").replace(/\r/g, "\n")
+    : null;
 }
 
 function fingerprintsEqual(left: CodingFileFingerprint, right: CodingFileFingerprint): boolean {
@@ -329,7 +359,7 @@ export async function getCodingFileDiffFromCheckpoint(input: {
   if (!record) return null;
 
   const roots = record.roots?.length ? record.roots : [record.cwd];
-  const selectedRoot = resolveRepositoryRoot(record, input.rootId);
+  const selectedRoot = await resolveRepositoryRoot(record, input.rootId);
   if (!selectedRoot) throw new Error(`找不到 Coding 根目录: ${input.rootId}`);
   const absolutePath = resolve(selectedRoot, input.path);
   if (!roots.some((root) => isPathInside(root, absolutePath))) {
@@ -382,7 +412,7 @@ export async function getCodingFileDiffFromCheckpoint(input: {
       removedLines: 0,
     });
   }
-  const oldContent = getBeforeSnapshotText(record, before, absolutePath);
+  const oldContent = await getBeforeSnapshotText(record, before, absolutePath);
   const newContent = getSnapshotText(after);
   let persistedDiff = record.diffs?.[absolutePath];
   if (!record.diffs && record.afterSnapshots) {
@@ -413,7 +443,7 @@ export async function getCodingDiffMediaFromCheckpoint(input: {
   const record = await loadCodingRunCheckpoint(input);
   if (!record) return null;
   const roots = record.roots?.length ? record.roots : [record.cwd];
-  const selectedRoot = resolveRepositoryRoot(record, input.rootId);
+  const selectedRoot = await resolveRepositoryRoot(record, input.rootId);
   if (!selectedRoot) throw new Error(`找不到 Coding 根目录: ${input.rootId}`);
   const absolutePath = resolve(selectedRoot, input.path);
   if (!roots.some((root) => isPathInside(root, absolutePath))) {
@@ -433,7 +463,7 @@ export async function getCodingDiffMediaFromCheckpoint(input: {
     after = await capturePreviewSnapshot(absolutePath);
   }
   const snapshot = input.side === "before" ? before : after;
-  const data = snapshotBuffer(record, snapshot, absolutePath, input.side);
+  const data = await snapshotBuffer(record, snapshot, absolutePath, input.side);
   if (!data) throw new Error(input.side === "before" ? "文件没有可用的旧版本" : "文件没有可用的新版本");
   if (data.length > 15 * 1024 * 1024) throw new Error("媒体文件过大，无法预览");
   return {
@@ -474,12 +504,12 @@ function checkpointMediaType(path: string): string {
   return types[extension ?? ""] ?? "application/octet-stream";
 }
 
-function snapshotBuffer(
+async function snapshotBuffer(
   record: CodingRunCheckpointRecord,
   snapshot: FileSnapshot,
   absolutePath: string,
   side: "before" | "after",
-): Buffer | null {
+): Promise<Buffer | null> {
   if (!snapshot.existed) return null;
   if (snapshot.contentBase64) return Buffer.from(snapshot.contentBase64, "base64");
   if (snapshot.content !== undefined) {
@@ -504,8 +534,8 @@ function snapshotBuffer(
   }
 }
 
-function readBaselineBuffer(record: CodingRunCheckpointRecord, absolutePath: string): Buffer | null {
-  const gitRoot = findGitRootForPath(absolutePath);
+async function readBaselineBuffer(record: CodingRunCheckpointRecord, absolutePath: string): Promise<Buffer | null> {
+  const gitRoot = await findGitRootForPath(absolutePath);
   if (!gitRoot) return null;
   // 与 readBaselineContent 同口径：git toplevel 为 realpath 而入参可能为词法路径，
   // 归属判定与 relative() 必须同侧规范化
@@ -515,12 +545,11 @@ function readBaselineBuffer(record: CodingRunCheckpointRecord, absolutePath: str
   const baselineCommit = findBaselineCommitForGitRoot(record, gitRoot, canonicalRoot);
   if (!baselineCommit || !/^[0-9a-f]{7,64}$/i.test(baselineCommit)) return null;
   const gitPath = relative(canonicalRoot, canonicalPath).split(sep).join("/");
-  const result = spawnSync("git", ["show", `${baselineCommit}:${gitPath}`], {
+  const result = await runGit(["show", `${baselineCommit}:${gitPath}`], {
     cwd: canonicalRoot,
-    windowsHide: true,
     maxBuffer: 15 * 1024 * 1024,
   });
-  return result.status === 0 && Buffer.isBuffer(result.stdout) ? result.stdout : null;
+  return result.status === 0 ? result.stdout : null;
 }
 
 export async function getCodingRunRoots(input: {
@@ -587,21 +616,31 @@ async function ensurePersistedDiffs(
 
 async function createPersistedDiffs(record: CodingRunCheckpointRecord): Promise<Record<string, PersistedCodingFileDiff>> {
   const probe = createGitProbeCache();
-  const entries = Object.entries(record.afterSnapshots ?? {}).flatMap(([absolutePath, after], index) => {
+  // #527-7：getBeforeSnapshotText 已异步化（基线内容走 execFile），同步 flatMap
+  // 改顺序 for 循环逐项 try/catch，语义与原跳过失败项一致
+  const entries: Array<{
+    id: string;
+    absolutePath: string;
+    oldContent: string;
+    newContent: string;
+  }> = [];
+  let index = 0;
+  for (const [absolutePath, after] of Object.entries(record.afterSnapshots ?? {})) {
     const before = Object.values(record.checkpoint.files)
       .find((snapshot) => resolve(snapshot.path) === resolve(absolutePath));
-    if (!before) return [];
+    if (!before) continue;
     try {
-      return [{
+      entries.push({
         id: String(index).padStart(6, "0"),
         absolutePath,
-        oldContent: getBeforeSnapshotText(record, before, absolutePath, probe),
+        oldContent: await getBeforeSnapshotText(record, before, absolutePath, probe),
         newContent: getSnapshotText(after),
-      }];
+      });
     } catch {
-      return [];
+      // 与原实现一致：无法取旧内容的文件直接不参与持久化 diff
     }
-  });
+    index += 1;
+  }
   if (entries.length === 0) return {};
 
   const directory = await mkdtemp(join(tmpdir(), "lume-coding-diffs-"));
@@ -613,7 +652,7 @@ async function createPersistedDiffs(record: CodingRunCheckpointRecord): Promise<
       writeFile(join(beforeDirectory, `${entry.id}.txt`), entry.oldContent, "utf8"),
       writeFile(join(afterDirectory, `${entry.id}.txt`), entry.newContent, "utf8"),
     ]));
-    const result = spawnSync("git", [
+    const result = await runGit([
       "diff",
       "--no-index",
       "--no-ext-diff",
@@ -623,12 +662,10 @@ async function createPersistedDiffs(record: CodingRunCheckpointRecord): Promise<
       beforeDirectory,
       afterDirectory,
     ], {
-      encoding: "utf8",
-      windowsHide: true,
       maxBuffer: MAX_BATCH_DIFF_OUTPUT_BYTES,
     });
-    const parsed = (result.status === 0 || result.status === 1) && typeof result.stdout === "string"
-      ? parseBatchDiffs(result.stdout)
+    const parsed = (result.status === 0 || result.status === 1)
+      ? parseBatchDiffs(result.stdout.toString("utf8"))
       : new Map<string, CodingDiffLine[]>();
     return Object.fromEntries(entries.map((entry) => {
       const lines = parsed.get(entry.id) ?? createContentDiffLines(entry.oldContent, entry.newContent);
@@ -661,7 +698,7 @@ async function createSnapshotDiffLines(oldContent: string, newContent: string) {
       writeFile(beforePath, oldContent, "utf8"),
       writeFile(afterPath, newContent, "utf8"),
     ]);
-    const result = spawnSync("git", [
+    const result = await runGit([
       "diff",
       "--no-index",
       "--no-ext-diff",
@@ -671,12 +708,10 @@ async function createSnapshotDiffLines(oldContent: string, newContent: string) {
       beforePath,
       afterPath,
     ], {
-      encoding: "utf8",
-      windowsHide: true,
       maxBuffer: MAX_DIFF_SNAPSHOT_BYTES * 3,
     });
-    if ((result.status === 0 || result.status === 1) && typeof result.stdout === "string") {
-      return parseUnifiedDiff(result.stdout);
+    if (result.status === 0 || result.status === 1) {
+      return parseUnifiedDiff(result.stdout.toString("utf8"));
     }
     return createContentDiffLines(oldContent, newContent);
   } finally {
@@ -711,8 +746,15 @@ export async function revertCodingRun(input: {
     .filter((path) => !requestedPaths || requestedPaths.has(resolve(path)));
   if (paths.length === 0) throw new Error("当前 Coding Run 没有工作区内的文件检查点");
   const gitProbe = createGitProbeCache();
-  const committedPaths = paths.filter((path) => hasCommitBoundaryForPath(record, path, gitProbe));
-  const rewindablePaths = paths.filter((path) => !committedPaths.includes(path));
+  // #527-7：hasCommitBoundary 已异步化；顺序遍历保持与原 filter 一致的路径序
+  const committedPathSet = new Set<string>();
+  for (const path of paths) {
+    if (await hasCommitBoundaryForPath(record, path, gitProbe)) {
+      committedPathSet.add(path);
+    }
+  }
+  const committedPaths = paths.filter((path) => committedPathSet.has(path));
+  const rewindablePaths = paths.filter((path) => !committedPathSet.has(path));
   const alreadyRestored = await findAlreadyRestoredFiles(record, rewindablePaths);
   const conflicts = (await findFingerprintConflicts(record, rewindablePaths))
     .filter((path) => !alreadyRestored.includes(path));
@@ -770,13 +812,13 @@ export async function revertCodingFileFromCheckpoint(input: {
   const record = await loadCodingRunCheckpoint(input);
   if (!record) throw new Error("当前 Coding Run 没有可撤销的文件检查点");
   const roots = record.roots?.length ? record.roots : [record.cwd];
-  const selectedRoot = resolveRepositoryRoot(record, input.rootId);
+  const selectedRoot = await resolveRepositoryRoot(record, input.rootId);
   if (!selectedRoot) throw new Error(`找不到 Coding 根目录: ${input.rootId}`);
   const safePath = resolve(selectedRoot, input.path);
   await assertNoSymlinkPathForRoots(roots, safePath);
   const snapshot = Object.values(record.checkpoint.files).find((candidate) => resolve(candidate.path) === safePath);
   if (!snapshot) throw new Error("该文件不属于当前 Coding Run 的检查点");
-  if (hasCommitBoundaryForPath(record, snapshot.path)) {
+  if (await hasCommitBoundaryForPath(record, snapshot.path)) {
     return { filesChanged: [], nonRewindableFiles: [snapshot.path], status: "committed_boundary" };
   }
   const conflicts = await findFingerprintConflicts(record, [snapshot.path]);
@@ -864,11 +906,15 @@ function createGitProbeCache(): GitProbeCache {
   return { gitRoots: new Map(), headByRoot: new Map() };
 }
 
-function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: string, probe?: GitProbeCache): boolean {
+async function hasCommitBoundaryForPath(
+  record: CodingRunCheckpointRecord,
+  path: string,
+  probe?: GitProbeCache,
+): Promise<boolean> {
   const cacheKey = resolve(path);
   let gitRoot = probe?.gitRoots.get(cacheKey);
   if (gitRoot === undefined) {
-    gitRoot = findGitRootForPath(path);
+    gitRoot = await findGitRootForPath(path);
     probe?.gitRoots.set(cacheKey, gitRoot);
   }
   if (!gitRoot) return false;
@@ -877,53 +923,52 @@ function hasCommitBoundaryForPath(record: CodingRunCheckpointRecord, path: strin
   if (!baselineCommit) return false;
   let currentCommit = probe?.headByRoot.get(rootKey);
   if (currentCommit === undefined) {
-    const result = spawnSync("git", ["rev-parse", "HEAD"], {
-      cwd: gitRoot,
-      encoding: "utf8",
-      windowsHide: true,
-    });
-    currentCommit = result.status === 0 ? result.stdout.trim() : "";
+    const result = await runGit(["rev-parse", "HEAD"], { cwd: gitRoot });
+    currentCommit = result.status === 0 ? result.stdout.toString("utf8").trim() : "";
     probe?.headByRoot.set(rootKey, currentCommit);
   }
   return Boolean(currentCommit && currentCommit !== baselineCommit);
 }
 
-function discoverRepositoryRoots(roots: string[]): Record<string, string> {
+async function discoverRepositoryRoots(roots: string[]): Promise<Record<string, string>> {
   const repositories: Record<string, string> = {};
   for (const root of roots) {
-    const gitRoot = findGitRootForPath(root) ?? resolve(root);
+    const gitRoot = await findGitRootForPath(root) ?? resolve(root);
     repositories[codingRootId(gitRoot)] = gitRoot;
   }
   return repositories;
 }
 
-function resolveRepositoryRoot(record: CodingRunCheckpointRecord, rootId?: string): string | undefined {
+async function resolveRepositoryRoot(record: CodingRunCheckpointRecord, rootId?: string): Promise<string | undefined> {
   if (!rootId) return record.cwd;
   const persisted = record.repositories?.[rootId];
   if (persisted) return persisted;
   const roots = record.roots?.length ? record.roots : [record.cwd];
-  return roots.find((root) => codingRootId(findGitRootForPath(root) ?? root) === rootId);
+  for (const root of roots) {
+    // 与原 find 谓词逐字对齐：按 gitRoot 归一 id 匹配，但返回的是根列表里的原项
+    const gitRoot = await findGitRootForPath(root);
+    if (codingRootId(gitRoot ?? root) === rootId) return root;
+  }
+  return undefined;
 }
 
-function findGitRootForPath(path: string): string | null {
+async function findGitRootForPath(path: string): Promise<string | null> {
   let cwd = resolve(path);
-  try {
-    const metadata = spawnSync("git", ["rev-parse", "--show-toplevel"], {
-      cwd,
-      encoding: "utf8",
-      windowsHide: true,
-      timeout: 1000,
-    });
-    if (metadata.status === 0 && metadata.stdout.trim()) return resolve(metadata.stdout.trim());
-  } catch {
-    // A file path is not a valid cwd; retry from its parent.
-  }
-  cwd = dirname(cwd);
-  const result = spawnSync("git", ["rev-parse", "--show-toplevel"], {
+  // A file path is not a valid cwd; retry from its parent.
+  // execFile 对无效 cwd 以 ENOENT 拒绝 → runGit 折为 status=-1 失败态，与原语义一致
+  const metadata = await runGit(["rev-parse", "--show-toplevel"], {
     cwd,
-    encoding: "utf8",
-    windowsHide: true,
     timeout: 1000,
   });
-  return result.status === 0 && result.stdout.trim() ? resolve(result.stdout.trim()) : null;
+  if (metadata.status === 0 && metadata.stdout.toString("utf8").trim()) {
+    return resolve(metadata.stdout.toString("utf8").trim());
+  }
+  cwd = dirname(cwd);
+  const result = await runGit(["rev-parse", "--show-toplevel"], {
+    cwd,
+    timeout: 1000,
+  });
+  return result.status === 0 && result.stdout.toString("utf8").trim()
+    ? resolve(result.stdout.toString("utf8").trim())
+    : null;
 }
