@@ -68,31 +68,37 @@ describe("session-store appendMessage/appendMessages", () => {
     }
   });
 
-  test("jsonl 行数与 json 脱节时单条 append 退回全量重写", () => {
+  // #527 三审①收官（jsonl 状态源）：撕裂尾行使快路径失效，
+  // 追加时全量重建 jsonl，完好前缀无损、撕裂内容被丢弃
+  test("撕裂尾行 append 时全量重建且完好消息无损", () => {
     const { agentDir, cwd, manager } = setup();
     try {
       manager.appendMessages([
         { role: "user", content: "one" },
         { role: "user", content: "two" }
       ]);
-      // 模拟崩溃截断：丢掉最后一行（保留无尾换行格式）
+      // 模拟崩溃撕裂：最后一行变半截 JSON
       const sessionDir = manager.getSessionDir();
-      const raw = readJsonl(sessionDir);
-      const truncated = raw.split("\n").slice(0, 1).join("\n");
-      writeFileSync(join(sessionDir, "transcript.jsonl"), truncated, "utf-8");
+      const rawLines = readJsonl(sessionDir).split("\n").filter(Boolean);
+      writeFileSync(
+        join(sessionDir, "transcript.jsonl"),
+        `${rawLines[0]}\n{"uuid":"torn`,
+        "utf-8"
+      );
 
       manager.appendMessage({ role: "user", content: "three" });
       const lines = parseJsonlLines(readJsonl(sessionDir));
-      expect(lines).toHaveLength(3);
-      expect((lines[2] as { content: unknown }).content).toBe("three");
+      expect(lines).toHaveLength(2);
+      expect((lines[0] as { content: unknown }).content).toBe("one");
+      expect((lines[1] as { content: unknown }).content).toBe("three");
     } finally {
       rmSync(agentDir, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
-  // #527 三审①（缓存）：连续单条快路径下 tail 计数不得漂移丢行
-  test("连续多次单条 append 全部落盘且 json/jsonl 行数一致", () => {
+  // #527 三审①收官（缓存）：连续单条快路径下 tail 计数不得漂移丢行
+  test("连续多次单条 append 全部落盘且元数据计数一致", () => {
     const { agentDir, cwd, manager } = setup();
     try {
       for (let i = 0; i < 6; i += 1) {
@@ -102,16 +108,15 @@ describe("session-store appendMessage/appendMessages", () => {
       expect(lines).toHaveLength(6);
       const stored = JSON.parse(
         readFileSync(join(manager.getSessionDir(), "transcript.json"), "utf-8")
-      ) as { metadata?: { messageCount?: number }; messages?: unknown[] };
+      ) as { metadata?: { messageCount?: number } };
       expect(stored.metadata?.messageCount).toBe(6);
-      expect(stored.messages).toHaveLength(6);
     } finally {
       rmSync(agentDir, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
     }
   });
 
-  // #527 三审①（缓存）：外部改写 transcript.json 后追加须冷读保留外部改动
+  // #527 三审①收官（缓存）：外部改写 transcript.json 后追加须冷读保留外部改动
   test("外部修改 json 元数据后 append 不回冲", () => {
     const { agentDir, cwd, manager } = setup();
     try {
@@ -126,10 +131,56 @@ describe("session-store appendMessage/appendMessages", () => {
       manager.appendMessage({ role: "user", content: "second" });
       const after = JSON.parse(
         readFileSync(join(sessionDir, "transcript.json"), "utf-8")
-      ) as { metadata?: { tag?: string }; sessionMessages?: unknown[] };
+      ) as { metadata?: { tag?: string } };
       // 快照失效→冷读→外部 tag 进入后续写入的基线
       expect(after.metadata?.tag).toBe("external-tag");
-      expect(after.sessionMessages).toHaveLength(2);
+      expect(parseJsonlLines(readJsonl(sessionDir))).toHaveLength(2);
+    } finally {
+      rmSync(agentDir, { recursive: true, force: true });
+      rmSync(cwd, { recursive: true, force: true });
+    }
+  });
+
+  // #527 三审①收官（升级）：旧肥 json（内嵌数组）+ 缺失 jsonl 冷启动时，
+  // 首次写入必须把内嵌数组升级进 jsonl 并保持权威一致
+  test("旧格式会话首次 append 升级 jsonl 状态源", () => {
+    const { agentDir, cwd, manager } = setup();
+    try {
+      manager.appendMessage({ role: "user", content: "legacy-one" });
+      // 模拟旧世界：删除 jsonl，历史只存在于 fat json
+      rmSync(join(manager.getSessionDir(), "transcript.jsonl"));
+      // 重新放回一条伪造的旧 fat json（含 sessionMessages 内嵌）
+      const legacy = {
+        metadata: {
+          id: "session-store-test",
+          cwd,
+          model: "unknown/unknown",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+          messageCount: 1
+        },
+        messages: [{ role: "user", content: "legacy-one" }],
+        sessionMessages: [
+          {
+            uuid: "legacy-uuid",
+            role: "user",
+            timestamp: new Date().toISOString(),
+            content: "legacy-one"
+          }
+        ]
+      };
+      writeFileSync(
+        join(manager.getSessionDir(), "transcript.json"),
+        JSON.stringify(legacy),
+        "utf-8"
+      );
+
+      manager.appendMessage({ role: "user", content: "fresh-two" });
+      const lines = parseJsonlLines(readJsonl(manager.getSessionDir())) as Array<{ uuid: string; content?: unknown }>;
+      expect(lines).toHaveLength(2);
+      expect(lines[0]?.content).toBe("legacy-one"); // 内嵌历史升级进 jsonl
+      expect(lines[1]?.content).toBe("fresh-two");
+      expect(lines[0]?.uuid).toBe("legacy-uuid"); // uuid 权威随源保留
     } finally {
       rmSync(agentDir, { recursive: true, force: true });
       rmSync(cwd, { recursive: true, force: true });
