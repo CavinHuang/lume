@@ -1,3 +1,5 @@
+import type { BrowserTabDescriptor } from "@lume/shared"
+
 export interface BrowserToolSession {
   activeTabId?: string
   blockedActionLoop?: {
@@ -21,6 +23,9 @@ export interface BrowserToolSession {
     tabId: string
   }
   threadId: string
+  /** #604①:list_tabs 会话级微缓存(TTL 内复用)。open/reconcile 失配/switch 未命中即失效；
+   *  外部关 tab 超出 TTL 的窗口由 reconcile 自愈兜底。 */
+  tabsCache?: { tabs: BrowserTabDescriptor[]; fetchedAt: number }
 }
 
 export class BrowserToolSessionRegistry {
