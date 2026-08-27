@@ -7,6 +7,8 @@ import { join, relative, resolve, dirname } from "node:path";
  * 1. agent-runtime(harness)不得静态引用应用层 services/agent 的"值"
  *    ——仅允许 `import type`(运行时零依赖);宿主能力一律经 host-ports 注入。
  * 2. runtime-core 不得引用上层 runner(attempt→runner→runtime-core 单向)。
+ * 3. model-runtime 不得引用 agent-runtime(#669):thinking-budgets 下沉后
+ *    model-runtime 是被 harness 消费的唯一出口,反向值导入会瓦解该分层。
  * 测试从仓库根运行(run-unit-tests.mjs 已保证 cwd=repositoryRoot)。
  */
 // 锚定本文件位置而非 process.cwd():手动直跑(cwd=apps/sidecar 等)与
@@ -214,6 +216,25 @@ describe("分层方向守卫(#289)", () => {
     // violations)或消环后忘删豁免都会在此变红。
     const stale = [...legacyEdgeExemptions].filter((entry) => !observedEdges.has(entry));
     expect(stale).toEqual([]);
+  });
+
+  test("model-runtime 不得引用 agent-runtime(含动态 import,#669)", () => {
+    const modelRuntimeRoot = join(repositoryRoot, "apps/sidecar/src/services/model-runtime");
+    const violations: string[] = [];
+    for (const file of listTsFiles(modelRuntimeRoot)) {
+      const rel = relative(modelRuntimeRoot, file);
+      if (/\.test\.ts$|\.bench\.ts$/.test(rel)) continue;
+      for (const clause of parseImports(readFileSync(file, "utf-8"))) {
+        const target = resolveImportFromFile(file, clause.spec);
+        if (!target) continue;
+        const intoAgentRuntime =
+          target === runtimeRoot || target.startsWith(runtimeRoot);
+        if (intoAgentRuntime) {
+          violations.push(`${rel}: "${clause.spec}"${clause.isDynamic ? " (dynamic)" : ""}`);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
   });
 
   // 正控(#503):守卫只断言空违规时,解析器回归会静默瘫痪而 CI 保持绿。

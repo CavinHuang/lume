@@ -7,6 +7,7 @@ import {
   PS_DELETE_COMMAND,
   PS_DYNAMIC_EXEC_VERBS,
   PS_FORMAT_VERBS,
+  PS_START_PROCESS_SHELL_SPAWN,
   PS_STOP_VERBS,
   hasPowerShellContentSignal
 } from "../ps-dangerous-verbs";
@@ -75,7 +76,13 @@ const FORCE_CONFIRM_POWERSHELL_RULES: CommandRule[] = [
   { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_STOP_VERBS}\\b`, "i"), reason: "停止进程、服务或重启系统需要用户确认" },
   { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_DYNAMIC_EXEC_VERBS}\\b`, "i"), reason: "修改脚本执行策略或动态执行代码需要用户确认" },
   { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_FORMAT_VERBS}\\b`, "i"), reason: "格式化磁盘或卷需要用户确认" },
-  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_CLEAR_CONTENT_VERBS}\\b`, "i"), reason: "清空文件内容需要用户确认" }
+  { pattern: new RegExp(`${PS_CONFIRM_COMMAND}${PS_CLEAR_CONTENT_VERBS}\\b`, "i"), reason: "清空文件内容需要用户确认" },
+  {
+    // #713 review：Start-Process 参数列表间接拉起 shell 的确认档（包裹锚两头失配
+    // 的旁路收口，探针与锚点同源钉死）
+    pattern: new RegExp(PS_START_PROCESS_SHELL_SPAWN, "i"),
+    reason: "Start-Process 拉起 shell 子进程需要用户确认"
+  }
 ];
 
 const FORCE_CONFIRM_TOOLS = new Map<string, string>([

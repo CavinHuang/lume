@@ -1,5 +1,5 @@
 import { shellKindConservative } from "@lume/agent-sdk";
-import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS, hasPowerShellContentSignal } from "../ps-dangerous-verbs";
+import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS, PS_START_PROCESS_SHELL_SPAWN, hasPowerShellContentSignal } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
   PermissionClassifierInput,
@@ -44,7 +44,9 @@ const MEDIUM_PATTERNS = [
 // （POSIX bash 在场时 iex/ri 等撞名命令防误拦）
 const POWERSHELL_MEDIUM_PATTERNS = [
   new RegExp(String.raw`\b${PS_FULL_NAME_VERBS}\b`, "i"),
-  new RegExp(PS_DELETE_COMMAND, "i")
+  new RegExp(PS_DELETE_COMMAND, "i"),
+  // #713 review：Start-Process 参数列表间接拉起 shell（与 guardrail 确认档同源锚点）
+  new RegExp(PS_START_PROCESS_SHELL_SPAWN, "i")
 ];
 
 export interface PermissionClassifier {
