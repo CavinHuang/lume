@@ -974,7 +974,7 @@ async function createRuntimeCoreSessionImpl(
           };
           // 主槽命中（最新后台任务）
           if (continuation.checkpoint.processJobId === event.task_id) {
-            return continuationStore.update(input.runId!, {
+            return runContinuationStore.update(input.runId!, {
               status: "ready_to_resume",
               checkpoint: {
                 ...continuation.checkpoint,
@@ -995,7 +995,7 @@ async function createRuntimeCoreSessionImpl(
               ? { ...item, syntheticToolResult: synthetic, updatedAt: new Date().toISOString() }
               : item,
           );
-          return continuationStore.update(input.runId!, {
+          return runContinuationStore.update(input.runId!, {
             backgroundCheckpoints: nextOthers,
             updatedAt: new Date().toISOString(),
           });
@@ -1440,7 +1440,7 @@ async function createRuntimeCoreSessionImpl(
       systemPrompt,
       memoryContext: contextAssembly.memoryContext,
       sessionMessages: context.messages,
-      toolSchemaTokens,
+      toolSchemaTokens: estimateToolSchemaTokens(toolset.tools),
     }),
     persistSession: true,
     enableFileCheckpointing,
