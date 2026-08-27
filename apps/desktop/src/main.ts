@@ -10,6 +10,7 @@ import {
   Notification,
   protocol,
   powerMonitor,
+  powerSaveBlocker,
   safeStorage,
   screen,
   session,
@@ -93,7 +94,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
-import { MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES } from '@lume/shared'
+import { IM_IPC_CHANNELS, MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -559,6 +560,23 @@ protocol.registerSchemesAsPrivileged([
   },
 ])
 
+// #544 会话镜像保活：stream 卡片活跃期间申请 power save blocker 防系统睡眠中断远程任务。
+// 按 threadId 记账，≥1 个活跃流即持有单个 blocker；进程退出/窗口关闭随生命周期自动释放。
+const mirrorStreamActiveThreads = new Set<string>()
+let mirrorStreamBlockerId: number | null = null
+
+function updateMirrorStreamBlocker(): void {
+  const shouldBlock = mirrorStreamActiveThreads.size > 0
+  if (shouldBlock && mirrorStreamBlockerId === null) {
+    mirrorStreamBlockerId = powerSaveBlocker.start('prevent-app-suspension')
+  } else if (!shouldBlock && mirrorStreamBlockerId !== null) {
+    if (powerSaveBlocker.isStarted(mirrorStreamBlockerId)) {
+      powerSaveBlocker.stop(mirrorStreamBlockerId)
+    }
+    mirrorStreamBlockerId = null
+  }
+}
+
 const sidecarHost = createSidecarHost({
   onNotification(method, params) {
     if (method === 'system.diagnostic-content') {
@@ -589,6 +607,19 @@ const sidecarHost = createSidecarHost({
     // 而是交给 PageRenderer 处理，完成后经 render:result 把 html|error 回送 sidecar。
     if (method === 'render:request' && params && typeof params.reqId === 'string') {
       void handleRenderRequest(params)
+      return
+    }
+    // #544 镜像保活通知仅主进程消费，不下发 renderer
+    if (method === IM_IPC_CHANNELS.MIRROR_STREAM_ACTIVE) {
+      const payload = params as { threadId?: unknown; active?: unknown } | null
+      if (typeof payload?.threadId === 'string') {
+        if (payload.active === true) {
+          mirrorStreamActiveThreads.add(payload.threadId)
+        } else {
+          mirrorStreamActiveThreads.delete(payload.threadId)
+        }
+        updateMirrorStreamBlocker()
+      }
       return
     }
     showDesktopProposalNotification(method, params)
