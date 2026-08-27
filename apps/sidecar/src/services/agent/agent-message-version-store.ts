@@ -117,7 +117,9 @@ export function writeAgentMessageVersionStore(sessionId: string, store: AgentMes
     sessionId,
     updatedAt: Date.now()
   };
-  writeTextAtomic(path, JSON.stringify(payload, null, 2));
+  // #527-1：紧凑序列化降写放大——每次创建版本都会全量重写本文件，
+  // pretty print 在长会话下让磁盘字节与耗时同步翻倍
+  writeTextAtomic(path, JSON.stringify(payload));
 }
 
 export function ensureAgentMessageVersionStore(sessionId: string): AgentMessageVersionStore {

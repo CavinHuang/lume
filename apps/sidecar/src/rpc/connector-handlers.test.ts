@@ -109,3 +109,28 @@ describe("connector rpc handlers: SAVE_CREDENTIAL authType dispatch", () => {
     expect((statusAfter as ConnectorStatus).connected).toBe(false);
   });
 });
+
+describe("connector rpc handlers: GET_POOL_METRICS diagnostics (#790)", () => {
+  test("只读返回池指标快照,含八项计数器 + idle_connections + kind 细分", async () => {
+    const handlers = createConnectorHandlers();
+    const snapshot = (await handlers[CONNECTOR_IPC_CHANNELS.GET_POOL_METRICS]?.({})) as
+      | Record<string, unknown>
+      | undefined;
+    if (!snapshot) throw new Error("no handler for GET_POOL_METRICS");
+    for (const key of [
+      "pool_hit",
+      "created",
+      "miss_ttl",
+      "miss_dead",
+      "miss_host",
+      "miss_auth",
+      "miss_unselected",
+      "error_destroy",
+      "idle_connections",
+      "error_destroy_kinds",
+    ]) {
+      expect(snapshot).toHaveProperty(key);
+    }
+    expect(typeof snapshot.error_destroy_kinds).toBe("object");
+  });
+});

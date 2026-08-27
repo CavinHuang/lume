@@ -1,7 +1,5 @@
 import {
-  closeSync,
   existsSync,
-  openSync,
   readFileSync,
   renameSync,
   rmSync,
@@ -9,6 +7,7 @@ import {
 } from "node:fs";
 import { dirname, join } from "node:path";
 import { getSettingsPath } from "../infra/config-paths";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 
 export interface SidecarSettingsStore {
   [key: string]: unknown;
@@ -80,28 +79,10 @@ export async function writePersistedSettings(settings: SidecarSettingsStore): Pr
   writePersistedSettingsLocally(path, settings);
 }
 
+// 全程同步执行，锁的 takeover/release token 复核语义由共享实现统一继承（#526）
 function writePersistedSettingsLocally(path: string, settings: SidecarSettingsStore): void {
   const lockPath = join(dirname(path), "settings.json.lock");
-  let lockFd: number | null = null;
-  try {
-    try {
-      lockFd = openSync(lockPath, "wx");
-    } catch (error) {
-      let ownerPid = 0;
-      try {
-        ownerPid = Number(JSON.parse(readFileSync(lockPath, "utf-8"))?.pid ?? 0);
-      } catch {
-        // An unreadable lock is treated as live and fails closed.
-      }
-      let ownerAlive = ownerPid > 0;
-      if (ownerAlive) {
-        try { process.kill(ownerPid, 0); } catch { ownerAlive = false; }
-      }
-      if (ownerAlive || ownerPid <= 0) throw error;
-      rmSync(lockPath, { force: true });
-      lockFd = openSync(lockPath, "wx");
-    }
-    writeFileSync(lockFd, JSON.stringify({ pid: process.pid, startedAt: Date.now() }), "utf-8");
+  withIndexMutationLock(lockPath, () => {
     const tempPath = join(dirname(path), "settings.json.tmp");
     const backupPath = join(dirname(path), "settings.json.bak");
     writeFileSync(tempPath, JSON.stringify(settings, null, 2), "utf-8");
@@ -123,10 +104,5 @@ function writePersistedSettingsLocally(path: string, settings: SidecarSettingsSt
       }
       throw error;
     }
-  } finally {
-    if (lockFd !== null) {
-      closeSync(lockFd);
-      rmSync(lockPath, { force: true });
-    }
-  }
+  });
 }

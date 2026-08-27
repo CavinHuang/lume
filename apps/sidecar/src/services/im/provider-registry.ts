@@ -48,7 +48,6 @@ export interface ImProviderDefinition {
   createWorker: (account: ImRuntimeAccount, deps?: ImCreateWorkerDeps) => ImWorker;
   sendText: (input: ImSendInput) => Promise<ImSendResult>;
   sendMedia?: (input: ImSendMediaInput) => Promise<ImSendResult>;
-  createLoginManager?: () => unknown;
 }
 
 const registry = new Map<ImProvider, ImProviderDefinition>();

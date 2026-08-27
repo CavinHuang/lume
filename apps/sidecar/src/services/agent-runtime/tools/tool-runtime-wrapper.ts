@@ -386,7 +386,17 @@ async function recordFileRead(
   const canonical = resolve(input.cwd, filePath);
   if (!(await exists(canonical))) return;
   const fileStat = await stat(canonical);
-  const contentHash = createHash("sha256").update(await readFile(canonical)).digest("hex");
+  // #527-8：SDK 内置 Read 已在读盘时顺带产出原始字节摘要并随 _meta.read
+  // 传入（与账本 hashFile 同为 raw 口径），在则免二次整文件 readFile。
+  // plugin/MCP 结果与流式范围读无此字段，回落重读；_meta 由同进程 SDK 产生。
+  const knownSha =
+    readMeta && typeof readMeta === "object"
+      ? (readMeta as Record<string, unknown>).rawSha256
+      : undefined;
+  const contentHash =
+    typeof knownSha === "string" && knownSha.length > 0
+      ? knownSha
+      : createHash("sha256").update(await readFile(canonical)).digest("hex");
   const fullRead = isFullReadResult(result);
   input.fileLedger.recordRead({
     threadId: input.threadId,

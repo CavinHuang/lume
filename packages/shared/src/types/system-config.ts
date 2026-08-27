@@ -28,26 +28,3 @@ export interface LumeSystemConfig {
 }
 
 export interface EffectiveSystemConfig extends LumeSystemConfig {}
-
-export interface NetworkDiagnosticEntry {
-  name: string
-  url: string
-  ok: boolean
-  statusCode?: number
-  error?: string
-}
-
-export interface NetworkDiagnosticResult {
-  proxy: {
-    httpProxy?: string
-    httpsProxy?: string
-    noProxy?: string
-  }
-  checks: NetworkDiagnosticEntry[]
-}
-
-export const SYSTEM_CONFIG_IPC_CHANNELS = {
-  GET_EFFECTIVE: "system-config:get-effective",
-  UPDATE_SECTION: "system-config:update-section",
-  NETWORK_DIAGNOSTIC: "system-config:network-diagnostic"
-} as const

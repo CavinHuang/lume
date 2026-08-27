@@ -37,13 +37,7 @@ interface RuntimeCoreStoredData {
     content: unknown;
   }>;
   sessionMessages: RuntimeCoreStoredSessionMessage[];
-  checkpoints?: Record<string, unknown>;
 }
-
-type RuntimeCoreEntry =
-  | { type: "model_change"; provider: string; modelId: string; timestamp: number }
-  | { type: "thinking_level_change"; level: string; timestamp: number }
-  | { type: "compaction"; summary: string; leafId?: string; tokenCount?: number; metadata?: Record<string, unknown>; timestamp: number };
 
 export interface RuntimeCoreModelChange {
   provider: string;
@@ -65,12 +59,6 @@ export interface RuntimeCoreSessionContextMessage {
 
 interface RuntimeCoreSessionContext {
   messages: RuntimeCoreSessionContextMessage[];
-  model?: RuntimeCoreModelChange;
-  thinkingLevel?: string;
-}
-
-interface RuntimeCoreSessionManagerState {
-  entries: RuntimeCoreEntry[];
 }
 
 export type RuntimeCoreAppendMessageInput = {
@@ -92,18 +80,10 @@ export interface RuntimeCoreSessionManager {
   getSessionId(): string;
   getSessionDir(): string;
   getSessionFile(): string | undefined;
-  getEntries(): RuntimeCoreEntry[];
   appendModelChange(provider: string, modelId: string): void;
-  appendThinkingLevelChange(level: string): void;
   appendMessage(message: RuntimeCoreAppendMessageInput): string;
   /** 批量追加（fork/导入 rebuild）：一次读改写，替代逐条 appendMessage 的 O(n²)。 */
   appendMessages(messages: RuntimeCoreAppendMessageInput[]): string[];
-  appendCompaction(
-    summary: string,
-    leafId?: string,
-    tokenCount?: number,
-    metadata?: Record<string, unknown>
-  ): void;
   buildSessionContext(): RuntimeCoreSessionContext;
 }
 
@@ -129,10 +109,6 @@ function getTranscriptJsonlPath(dir: string): string {
   return join(dir, "transcript.jsonl");
 }
 
-function getStatePath(dir: string): string {
-  return join(dir, "runtime-state.json");
-}
-
 function ensureAgentSdkHome(agentDir: string): void {
   process.env.OPEN_AGENT_SDK_HOME = agentDir;
   process.env.CODEANY_HOME = agentDir;
@@ -153,8 +129,7 @@ function normalizeStoredData(sessionId: string, cwd: string, raw?: Partial<Runti
       forkedFrom: raw?.metadata?.forkedFrom
     },
     messages: Array.isArray(raw?.messages) ? raw.messages : [],
-    sessionMessages: Array.isArray(raw?.sessionMessages) ? raw.sessionMessages : [],
-    checkpoints: raw?.checkpoints ?? {}
+    sessionMessages: Array.isArray(raw?.sessionMessages) ? raw.sessionMessages : []
   };
 }
 
@@ -204,25 +179,6 @@ function tryAppendTranscriptJsonlLine(
   const prefix = existing.length > 0 && !existing.endsWith("\n") ? "\n" : "";
   appendFileSync(path, `${prefix}${JSON.stringify(message)}\n`, "utf-8");
   return true;
-}
-
-function readState(sessionDir: string): RuntimeCoreSessionManagerState {
-  const path = getStatePath(sessionDir);
-  if (!existsSync(path)) {
-    return { entries: [] };
-  }
-  try {
-    const parsed = JSON.parse(readFileSync(path, "utf-8")) as RuntimeCoreSessionManagerState;
-    return {
-      entries: Array.isArray(parsed.entries) ? parsed.entries : []
-    };
-  } catch {
-    return { entries: [] };
-  }
-}
-
-function writeState(sessionDir: string, state: RuntimeCoreSessionManagerState): void {
-  writeTextAtomic(getStatePath(sessionDir), JSON.stringify(state, null, 2));
 }
 
 function extractNormalizedMessages(sessionMessages: RuntimeCoreStoredSessionMessage[]): RuntimeCoreStoredData["messages"] {
@@ -371,35 +327,12 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     return existsSync(path) ? path : undefined;
   }
 
-  getEntries(): RuntimeCoreEntry[] {
-    return readState(this.sessionDir).entries;
-  }
-
   appendModelChange(provider: string, modelId: string): void {
-    const state = readState(this.sessionDir);
-    state.entries.push({
-      type: "model_change",
-      provider,
-      modelId,
-      timestamp: Date.now()
-    });
-    writeState(this.sessionDir, state);
-
     const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
     data.metadata.model = `${provider}/${modelId}`;
     data.metadata.updatedAt = new Date().toISOString();
     // 只改元数据，jsonl 内容不变，跳过其全量重写
     writeTranscriptJson(this.sessionDir, data);
-  }
-
-  appendThinkingLevelChange(level: string): void {
-    const state = readState(this.sessionDir);
-    state.entries.push({
-      type: "thinking_level_change",
-      level,
-      timestamp: Date.now()
-    });
-    writeState(this.sessionDir, state);
   }
 
   appendMessage(message: RuntimeCoreAppendMessageInput): string {
@@ -427,42 +360,10 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     return uuids;
   }
 
-  appendCompaction(
-    summary: string,
-    leafId?: string,
-    tokenCount?: number,
-    metadata?: Record<string, unknown>
-  ): void {
-    const state = readState(this.sessionDir);
-    state.entries.push({
-      type: "compaction",
-      summary,
-      leafId,
-      tokenCount,
-      metadata,
-      timestamp: Date.now()
-    });
-    writeState(this.sessionDir, state);
-  }
-
   buildSessionContext(): RuntimeCoreSessionContext {
     const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
-    const state = readState(this.sessionDir);
-    const lastModelChange = [...state.entries].reverse().find((entry) => entry.type === "model_change");
-    const lastThinkingChange = [...state.entries].reverse().find((entry) => entry.type === "thinking_level_change");
     return {
-      messages: convertSessionMessagesToContext(data),
-      ...(lastModelChange && lastModelChange.type === "model_change"
-        ? {
-            model: {
-              provider: lastModelChange.provider,
-              modelId: lastModelChange.modelId
-            }
-          }
-        : {}),
-      ...(lastThinkingChange && lastThinkingChange.type === "thinking_level_change"
-        ? { thinkingLevel: lastThinkingChange.level }
-        : {})
+      messages: convertSessionMessagesToContext(data)
     };
   }
 }

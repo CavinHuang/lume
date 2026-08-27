@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * MusicBrainz URL handler for artists, releases, and recordings
  */
@@ -77,7 +76,7 @@ function parseEntity(url: URL): { entity: MusicBrainzEntity; mbid: string } | nu
 	const entity = parts[0] as MusicBrainzEntity;
 	if (entity !== "artist" && entity !== "release" && entity !== "recording") return null;
 
-	const mbid = parts[1];
+	const mbid = parts[1] ?? "";
 	if (!/^[0-9a-fA-F-]{36}$/.test(mbid)) return null;
 
 	return { entity, mbid };

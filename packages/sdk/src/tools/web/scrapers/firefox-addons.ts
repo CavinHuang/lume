@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { LocalizedText, RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, getLocalizedText, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -97,7 +96,7 @@ export const handleFirefoxAddons: SpecialHandler = async (
 		const addonIndex = segments.indexOf("addon");
 		if (addonIndex === -1) return null;
 
-		const slug = segments[addonIndex + 1] ? decodeURIComponent(segments[addonIndex + 1]) : "";
+		const slug = segments[addonIndex + 1] ? decodeURIComponent(segments[addonIndex + 1] ?? "") : "";
 		if (!slug) return null;
 
 		const apiUrl = `https://addons.mozilla.org/api/v5/addons/addon/${encodeURIComponent(slug)}/`;

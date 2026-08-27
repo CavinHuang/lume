@@ -21,7 +21,6 @@ export interface PersonaCorrectionInput {
 
 export const PERSONA_IPC_CHANNELS = {
   GET: "persona:get",
-  UPDATE: "persona:update",
   CORRECT: "persona:correct",
   REGENERATE: "persona:regenerate",
 } as const;

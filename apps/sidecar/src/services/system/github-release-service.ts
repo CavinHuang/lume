@@ -1,31 +1,16 @@
-import type { GitHubRelease, GitHubReleaseListOptions } from "@lume/shared";
+import type { GitHubRelease } from "@lume/shared";
 import { createLogger } from "../infra/logger";
 
 const GITHUB_API_BASE = "https://api.github.com";
 const GITHUB_REPO_OWNER = process.env.LUME_GITHUB_RELEASE_OWNER?.trim() || "CavinHUang";
 const GITHUB_REPO_NAME = process.env.LUME_GITHUB_RELEASE_REPO?.trim() || "Lume";
-const CACHE_TTL_MS = 5 * 60 * 1000;
 const log = createLogger("github-release");
-
-interface ReleaseCache {
-  data: GitHubRelease[];
-  timestamp: number;
-}
-
-let releaseCache: ReleaseCache | null = null;
 
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
   }
   return String(error);
-}
-
-function filterReleases(releases: GitHubRelease[], includePrerelease: boolean): GitHubRelease[] {
-  if (includePrerelease) {
-    return releases;
-  }
-  return releases.filter((release) => !release.prerelease && !release.draft);
 }
 
 async function fetchFromGitHub<T>(endpoint: string): Promise<T> {
@@ -51,52 +36,4 @@ export async function getLatestGitHubRelease(): Promise<GitHubRelease | null> {
     log.warn("failed to fetch latest release", { error: getErrorMessage(error) });
     return null;
   }
-}
-
-export async function listGitHubReleases(
-  options: GitHubReleaseListOptions = {}
-): Promise<GitHubRelease[]> {
-  const perPage = options.perPage ?? 10;
-  const page = options.page ?? 1;
-  const includePrerelease = options.includePrerelease ?? false;
-
-  try {
-    if (releaseCache && page === 1 && Date.now() - releaseCache.timestamp < CACHE_TTL_MS) {
-      return filterReleases(releaseCache.data, includePrerelease).slice(0, perPage);
-    }
-
-    const params = new URLSearchParams({
-      per_page: String(perPage),
-      page: String(page)
-    });
-
-    const releases = await fetchFromGitHub<GitHubRelease[]>(`/releases?${params.toString()}`);
-    if (page === 1) {
-      releaseCache = {
-        data: releases,
-        timestamp: Date.now()
-      };
-    }
-
-    return filterReleases(releases, includePrerelease);
-  } catch (error) {
-    log.warn("failed to fetch release history", { error: getErrorMessage(error) });
-    if (!releaseCache) {
-      return [];
-    }
-    return filterReleases(releaseCache.data, includePrerelease).slice(0, perPage);
-  }
-}
-
-export async function getGitHubReleaseByTag(tag: string): Promise<GitHubRelease | null> {
-  try {
-    return await fetchFromGitHub<GitHubRelease>(`/releases/tags/${encodeURIComponent(tag)}`);
-  } catch (error) {
-    log.warn("failed to fetch release by tag", { tag, error: getErrorMessage(error) });
-    return null;
-  }
-}
-
-export function clearGitHubReleaseCache(): void {
-  releaseCache = null;
 }

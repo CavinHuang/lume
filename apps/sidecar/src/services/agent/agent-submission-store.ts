@@ -1,11 +1,11 @@
 import { createHash } from "node:crypto";
 import { existsSync, rmSync } from "node:fs";
-import { createRequire } from "node:module";
 import { join } from "node:path";
 import type { AgentSavedFile, AgentSendInput, AgentSubmissionReceipt, AgentThreadMessageDispatchResult } from "@lume/shared";
 import { stableSerialize } from "@lume/shared";
 import { getConfigDir } from "../infra/config-paths";
 import { writeLogRecord } from "../infra/logger";
+import { openSqlite, type SqliteDatabase } from "../infra/open-sqlite";
 
 interface SubmissionRow {
   client_submission_id: string;
@@ -19,46 +19,12 @@ interface SubmissionRow {
   error_code: string | null;
 }
 
-interface DatabaseStatementLike {
-  all(...params: unknown[]): unknown[];
-  get(...params: unknown[]): unknown;
-  run(...params: unknown[]): unknown;
-}
-
-interface DatabaseSyncLike {
-  exec(sql: string): void;
-  prepare(sql: string): DatabaseStatementLike;
-  close(): void;
-}
-
-interface BunDatabaseLike {
-  exec(sql: string): void;
-  query(sql: string): DatabaseStatementLike;
-  close(): void;
-}
-
 export class AgentSubmissionStore {
-  readonly #db: DatabaseSyncLike;
+  readonly #db: SqliteDatabase;
   readonly #now: () => number;
 
   constructor(input: { dbPath: string; now?: () => number }) {
-    const runtimeRequire = createRequire(import.meta.url);
-    if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
-      const BunDatabase = (runtimeRequire("bun:sqlite") as {
-        Database: new (path: string) => BunDatabaseLike;
-      }).Database;
-      const db = new BunDatabase(input.dbPath);
-      this.#db = {
-        exec: (sql) => db.exec(sql),
-        prepare: (sql) => db.query(sql),
-        close: () => db.close(),
-      };
-    } else {
-      const NodeDatabase = (runtimeRequire("node:sqlite") as {
-        DatabaseSync: new (path: string) => DatabaseSyncLike;
-      }).DatabaseSync;
-      this.#db = new NodeDatabase(input.dbPath);
-    }
+    this.#db = openSqlite(input.dbPath);
     this.#now = input.now ?? Date.now;
     this.#db.exec("PRAGMA journal_mode = WAL;");
     migrateSubmissionStore(this.#db);
@@ -162,7 +128,7 @@ export class AgentSubmissionStore {
       FROM agent_attachment_lease
       WHERE client_submission_id = ? AND status = 'prepared'
       ORDER BY created_at, target_path
-    `).all(id) as unknown as Array<{
+    `).all(id) as Array<{
       attachment_id: string | null;
       filename: string;
       target_path: string;
@@ -215,7 +181,7 @@ export class AgentSubmissionStore {
       SELECT payload_json FROM agent_submission_outbox
       WHERE thread_id = ? AND status IN ('queued', 'paused')
       ORDER BY created_at
-    `).all(threadId) as unknown as Array<{ payload_json: string }>;
+    `).all(threadId) as Array<{ payload_json: string }>;
     return rows.map((row) => JSON.parse(row.payload_json) as AgentSendInput);
   }
 
@@ -223,7 +189,7 @@ export class AgentSubmissionStore {
     const row = this.#db.prepare(`
       SELECT COUNT(*) AS count FROM agent_submission_outbox
       WHERE thread_id = ? AND status IN ('queued', 'paused')
-    `).get(threadId) as unknown as { count: number };
+    `).get(threadId) as { count: number };
     return row.count;
   }
 
@@ -243,7 +209,7 @@ export class AgentSubmissionStore {
     const rows = this.#db.prepare(`
       SELECT thread_id, target_path FROM agent_attachment_lease
       WHERE client_submission_id = ? AND status = 'prepared'
-    `).all(id) as unknown as Array<{ thread_id: string; target_path: string }>;
+    `).all(id) as Array<{ thread_id: string; target_path: string }>;
     for (const row of rows) {
       if (existsSync(row.target_path)) rmSync(row.target_path, { force: true });
     }
@@ -269,7 +235,7 @@ export class AgentSubmissionStore {
     const rows = this.#db.prepare(`
       SELECT thread_id FROM agent_attachment_lease
       WHERE client_submission_id = ? AND status = 'prepared'
-    `).all(id) as unknown as Array<{ thread_id: string }>;
+    `).all(id) as Array<{ thread_id: string }>;
     this.#db.prepare(`
       UPDATE agent_attachment_lease SET status = 'committed', updated_at = ?
       WHERE client_submission_id = ? AND status = 'prepared'
@@ -293,7 +259,7 @@ export class AgentSubmissionStore {
       SELECT client_submission_id, payload_hash, thread_id, status, mode,
              queued_message_id, created_at, updated_at, error_code
       FROM agent_submission WHERE client_submission_id = ?
-    `).get(id) as unknown as SubmissionRow | undefined;
+    `).get(id) as SubmissionRow | undefined;
     return row ? rowToReceipt(row) : undefined;
   }
 
@@ -302,7 +268,7 @@ export class AgentSubmissionStore {
       SELECT DISTINCT client_submission_id
       FROM agent_attachment_lease
       WHERE status = 'prepared' AND thread_id = ?
-    `).all(threadId) as unknown as Array<{ client_submission_id: string }>;
+    `).all(threadId) as Array<{ client_submission_id: string }>;
     for (const row of prepared) this.abortAttachmentLease(row.client_submission_id);
     this.#db.exec("BEGIN IMMEDIATE");
     try {
@@ -337,7 +303,7 @@ export class AgentSubmissionStore {
   }
 }
 
-function migrateSubmissionStore(db: DatabaseSyncLike): void {
+function migrateSubmissionStore(db: SqliteDatabase): void {
   db.exec(`
     BEGIN IMMEDIATE;
     CREATE TABLE IF NOT EXISTS agent_submission (
@@ -376,7 +342,7 @@ function migrateSubmissionStore(db: DatabaseSyncLike): void {
     COMMIT;
   `);
 
-  const version = (db.prepare("PRAGMA user_version").get() as unknown as { user_version: number }).user_version;
+  const version = (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version;
   if (version < 2) {
     db.exec("BEGIN IMMEDIATE");
     try {
@@ -393,14 +359,14 @@ function migrateSubmissionStore(db: DatabaseSyncLike): void {
     }
   }
 
-  const integrity = db.prepare("PRAGMA quick_check").get() as unknown as Record<string, string>;
+  const integrity = db.prepare("PRAGMA quick_check").get() as Record<string, string>;
   if (!Object.values(integrity).includes("ok")) {
     throw new Error("agent-submissions.sqlite 完整性检查失败");
   }
 }
 
-function ensureColumn(db: DatabaseSyncLike, table: string, column: string, definition: string): void {
-  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as unknown as Array<{ name: string }>;
+function ensureColumn(db: SqliteDatabase, table: string, column: string, definition: string): void {
+  const columns = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!columns.some((item) => item.name === column)) {
     db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition};`);
   }

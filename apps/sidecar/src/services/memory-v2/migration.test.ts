@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -45,6 +45,12 @@ describe("memory schema migration", () => {
     writeFileSync(bad, "not frontmatter", "utf-8");
     expect(() => migrateMemoryScopeRootIfNeeded(root, "workspace")).toThrow("Missing frontmatter");
     expect(readFileSync(bad, "utf-8")).toBe("not frontmatter");
+    // 迁移中途失败必须释放作用域锁，否则后续所有迁移 fail-closed 永久卡死
+    expect(existsSync(join(parent, ".memory.migration.lock"))).toBe(false);
+    // 释放干净：同一路径立即可再次独占获取（同秒内重跑会撞残留 backup 的 EEXIST，属既有语义）
+    const lockProbe = openSync(join(parent, ".memory.migration.lock"), "wx");
+    closeSync(lockProbe);
+    rmSync(join(parent, ".memory.migration.lock"));
     rmSync(parent, { recursive: true, force: true });
   });
 

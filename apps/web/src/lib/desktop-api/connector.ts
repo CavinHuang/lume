@@ -1,5 +1,5 @@
 import { CONNECTOR_IPC_CHANNELS } from '@lume/shared'
-import type { ConnectorSetupWithStatus, ConnectorStatus } from '@lume/shared'
+import type { ConnectorSetupWithStatus, ConnectorStatus, ImapPoolMetricsPayload } from '@lume/shared'
 import { sidecarCall } from './system'
 
 export const getConnectorSetups = () =>
@@ -19,3 +19,7 @@ export const startConnectorAuth = (service: string) =>
 
 export const disconnectConnector = (service: string) =>
   sidecarCall<ConnectorStatus>(CONNECTOR_IPC_CHANNELS.DISCONNECT, { service })
+
+/** 只读诊断出口(#790):IMAP 连接池指标计数器 + error_destroy kind 细分。 */
+export const getConnectorPoolMetrics = () =>
+  sidecarCall<ImapPoolMetricsPayload>(CONNECTOR_IPC_CHANNELS.GET_POOL_METRICS, {})

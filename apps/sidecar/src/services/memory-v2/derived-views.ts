@@ -36,7 +36,7 @@ export async function rebuildDerivedMemoryViews(input: { scope: MemoryV2Scope; w
   if (input.scope === "workspace") {
     if (rebuildWorkspaceBrief(paths.workspaceBrief, recallableEntries)) changed.push("workspace:workspace-brief.md");
   } else {
-    if (await ensurePersona({ scope: "global" })) changed.push("global:persona.md");
+    if (await ensurePersona({})) changed.push("global:persona.md");
   }
   return changed;
 }

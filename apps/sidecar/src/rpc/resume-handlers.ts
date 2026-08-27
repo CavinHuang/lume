@@ -2,7 +2,6 @@ import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import {
   clearAgentThreadMessages,
   forkAgentThread,
-  truncateAgentMessagesFrom,
 } from "../services/agent/agent-thread-manager";
 import { getThreadEventBus } from "../services/agent-runtime/events/thread-event-bus";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runner/attempt";
@@ -16,7 +15,6 @@ import {
 import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/trace-store";
 import {
   agentThreadIdInputSchema,
-  agentTruncateThreadInputSchema,
   discardInterruptedRunInputSchema,
   forkThreadInputSchema,
   getEventsInputSchema,
@@ -170,18 +168,6 @@ export function createResumeHandlers(
             )
           : null,
       };
-    },
-    [AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM]: async (params) => {
-      const input = validateInput(
-        agentTruncateThreadInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.TRUNCATE_THREAD_MESSAGES_FROM,
-      );
-      // 截断直接替换 transcript，运行中执行会与 run 写入互踩（#397）。
-      if (isAgentRuntimeSessionActive(input.threadId)) {
-        throw new Error("线程正在运行中，请停止后再截断消息。");
-      }
-      return truncateAgentMessagesFrom(input.threadId, input.messageId);
     },
     [AGENT_IPC_CHANNELS.CLEAR_THREAD]: async (params) => {
       const input = validateInput(

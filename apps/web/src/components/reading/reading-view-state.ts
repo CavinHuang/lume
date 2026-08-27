@@ -544,6 +544,10 @@ function readWereadNotebookCounts(raw: Record<string, unknown>): WereadNotebookC
   }
 }
 
+// ⚠️ weread 提取原语的 web 侧平行副本(#531 复审留痕)：sidecar 已收敛于
+// apps/sidecar/src/services/reading/weread-payload.ts(键序/嵌套探测/秒级归一)。
+// 改动下方 readProgressPercent/readWereadTimestamp 的键位或语义时必须四处同步
+// (此处 + sidecar 三消费方)，或考虑抽至 @lume/shared。
 function readProgressPercent(...records: Array<Record<string, unknown> | undefined>): number | undefined {
   for (const record of records) {
     if (!record) continue
@@ -773,7 +777,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function hasPoetryNotes(snapshot: ReadingLibrarySnapshot): boolean {
   return snapshot.notes.some((note) =>
-    note.evidence.some((item) => item.sourceKind === 'poetry')
+    // poetry 书源已删(#529)，此处仅为历史笔记数据兜底
+    note.evidence.some((item) => (item.sourceKind as string) === 'poetry')
     || note.book?.title.includes('诗')
   )
 }
@@ -794,8 +799,6 @@ function safeFilenameSegment(value: string): string {
 function getSourceLabel(source: ReadingSourceKind): string {
   switch (source) {
     case 'weread': return '微信读书'
-    case 'gutenberg': return 'Gutenberg'
-    case 'poetry': return '诗词'
     default: return source
   }
 }

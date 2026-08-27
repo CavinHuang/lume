@@ -1,4 +1,4 @@
-import { AGENT_IPC_CHANNELS, type BootstrapFileType } from "@lume/shared";
+import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import type {
   AgentPendingInteractiveState,
@@ -16,7 +16,6 @@ import {
   getRecentAgentThreadMessages,
   listAllAgentThreads,
   listAgentThreads,
-  moveAgentThreadToWorkspace,
   toggleAgentThreadPin,
   updateAgentThreadMeta,
   archiveAgentThread,
@@ -114,21 +113,21 @@ import {
   submitDesktopActionDecision,
 } from "../services/agent-runtime/interruption/desktop-action-session";
 import { listPendingToolPermissionRequests } from "../services/agent-runtime/interruption/tool-permission-session";
+import { listPendingRuntimeCoreInterruptions } from "../services/agent-runtime/interruption/interruption-pending";
+// #775：持久工具授权查看/撤销面板
+import {
+  ensureToolGrantsHydrated,
+  toolGrantMirror,
+} from "../services/agent-runtime/permissions/persisted-grant-store";
 import {
   getAgentProxyStatus,
   saveAgentProxySettings,
 } from "../services/system/proxy-settings-manager";
-import {
-  readBootstrapFile,
-  writeBootstrapFile,
-} from "../services/system/workspace-bootstrap-service";
 import { resumeAutomationAfterInteraction } from "../services/automation/automation-runner-service";
 import {
-  agentAppendInputSchema,
   agentCreateThreadInputSchema,
   agentGetThreadMessageVersionsInputSchema,
   agentListSubagentRunsInputSchema,
-  agentMoveThreadInputSchema,
   agentQueuedMessageInputSchema,
   agentRetryQueuedMessageInputSchema,
   agentRecentThreadMessagesInputSchema,
@@ -148,11 +147,11 @@ import {
   mcpStatusInputSchema,
   mcpTestServerInputSchema,
   proxySettingsInputSchema,
-  readBootstrapFileInputSchema,
-  writeBootstrapFileInputSchema,
   submitAskUserQuestionInputSchema,
   submitDesktopActionInputSchema,
   submitToolPermissionInputSchema,
+  listToolPermissionGrantsInputSchema,
+  revokeToolPermissionGrantInputSchema,
   threadRunEventsInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
@@ -165,7 +164,7 @@ import {
   agentWelcomeSuggestionInputSchema,
 } from "./schemas";
 import type { NotificationWriter, RpcHandler } from "./types";
-import { asObject, asString, validateInput } from "./validation";
+import { asObject, validateInput } from "./validation";
 import { trimSdkMessagesForTransport } from "./message-payload-trim";
 import { createAgentNotificationEmitter } from "../services/agent/agent-notification-service";
 import { createCodingHandlers } from "./coding-handlers";
@@ -775,15 +774,6 @@ export function createAgentHandlers(
       );
       return toggleAgentThreadPin(input.threadId);
     },
-    [AGENT_IPC_CHANNELS.MOVE_THREAD]: async (params) => {
-      const input = validateInput(
-        agentMoveThreadInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.MOVE_THREAD,
-      );
-      await assertThreadNotRunningAfterGrace(input.threadId, "移动");
-      return moveAgentThreadToWorkspace(input.threadId, input.workspaceId);
-    },
     [AGENT_IPC_CHANNELS.DELETE_THREAD]: async (params) => {
       const input = validateInput(
         agentThreadIdInputSchema,
@@ -903,9 +893,12 @@ export function createAgentHandlers(
         params ?? {},
         AGENT_IPC_CHANNELS.GET_PENDING_INTERACTIVE,
       );
-      const askRequests = listPendingAskUserQuestionRequests();
+      // #527-6：持久化中断只扫一次目录，ask/tool 两路复用（desktop action
+      // 走内存注册表，无磁盘扫描）
+      const persistedInterruptions = listPendingRuntimeCoreInterruptions();
+      const askRequests = listPendingAskUserQuestionRequests(persistedInterruptions);
       const desktopActionRequests = listPendingDesktopActionRequests();
-      const toolRequests = listPendingToolPermissionRequests();
+      const toolRequests = listPendingToolPermissionRequests(persistedInterruptions);
       const threadIds = new Set<string>();
       for (const request of askRequests) threadIds.add(request.threadId);
       for (const request of desktopActionRequests)
@@ -1191,33 +1184,34 @@ export function createAgentHandlers(
       });
       return result;
     },
+    [AGENT_IPC_CHANNELS.LIST_TOOL_PERMISSION_GRANTS]: async (params) => {
+      validateInput(
+        listToolPermissionGrantsInputSchema,
+        params ?? {},
+        AGENT_IPC_CHANNELS.LIST_TOOL_PERMISSION_GRANTS,
+      );
+      // 面板读取前兜底等待启动恢复（生产 imports 已 kick，幂等）
+      await ensureToolGrantsHydrated();
+      return { grants: toolGrantMirror.list() };
+    },
+    [AGENT_IPC_CHANNELS.REVOKE_TOOL_PERMISSION_GRANT]: async (params) => {
+      const input = validateInput(
+        revokeToolPermissionGrantInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.REVOKE_TOOL_PERMISSION_GRANT,
+      );
+      await ensureToolGrantsHydrated();
+      if (input.ids?.length) {
+        let removed = 0;
+        for (const id of input.ids) {
+          if (await toolGrantMirror.remove(id)) removed += 1;
+        }
+        return { removed };
+      }
+      const removed = await toolGrantMirror.removeByWorkspace(input.workspaceSlug!);
+      return { removed };
+    },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
-    "agent:read-bootstrap-file": async (params) => {
-      const input = validateInput(
-        readBootstrapFileInputSchema,
-        params,
-        "agent:read-bootstrap-file",
-      );
-      return {
-        content: readBootstrapFile(
-          input.workspaceSlug,
-          input.fileType as BootstrapFileType,
-        ),
-      };
-    },
-    "agent:write-bootstrap-file": async (params) => {
-      const input = validateInput(
-        writeBootstrapFileInputSchema,
-        params,
-        "agent:write-bootstrap-file",
-      );
-      writeBootstrapFile(
-        input.workspaceSlug,
-        input.fileType as BootstrapFileType,
-        input.content,
-      );
-      return { ok: true };
-    },
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {
       const trustedSurface =
         params &&
@@ -1380,26 +1374,6 @@ export function createAgentHandlers(
       trustedPlanningSendEnvelopes.add(trustedParams);
       return handlers[AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]!(trustedParams);
     },
-    [AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE]: async (params) => {
-      const input = validateInput(
-        agentAppendInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.APPEND_THREAD_MESSAGE,
-      ) as AgentSendInput;
-      const preparedInput = await prepareAgentDispatchInput(input);
-      return appendAgentMessageForContext(
-        preparedInput,
-        createAgentStreamEmitter(preparedInput.threadId, {
-          workspaceSlug: resolveWorkspaceSlugForThread(
-            preparedInput.threadId,
-            preparedInput.workspaceId,
-          ),
-        }),
-        {
-          onExecutionStarted: createExecutionStartCallback(preparedInput),
-        },
-      );
-    },
     [AGENT_IPC_CHANNELS.LIST_MESSAGE_QUEUE]: async (params) => {
       const input = validateInput(
         agentThreadIdInputSchema,
@@ -1487,29 +1461,6 @@ export function createAgentHandlers(
       );
       return promoteQueuedAgentMessageToGuidance(input);
     },
-    [AGENT_IPC_CHANNELS.WRITE_LOG]: async (params) => {
-      const payload = asObject(params);
-      const level = asString(payload.level) || "info";
-      const contextName = asString(payload.context) || "web";
-      const message = asString(payload.message);
-      const threadId = asString(payload.threadId);
-      const data = payload.data as Record<string, unknown> | undefined;
-
-      if (!message) {
-        return { ok: false };
-      }
-
-      const log = createLogger(contextName, threadId);
-      const logMethod = level as
-        "trace" | "debug" | "info" | "warn" | "error" | "fatal";
-      if (typeof log[logMethod] === "function") {
-        log[logMethod](message, data);
-      } else {
-        log.info(message, data);
-      }
-      return { ok: true };
-    },
-    [AGENT_IPC_CHANNELS.GET_LOGS_DIR]: async () => ({ path: "" }),
     [AGENT_IPC_CHANNELS.GET_WORKSPACE_ROOT_PATH]: async (params) => {
       const input = validateInput(
         workspaceSlugInputSchema,

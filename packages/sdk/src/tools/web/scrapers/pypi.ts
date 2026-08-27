@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import { buildResult, formatNumber, loadPage, type RenderResult, type SpecialHandler } from "./types.js";
 
@@ -18,7 +17,7 @@ export const handlePyPI: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/project\/([^/]+)/);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from PyPI JSON API

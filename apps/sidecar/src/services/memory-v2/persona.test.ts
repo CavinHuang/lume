@@ -4,10 +4,8 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import {
   buildPersonaFromRules,
-  deletePersona,
   ensurePersona,
   generatePersona,
-  getPersonaPath,
   parsePersonaProfile,
   readPersonaRaw,
   resetPersonaStoreForTest,
@@ -61,33 +59,18 @@ afterEach(() => {
 
 describe("persona store", () => {
   test("writePersona + readPersonaRaw 往返", () => {
-    writePersona("global", undefined, "# 用户画像\n## 一句话定位\n开发者");
-    expect(readPersonaRaw("global")).toBe("# 用户画像\n## 一句话定位\n开发者");
+    writePersona("# 用户画像\n## 一句话定位\n开发者");
+    expect(readPersonaRaw()).toBe("# 用户画像\n## 一句话定位\n开发者");
   });
 
   test("readPersonaRaw 不存在返回 null", () => {
-    expect(readPersonaRaw("global")).toBeNull();
-  });
-
-  test("deletePersona 幂等", () => {
-    writePersona("global", undefined, "x");
-    deletePersona("global");
-    expect(readPersonaRaw("global")).toBeNull();
-    expect(() => deletePersona("global")).not.toThrow();
-  });
-
-  test("workspace scope 独立于 global", () => {
-    writePersona("global", undefined, "G");
-    writePersona("workspace", "my-team", "W");
-    expect(readPersonaRaw("global")).toBe("G");
-    expect(readPersonaRaw("workspace", "my-team")).toBe("W");
-    expect(getPersonaPath("global")).not.toBe(getPersonaPath("workspace", "my-team"));
+    expect(readPersonaRaw()).toBeNull();
   });
 
   test("writePersona 覆盖既有内容", () => {
-    writePersona("global", undefined, "old");
-    writePersona("global", undefined, "new");
-    expect(readPersonaRaw("global")).toBe("new");
+    writePersona("old");
+    writePersona("new");
+    expect(readPersonaRaw()).toBe("new");
   });
 });
 
@@ -306,35 +289,29 @@ describe("generatePersona", () => {
 describe("ensurePersona", () => {
   test("无 persona + LLM 可用 → 生成（state 1）", async () => {
     const provider = async () => "# 关于我\n## 一句话定位\n开发者";
-    await ensurePersona({ scope: "global", providerFactory: provider });
-    expect(readPersonaRaw("global")).toContain("一句话定位");
+    await ensurePersona({ providerFactory: provider });
+    expect(readPersonaRaw()).toContain("一句话定位");
   });
 
   test("有 persona + LLM 可用 → 增量合并（existing 注入 prompt）（state 2）", async () => {
-    writePersona("global", undefined, "旧画像内容");
+    writePersona("旧画像内容");
     let capturedPrompt = "";
     const provider = async (p: string) => {
       capturedPrompt = p;
       return "# 关于我\n## 一句话定位\n新";
     };
-    await ensurePersona({ scope: "global", providerFactory: provider });
+    await ensurePersona({ providerFactory: provider });
     expect(capturedPrompt).toContain("旧画像内容");
-    expect(readPersonaRaw("global")).toContain("新");
+    expect(readPersonaRaw()).toContain("新");
   });
 
   test("LLM 失败 → 规则兜底（fail-open，不抛）（state 3）", async () => {
     const provider = async () => {
       throw new Error("no llm configured");
     };
-    await ensurePersona({ scope: "global", providerFactory: provider });
-    const md = readPersonaRaw("global");
-    expect(md).toContain("关于我"); // buildPersonaFromRules 兜底产出
-  });
-
-  test("scope 默认 global（未传 scope/workspaceSlug）", async () => {
-    const provider = async () => "# 关于我\n## 一句话定位\n默认";
     await ensurePersona({ providerFactory: provider });
-    expect(readPersonaRaw("global")).toContain("默认");
+    const md = readPersonaRaw();
+    expect(md).toContain("关于我"); // buildPersonaFromRules 兜底产出
   });
 
   test("activation.persona=false 的条目不进 persona 生成", async () => {
@@ -361,7 +338,7 @@ describe("ensurePersona", () => {
       capturedPrompt = prompt;
       return "# 关于我\n## 一句话定位\nx";
     };
-    await ensurePersona({ scope: "global", providerFactory: provider });
+    await ensurePersona({ providerFactory: provider });
 
     expect(capturedPrompt).toContain("persona-visible");
     expect(capturedPrompt).not.toContain("persona-suppressed");

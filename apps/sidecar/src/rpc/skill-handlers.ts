@@ -1,9 +1,6 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { getRecentAgentThreadMessages } from "../services/agent/agent-thread-manager";
-import {
-  getWorkspaceSkills,
-  deleteWorkspaceSkill,
-} from "../services/agent/agent-workspace-manager";
+import { deleteWorkspaceSkill } from "../services/agent/agent-workspace-manager";
 import { listInvocableCapabilities } from "../services/agent/invocable-capability-catalog";
 import {
   analyzeWorkspaceSkillImprovement,
@@ -32,21 +29,12 @@ import {
   skillMarketCatalogInputSchema,
   skillMarketDetailInputSchema,
   skillVersionInputSchema,
-  workspaceSlugInputSchema,
 } from "./schemas";
 import type { RpcHandler } from "./types";
 import { validateInput } from "./validation";
 
 export function createSkillHandlers(): Record<string, RpcHandler> {
   return {
-    [AGENT_IPC_CHANNELS.GET_SKILLS]: async (params) => {
-      const input = validateInput(
-        workspaceSlugInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.GET_SKILLS,
-      );
-      return getWorkspaceSkills(input.workspaceSlug);
-    },
     [AGENT_IPC_CHANNELS.LIST_EDITABLE_SKILLS]: async (params) => {
       const input = validateInput(
         listEditableSkillsInputSchema,

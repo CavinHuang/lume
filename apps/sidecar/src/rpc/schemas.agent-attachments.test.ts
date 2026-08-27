@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { agentAppendInputSchema, agentSendInputSchema } from "./schemas";
+import { agentSendInputSchema } from "./schemas";
 import { validateInput } from "./validation";
 
 describe("agentSendInputSchema messageAttachments", () => {
@@ -440,13 +440,4 @@ describe("agentSendInputSchema followUpQueueMode (RPC contract)", () => {
     )).toThrow();
   });
 
-  test("agentAppendInputSchema 同步保留 followUpQueueMode(别名)", () => {
-    // agentAppendInputSchema 是 agentSendInputSchema 的别名,字段同步覆盖
-    const parsed = validateInput(
-      agentAppendInputSchema,
-      { threadId: "t1", userMessage: "hi", followUpQueueMode: "steer" },
-      "agent.append",
-    );
-    expect(parsed.followUpQueueMode).toBe("steer");
-  });
 });

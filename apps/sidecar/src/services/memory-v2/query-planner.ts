@@ -1,4 +1,5 @@
 import { type ApiType, type LLMProvider } from "@lume/agent-sdk";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
 import {
   MEMORY_CLAIM_IDENTITY,
@@ -11,7 +12,7 @@ import {
   type MemoryV2QueryPlan
 } from "./claim";
 import { resolveMemoryRerankModelRefs } from "./rerank";
-import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
+import { resolveChatProvider } from "./chat-provider";
 
 export type MemoryV2PlanQuery = (query: string) => Promise<MemoryV2QueryPlan | undefined>;
 
@@ -57,11 +58,11 @@ function createQueryPlannerAttempt(
   return {
     provider: createProviderInput
       ? createProviderInput({
-        apiType: binding ? resolveQueryPlannerApiType(binding.channel.provider) : "openai-completions",
+        apiType: binding ? resolveProviderApiType({ provider: binding.channel.provider }) : "openai-completions",
         apiKey: binding ? decryptApiKey(binding.channel.id) : "",
         baseURL: binding?.channel.baseUrl
       })
-      : createLazyConnectionLlmProvider({ connectionId: binding!.channel.id, modelId: binding!.modelId }),
+      : resolveChatProvider(modelRef).provider,
     model: binding?.modelId ?? modelRef.split("/").at(-1) ?? modelRef
   };
 }
@@ -141,11 +142,4 @@ function parseQueryPlan(text: string): MemoryV2QueryPlan | undefined {
   } catch {
     return undefined;
   }
-}
-
-function resolveQueryPlannerApiType(provider: string): ApiType {
-  const normalized = provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }

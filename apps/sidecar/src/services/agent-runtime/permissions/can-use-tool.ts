@@ -884,6 +884,8 @@ export function createCanUseToolHandler(
       threadId: params.runtime.sessionId,
       ...(requestRunId ? { runId: requestRunId } : {}),
       ...(originThreadId ? { originThreadId } : {}),
+      // #775：allow_always 持久化定位——无 workspace 的运行缺省保持线程内行为
+      ...(prepared.workspaceSlug ? { workspaceSlug: prepared.workspaceSlug } : {}),
       ...(subagentRunId ? { subagentRunId } : {}),
       ...(subagentLabel ? { subagentLabel } : {}),
       requestId: metadata?.toolUseId ?? toolName,

@@ -79,8 +79,10 @@ function assertSafeSegment(value: string, label: string): void {
   }
 }
 
+const waitSignal = new Int32Array(new SharedArrayBuffer(4));
+
 function sleepSync(ms: number): void {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  Atomics.wait(waitSignal, 0, 0, ms);
 }
 
 function readLock(path: string): LockPayload | null {
@@ -106,13 +108,15 @@ function lockFileAgeMs(path: string): number {
   }
 }
 
+// agent-runtime 分层内不得引用 services/*（#289），此处保持本地实现，
+// 语义对齐 infra/index-mutation-lock 的 isProcessAlive
 function processAlive(pid: number): boolean | undefined {
   if (!Number.isFinite(pid) || pid <= 0) return undefined;
   try {
     process.kill(pid, 0);
     return true;
   } catch (error) {
-    // EPERM 表示目标进程存在但无权发信号——仍视为存活（对齐 index-mutation-lock）
+    // EPERM 表示目标进程存在但无权发信号——仍视为存活
     return (error as NodeJS.ErrnoException | undefined)?.code === "EPERM" ? true : false;
   }
 }

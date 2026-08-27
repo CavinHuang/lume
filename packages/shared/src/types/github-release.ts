@@ -35,22 +35,8 @@ export interface GitHubReleaseAsset {
   size?: number;
 }
 
-/** GitHub Release 列表查询选项 */
-export interface GitHubReleaseListOptions {
-  /** 每页数量（默认 10） */
-  perPage?: number;
-  /** 页码（默认 1） */
-  page?: number;
-  /** 是否包含草稿和预发布版本（默认 false） */
-  includePrerelease?: boolean;
-}
-
 /** GitHub Release IPC 通道常量 */
 export const GITHUB_RELEASE_IPC_CHANNELS = {
   /** 获取最新 Release */
   GET_LATEST_RELEASE: "github-release:get-latest",
-  /** 获取 Release 列表 */
-  LIST_RELEASES: "github-release:list",
-  /** 获取指定版本的 Release */
-  GET_RELEASE_BY_TAG: "github-release:get-by-tag"
 } as const;

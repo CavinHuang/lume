@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Spotify URL handler for podcasts, tracks, albums, and playlists
  *

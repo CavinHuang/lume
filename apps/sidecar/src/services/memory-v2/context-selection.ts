@@ -4,6 +4,7 @@ import {
   type MemoryV2QueryPlan
 } from "./claim";
 import { areMemoryStatementsSimilar } from "./dedupe";
+import { isConversationHistory } from "./recall-items";
 import type { MemoryV2RecallItem } from "./types";
 
 export function selectMemoryV2PromptItems(input: {
@@ -78,11 +79,4 @@ function shouldDedupePromptItem(left: MemoryV2RecallItem, right: MemoryV2RecallI
   }
   if (left.kind !== right.kind || left.scope !== right.scope) return false;
   return areMemoryStatementsSimilar(left.statement, right.statement);
-}
-
-function isConversationHistory(item: MemoryV2RecallItem): boolean {
-  return item.reason === "recent daily memory"
-    || item.reason === "recent run memory"
-    || item.id.includes(":daily:")
-    || item.id.includes(":run:");
 }

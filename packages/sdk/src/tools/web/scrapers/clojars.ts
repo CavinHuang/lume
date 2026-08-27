@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -92,8 +91,8 @@ export const handleClojars: SpecialHandler = async (
 		const segments = path.split("/").filter(Boolean);
 		if (segments.length < 1 || segments.length > 2) return null;
 
-		const groupFromUrl = segments.length === 2 ? decodeURIComponent(segments[0]) : null;
-		const artifactFromUrl = decodeURIComponent(segments[segments.length - 1]);
+		const groupFromUrl = segments.length === 2 ? decodeURIComponent(segments[0] ?? "") : null;
+		const artifactFromUrl = decodeURIComponent(segments[segments.length - 1] ?? "");
 
 		const apiUrl =
 			segments.length === 2

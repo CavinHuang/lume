@@ -6,8 +6,8 @@
  * - 取全部 *_IPC_CHANNELS 常量（PLUGIN_PACKAGE_PRIVILEGED 与 AGENT_ISLAND 除外——
  *   前者主进程专属，后者 island 窗口专用通道）；
  * - 排除通知类 key（CHANGED/REMINDER_DUE/EVENTS，renderer 经事件通道订阅而非 RPC 调用）；
- * - 排除 privileged 通道与 BROWSER_IPC_CHANNELS 成员（走桌面专属入口）；
- * - 排除 RENDERER_BLOCKED_CHANNEL_VALUES（源路径收口，renderer 不可直达）。
+ * - 排除 privileged 通道与 BROWSER_IPC_CHANNELS 成员（走桌面专属入口）。
+ * （#528 清理：RENDERER_BLOCKED_CHANNEL_VALUES 黑名单已随 copy-folder 两条死通道一并删除。）
  * 新增通道常量时需同步本文件的 source 列表；契约测试是漏配的绊线（会红）。
  */
 import { AGENT_IPC_CHANNELS } from "./agent"
@@ -26,26 +26,34 @@ import { PERSONA_IPC_CHANNELS } from "./persona"
 import { PLANNING_TODO_IPC_CHANNELS } from "./planning-todo"
 import { READING_IPC_CHANNELS, WEREAD_IPC_CHANNELS } from "./reading"
 import { ROUTINE_IPC_CHANNELS } from "./routine"
-import { IPC_CHANNELS as RUNTIME_IPC_CHANNELS } from "./runtime"
 import { SUGGESTION_IPC_CHANNELS } from "./suggestion"
-import { SYSTEM_CONFIG_IPC_CHANNELS } from "./system-config"
-import { UI_STATE_IPC_CHANNELS } from "./ui-state"
 
 /** 通知类 key：不可作为 renderer RPC method 暴露 */
 const NOTIFICATION_CHANNEL_KEYS = new Set(["CHANGED", "REMINDER_DUE", "EVENTS"])
 
-const BROWSER_CHANNEL_VALUES = new Set<string>(Object.values(BROWSER_IPC_CHANNELS))
-
 /**
- * Renderer 禁用的通道值：源路径收口（issue #145）。
- * copy-folder 系列接受 renderer 可控的任意绝对路径做递归复制，构成任意文件读取原语；
- * 附件暂存协议仅支持普通文件，目录复制无受控入口，故整体移出 renderer 可达面
- * （sidecar handler 保留，供未来受控入口使用）。
+ * 通知型通道值(#531 复审分离)：sidecar 经 writeNotification 单向推送
+ * (apps/sidecar/src/index.ts:73)，不经过渲染端→sidecar 的 sidecar_call 准入，
+ * 因此不得进入可调用 method 派生集。逐值显式列举(命名无稳定后缀，
+ * 后缀规则会误伤)；新增推送通道时在此登记。REVIEW 口径见契约测试。
  */
-const RENDERER_BLOCKED_CHANNEL_VALUES = new Set<string>([
-  AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD,
-  AGENT_IPC_CHANNELS.COPY_FOLDER_TO_WORKSPACE,
+export const NOTIFY_ONLY_CHANNEL_VALUES: ReadonlySet<string> = new Set([
+  "agent:ask-user-question",
+  "agent:capabilities-changed",
+  "agent:desktop-action-request",
+  "agent:message-queue-changed",
+  "agent:plan-mode-phase-changed",
+  "agent:skill-improvement-suggested",
+  "agent:subagent-completed",
+  "agent:tool-permission-request",
+  "agent:workspace-files-changed",
+  "desktop-context:proposal-updated",
+  "memory:source-files-changed",
+  "reading:noteGenDone",
+  "reading:noteGenFailed",
 ])
+
+const BROWSER_CHANNEL_VALUES = new Set<string>(Object.values(BROWSER_IPC_CHANNELS))
 
 const PUBLIC_CHANNEL_SOURCES = [
   AGENT_IPC_CHANNELS,
@@ -63,10 +71,7 @@ const PUBLIC_CHANNEL_SOURCES = [
   PLANNING_TODO_IPC_CHANNELS,
   READING_IPC_CHANNELS,
   ROUTINE_IPC_CHANNELS,
-  RUNTIME_IPC_CHANNELS,
   SUGGESTION_IPC_CHANNELS,
-  SYSTEM_CONFIG_IPC_CHANNELS,
-  UI_STATE_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS,
 ]
 
@@ -80,7 +85,7 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
         !NOTIFICATION_CHANNEL_KEYS.has(key) &&
         !value.includes(":privileged-") &&
         !BROWSER_CHANNEL_VALUES.has(value) &&
-        !RENDERER_BLOCKED_CHANNEL_VALUES.has(value),
+        !NOTIFY_ONLY_CHANNEL_VALUES.has(value),
     )
     .map(([, value]) => value),
 )
@@ -90,8 +95,8 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
  * - browser:* —— BROWSER_IPC_CHANNELS 走桌面专属入口，被派生规则排除的四个只读 method；
  * - lume-config:changed —— CHANGED 通知 key 被派生规则排除，但 renderer 经 sidecar_call 订阅；
  * - healthcheck —— runtime IPC_CHANNELS 之外的裸方法。
- * （F5 清理：agent:revert-coding-file / revert-coding-run / rewind-coding-turn
- * 三个死条目已删——批次5 T7b 评审核实全仓无 handler。）
+ * （F5 清理曾删除 agent:revert-coding-file / revert-coding-run / rewind-coding-turn
+ * 死条目；其后快照还原功能(#572)为前两者接入了真实 handler，经 sidecar_call 正常放行。）
  */
 export const LOCAL_RENDERER_SIDECAR_METHODS: readonly string[] = [
   "browser:backends",

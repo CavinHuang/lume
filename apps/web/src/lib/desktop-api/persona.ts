@@ -8,26 +8,13 @@ import {
 const call = <T>(method: string, params: unknown) =>
   invoke<T>('sidecar_call', { method, params })
 
-/** 读取当前 persona markdown（含解析后的结构化字段） */
-export const getPersona = (workspaceSlug?: string) =>
-  call<PersonaGetResult>(
-    PERSONA_IPC_CHANNELS.GET,
-    workspaceSlug ? { workspaceSlug } : {},
-  )
-
-/** 直接覆写 persona markdown（用户手动编辑） */
-export const updatePersona = (input: {
-  workspaceSlug?: string
-  markdown: string
-}) =>
-  call<{ ok: true }>(PERSONA_IPC_CHANNELS.UPDATE, input)
+/** 读取当前 persona markdown（含解析后的结构化字段）；persona 仅 global scope */
+export const getPersona = () =>
+  call<PersonaGetResult>(PERSONA_IPC_CHANNELS.GET, {})
 
 export const correctPersona = (input: PersonaCorrectionInput) =>
   call(PERSONA_IPC_CHANNELS.CORRECT, input)
 
 /** 触发 LLM 基于 memory 重新生成 persona */
-export const regeneratePersona = (workspaceSlug?: string) =>
-  call<{ ok: true }>(
-    PERSONA_IPC_CHANNELS.REGENERATE,
-    workspaceSlug ? { workspaceSlug } : {},
-  )
+export const regeneratePersona = () =>
+  call<{ ok: true }>(PERSONA_IPC_CHANNELS.REGENERATE, {})

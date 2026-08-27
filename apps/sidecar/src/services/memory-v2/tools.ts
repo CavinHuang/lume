@@ -17,13 +17,6 @@ import type { MemoryV2Candidate, MemoryV2Kind, MemoryV2Scope } from "./types";
 import { memoryFileRefForPath } from "./source-files";
 import { MemoryCommandService, toSharedMemoryReceipt } from "./command-service";
 
-export const MEMORY_V2_TOOL_NAMES = [
-  "memory.search",
-  "memory.read",
-  "memory.remember",
-  "memory.forget"
-] as const satisfies readonly MemoryToolName[];
-
 export async function searchMemoryTool(input: MemorySearchToolInput): Promise<MemorySearchResult[]> {
   const v2Results = await searchMemoryV2({
     workspaceSlug: input.workspaceSlug,

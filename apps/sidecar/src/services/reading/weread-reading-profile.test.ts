@@ -65,6 +65,39 @@ describe("buildWereadReadingProfile", () => {
     expect(profile.warnings).toEqual([]);
   });
 
+  test("extracts last-read time from full API payload shapes (nested readInfo/readAt/finishedDate)", () => {
+    const now = Date.UTC(2026, 6, 17);
+    const dayMs = 24 * 60 * 60 * 1000;
+    // 与 store/client 同源的网关 payload 形状：进度字段藏在 readInfo/progressInfo
+    // 嵌套对象里，或落在 finishedDate/readAt/readTime 等键上。
+    const profile = buildWereadReadingProfile({
+      books: [
+        {
+          bookId: "finished",
+          title: "读完的书",
+          readInfo: { finishedDate: Math.floor((now - dayMs) / 1000) }
+        },
+        {
+          bookId: "progressed",
+          title: "在读的书",
+          progressInfo: { readAt: Math.floor((now - 2 * dayMs) / 1000), readingProgress: 0.45 }
+        },
+        {
+          bookId: "readtime",
+          title: "readTime 书",
+          readTime: Math.floor((now - 3 * dayMs) / 1000)
+        }
+      ]
+    }, { books: [{ bookId: "finished" }] }, now);
+
+    const byId = new Map(profile.recent.map((book) => [book.bookId, book]));
+    expect(byId.get("finished")?.lastReadDate).toBe("2026-07-16");
+    expect(byId.get("progressed")?.lastReadAt).toBe(now - 2 * dayMs);
+    expect(byId.get("progressed")?.progressPercent).toBe(45);
+    expect(byId.get("readtime")?.lastReadAt).toBe(now - 3 * dayMs);
+    expect(profile.summary.recentActiveCount).toBe(3);
+  });
+
   test("makes empty-data fallbacks explicit", () => {
     const profile = buildWereadReadingProfile({ books: [] }, { books: [] }, 0);
 
