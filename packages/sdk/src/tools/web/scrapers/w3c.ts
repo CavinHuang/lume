@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -30,13 +29,13 @@ function extractShortname(pathname: string): string | null {
 	if (segments.length < 2 || segments[0] !== "TR") return null;
 
 	if (segments.length === 2) {
-		const shortname = segments[1];
+		const shortname = segments[1] ?? "";
 		if (/^\d{4}$/.test(shortname)) return null;
 		return decodeURIComponent(shortname);
 	}
 
-	if (segments.length >= 3 && /^\d{4}$/.test(segments[1])) {
-		const version = segments[2];
+	if (segments.length >= 3 && /^\d{4}$/.test(segments[1] ?? "")) {
+		const version = segments[2] ?? "";
 		const match = version.match(/^[A-Za-z]+-(.+)-\d{8}$/);
 		if (match?.[1]) return decodeURIComponent(match[1]);
 	}

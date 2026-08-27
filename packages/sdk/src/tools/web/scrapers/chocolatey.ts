@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, loadPage } from "./types.js";
@@ -31,7 +30,7 @@ function extractXmlField(xml: string, fieldName: string): string | null {
 	const pattern = new RegExp(`<d:${fieldName}[^>]*>([\\s\\S]*?)</d:${fieldName}>`, "i");
 	const match = xml.match(pattern);
 	if (!match) return null;
-	return match[1].trim();
+	return (match[1] ?? "").trim();
 }
 
 /**
@@ -50,7 +49,7 @@ export const handleChocolatey: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/packages\/([^/]+)(?:\/([^/]+))?/);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const specificVersion = match[2] ? decodeURIComponent(match[2]) : null;
 
 		const fetchedAt = new Date().toISOString();

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { SpecialHandler } from "./types.js";
 import { buildResult, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -84,8 +83,10 @@ async function convertMDNBody(sections: MDNSection[]): Promise<string> {
 			case "table":
 				if (value.rows && value.rows.length > 0) {
 					// Simple markdown table
-					const header = (await Promise.all(value.rows[0].map(cell => htmlToBasicMarkdown(cell)))).join(" | ");
-					const separator = value.rows[0].map(() => "---").join(" | ");
+					const headerRow = value.rows[0];
+					if (!headerRow) break;
+					const header = (await Promise.all(headerRow.map(cell => htmlToBasicMarkdown(cell)))).join(" | ");
+					const separator = headerRow.map(() => "---").join(" | ");
 					const bodyRows = await Promise.all(
 						value.rows
 							.slice(1)

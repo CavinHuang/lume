@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, loadPage } from "./types.js";
@@ -55,21 +54,21 @@ export const handleMetaCPAN: SpecialHandler = async (
 		// Match /pod/Module::Name pattern
 		const podMatch = parsed.pathname.match(/^\/pod\/(.+?)(?:\/|$)/);
 		if (podMatch) {
-			const moduleName = decodeURIComponent(podMatch[1]);
+			const moduleName = decodeURIComponent(podMatch[1] ?? "");
 			return await fetchModule(url, moduleName, timeout, fetchedAt, signal);
 		}
 
 		// Match /release/AUTHOR/Distribution pattern
 		const releaseMatch = parsed.pathname.match(/^\/release\/([^/]+)\/([^/]+)/);
 		if (releaseMatch) {
-			const distribution = decodeURIComponent(releaseMatch[2]);
+			const distribution = decodeURIComponent(releaseMatch[2] ?? "");
 			return await fetchRelease(url, distribution, timeout, fetchedAt, signal);
 		}
 
 		// Match /release/Distribution pattern (without author)
 		const simpleReleaseMatch = parsed.pathname.match(/^\/release\/([^/]+)$/);
 		if (simpleReleaseMatch) {
-			const distribution = decodeURIComponent(simpleReleaseMatch[1]);
+			const distribution = decodeURIComponent(simpleReleaseMatch[1] ?? "");
 			return await fetchRelease(url, distribution, timeout, fetchedAt, signal);
 		}
 

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Read the Docs handler for web-fetch
  */

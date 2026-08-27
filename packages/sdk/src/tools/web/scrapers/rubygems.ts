@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import { buildResult, formatNumber, loadPage, type RenderResult, type SpecialHandler } from "./types.js";
 
@@ -44,7 +43,7 @@ export const handleRubyGems: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/gems\/([^/]+)/);
 		if (!match) return null;
 
-		const gemName = decodeURIComponent(match[1]);
+		const gemName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from RubyGems API

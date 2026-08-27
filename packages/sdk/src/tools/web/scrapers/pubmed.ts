@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * PubMed handler for web-fetch
  */
@@ -34,11 +33,11 @@ export const handlePubMed: SpecialHandler = async (
 		if (parsed.hostname === "pubmed.ncbi.nlm.nih.gov") {
 			// Format: pubmed.ncbi.nlm.nih.gov/12345678/
 			const match = parsed.pathname.match(/\/(\d+)/);
-			if (match) pmid = match[1];
+			if (match) pmid = match[1] ?? null;
 		} else {
 			// Format: ncbi.nlm.nih.gov/pubmed/12345678
 			const match = parsed.pathname.match(/\/pubmed\/(\d+)/);
-			if (match) pmid = match[1];
+			if (match) pmid = match[1] ?? null;
 		}
 
 		if (!pmid) return null;

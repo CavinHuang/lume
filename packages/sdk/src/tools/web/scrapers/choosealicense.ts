@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { parseFrontmatter } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -56,7 +55,7 @@ export const handleChooseALicense: SpecialHandler = async (
 		const isAppendix = APPENDIX_PATH.test(parsed.pathname);
 		if (!licenseMatch && !isAppendix) return null;
 
-		const licenseSlug = licenseMatch ? decodeURIComponent(licenseMatch[1]).toLowerCase() : "appendix";
+		const licenseSlug = licenseMatch ? decodeURIComponent(licenseMatch[1] ?? "").toLowerCase() : "appendix";
 		const rawUrl = licenseMatch
 			? `https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_licenses/${licenseSlug}.txt`
 			: "https://raw.githubusercontent.com/github/choosealicense.com/gh-pages/_pages/appendix.md";

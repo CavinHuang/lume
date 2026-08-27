@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import { formatBytes } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
@@ -106,15 +105,15 @@ function parseOllamaUrl(url: string): { modelRef: string; baseRef: string; pageU
 		if (parts.length === 0) return null;
 
 		if (parts[0] === "library" && parts.length >= 2) {
-			const modelRef = decodeURIComponent(parts[1]);
+			const modelRef = decodeURIComponent(parts[1] ?? "");
 			const baseRef = modelRef.split(":")[0] ?? modelRef;
 			const pageUrl = `${parsed.origin}/${buildModelPath(["library", baseRef])}`;
 			return { modelRef, baseRef, pageUrl };
 		}
 
-		if (parts.length >= 2 && !RESERVED_ROOTS.has(parts[0])) {
-			const namespace = decodeURIComponent(parts[0]);
-			const model = decodeURIComponent(parts[1]);
+		if (parts.length >= 2 && !RESERVED_ROOTS.has(parts[0] ?? "")) {
+			const namespace = decodeURIComponent(parts[0] ?? "");
+			const model = decodeURIComponent(parts[1] ?? "");
 			const modelBase = model.split(":")[0] ?? model;
 			const modelRef = `${namespace}/${model}`;
 			const baseRef = `${namespace}/${modelBase}`;

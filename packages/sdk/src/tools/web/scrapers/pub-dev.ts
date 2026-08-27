@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import { buildResult, formatNumber, htmlToBasicMarkdown, loadPage, type SpecialHandler } from "./types.js";
 
@@ -14,7 +13,7 @@ export const handlePubDev: SpecialHandler = async (url: string, timeout: number,
 		const match = parsed.pathname.match(/^\/packages\/([^/]+)/);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from pub.dev API
@@ -126,7 +125,7 @@ export const handlePubDev: SpecialHandler = async (url: string, timeout: number,
 					/<div[^>]*class="[^"]*markdown-body[^"]*"[^>]*>([\s\S]*?)<\/div>/i,
 				);
 				if (readmeMatch) {
-					const readme = await htmlToBasicMarkdown(readmeMatch[1]);
+					const readme = await htmlToBasicMarkdown(readmeMatch[1] ?? "");
 
 					if (readme.length > 100) {
 						md += `## README\n\n${readme}\n`;

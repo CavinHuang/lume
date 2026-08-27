@@ -1,4 +1,3 @@
-// @ts-nocheck
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
 import { convertWithMarkit, fetchBinary } from "./utils.js";

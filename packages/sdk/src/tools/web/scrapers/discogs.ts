@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Discogs URL handler for music releases and masters
  *

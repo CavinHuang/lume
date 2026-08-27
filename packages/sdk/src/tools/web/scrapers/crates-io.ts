@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage, looksLikeHtml } from "./types.js";
@@ -19,7 +18,7 @@ export const handleCratesIo: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/crates\/([^/]+)/);
 		if (!match) return null;
 
-		const crateName = decodeURIComponent(match[1]);
+		const crateName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from crates.io API

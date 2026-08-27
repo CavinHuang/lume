@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { SpecialHandler } from "./types.js";
 import { buildResult, decodeHtmlEntities, formatIsoDate, loadPage } from "./types.js";
@@ -70,11 +69,11 @@ async function renderStory(item: HNItem, timeout: number, depth = 0, signal?: Ab
 	let output = "";
 
 	if (depth === 0) {
-		output += `# ${item.title}\n\n`;
+		output += `# ${item.title ?? "(untitled)"}\n\n`;
 		if (item.url) {
 			output += `**URL:** ${item.url}\n\n`;
 		}
-		output += `**Posted by:** ${item.by} | **Score:** ${item.score ?? 0} | **Time:** ${formatTimestamp(item.time ?? 0)}`;
+		output += `**Posted by:** ${item.by ?? "[deleted]"} | **Score:** ${item.score ?? 0} | **Time:** ${formatTimestamp(item.time ?? 0)}`;
 		if (item.descendants) {
 			output += ` | **Comments:** ${item.descendants}`;
 		}
@@ -94,7 +93,7 @@ async function renderStory(item: HNItem, timeout: number, depth = 0, signal?: Ab
 
 			for (const comment of comments) {
 				const indent = "  ".repeat(depth);
-				output += `${indent}**${comment.by}** (${formatTimestamp(comment.time ?? 0)})`;
+				output += `${indent}**${comment.by ?? "[deleted]"}** (${formatTimestamp(comment.time ?? 0)})`;
 				if (comment.score !== undefined) output += ` [${comment.score}]`;
 				output += "\n";
 				if (comment.text) {
@@ -118,13 +117,16 @@ async function renderListing(ids: number[], timeout: number, title: string, sign
 	let output = `# ${title}\n\n`;
 	const stories = await fetchItems(ids, timeout, 20, signal);
 
+	let seq = 0;
 	for (let i = 0; i < stories.length; i++) {
 		const story = stories[i];
-		output += `${i + 1}. **${story.title}**\n`;
+		if (!story) continue;
+		seq++;
+		output += `${seq}. **${story.title ?? "(untitled)"}**\n`;
 		if (story.url) {
 			output += `   ${story.url}\n`;
 		}
-		output += `   ${story.score ?? 0} points by ${story.by} | ${formatTimestamp(story.time ?? 0)}`;
+		output += `   ${story.score ?? 0} points by ${story.by ?? "[deleted]"} | ${formatTimestamp(story.time ?? 0)}`;
 		if (story.descendants) {
 			output += ` | ${story.descendants} comments`;
 		}

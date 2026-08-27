@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -105,7 +104,7 @@ export const handleWikidata: SpecialHandler = async (
 		const qidMatch = parsed.pathname.match(/\/(?:wiki|entity)\/(Q\d+)/i);
 		if (!qidMatch) return null;
 
-		const qid = qidMatch[1].toUpperCase();
+		const qid = (qidMatch[1] ?? "").toUpperCase();
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch entity data from API
@@ -329,7 +328,7 @@ function formatWikidataTime(time: string, precision: number): string {
 	const match = time.match(/^([+-]?\d+)-(\d{2})-(\d{2})/);
 	if (!match) return time;
 
-	const [, year, month, day] = match;
+	const [, year = "", month, day] = match;
 	const yearNum = Number.parseInt(year, 10);
 	const absYear = Math.abs(yearNum);
 	const era = yearNum < 0 ? " BCE" : "";
