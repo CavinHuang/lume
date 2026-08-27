@@ -40,6 +40,44 @@ describe("session persistence", () => {
     expect(() => JSON.parse(readFileSync(join(dir, "meta.json"), "utf-8"))).not.toThrow()
   })
 
+  // #527 三审①收官：sidecar slim 投影（json 仅元数据）+ 完好 jsonl 时，
+  // loadSession 必须由状态源派生 messages 并修正计数
+  test("slim transcript.json + jsonl 状态源 → messages 派生与计数修正", async () => {
+    const sessionsRoot = useTempSdkHome()
+    const dir = join(sessionsRoot, "slim-1")
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(
+      join(dir, "transcript.json"),
+      JSON.stringify({
+        metadata: {
+          id: "slim-1",
+          cwd: "/w",
+          model: "unknown/unknown",
+          createdAt: "2026-08-27T00:00:00.000Z",
+          updatedAt: "2026-08-27T00:00:02.000Z",
+          messageCount: 2
+        }
+      }),
+      "utf-8"
+    )
+    const lines = [
+      { uuid: "u1", role: "user", timestamp: "2026-08-27T00:00:01.000Z", content: "q" },
+      { uuid: "a1", role: "assistant", timestamp: "2026-08-27T00:00:02.000Z", content: [{ type: "text", text: "a" }] }
+    ]
+    writeFileSync(join(dir, "transcript.jsonl"), lines.map((line) => JSON.stringify(line)).join("\n"), "utf-8")
+
+    const data = await loadSession("slim-1")
+
+    expect(data).not.toBeNull()
+    expect(data?.messages).toEqual([
+      { role: "user", content: "q" },
+      { role: "assistant", content: [{ type: "text", text: "a" }] }
+    ])
+    expect(data?.sessionMessages).toHaveLength(2)
+    expect(data?.metadata.messageCount).toBe(2)
+    expect(data?.metadata.tag).toBeUndefined() // slim 元数据投影原样保留
+  })
+
   test("loadSession rebuilds from jsonl when transcript.json is a torn write (#293 #306)", async () => {
     const sessionsRoot = useTempSdkHome()
     const dir = join(sessionsRoot, "torn-1")
