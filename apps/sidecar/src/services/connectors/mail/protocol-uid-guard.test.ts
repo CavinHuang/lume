@@ -6,16 +6,29 @@ import { createMailProtocol, type MailCredential } from "./protocol";
  * 对不存在的 UID 静默成功——变更动作必须先探测存在性,否则过期 UID 虚报成功。
  * fake client 刻意模拟真实库语义(对不存在 UID 照样返回 true)。
  */
-function makeFakeClient(messageExists: boolean, options?: { folders?: Array<Record<string, unknown>>; uidValidity?: bigint }) {
+function makeFakeClient(
+  messageExists: boolean,
+  options?: {
+    folders?: Array<Record<string, unknown>>;
+    uidValidity?: bigint;
+    /** mailboxOpen 注入 imapflow 形态的错误(NO/BAD 细节在 serverResponseCode/response)。 */
+    openError?: unknown;
+  },
+) {
   let fetchCalls = 0;
   let currentUidValidity = options?.uidValidity;
   const moveTargets: string[] = [];
+  const errorListeners: Array<[string, (error: Error) => void]> = [];
   const client = {
     connect: async () => {},
     logout: async () => {},
     close: () => {},
-    list: async () => options?.folders ?? [{ path: "Trash", name: "Trash", delimiter: "/", flags: [], specialUse: "\\Trash" }],
-    mailboxOpen: async () => ({ ...(currentUidValidity !== undefined ? { uidValidity: currentUidValidity } : {}) }),
+    list: async () =>
+      options?.folders ?? [{ path: "Trash", name: "Trash", delimiter: "/", flags: [], specialUse: "\\Trash" }],
+    mailboxOpen: async () => {
+      if (options?.openError !== undefined) throw options.openError;
+      return { ...(currentUidValidity !== undefined ? { uidValidity: currentUidValidity } : {}) };
+    },
     search: async () => [1],
     fetchAll: async () => [],
     fetchOne: async () => {
@@ -34,9 +47,19 @@ function makeFakeClient(messageExists: boolean, options?: { folders?: Array<Reco
     resetUidValidity(next: bigint) {
       currentUidValidity = next;
     },
+    on(event: string, listener: (error: Error) => void) {
+      errorListeners.push([event, listener]);
+      return client;
+    },
   };
-  return { client, moveTargets, get fetchCount() { return fetchCalls; } };
+  return { client, errorListeners, moveTargets, get fetchCount() { return fetchCalls; } };
 }
+
+/** imapflow 对命令 NO/BAD 的真实错误形态:message 恒为 "Command failed",细节在另两个字段。 */
+const IMAPFLOW_FOLDER_MISSING_ERROR = Object.assign(new Error("Command failed"), {
+  serverResponseCode: "NONEXISTENT",
+  response: "* NO [NONEXISTENT] Mailbox doesn't exist: Missing (0.001 + 0.1 ns)",
+});
 
 let uidGuardSeq = 0;
 // 池按账号键控且连接跨动作复用:每个用例独立邮箱,避免吃到上一用例留池的 fake 连接
@@ -141,5 +164,30 @@ describe("mutation actions verify UIDVALIDITY before writing (#690)", () => {
     // 大小写变体建立基准后,另一变体的写动作不得因「无基准」被误拒(#735 审查)
     await protocol.searchSummaries({ ...account, email: account.email.toUpperCase() }, "INBOX", {}, { limit: 5, peek: true });
     await expect(protocol.markSeen(account, "INBOX", 1)).resolves.toBeUndefined();
+  });
+});
+
+describe("imapflow error shape handling", () => {
+  it("classifies folder-missing from serverResponseCode/response, not from message", async () => {
+    // 回归钉死:imapflow 的 NO/BAD 错误 message 恒为 "Command failed",
+    // 响应码在 serverResponseCode、原文在 response——读 .code/.message 永远不命中
+    const { client } = makeFakeClient(true, { openError: IMAPFLOW_FOLDER_MISSING_ERROR });
+    const protocol = createMailProtocol(config, { createImapClient: () => client });
+
+    await expect(protocol.deleteMessage(credential(), "Missing", 1)).rejects.toMatchObject({
+      kind: "folder_not_found",
+    });
+  });
+
+  it("attaches a transport error listener so async socket failures stay contained", async () => {
+    const fake = makeFakeClient(true);
+    const protocol = createMailProtocol(config, { createImapClient: () => fake.client });
+    await protocol.deleteMessage(credential(), "INBOX", 1);
+
+    const registered = fake.errorListeners.filter(([event]) => event === "error");
+    expect(registered.length).toBeGreaterThan(0);
+    const [firstEvent, firstListener] = registered[0] ?? [];
+    expect(firstEvent).toBe("error");
+    expect(typeof firstListener).toBe("function");
   });
 });
