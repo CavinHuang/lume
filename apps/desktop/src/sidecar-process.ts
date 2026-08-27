@@ -107,6 +107,8 @@ export function createDesktopHostSpawnConfig({
   endpoint,
   sessionToken,
   tokenFilePath,
+  logStdoutPath,
+  logStderrPath,
   env = {},
   platform = process.platform,
 }) {
@@ -114,12 +116,20 @@ export function createDesktopHostSpawnConfig({
     if (!tokenFilePath) {
       throw new Error('tokenFilePath is required for macOS desktop host launch')
     }
+    // #751: LaunchServices 拉起时宿主 stdio 归 /dev/null，supervisor 收不到任何
+    // LUMELOG 结构化行。open --stdout/--stderr 把宿主输出重定向到文件（这两个是
+    // open 自身的选项，须在 app 路径之前），由 supervisor tail 跟随；TCC 身份
+    // 仍由 .app bundle 保留（这也是必须经 open 拉起的根因）。
+    const redirectArgs = logStdoutPath && logStderrPath
+      ? ['--stdout', logStdoutPath, '--stderr', logStderrPath]
+      : []
     return {
       command: '/usr/bin/open',
       args: [
         '-n',
         '-W',
         '-g',
+        ...redirectArgs,
         desktopHostMacAppPathFromExecutable(binaryPath),
         '--args',
         '--endpoint',

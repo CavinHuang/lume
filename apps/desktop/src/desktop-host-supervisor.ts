@@ -31,6 +31,8 @@ interface DesktopHostSupervisorOptions {
   logEvent?: (event: LumeHostLogLine) => void
   writeTokenFile?: (path: string, token: string) => void
   removeTokenFile?: (path: string) => void
+  /** #751: 宿主日志重定向文件落位前须存在（空文件），否则 tail -F 在部分平台上不跟随。 */
+  touchFile?: (path: string) => void
   schedule?: (callback: () => void, delayMs: number) => ReturnType<typeof setTimeout>
   cancelSchedule?: (timer: ReturnType<typeof setTimeout>) => void
   now?: () => number
@@ -71,6 +73,7 @@ export function createDesktopHostSupervisor({
   logEvent,
   writeTokenFile = (path, token) => writeFileSync(path, token, { encoding: 'utf8', mode: 0o600 }),
   removeTokenFile = (path) => rmSync(path, { force: true }),
+  touchFile = (path) => writeFileSync(path, '', { encoding: 'utf8', mode: 0o600 }),
   schedule = setTimeout,
   cancelSchedule = clearTimeout,
   now = Date.now,
@@ -83,6 +86,60 @@ export function createDesktopHostSupervisor({
   let activeConfig: ReturnType<typeof createDesktopHostSpawnConfig> | null = null
   let activeConnection: Extract<DesktopHostState, { available: true }> | null = null
   let activeTokenFilePath: string | null = null
+  // #751: darwin 宿主日志重定向文件 + tail 跟随进程；跟随者与宿主生命周期解耦
+  //（open 重启时文件路径不变，旧 -F 继续有效，无需重建）。
+  let hostLogPaths: { stdout: string; stderr: string } | null = null
+  let hostLogFollowers: Array<ReturnType<typeof spawnProcess>> = []
+
+  // 无换行洪水的兜底：缓冲超限保留末尾 64KB，防止 O(n²) 重扫与内存无界。
+  // 提升到实例级：流来源既有直连子进程也有 tail 跟随者（darwin），共用同一摄取管线。
+  const MAX_LINE_BUFFER_CHARS = 1024 * 1024
+  const lineBuffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
+  const ingestChunk = (stream: 'stdout' | 'stderr', chunk: string) => {
+    lineBuffers[stream] += chunk
+    if (lineBuffers[stream].length > MAX_LINE_BUFFER_CHARS) {
+      lineBuffers[stream] = lineBuffers[stream].slice(-64 * 1024)
+    }
+    const lines = lineBuffers[stream].split('\n')
+    lineBuffers[stream] = lines.pop() ?? ''
+    for (const raw of lines) {
+      const line = raw.trimEnd()
+      if (!line) continue
+      // parseLumeLogLine：非前缀/坏 JSON/非对象载荷返回 null → 回退文本路径，
+      // 避免 null 解构在 data handler 里抛未捕获异常击穿主进程。
+      const parsed = parseLumeLogLine(line)
+      if (!parsed) {
+        // 非前缀/坏 JSON/非对象/缺核心字段回退文本路径。
+        log(`[desktop-host] ${line}`)
+        continue
+      }
+      try {
+        logEvent?.(parsed)
+      } catch {
+        // logEvent 自身故障不得在 data handler 里抛未捕获异常。
+        log(`[desktop-host] ${line}`)
+      }
+    }
+  }
+
+  const ensureHostLogFollowers = (): void => {
+    if (!hostLogPaths || hostLogFollowers.length > 0) return
+    touchFile(hostLogPaths.stdout)
+    touchFile(hostLogPaths.stderr)
+    for (const [stream, path] of [['stdout', hostLogPaths.stdout], ['stderr', hostLogPaths.stderr]] as const) {
+      try {
+        const follower = spawn('/usr/bin/tail', ['-n0', '-F', path], { stdio: ['ignore', 'pipe', 'ignore'] })
+        follower.stdout?.on('data', (chunk) => ingestChunk(stream as 'stdout' | 'stderr', String(chunk)))
+        follower.once?.('error', (error: unknown) => {
+          // 跟随失败仅降级为收不到结构化行（等同修复前行为），不影响宿主生命周期。
+          log(`[desktop-host] log follow failed for ${path}: ${error instanceof Error ? error.message : String(error)}`)
+        })
+        hostLogFollowers.push(follower)
+      } catch (error) {
+        log(`[desktop-host] log follow spawn failed: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+  }
 
   // exit 与 error 共用的降级路径:置 unavailable、按崩溃窗口退避重调度。
   // spawn 失败(杀软拦截/缺 DLL)只发 error 不发 exit,原实现仅打日志导致 state 永远 available(#124)。
@@ -113,35 +170,7 @@ export function createDesktopHostSupervisor({
     const running = spawn(config.command, config.args, config.options)
     child = running
     if (activeConnection) state = activeConnection
-    // 无换行洪水的兜底：缓冲超限保留末尾 64KB，防止 O(n²) 重扫与内存无界。
-    const MAX_LINE_BUFFER_CHARS = 1024 * 1024
-    const lineBuffers: Record<'stdout' | 'stderr', string> = { stdout: '', stderr: '' }
-    const ingestChunk = (stream: 'stdout' | 'stderr', chunk: string) => {
-      lineBuffers[stream] += chunk
-      if (lineBuffers[stream].length > MAX_LINE_BUFFER_CHARS) {
-        lineBuffers[stream] = lineBuffers[stream].slice(-64 * 1024)
-      }
-      const lines = lineBuffers[stream].split('\n')
-      lineBuffers[stream] = lines.pop() ?? ''
-      for (const raw of lines) {
-        const line = raw.trimEnd()
-        if (!line) continue
-        // parseLumeLogLine：非前缀/坏 JSON/非对象载荷返回 null → 回退文本路径，
-        // 避免 null 解构在 data handler 里抛未捕获异常击穿主进程。
-        const parsed = parseLumeLogLine(line)
-        if (!parsed) {
-          // 非前缀/坏 JSON/非对象/缺核心字段回退文本路径。
-          log(`[desktop-host] ${line}`)
-          continue
-        }
-        try {
-          logEvent?.(parsed)
-        } catch {
-          // logEvent 自身故障不得在 data handler 里抛未捕获异常。
-          log(`[desktop-host] ${line}`)
-        }
-      }
-    }
+    if (hostLogPaths) ensureHostLogFollowers()
     running.stdout?.on('data', (chunk) => ingestChunk('stdout', String(chunk)))
     running.stderr?.on('data', (chunk) => ingestChunk('stderr', String(chunk)))
     let spawnedAt = 0
@@ -186,11 +215,17 @@ export function createDesktopHostSupervisor({
       const sessionToken = token()
       const tokenFilePath = platform === 'darwin' ? createDesktopHostTokenFilePath(endpoint) : undefined
       stopped = false
+      // #751: darwin 宿主 stdio 经 LaunchServices 归 /dev/null，重定向到文件由 tail 跟随。
+      hostLogPaths = platform === 'darwin' && tokenFilePath
+        ? { stdout: `${tokenFilePath}.stdout.log`, stderr: `${tokenFilePath}.stderr.log` }
+        : null
       activeConfig = createDesktopHostSpawnConfig({
         binaryPath,
         endpoint,
         sessionToken,
         tokenFilePath,
+        logStdoutPath: hostLogPaths?.stdout,
+        logStderrPath: hostLogPaths?.stderr,
         env: baseEnv,
         platform,
       })
@@ -205,6 +240,14 @@ export function createDesktopHostSupervisor({
       stopped = true
       if (restartTimer) cancelSchedule(restartTimer)
       restartTimer = null
+      // #751: tail 跟随者必须随 stop 回收，否则旧 -F 与下次 start 的新 follower 双跟重复摄取。
+      for (const follower of hostLogFollowers) follower.kill?.()
+      hostLogFollowers = []
+      if (hostLogPaths) {
+        removeTokenFile(hostLogPaths.stdout)
+        removeTokenFile(hostLogPaths.stderr)
+      }
+      hostLogPaths = null
       child?.kill?.()
       child = null
       if (activeTokenFilePath) removeTokenFile(activeTokenFilePath)

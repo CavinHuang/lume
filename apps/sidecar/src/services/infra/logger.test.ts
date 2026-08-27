@@ -45,7 +45,7 @@ describe("logger diagnostic helpers", () => {
     expect(summary).not.toContain("secret-token");
     expect(summary).toContain("[redacted]");
     expect(summary.length).toBeLessThanOrEqual(135);
-    expect(summary).toContain("(truncated)");
+    expect(summary).toContain("…[truncated]");
   });
 
   test("uses the shared daily log file name while main owns persistence", () => {
@@ -92,5 +92,20 @@ describe("logger diagnostic helpers", () => {
       }]
     });
     expect(batches[0].events[0].emittedAt).toEqual(expect.any(String));
+  });
+
+  test("handles a synchronous acknowledgement without corrupting in-flight state", () => {
+    const batches: any[] = [];
+    setLogBatchNotificationWriter((batch) => {
+      batches.push(batch);
+      acknowledgeLogBatch(batch.batchId);
+    });
+    try {
+      writeLogRecord({ level: "info", context: "console", message: "sync ack" });
+      flushLogTransport();
+    } finally {
+      setLogBatchNotificationWriter(null);
+    }
+    expect(batches).toHaveLength(1);
   });
 });
