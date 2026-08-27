@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import type { BrowserActionRequest } from "@lume/shared";
+import type { BrowserActionRequest, BrowserErrorCode } from "@lume/shared";
 import type { BrowserMainTransport } from "./browser-broker";
 
 const APP_SERVER_PROTOCOL_VERSION = 2;
@@ -107,7 +107,9 @@ export class ExternalChromeTransport implements BrowserMainTransport {
         this.pending.delete(id);
         // 与主通道超时同语义：变更型动作可能已执行，错误码须过 broker 白名单
         // 落到 executed_unknown，而非塌缩成 browser_internal_error 误导重试判定（#407）
-        const timeoutError = new Error("external browser request timed out") as Error & { code?: string };
+        const timeoutError = new Error("external browser request timed out") as Error & {
+          code?: BrowserErrorCode;
+        };
         timeoutError.code = "executed_unknown";
         reject(timeoutError);
       }, this.timeoutMs);

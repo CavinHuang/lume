@@ -43,6 +43,9 @@ interface ImportClause {
 
 // 覆盖:import/export-import、动态 import()、export *(可带 as 别名)与
 // export {...}/export type {...} from(#503:此前 export-from 形式不可见)。
+// 已知盲区(round1 review 披露):require() 形态(index.ts 自身在用)与
+// specifier 为变量的动态 import 不可见——本守卫本质是存量快照冻结器,
+// 新增越界须走这两形态才能绕过,code review 时人工留意。
 const IMPORT_RE =
   /(?:^|\n)\s*(?:export\s+)?import\s+(type\s+)?(?:([\w*${}\s,]+?)\s+from\s+)?["']([^"']+)["']|\bimport\s*\(\s*["']([^"']+)["']\s*\)|(?:^|\n)\s*export\s+(type\s+)?(\*(?:\s+as\s+[\w$]+)?|\{[^}]*\})\s+from\s+["']([^"']+)["']/g;
 
@@ -126,6 +129,91 @@ describe("分层方向守卫(#289)", () => {
       }
     }
     expect(violations).toEqual([]);
+  });
+
+  // #578 登记:应用层↔功能域双向禁入边(import type 放行,与上测同规则)。
+  // 四组环的存量越界记录在 legacyEdgeExemptions 台账——新增越界即红,逐 PR
+  // 消环时同步删豁免;某域对清零后将其升级为硬禁入对。
+  const forbiddenBidirectionalPairs: Array<[string, string]> = [
+    ["agent", "automation"],
+    ["agent", "mcp"],
+    ["agent", "im"],
+    ["agent", "memory-v2"],
+    // review fix(#578 follow-up):im↔agent-runtime 是第五组真实环,此前因
+    // 台账的 "agent" 仅指应用层而不可见;存量两条借道边登记进豁免。
+    ["agent-runtime", "im"],
+  ];
+
+  // review fix(#581/#578 follow-up):本 PR 剪除的单向边当场登记禁入,
+  // 防止"宣称的核心成果"处于无绊线状态;两者现值均为零,登记零成本。
+  const forbiddenDirectedEdges: Array<[string, string]> = [
+    ["channel", "agent-runtime"], // #581:model-refs 下沉后 channel 不再上行 harness
+    ["infra", "system"], // #578:proxy 配置经 holder 注入后 infra 不再上行 system
+  ];
+
+  /** 存量豁免台账 `<相对 services 的文件路径> => <目标域>`;仅限登记时已知违规。 */
+  const legacyEdgeExemptions = new Set<string>([
+    "agent/agent-file-ref.ts => memory-v2",
+    "agent/agent-files-service.ts => memory-v2",
+    "agent/agent-project-lifecycle-service.ts => automation",
+    "agent/agent-project-lifecycle-service.ts => im",
+    "agent/agent-project-lifecycle-service.ts => mcp",
+    "automation/automation-runner-service.ts => agent",
+    "im/im-chat-commands.ts => agent",
+    "im/im-message-router.ts => agent",
+    "im/im-run-card-session.ts => agent", // 上游 #709 批次引入,待后续消环
+    "im/im-message-router.ts => agent-runtime", // 会话活性/目录/回滚查询,待端口化
+    "agent-runtime/tools/im/create-im-tools.ts => im", // IM 工具天然绑定 im 域
+    "mcp/workspace-mcp-manager.ts => agent",
+    // memory-v2 两文件的通知借道边(agent-notification-service)已在 #580
+    // follow-up 直连 infra 剪除;豁免仍覆盖其深层数据访问边(agent-thread-
+    // manager/agent-service 等),待仓储端口化后整条删除。
+    "memory-v2/background-extractor.ts => agent",
+    "memory-v2/consolidation.ts => agent",
+    "memory-v2/dream-evidence.ts => agent",
+    "memory-v2/dream-organizer.ts => agent",
+    "memory-v2/history-organizer.ts => agent",
+    "memory-v2/ingestion.ts => agent",
+    "memory-v2/job-recovery.ts => agent",
+  ]);
+
+  test("#578 登记:域间值导入不得超出存量豁免台账", () => {
+    const servicesRoot = join(repositoryRoot, "apps/sidecar/src/services");
+    const violations: string[] = [];
+    // 本轮实际命中的边全集:台账活性正控的对照面。
+    const observedEdges = new Set<string>();
+    for (const file of listTsFiles(servicesRoot)) {
+      if (/\.test\.ts$|\.bench\.ts$/.test(file)) continue;
+      const relPath = relative(servicesRoot, file).split("\\").join("/");
+      const srcDomain = relPath.split("/")[0];
+      for (const clause of parseImports(readFileSync(file, "utf-8"))) {
+        if (!clause.hasValueSpecifiers) continue;
+        const target = resolveImportFromFile(file, clause.spec);
+        if (!target || !target.startsWith(servicesRoot)) continue;
+        const dstDomain = relative(servicesRoot, dirname(target)).split("\\")[0]?.split("/")[0] ?? "";
+        if (dstDomain === srcDomain) continue;
+        const paired = forbiddenBidirectionalPairs.some(
+          ([a, b]) => (srcDomain === a && dstDomain === b) || (srcDomain === b && dstDomain === a),
+        );
+        const directed = forbiddenDirectedEdges.some(
+          ([src, dst]) => srcDomain === src && dstDomain === dst,
+        );
+        if (!paired && !directed) continue;
+        const edge = `${relPath} => ${dstDomain}`;
+        observedEdges.add(edge);
+        // 单向绊线不可被台账中和:命中禁入向即违规,豁免只服务双向对存量。
+        if (directed) {
+          violations.push(`${edge} (单向禁入边,不受豁免保护)`);
+        } else if (!legacyEdgeExemptions.has(edge)) {
+          violations.push(edge);
+        }
+      }
+    }
+    expect(violations).toEqual([]);
+    // 台账活性正控:每条豁免必须仍对应一条现存活边——判定逻辑回归(恒空
+    // violations)或消环后忘删豁免都会在此变红。
+    const stale = [...legacyEdgeExemptions].filter((entry) => !observedEdges.has(entry));
+    expect(stale).toEqual([]);
   });
 
   // 正控(#503):守卫只断言空违规时,解析器回归会静默瘫痪而 CI 保持绿。

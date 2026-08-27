@@ -208,8 +208,8 @@ export class TraceRecorder {
     const cached = this.spans.get(spanId);
     if (cached) return cached;
     // 外部 span（非本 recorder 启动）：扫描 session store，保持旧路径
-    const anyStore = this.store as unknown as { listByThread?: (threadId: string) => Promise<LumeTrace[]> };
-    if (!anyStore.listByThread) return null;
+    // (#584:探测门与使用面曾错位——查 listByThread 干 tracesDir 的活,
+    // 无 listByThread mock 但有 tracesDir 的实现被误判不支持)
     const knownTraces = await collectKnownTraces(this.store);
     for (const trace of knownTraces) {
       const span = trace.spans.find((item) => item.id === spanId);
@@ -220,12 +220,10 @@ export class TraceRecorder {
 }
 
 async function collectKnownTraces(store: LumeTraceStore): Promise<LumeTrace[]> {
-  const internals = store as unknown as { tracesDir?: string };
-  if (!internals.tracesDir) return [];
+  if (!store.tracesDir) return [];
   const { readdirSync } = await import("node:fs");
-  const { join } = await import("node:path");
   const traces: LumeTrace[] = [];
-  for (const file of readdirSync(internals.tracesDir)) {
+  for (const file of readdirSync(store.tracesDir)) {
     if (!file.endsWith(".json")) continue;
     const traceId = file.slice(0, -".json".length);
     const trace = await store.get(traceId);

@@ -386,8 +386,9 @@ export class LumeRunner {
       this.emitMemoryContextUsed(runtimeSession.memoryContextUsedItems ?? []);
 
       updateRuntimeThreadMetaIfPresent(runtime, {
-        sdkThreadId: session.threadId ?? session.sessionId,
-        runtimeThreadId: session.threadId ?? session.sessionId
+        // #584:runtime-core 内 sessionId 即 threadId,不再双名兜底
+        sdkThreadId: session.sessionId,
+        runtimeThreadId: session.sessionId
       });
       await runtimeSession.refreshCodingChangeSet?.();
       return this.complete(

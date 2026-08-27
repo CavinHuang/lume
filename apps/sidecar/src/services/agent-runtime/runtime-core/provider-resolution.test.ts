@@ -64,7 +64,7 @@ describe("provider-resolution", () => {
   });
 
   test("应映射全部 coding-plan/国内供应商到 runtime provider（避免发送完整 ref）", () => {
-    // 这些 provider 已在 coerceKnownProvider/PROVIDER_API_FAMILIES 中登记，
+    // 这些 provider 已在 PROVIDER_API_FAMILIES(shared channel.ts)中登记，
     // PROVIDER_ALIAS 必须同步覆盖，否则 parseProviderModelRef 无法拆分，
     // 会把 "provider/model" 整串当作模型名发给上游 → 404 model does not exist
     expect(mapLumeProviderToRuntimeProvider("stepfun")).toBe("openai");

@@ -19,7 +19,7 @@ import { resolvePromptCachePolicy } from "./request-policy";
 import { runRuntimeCoreAttempt } from "../runner/attempt";
 import { prepareRuntimeCoreAttempt } from "../runner/prepare-attempt";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { getAgentSessionWorkspacePath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
+import { getAgentThreadRootPath, getAgentWorkspacePath, getAliceUserSkillsDir, getDefaultSkillsDir } from "../../infra/config-paths";
 import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { getSubagentRunRegistry, resetSubagentRunRegistryForTest } from "../subagents/subagent-run-registry";
@@ -111,7 +111,7 @@ describe("runtime-core run", () => {
       permissionMode: "plan"
     });
 
-    expect(result.session.threadId).toBe(result.sessionManager.getSessionId());
+    expect(result.session.sessionId).toBe(result.sessionManager.getSessionId());
     expect(result.session.model?.provider).toBe("anthropic");
     expect(result.session.getActiveToolNames().length).toBeGreaterThan(0);
     expect(result.session.getActiveToolNames()).toContain("Read");
@@ -879,7 +879,7 @@ describe("runtime-core run", () => {
       apiKey: "test-key",
       permissionMode: "plan"
     });
-    const firstUpstreamSessionId = first.session.threadId;
+    const firstUpstreamSessionId = first.session.sessionId;
     first.sessionManager.appendMessage({
       role: "user",
       content: [{ type: "text", text: "restore me" }],
@@ -919,7 +919,7 @@ describe("runtime-core run", () => {
 
     expect(second.sessionManager.buildSessionContext().messages.some((message) => message.role === "user")).toBeTrue();
     expect(second.session.messages.some((message) => message.role === "user")).toBeTrue();
-    expect(second.session.threadId).toBe(firstUpstreamSessionId);
+    expect(second.session.sessionId).toBe(firstUpstreamSessionId);
     second.session.dispose();
   });
 
@@ -1273,7 +1273,7 @@ describe("runtime-core run", () => {
 
     const thread = createAgentThread("runtime attempt no mirror", channel.id, workspace.id, undefined, "gpt-5.4-mini");
     const sessionId = thread.id;
-    const threadDir = getAgentSessionWorkspacePath(workspace.slug, sessionId);
+    const threadDir = getAgentThreadRootPath(workspace.slug, sessionId);
 
     const result = await runRuntimeCoreAttempt(
       {

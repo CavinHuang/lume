@@ -4,7 +4,8 @@
  * 投影出同内容异 id 的消息 → 幽灵消息突现。
  *
  * 本文件用 mock.module 隔离重依赖（dream-organizer/derived-views），捕获
- * emitAgentNotification 通知；runner 会将含 mock.module 的文件单独进程执行。
+ * 出站通知写入器（memory-v2 已直连 infra/outbound-notification）；runner 会
+ * 将含 mock.module 的文件单独进程执行。
  */
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -19,8 +20,8 @@ interface CapturedNotification {
 
 const captured: CapturedNotification[] = [];
 
-mock.module("../agent/agent-notification-service", () => ({
-  emitAgentNotification: (channel: string, payload: unknown) => {
+mock.module("../infra/outbound-notification", () => ({
+  getOutboundNotificationWriter: () => (channel: string, payload: unknown) => {
     captured.push({ channel, payload });
   }
 }));

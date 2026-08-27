@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { getAgentSessionWorkspacePath, getAgentThreadFilesPath, getWorkspaceResourcesPath } from "../infra/config-paths";
+import { getAgentThreadRootPath, getAgentThreadFilesPath, getWorkspaceResourcesPath } from "../infra/config-paths";
 import { listWorkspaceDirectory, saveFilesToAgentSession } from "./agent-files-service";
 import { promoteFileToWorkspace } from "./agent-file-promotion-service";
 
@@ -58,7 +58,7 @@ describe("agent-file-promotion-service", () => {
     const externalSource = join(tempConfigDir, "external.md");
     writeFileSync(externalSource, "# external", "utf-8");
 
-    const source = join(getAgentSessionWorkspacePath("demo", "thread-1"), "imported.md");
+    const source = join(getAgentThreadRootPath("demo", "thread-1"), "imported.md");
     saveFilesToAgentSession({
       workspaceSlug: "demo",
       threadId: "thread-1",
@@ -90,7 +90,7 @@ describe("agent-file-promotion-service", () => {
     promoteFileToWorkspace({
       workspaceSlug: "demo",
       threadId: "thread-1",
-      filePath: join(getAgentSessionWorkspacePath("demo", "thread-1"), "imported.md")
+      filePath: join(getAgentThreadRootPath("demo", "thread-1"), "imported.md")
     });
 
     saveFilesToAgentSession({
@@ -101,7 +101,7 @@ describe("agent-file-promotion-service", () => {
     promoteFileToWorkspace({
       workspaceSlug: "demo",
       threadId: "thread-1",
-      filePath: join(getAgentSessionWorkspacePath("demo", "thread-1"), "imported.md"),
+      filePath: join(getAgentThreadRootPath("demo", "thread-1"), "imported.md"),
       conflictMode: "overwrite"
     });
 

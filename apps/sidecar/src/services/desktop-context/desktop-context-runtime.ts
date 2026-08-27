@@ -1,4 +1,5 @@
 import type { DesktopAssistantSettings, DesktopContextSuspensionReason } from "@lume/shared";
+import { getOutboundNotificationWriter } from "../infra/outbound-notification";
 import {
   getDesktopContextDbPath,
   getDesktopContextSettingsPath,
@@ -12,7 +13,6 @@ import {
 } from "./desktop-context-settings";
 
 let runtime: { settingsPath: string; service: DesktopContextService } | null = null;
-let notificationWriter: ((method: string, params: unknown) => void) | undefined;
 let hostNotificationsRegistered = false;
 
 function getRuntime(): { settingsPath: string; service: DesktopContextService } {
@@ -25,7 +25,8 @@ function getRuntime(): { settingsPath: string; service: DesktopContextService } 
       settings: loadDesktopAssistantSettings(settingsPath),
       invokeHost: (method, input) => invokeDesktopHost(`desktop_context.${method}`, input),
       manageHostEventSubscription: true,
-      emitNotification: (method, params) => notificationWriter?.(method, params),
+      // #580:经 outbound-notification 单点读取出站写入器(组合根注入)
+      emitNotification: (method, params) => getOutboundNotificationWriter()?.(method, params),
       generateProposalResult: createDesktopProposalResultGenerator(),
     }),
   };
@@ -36,10 +37,6 @@ function getRuntime(): { settingsPath: string; service: DesktopContextService } 
     });
   }
   return runtime;
-}
-
-export function setDesktopContextNotificationWriter(writer: (method: string, params: unknown) => void): void {
-  notificationWriter = writer;
 }
 
 export const desktopContextRpcService = {

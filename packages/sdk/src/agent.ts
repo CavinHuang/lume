@@ -741,6 +741,11 @@ export class Agent {
     }
   }
 
+  /** 公开只读快照(#584):此前 run-subagent 以双重断言伸入私有 toolPool,重命名即静默 fallback。 */
+  get resolvedTools(): readonly ToolDefinition[] {
+    return this.toolPool
+  }
+
   /** Resolve the tool pools for one run: shared by runSinglePrompt and resumeInterruptedRun. */
   private getRunTools(
     _opts: AgentOptions,

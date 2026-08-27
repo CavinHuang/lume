@@ -14,7 +14,7 @@ import {
   setConnectionApiKey,
 } from "./connection-credential-store";
 import { getSuggestedProviderModels, normalizeChannelModel, parseConnectionModelRef, PROVIDER_API_FAMILIES } from "@lume/shared";
-import { parseModelRef } from "./model-selection";
+import { parseModelRef } from "../infra/model-refs";
 import { createLogger } from "../infra/logger";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import type {
