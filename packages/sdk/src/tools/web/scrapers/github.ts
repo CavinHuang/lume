@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getRuntimeFetch } from "./compat.js";
 import { $env, ptree } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
@@ -46,6 +45,7 @@ export function parseGitHubUrl(url: string): GitHubUrl | null {
 		if (parts.length < 2) return null;
 
 		const [owner, repo, ...rest] = parts;
+		if (!owner || !repo) return null;
 
 		if (rest.length === 0) {
 			return { type: "repo", owner, repo };
@@ -65,13 +65,13 @@ export function parseGitHubUrl(url: string): GitHubUrl | null {
 				}
 				return { type: "other", owner, repo };
 			case "issues":
-				if (subParts.length > 0 && /^\d+$/.test(subParts[0])) {
-					return { type: "issue", owner, repo, number: parseInt(subParts[0], 10) };
+				if (subParts.length > 0 && /^\d+$/.test(subParts[0] ?? "")) {
+					return { type: "issue", owner, repo, number: parseInt(subParts[0] ?? "", 10) };
 				}
 				return { type: "issues", owner, repo };
 			case "pull":
-				if (subParts.length > 0 && /^\d+$/.test(subParts[0])) {
-					return { type: "pull", owner, repo, number: parseInt(subParts[0], 10) };
+				if (subParts.length > 0 && /^\d+$/.test(subParts[0] ?? "")) {
+					return { type: "pull", owner, repo, number: parseInt(subParts[0] ?? "", 10) };
 				}
 				return { type: "pulls", owner, repo };
 			case "pulls":
@@ -81,18 +81,18 @@ export function parseGitHubUrl(url: string): GitHubUrl | null {
 				// /actions/runs/{runId}/job/{jobId}          → single job (web URL uses singular "job")
 				// /actions/runs/{runId}/jobs/{jobId}         → single job (API-style plural)
 				if (subParts[0] === "runs" && /^\d+$/.test(subParts[1] ?? "")) {
-					const runId = parseInt(subParts[1], 10);
+					const runId = parseInt(subParts[1] ?? "", 10);
 					const seg = subParts[2];
 					if ((seg === "job" || seg === "jobs") && /^\d+$/.test(subParts[3] ?? "")) {
-						return { type: "actions-job", owner, repo, runId, jobId: parseInt(subParts[3], 10) };
+						return { type: "actions-job", owner, repo, runId, jobId: parseInt(subParts[3] ?? "", 10) };
 					}
 					return { type: "actions-run", owner, repo, runId };
 				}
 				return { type: "other", owner, repo };
 			}
 			case "discussions":
-				if (subParts.length > 0 && /^\d+$/.test(subParts[0])) {
-					return { type: "discussion", owner, repo, number: parseInt(subParts[0], 10) };
+				if (subParts.length > 0 && /^\d+$/.test(subParts[0] ?? "")) {
+					return { type: "discussion", owner, repo, number: parseInt(subParts[0] ?? "", 10) };
 				}
 				return { type: "discussions", owner, repo };
 			default:
@@ -356,7 +356,7 @@ async function renderGitHubIssuesList(
 		if (issue.pull_request) continue; // Skip PRs in issues list
 		const labels = issue.labels.length > 0 ? ` [${issue.labels.map(l => l.name).join(", ")}]` : "";
 		md += `- **#${issue.number}** ${issue.title}${labels}\n`;
-		md += `  by @${issue.user.login} · ${issue.comments} comments · ${issue.created_at}\n\n`;
+		md += `  by @${issue.user?.login ?? "(deleted)"} · ${issue.comments} comments · ${issue.created_at}\n\n`;
 	}
 
 	return { content: md, ok: true };

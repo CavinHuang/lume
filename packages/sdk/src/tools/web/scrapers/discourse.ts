@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -50,13 +49,13 @@ function normalizeBasePath(basePath: string): string {
 function parseTopicPath(pathname: string): { basePath: string; topicId: string } | null {
 	const match = pathname.match(/^(.*?)(?:\/t\/)(?:[^/]+\/)?(\d+)(?:\.json)?(?:\/|$)/);
 	if (!match) return null;
-	return { basePath: match[1] ?? "", topicId: match[2] };
+	return { basePath: match[1] ?? "", topicId: match[2] ?? "" };
 }
 
 function parsePostPath(pathname: string): { basePath: string; postId: string } | null {
 	const match = pathname.match(/^(.*?)(?:\/posts\/)(\d+)(?:\.json)?(?:\/|$)/);
 	if (!match) return null;
-	return { basePath: match[1] ?? "", postId: match[2] };
+	return { basePath: match[1] ?? "", postId: match[2] ?? "" };
 }
 
 function formatAuthor(user?: DiscourseUser | null): string {
@@ -188,10 +187,11 @@ export const handleDiscourse: SpecialHandler = async (
 
 		md += "\n";
 
+		const firstPost = posts[0];
 		const description = topic.excerpt
 			? await htmlToBasicMarkdown(topic.excerpt)
-			: posts.length
-				? await formatPostBody(posts[0])
+			: firstPost
+				? await formatPostBody(firstPost)
 				: "";
 		if (description) {
 			md += `## Description\n\n${description}\n\n`;

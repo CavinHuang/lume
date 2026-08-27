@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -107,7 +106,7 @@ export const handleGoPkg: SpecialHandler = async (
 			if (moduleLink) {
 				const href = moduleLink.getAttribute("href");
 				if (href) {
-					actualModulePath = href.slice(1).split("@")[0];
+					actualModulePath = href.slice(1).split("@")[0] ?? "";
 				}
 			}
 		}
@@ -173,6 +172,7 @@ export const handleGoPkg: SpecialHandler = async (
 				const docParts: string[] = [];
 				for (let i = 0; i < Math.min(3, paragraphs.length); i++) {
 					const p = paragraphs[i];
+					if (!p) continue;
 					const text = (await htmlToBasicMarkdown(p.innerHTML)).trim();
 					if (text) {
 						docParts.push(text);

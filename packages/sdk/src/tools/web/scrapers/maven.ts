@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, loadPage } from "./types.js";
@@ -50,16 +49,16 @@ export const handleMaven: SpecialHandler = async (
 			// Pattern: /artifact/{groupId}/{artifactId}[/{version}[/{packaging}]]
 			const match = parsed.pathname.match(/^\/artifact\/([^/]+)\/([^/]+)(?:\/([^/]+))?/);
 			if (!match) return null;
-			groupId = match[1];
-			artifactId = match[2];
-			version = match[3] || null;
+			groupId = match[1] ?? null;
+			artifactId = match[2] ?? null;
+			version = match[3] ?? null;
 		} else if (isMvnRepository) {
 			// Pattern: /artifact/{groupId}/{artifactId}[/{version}]
 			const match = parsed.pathname.match(/^\/artifact\/([^/]+)\/([^/]+)(?:\/([^/]+))?/);
 			if (!match) return null;
-			groupId = match[1];
-			artifactId = match[2];
-			version = match[3] || null;
+			groupId = match[1] ?? null;
+			artifactId = match[2] ?? null;
+			version = match[3] ?? null;
 		}
 
 		if (!groupId || !artifactId) return null;
@@ -82,6 +81,7 @@ export const handleMaven: SpecialHandler = async (
 		if (data.response.numFound === 0) return null;
 
 		const doc = data.response.docs[0];
+		if (!doc) return null;
 		const displayVersion = version || doc.latestVersion;
 
 		let md = `# ${doc.g}:${doc.a}\n\n`;

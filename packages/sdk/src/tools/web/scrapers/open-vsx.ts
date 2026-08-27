@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -38,8 +37,8 @@ export const handleOpenVsx: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/extension\/([^/]+)\/([^/]+)(?:\/([^/]+))?\/?$/);
 		if (!match) return null;
 
-		const namespace = decodeURIComponent(match[1]);
-		const extension = decodeURIComponent(match[2]);
+		const namespace = decodeURIComponent(match[1] ?? "");
+		const extension = decodeURIComponent(match[2] ?? "");
 		const version = match[3] ? decodeURIComponent(match[3]) : null;
 
 		const fetchedAt = new Date().toISOString();

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -42,7 +41,7 @@ export const handleDevTo: SpecialHandler = async (
 
 		// Tag page: /t/{tag}
 		if (pathParts[0] === "t" && pathParts.length >= 2) {
-			const tag = pathParts[1];
+			const tag = pathParts[1] ?? "";
 			const apiUrl = `https://dev.to/api/articles?tag=${encodeURIComponent(tag)}&per_page=20`;
 
 			const result = await loadPage(apiUrl, { timeout, signal });
@@ -75,7 +74,7 @@ export const handleDevTo: SpecialHandler = async (
 
 		// User profile: /{username} (only if single path segment)
 		if (pathParts.length === 1) {
-			const username = pathParts[0];
+			const username = pathParts[0] ?? "";
 			const apiUrl = `https://dev.to/api/articles?username=${encodeURIComponent(username)}&per_page=20`;
 
 			const result = await loadPage(apiUrl, { timeout, signal });
@@ -107,8 +106,8 @@ export const handleDevTo: SpecialHandler = async (
 
 		// Article: /{username}/{slug}
 		if (pathParts.length >= 2) {
-			const username = pathParts[0];
-			const slug = pathParts[1];
+			const username = pathParts[0] ?? "";
+			const slug = pathParts[1] ?? "";
 			const apiUrl = `https://dev.to/api/articles/${encodeURIComponent(username)}/${encodeURIComponent(slug)}`;
 
 			const result = await loadPage(apiUrl, { timeout, signal });

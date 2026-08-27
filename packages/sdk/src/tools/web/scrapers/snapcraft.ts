@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -110,7 +109,7 @@ export const handleSnapcraft: SpecialHandler = async (
 		const directMatch = parsed.pathname.match(/^\/([^/]+)\/?$/);
 		if (!installMatch && !directMatch) return null;
 
-		const snapName = decodeURIComponent((installMatch ?? directMatch)![1]);
+		const snapName = decodeURIComponent((installMatch ?? directMatch)![1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		const apiUrl = `https://api.snapcraft.io/v2/snaps/info/${encodeURIComponent(snapName)}`;

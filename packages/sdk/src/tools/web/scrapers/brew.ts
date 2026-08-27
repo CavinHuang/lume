@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -76,7 +75,7 @@ export const handleBrew: SpecialHandler = async (
 
 		const fetchedAt = new Date().toISOString();
 		const isFormula = Boolean(formulaMatch);
-		const name = decodeURIComponent(isFormula ? formulaMatch![1] : caskMatch![1]);
+		const name = decodeURIComponent((isFormula ? formulaMatch![1] : caskMatch![1]) ?? "");
 
 		const apiUrl = isFormula
 			? `https://formulae.brew.sh/api/formula/${encodeURIComponent(name)}.json`

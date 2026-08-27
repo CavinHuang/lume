@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, loadPage } from "./types.js";
@@ -44,7 +43,7 @@ export const handleCoinGecko: SpecialHandler = async (
 		const match = parsed.pathname.match(/^(?:\/[a-z]{2})?\/coins\/([^/?#]+)/);
 		if (!match) return null;
 
-		const coinId = decodeURIComponent(match[1]);
+		const coinId = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from CoinGecko API

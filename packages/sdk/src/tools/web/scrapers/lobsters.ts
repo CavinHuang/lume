@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, loadPage } from "./types.js";
