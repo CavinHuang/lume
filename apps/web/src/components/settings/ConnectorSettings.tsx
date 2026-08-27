@@ -105,8 +105,8 @@ export function ConnectorSettings() {
         </div>
       </div>
 
-      {!collapsed && (
-      <div id="connector-settings-body" className="p-4">
+      {/* 常驻 + hidden 切换:折叠态卸载目标会让 aria-controls 悬空(严格 ARIA 缺陷,#794③) */}
+      <div id="connector-settings-body" className="p-4" hidden={collapsed}>
         <div className="space-y-2">
           {setups.length === 0 && loading ? (
             <div className="flex h-28 items-center justify-center text-body text-[var(--text-3)]">
@@ -122,7 +122,6 @@ export function ConnectorSettings() {
           ))}
         </div>
       </div>
-      )}
     </section>
   )
 }
@@ -134,7 +133,13 @@ function ConnectorCard({ setup, onChanged }: { setup: ConnectorSetupWithStatus; 
   const [values, setValues] = React.useState<Record<string, string>>({})
 
   React.useEffect(() => {
-    setStatus(setup)
+    // 本地熔断态(轮询失败写入的 authorizing:false + lastError)优先于 server 快照:
+    // 父级 refresh/其他卡片 onChanged 的回灌不得把它冲回「授权中…」,否则
+    // pollFailures 清零后再花一轮 2s×5 失败又一次 toast(#794②)。
+    // 授权真正完成(connected)或用户重新发起(authorizing)时仍跟随 server 真相。
+    setStatus((prev) => (
+      prev.lastError && !prev.authorizing && !setup.authorizing && !setup.connected ? prev : setup
+    ))
   }, [setup])
 
   // 浏览器授权进行中轮询状态
