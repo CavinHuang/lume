@@ -14,6 +14,11 @@ import type { LumeRunState } from "../runtime-core/run-state";
  * assistant/tool/run/todo/compaction/memory.context.used/background.task 等历史由
  * web 端总线快照(GET_EVENTS)单读驱动,旧投影再产一份会 runId 错位无法去重。
  * 旧线程(events.jsonl 空/缺)无快照可读,全量旧投影兜底。
+ *
+ * #553 退役条件:本白名单是为总线开通前旧线程设的存量兜底,有 #737 输入签名缓存后
+ * 它是残留的第二解析路径。退役时点 = 升级窗口后存量旧线程消化完(hasEvents=false
+ * 线程占比趋零,可由埋点统计),届时连同 computeListThreadRuntimeEvents 的
+ * busHasEvents 兜底分支一并删除,勿让白名单成为永久第二真相源。
  */
 const RETAINED_HYDRATE_EVENT_TYPES = new Set([
   "message.user.submitted",

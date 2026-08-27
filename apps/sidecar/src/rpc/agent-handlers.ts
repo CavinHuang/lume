@@ -167,7 +167,7 @@ import {
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, validateInput } from "./validation";
 import { trimSdkMessagesForTransport } from "./message-payload-trim";
-import { createAgentNotificationEmitter } from "../services/agent/agent-notification-service";
+import { createAgentNotificationEmitter, emitRuntimeEventNotification } from "../services/agent/agent-notification-service";
 import { createCodingHandlers } from "./coding-handlers";
 import { createFileHandlers } from "./file-handlers";
 import { createPluginHandlers } from "./plugin-handlers";
@@ -294,10 +294,7 @@ export function createAgentHandlers(
       },
       {
         onRuntimeEvent: (event) => {
-          context.writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-            threadId: state.threadId,
-            event,
-          });
+          emitRuntimeEventNotification(state.threadId, event, context.writeNotification);
         },
         onMessageAppended: (event) => {
           context.writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
