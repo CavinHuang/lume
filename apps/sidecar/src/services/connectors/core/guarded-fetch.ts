@@ -161,9 +161,12 @@ export function unwrapGuardedFetch(fetcher: typeof fetch | undefined): typeof fe
  *   requests to names resolving to blocked addresses are rejected, closing the
  *   static DNS name→private-IP bypass. Lookup failures fail closed (the request
  *   is rejected) so a forced-failure or split resolver cannot skip address
- *   validation. (True time-of-check/time-of-use DNS rebinding with low-TTL
- *   records remains possible because the transport re-resolves; full connection
- *   pinning is not expressible over the fetch API.) The default lookup uses
+ *   validation. On Node the connection is additionally pinned to the screened
+ *   addresses via an undici dispatcher (`connect.lookup` answers from the
+ *   screened set), closing the check-to-connection rebinding window; on runtimes
+ *   without dispatcher support (Bun) only the pre-resolution check applies. A
+ *   globally installed proxy dispatcher (custom/system proxy mode) takes
+ *   precedence and keeps the proxied transport. The default lookup uses
  *   `node:dns`, which
  *   Cloudflare Workers also provides under `nodejs_compat` (resolving over DoH),
  *   so this layer applies there too. Only on a runtime without `node:dns` does it
@@ -214,7 +217,11 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
 
     const redirectMode = init?.redirect ?? request?.redirect ?? "follow";
     if (redirectMode !== "follow") {
-      return fetchTransport(input, init);
+      // manual/error 原样返回首响应,但 check-to-connect 窗口不因调用方选了
+      // manual 而豁免——token 兑换等凭证最重的流量恰走这一路
+      const manualDispatcher = pinnedDispatcherFactory ? pinnedDispatcherFactory(hop.addresses) : undefined;
+      const manualInit = manualDispatcher ? ({ ...init, dispatcher: manualDispatcher } as RequestInit) : init;
+      return fetchTransport(input, manualInit);
     }
 
     let method = (init?.method ?? request?.method ?? "GET").toUpperCase();
@@ -223,10 +230,9 @@ export function createGuardedFetch(options: GuardedFetchOptions = {}): typeof fe
 
     for (let redirects = 0; ; redirects++) {
       // 每跳用该跳 screened 地址集构造 pinned dispatcher:连接层不再二次 DNS,
-      // check-to-connection 的 rebinding 窗口闭合(Bun fetch 不支持 dispatcher 时为 no-op)
-      const dispatcher = pinnedDispatcherFactory && !options.skipDnsValidation
-        ? pinnedDispatcherFactory(hop.addresses)
-        : undefined;
+      // check-to-connection 的 rebinding 窗口闭合。工厂内部处理三种 no-op:
+      // Bun(无 dispatcher 支持)/代理接管连接层/地址集为空(lookup 关闭)
+      const dispatcher = pinnedDispatcherFactory ? pinnedDispatcherFactory(hop.addresses) : undefined;
       const pinInit = { dispatcher } as Partial<Parameters<typeof fetchTransport>[1]>;
       const response =
         redirects === 0
@@ -377,9 +383,27 @@ export function createPinnedLookup(addresses: ResolvedAddress[]): LookupFunction
 
 interface PinnedDispatcherModule {
   Agent: new (options: unknown) => unknown;
+  getGlobalDispatcher?: () => unknown;
+  proxyClasses: readonly (abstract new (...args: never[]) => unknown)[];
 }
 
 let undiciModulePromise: Promise<PinnedDispatcherModule | null> | undefined;
+let proxyPinSkipLogged = false;
+
+/**
+ * Whether the process-global dispatcher is a proxy class. `setGlobalDispatcher`
+ * stores into a `Symbol.for` registry shared between this undici copy and the
+ * runtime's bundled fetch, so an installed ProxyAgent/EnvHttpProxyAgent governs
+ * every built-in-fetch egress — and a per-request pinned dispatcher would
+ * silently override it.
+ */
+export function isProxyLikeDispatcher(
+  globalDispatcher: unknown,
+  proxyClasses: readonly (abstract new (...args: never[]) => unknown)[],
+): boolean {
+  if (globalDispatcher === undefined || globalDispatcher === null) return false;
+  return proxyClasses.some((cls) => cls && globalDispatcher instanceof cls);
+}
 
 /**
  * Transport-level connection pinning for the fetch path. Node ships undici's
@@ -387,6 +411,14 @@ let undiciModulePromise: Promise<PinnedDispatcherModule | null> | undefined;
  * `dispatcher` init field; Bun's fetch does not, so there we return null and
  * keep the pre-resolution check as the only DNS gate (test environments do not
  * exercise real transports).
+ *
+ * The returned factory yields undefined (keep native transport) when:
+ * - a user-configured proxy dispatcher is globally installed (custom/system
+ *   mode): DNS is then resolved by the proxy itself, pinning is not reachable,
+ *   and injecting `init.dispatcher` would silently bypass the proxy — keep the
+ *   proxied path and rely on the pre-resolution address screening;
+ * - the screened address set is empty (`lookup` disabled): honoring the option
+ *   semantics instead of turning "skip validation" into "always fail".
  */
 async function loadPinnedDispatcherFactory(): Promise<
   ((addresses: ResolvedAddress[]) => unknown) | null
@@ -394,12 +426,31 @@ async function loadPinnedDispatcherFactory(): Promise<
   if (typeof Bun !== "undefined") return null;
   if (!undiciModulePromise) {
     undiciModulePromise = import("undici")
-      .then((module): PinnedDispatcherModule => ({ Agent: module.Agent as new (options: unknown) => unknown }))
-      .catch(() => null);
+      .then((module): PinnedDispatcherModule => ({
+        Agent: module.Agent as new (options: unknown) => unknown,
+        getGlobalDispatcher: module.getGlobalDispatcher as (() => unknown) | undefined,
+        proxyClasses: [module.ProxyAgent, module.EnvHttpProxyAgent].filter(Boolean),
+      }))
+      .catch((error): null => {
+        // 防护静默失效必须留痕:任何一次 import 失败都会 memoize 到进程死
+        console.warn("[guarded-fetch] undici unavailable; connection pinning disabled", error);
+        return null;
+      });
   }
   const module = await undiciModulePromise;
   if (!module) return null;
-  return (addresses: ResolvedAddress[]) => new module.Agent({ connect: { lookup: createPinnedLookup(addresses) } });
+  return (addresses: ResolvedAddress[]): unknown => {
+    const globalDispatcher = module.getGlobalDispatcher?.();
+    if (isProxyLikeDispatcher(globalDispatcher, module.proxyClasses)) {
+      if (!proxyPinSkipLogged) {
+        proxyPinSkipLogged = true;
+        console.warn("[guarded-fetch] proxy dispatcher active; keeping proxied transport instead of connection pinning");
+      }
+      return undefined;
+    }
+    if (addresses.length === 0) return undefined;
+    return new module.Agent({ connect: { lookup: createPinnedLookup(addresses) } });
+  };
 }
 
 interface ResolvedAddressPolicy {

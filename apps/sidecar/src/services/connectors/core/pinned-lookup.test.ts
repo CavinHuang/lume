@@ -1,5 +1,23 @@
 import { describe, expect, it } from "bun:test";
-import { createPinnedLookup } from "./guarded-fetch";
+import { ProxyAgent } from "undici";
+import { createPinnedLookup, isProxyLikeDispatcher } from "./guarded-fetch";
+
+describe("isProxyLikeDispatcher", () => {
+  it("detects a globally installed proxy dispatcher by class identity", () => {
+    const proxy = new ProxyAgent("http://127.0.0.1:1");
+    // 代理接管连接层时禁止 per-request pinned 覆写(否则 connector 出站静默绕开用户代理)
+    expect(isProxyLikeDispatcher(proxy, [ProxyAgent])).toBe(true);
+    // 直连默认态(全局为普通 Agent/undefined)保持 pinning
+    expect(isProxyLikeDispatcher(undefined, [ProxyAgent])).toBe(false);
+    expect(isProxyLikeDispatcher({}, [ProxyAgent])).toBe(false);
+  });
+
+  it("tolerates missing proxy classes (older undici exports)", () => {
+    const lookup = createPinnedLookup([{ address: "93.184.216.34", family: 4 }]);
+    expect(typeof lookup).toBe("function");
+    expect(isProxyLikeDispatcher({ constructor: Object }, [])).toBe(false);
+  });
+});
 
 type LookupCallback = (error: Error | null, addresses?: Array<{ address: string; family: number }>) => void;
 
