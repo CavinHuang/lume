@@ -211,6 +211,13 @@ describe('im-settings-state #544 会话镜像', () => {
     })
   })
 
+  test('attach 档（weixin）：选择入口未开放前灰置带提示', () => {
+    const weixinAccount = { ...feishuAccount, id: 'acc-w', provider: 'weixin' as const }
+    const state = resolveImMirrorSwitchState({ account: weixinAccount, settings: null })
+    expect(state.disabled).toBe(true)
+    expect(state.hint).toContain('附着')
+  })
+
   test('已承担者可关闭（自身不受占用/unsupported 灰置影响）', () => {
     const self = { enabledMirrorAccountId: 'acc-d' }
     expect(resolveImMirrorSwitchState({ account: dingtalkAccount, settings: self })).toEqual({

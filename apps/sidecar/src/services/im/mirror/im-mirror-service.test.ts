@@ -306,6 +306,49 @@ describe("im-mirror-service wrapAgentEmitterForMirror", () => {
     unsubscribe();
   });
 
+  test("attach 档（carrier:text）：无 createGroup 绝不建群，走文本档两段式", async () => {
+    writeThreadFixture("thr_attach", "附着任务");
+    const account = createImAccount({
+      provider: "weixin",
+      label: "微信附着",
+      token: "tok",
+      enabled: true
+    });
+    setMirrorOwnerAccountId(account.id);
+    const sentTexts: Array<{ peerId: string; text: string }> = [];
+    registerImProvider({
+      provider: "weixin",
+      createWorker: () => ({ start() {}, stop() {}, isRunning: () => false }),
+      sendText: async (input) => {
+        sentTexts.push({ peerId: input.peerId, text: input.text });
+        return { ok: true };
+      },
+      mirror: { carrier: "text" }
+    });
+    // 附着映射预置（选择入口开放前的内部写入路径）
+    upsertImMirrorEntry({
+      threadId: "thr_attach",
+      accountId: account.id,
+      chatId: "room_existing",
+      carrier: "text"
+    });
+    const activity: boolean[] = [];
+    const unsubscribe = subscribeImMirrorStreamActivity((a) => activity.push(a.active));
+    const { emit, passthroughCount } = makeHostEmitter();
+    const wrapped = wrapAgentEmitterForMirror("thr_attach", emit);
+    expect(wrapped).not.toBe(emit);
+
+    wrapped.onRuntimeEvent(triggerEvent("thr_attach"));
+    await until(() => sentTexts.some((item) => item.text.includes("开始执行")));
+    wrapped.onComplete(undefined);
+    await until(() => sentTexts.some((item) => item.text.startsWith("✅")));
+
+    expect(sentTexts.every((item) => item.peerId === "room_existing")).toBe(true);
+    expect(activity).toEqual([true, false]);
+    expect(passthroughCount.complete).toBe(1);
+    unsubscribe();
+  });
+
   test("onError 走 failed 终态并携带错误串", async () => {
     writeThreadFixture("thr_err", "会失败的任务");
     seedOwnerAccount({ senderId: "ou_target" });

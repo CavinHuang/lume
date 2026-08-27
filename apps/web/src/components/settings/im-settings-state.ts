@@ -158,6 +158,10 @@ export function resolveImMirrorSwitchState(input: {
   if (tier.tier === 'unsupported') {
     return { disabled: true, hint: tier.reason ?? '该渠道暂不支持镜像' }
   }
+  if (tier.tier === 'attach') {
+    // 附着档：载体与回流链路已就绪，但「已有群 × 桌面线程」配对选择入口未开放
+    return { disabled: true, hint: '附着模式选择入口将在后续版本开放' }
+  }
   if (!input.account.enabled) {
     return { disabled: true, hint: '账号未启用' }
   }
