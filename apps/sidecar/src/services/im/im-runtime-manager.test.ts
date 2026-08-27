@@ -245,6 +245,47 @@ describe("im-runtime-manager", () => {
     expect(manager.getRunningAccountIds()).toEqual(["account-1"]);
   });
 
+  test("restart waits for asynchronous stopped status persistence", async () => {
+    let releaseStopped!: () => void;
+    const stopped = new Promise<void>((resolve) => { releaseStopped = resolve; });
+    let status = "stopped";
+    let starts = 0;
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: async (_id, input) => {
+        if (input.status === "stopped") await stopped;
+        if (input.status) status = input.status;
+      },
+      createWorker: () => ({
+        start() { starts += 1; },
+        stop() {},
+        isRunning: () => true
+      })
+    });
+
+    await manager.startAccount("account-1");
+    manager.stopAccount("account-1");
+    const restarted = manager.startAccount("account-1");
+    await Promise.resolve();
+    expect(starts).toBe(1);
+
+    releaseStopped();
+    await restarted;
+    expect(starts).toBe(2);
+    expect(status).toBe("running");
+  });
+
   test("cleans up a started worker when running status persistence fails", async () => {
     let stopped = 0;
     const manager = createImRuntimeManager({

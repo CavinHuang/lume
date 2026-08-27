@@ -48,6 +48,7 @@ function errorMessage(error: unknown): string {
 export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}): ImRuntimeManager {
   const workers = new Map<string, ImWorker>();
   const pendingStarts = new Map<string, { promise: Promise<void>; lifecycleVersion: number }>();
+  const pendingStops = new Map<string, Promise<void>>();
   const lifecycleVersions = new Map<string, number>();
   const listAccountsFn = input.listAccounts ?? listImAccounts;
   const getRuntimeAccountFn = input.getRuntimeAccount ?? getImRuntimeAccount;
@@ -83,6 +84,11 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
 
     async startAccount(accountId: string) {
       const lifecycleVersion = lifecycleVersions.get(accountId) ?? 0;
+      const pendingStop = pendingStops.get(accountId);
+      if (pendingStop) {
+        await pendingStop;
+        if ((lifecycleVersions.get(accountId) ?? 0) !== lifecycleVersion) return;
+      }
       const pending = pendingStarts.get(accountId);
       if (pending?.lifecycleVersion === lifecycleVersion) return pending.promise;
       if (pending) {
@@ -151,7 +157,10 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
       lifecycleVersions.set(accountId, (lifecycleVersions.get(accountId) ?? 0) + 1);
       const worker = workers.get(accountId);
       if (worker) stopWorker(accountId, worker, workers);
-      void recordStopped(accountId, updateAccountFn);
+      const stopped = recordStopped(accountId, updateAccountFn).finally(() => {
+        if (pendingStops.get(accountId) === stopped) pendingStops.delete(accountId);
+      });
+      pendingStops.set(accountId, stopped);
     },
 
     stopAll() {
