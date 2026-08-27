@@ -1,7 +1,8 @@
 # Notices
 
-本目录核心框架(`core/`、`oauth/oauth-token.ts`、`providers/provider-runtime.ts`)与 Gmail
-provider(`providers/gmail/`)迁移自 [open-connector](https://github.com/oomol-lab/open-connector)
+本目录核心框架(`core/`、`oauth/oauth-token.ts`、`providers/provider-runtime.ts`)、Gmail
+provider(`providers/gmail/`)、IMAP/SMTP 协议层(`mail/`,源自上游 `src/mail/imap-smtp`)及
+QQ 邮箱 provider(`providers/qq_mail/`)迁移自 [open-connector](https://github.com/oomol-lab/open-connector)
 (Apache License, Version 2.0, Copyright OOMOL),并已按 Lume 的架构适配:
 
 - import 后缀与路径调整;移除 server/hono 依赖、slack 特例与生成的 action 名契约;
