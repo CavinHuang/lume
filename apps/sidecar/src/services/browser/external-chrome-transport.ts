@@ -3,12 +3,12 @@ import { spawnSync } from "node:child_process";
 import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import type { BrowserActionRequest, BrowserErrorCode } from "@lume/shared";
+import { MAX_RPC_MESSAGE_BYTES, type BrowserActionRequest, type BrowserErrorCode } from "@lume/shared";
 import type { BrowserMainTransport } from "./browser-broker";
 
 const APP_SERVER_PROTOCOL_VERSION = 2;
 const NATIVE_HOST_PROTOCOL_VERSION = 5;
-const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
+const MAX_MESSAGE_BYTES = MAX_RPC_MESSAGE_BYTES;
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -192,6 +192,8 @@ export class ExternalChromeTransport implements BrowserMainTransport {
   }
 
   private dropPeer(error: Error): void {
+    const pendingError = error as Error & { code?: BrowserErrorCode };
+    pendingError.code ??= "executed_unknown";
     const peer = this.peer;
     this.peer = null;
     if (peer) {
@@ -201,7 +203,7 @@ export class ExternalChromeTransport implements BrowserMainTransport {
     }
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(error);
+      pending.reject(pendingError);
       this.pending.delete(id);
     }
     this.generation += 1;
@@ -293,13 +295,14 @@ class LineJsonPeer implements BridgePeer {
   close(): void { if (!this.closed) { this.closed = true; this.socket.destroy(); } }
   private read(chunk: Buffer): void {
     this.buffer = Buffer.concat([this.buffer, chunk]);
-    if (this.buffer.length > MAX_MESSAGE_BYTES) { this.close(); return; }
     for (let newline = this.buffer.indexOf(10); newline >= 0; newline = this.buffer.indexOf(10)) {
       const payload = this.buffer.subarray(0, newline)
       this.buffer = this.buffer.subarray(newline + 1)
       if (!payload.length) continue
+      if (payload.length > MAX_MESSAGE_BYTES) { this.close(); return }
       try { this.onMessage?.(JSON.parse(payload.toString("utf8"))); } catch { this.close(); return; }
     }
+    if (this.buffer.length > MAX_MESSAGE_BYTES) this.close();
   }
 }
 
