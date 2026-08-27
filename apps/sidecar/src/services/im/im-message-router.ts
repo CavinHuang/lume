@@ -974,7 +974,11 @@ export async function routeInboundImMessage(
   const approvalCommand = parseImApprovalCommand(message.text);
   if (existing && approvalCommand.type !== "none") {
     log.info("处理审批命令", { peerId: message.peerId, requestId: approvalCommand.type === "command" ? approvalCommand.requestId : undefined });
-    return routeImApprovalCommand(existing, approvalCommand, deps);
+    const result = await routeImApprovalCommand(existing, approvalCommand, deps);
+    if (message.messageId) {
+      rememberImMessage(message.provider, message.accountId, message.messageId);
+    }
+    return result;
   }
   // 会话内斜杠命令（/help /new /stop /now /model）
   const chatCommand = parseImCommand(message.text);

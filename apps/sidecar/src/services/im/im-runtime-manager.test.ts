@@ -119,4 +119,37 @@ describe("im-runtime-manager", () => {
 
     expect(started).toEqual(["worker-1", "worker-2"]);
   });
+
+  test("coalesces concurrent starts for the same account", async () => {
+    let releaseStarting!: () => void;
+    const starting = new Promise<void>((resolve) => { releaseStarting = resolve; });
+    const started: string[] = [];
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: (_id, input) => input.status === "starting" ? starting : undefined,
+      createWorker: (account) => ({
+        start() { started.push(account.id); },
+        stop() {},
+        isRunning: () => true
+      })
+    });
+
+    const first = manager.startAccount("account-1");
+    const second = manager.startAccount("account-1");
+    releaseStarting();
+    await Promise.all([first, second]);
+
+    expect(started).toEqual(["account-1"]);
+  });
 });

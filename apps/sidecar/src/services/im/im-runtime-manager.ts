@@ -47,6 +47,7 @@ function errorMessage(error: unknown): string {
 
 export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}): ImRuntimeManager {
   const workers = new Map<string, ImWorker>();
+  const pendingStarts = new Map<string, Promise<void>>();
   const listAccountsFn = input.listAccounts ?? listImAccounts;
   const getRuntimeAccountFn = input.getRuntimeAccount ?? getImRuntimeAccount;
   const updateAccountFn = input.updateAccount ?? updateImAccount;
@@ -80,33 +81,42 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     async startAccount(accountId: string) {
-      await ensureProvidersLoaded();
-      const existingWorker = workers.get(accountId);
-      if (existingWorker?.isRunning()) return;
-      if (existingWorker) {
-        workers.delete(accountId);
-      }
-      await updateAccountFn(accountId, {
-        status: "starting",
-        lastStartedAt: Date.now(),
-        lastError: null
-      });
-      try {
-        const account = getRuntimeAccountFn(accountId);
-        const worker = createWorkerFn(account);
-        worker.start();
-        workers.set(accountId, worker);
+      const pending = pendingStarts.get(accountId);
+      if (pending) return pending;
+      let startPromise!: Promise<void>;
+      startPromise = (async () => {
+        await ensureProvidersLoaded();
+        const existingWorker = workers.get(accountId);
+        if (existingWorker?.isRunning()) return;
+        if (existingWorker) {
+          workers.delete(accountId);
+        }
         await updateAccountFn(accountId, {
-          status: "running",
+          status: "starting",
+          lastStartedAt: Date.now(),
           lastError: null
         });
-      } catch (error) {
-        await updateAccountFn(accountId, {
-          status: "error",
-          lastError: errorMessage(error)
-        });
-        throw error;
-      }
+        try {
+          const account = getRuntimeAccountFn(accountId);
+          const worker = createWorkerFn(account);
+          worker.start();
+          workers.set(accountId, worker);
+          await updateAccountFn(accountId, {
+            status: "running",
+            lastError: null
+          });
+        } catch (error) {
+          await updateAccountFn(accountId, {
+            status: "error",
+            lastError: errorMessage(error)
+          });
+          throw error;
+        }
+      })().finally(() => {
+        if (pendingStarts.get(accountId) === startPromise) pendingStarts.delete(accountId);
+      });
+      pendingStarts.set(accountId, startPromise);
+      return startPromise;
     },
 
     stopAccount(accountId: string) {
