@@ -55,7 +55,7 @@ quiet 名单有两处：RPC 侧 `QUIET_RPC_METHODS`（packages/shared 单一来�
 键分类在 `packages/shared/src/logging/index.ts` 的 `classifyLogKey`，三端 normalizer 与 `summarizeValue` 共用：
 
 - **REDACT_KEY_PARTS**（子串命中，归一化后包含即命中）：token / secret / password / apikey / authorization / cookie / setcookie / accesstoken / refreshtoken / grant → 一律 `[redacted]`，永不落盘。
-- **CONTENT_PREVIEW_KEYS**（归一化后精确命中，13 键）：body / prompt / systemprompt / rawrequest / rawresponse / requestbody / responsebody / content / contents / html / markdown / input / output → 截断为前 200 字符预览（`clipLogPreview`，超长标注 `…(+N)`）。注意 `message` 不在名单内——错误消息走 8K 上限而非 200 预览。
+- **CONTENT_PREVIEW_KEYS**（归一化后精确命中，13 键）：body / prompt / systemprompt / rawrequest / rawresponse / requestbody / responsebody / content / contents / html / markdown / input / output → 截断为前 200 字符预览（`clipLogPreview`，超长标注 `…[truncated]`）。注意 `message` 不在名单内——错误消息走 8K 上限而非 200 预览。
 - **两层上限要分清**：
   - `summarizeValue` 层（IPC/RPC 摘要与显式调用）：字符串 >200 截预览；对象限深 2、键数 30；数组输出 `{length, items: 前 5 项}`；TypedArray/Buffer 输出 `{type, byteLength}` 骨架。
   - normalizer 层（各进程写入前的最终规整）：深度 6、键数 100、数组 100 项、字符串上限 8192——普通键的长字符串保留到 8K 而非 200 预览。
@@ -85,7 +85,7 @@ LUMELOG {"level":"warn","context":"host.pipe","event":"client.disconnected","mes
 - desktop-host 的输出由 `apps/desktop/src/desktop-host-supervisor.ts` 行缓冲解析 → 结构化事件（source=`desktop-host`）；node-repl 的输出由 `node-repl-runtime-manager.ts` 解析（批协议限制下 source 保持 `sidecar`，用 context `node-repl.host` 过滤）。
 - 无前缀或解析失败的行回退纯文本路径（`[desktop-host] ...` / `.stderr` 诊断缓冲）。
 - level 允许 trace..fatal；`fatal` 在两侧都映射为 `error`。
-- **已知平台限制（macOS）**：darwin 上 desktop-host 经 `/usr/bin/open -n -W -g`（LaunchServices）拉起以保留 .app bundle 的 TCC 权限身份，宿主 stderr 不经管道转发——supervisor 收到的是 open 进程自身的 stdio。因此宿主结构化行在 Windows/Linux 全量生效，macOS 上暂收不到（此限制在本次重构前的文本日志同样存在）。改进方向见仓库 issue 追踪。
+- **平台语义（macOS）**：darwin 上 desktop-host 经 `/usr/bin/open -n -W -g`（LaunchServices）拉起以保留 .app bundle 的 TCC 权限身份。supervisor 以 `open --stdout/--stderr` 把宿主输出重定向到 `<token 路径>.stdout.log/.stderr.log`，并各挂一条 `tail -n0 -F` 送进同一行缓冲解析管线（跟随失败仅降级为收不到结构化行）。打包版真机需按 issue #751 验收项复核：ndjson 出现 `source:"desktop-host"`、TCC 身份不回退、`-W` 等待语义不变。
 
 ## 8. dev 怎么看日志
 
@@ -105,6 +105,14 @@ pretty 行尾带 ≤200 字符 JSON 摘要（status/durationMs/data/error），�
 生产排查：应用内 设置 → 日志（过滤级别/来源/关键字/traceId、实时订阅、导出），或直接看 `~/.lume/logs/lume-*.ndjson`（按天轮转，保留 14 天 / 总量 500MB 上限）。
 
 已知预期行为：renderer 的 console.error/warn 经桥接进入统一日志（限流 30 条/分钟，溢出汇总为 `console.dropped`），与全局错误 toast 对同一失败可能各出一条事件——context 不同、信息互补，属预期。
+
+## 8.1 存量平台问题登记（非日志重设计引入）
+
+跨平台评审发现的既存事实，修复需单开 issue；此处先立档防止未来误归因：
+
+- **Windows 环境变量大小写分叉**：Node 在 win32 上 `process.env` 大小写不敏感、POSIX 敏感——`LUME_LOG_*` 之外的**小写**设置在 Windows 生效、macOS/Linux 忽略。
+- **逐 chunk UTF-8 解码无 string_decoder**：多字节字符跨 read 块边界变 U+FFFD（不含换行字节故不断行；LUMELOG 前缀为 ASCII 不受影响）。位置：desktop-host-supervisor 的 `String(chunk)` 与 node-repl 的 `chunk.toString('utf8')`。
+- **`LUME_LOG_FORMAT=pretty` 无法覆盖 settings=json**：仅 env=json 方向覆盖 settings；§8 措辞已按实际行为修正，方向不对称本身是否要修待评估。
 
 ## 9. 运行时语义注记
 

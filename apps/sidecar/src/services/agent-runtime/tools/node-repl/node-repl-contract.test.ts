@@ -129,6 +129,17 @@ describe("node_repl tool contract", () => {
     });
   });
 
+  // #634: 注册任意 node_modules 目录后其中的 bare package 在宿主 realm 执行
+  // （importNative 路径），必须保持用户显式授权档位，防止静默降级。
+  test("js_add_node_module_dir stays on the high-approval tier", () => {
+    const tool = createContractTools().find((candidate) => candidate.name === "js_add_node_module_dir")!;
+
+    expect(tool.runtimeMetadata).toMatchObject({
+      category: "control",
+      riskLevel: "high"
+    });
+  });
+
   test("persistent bindings survive js calls until reset", async () => {
     const tools = createContractTools();
     const js = tools.find((tool) => tool.name === "js")!;

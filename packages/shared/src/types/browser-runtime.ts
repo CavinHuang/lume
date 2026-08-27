@@ -5,6 +5,9 @@ export const BROWSER_PROTOCOL_MAX_SUPPORTED = 8 as const;
 
 export type BrowserBackendType = "iab" | "extension";
 export type BrowserActor = "user" | "agent";
+// 注意:"browser_unavailable" 与 RPC_ERROR_CODES.BROWSER_UNAVAILABLE(shared
+// rpc-error.ts,RPC 传输面)为同字符串的双域定义,语义分属 browser 运行时
+// 白名单与 sidecar 出站台账——改其一须核对另一处,勿合并两域命名空间。
 export type BrowserErrorCode =
   | "incompatible_protocol" | "browser_unavailable" | "invalid_browser_request"
   | "invalid_url" | "private_origin_confirmation_required" | "stale_target" | "stale_snapshot_cursor"

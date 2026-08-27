@@ -262,10 +262,6 @@ export function getAgentThreadSystemContextPath(workspaceSlug: string, threadId:
   return ensureDir(join(getAgentThreadRootPath(workspaceSlug, threadId), ".context"), "Agent 线程上下文目录");
 }
 
-export function getAgentSessionWorkspacePath(workspaceSlug: string, sessionId: string): string {
-  return getAgentThreadRootPath(workspaceSlug, sessionId);
-}
-
 export function getWorkspaceMemoryDir(workspaceSlug: string): string {
   return ensureDir(join(getAgentWorkspacePath(workspaceSlug), "memory"), "记忆目录");
 }

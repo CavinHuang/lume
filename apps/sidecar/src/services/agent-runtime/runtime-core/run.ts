@@ -259,8 +259,9 @@ export type CreateRuntimeCoreSessionInput = SessionIdentityInput &
   RuntimeControlFlags;
 
 export interface RuntimeCoreSessionLike {
+  // #584 三名一物收口:sessionId 即 threadId(runtime-core 内两者恒同值),
+  // 不再保留可选拼写让下游各自兜底翻译。
   sessionId: string;
-  threadId?: string;
   model?: RuntimeCoreResolvedModel;
   messages: Array<{ role: string }>;
   agent: {
@@ -1460,11 +1461,10 @@ async function createRuntimeCoreSessionImpl(
   const agent = createAgent(agentOptions);
   pendingCleanup.push(() => agent.close());
   await agent.getInitializationResult();
-  const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
+  const resolvedTools = getResolvedAgentTools(agent);
 
   const session: RuntimeCoreSessionLike = {
     sessionId: input.lumeSessionId,
-    threadId: input.lumeSessionId,
     model: input.resolvedModel ?? {
       id: input.resolvedModelId,
       provider: input.provider,

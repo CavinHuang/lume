@@ -118,20 +118,37 @@ export function LogSettings() {
     }
   }
 
+  // #753: 仅单文件跟随——' * '（全目录）跟随会退化为 250ms 全量重扫，随历史累积线性恶化。
+  const liveFollowEligible = selectedFileName !== '' && selectedFileName !== '*'
+  const liveFollowRef = React.useRef(liveFollowEligible)
+  React.useEffect(() => { liveFollowRef.current = liveFollowEligible }, [liveFollowEligible])
+
   React.useEffect(() => {
+    if (!liveFollowEligible) return
+    let disposed = false
     let unsubscribe: (() => Promise<void>) | undefined
     void subscribeLiveLogs(() => {
-      if (livePausedRef.current || liveRefreshTimer.current) return
+      if (livePausedRef.current || !liveFollowRef.current || liveRefreshTimer.current) return
       liveRefreshTimer.current = setTimeout(() => {
         liveRefreshTimer.current = null
         setContentRefreshKey((key) => key + 1)
       }, 250)
-    }).then((off) => { unsubscribe = off }).catch(() => {})
+    }).then((off) => {
+      if (disposed) {
+        void off()
+        return
+      }
+      unsubscribe = off
+    }).catch(() => {})
     return () => {
-      if (liveRefreshTimer.current) clearTimeout(liveRefreshTimer.current)
+      disposed = true
+      if (liveRefreshTimer.current) {
+        clearTimeout(liveRefreshTimer.current)
+        liveRefreshTimer.current = null
+      }
       void unsubscribe?.()
     }
-  }, [])
+  }, [liveFollowEligible])
 
   const selectedFile = React.useMemo(
     () => snapshot?.files.find((file) => file.name === selectedFileName) ?? null,
@@ -297,7 +314,14 @@ export function LogSettings() {
             <RefreshCw size={14} className={cn(loadingFiles && 'animate-spin')} />
             刷新
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setLivePaused((value) => !value)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setLivePaused((value) => !value)}
+            disabled={!liveFollowEligible}
+            title={!liveFollowEligible ? '选择单个日志文件后启用实时跟随' : undefined}
+          >
             {livePaused ? <Radio size={14} /> : <Pause size={14} />}
             {livePaused ? '继续实时跟随' : '暂停实时跟随'}
           </Button>

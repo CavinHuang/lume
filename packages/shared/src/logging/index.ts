@@ -50,8 +50,9 @@ export function classifyLogKey(key: string): LogKeyClass {
 }
 
 export function clipLogPreview(text: string): string {
+  // #758: 截断标记全仓统一为 …[truncated]，保证人对日志文件 grep 行为一致。
   return text.length > LOG_PREVIEW_MAX_CHARS
-    ? `${text.slice(0, LOG_PREVIEW_MAX_CHARS)}…(+${text.length - LOG_PREVIEW_MAX_CHARS})`
+    ? `${text.slice(0, LOG_PREVIEW_MAX_CHARS)}…[truncated]`
     : text
 }
 
@@ -87,16 +88,18 @@ function extractCorrelationIdsInternal(payload: unknown, depth: number, out: Rec
   // 永不抛出：敌对载荷（throwing getter / Proxy）最多损失关联 ID，不得影响调用方语义。
   // 子层扫描限量，避免大载荷上做全量 Object.values 物化。
   try {
-    if (depth > 1 || payload == null || typeof payload !== 'object' || Array.isArray(payload)) return
+    if (depth > 2 || payload == null || typeof payload !== 'object' || Array.isArray(payload)) return
     for (const [key, field] of CORRELATION_ID_KEYS) {
       if (out[field]) continue
       const candidate = (payload as Record<string, unknown>)[key]
       if (isValidIdShape(candidate)) out[field] = candidate
     }
-    if (depth === 0) {
+    // #757: 子层枚举放宽到两层——{input:{traceContext:{traceId}}} 场景可达；
+    // depth 2 节点只查自身关联键、不再下钻，成本仍受 SUMMARIZE_MAX_KEYS 限量。
+    if (depth <= 1) {
       const children = Object.entries(payload as Record<string, unknown>).slice(0, SUMMARIZE_MAX_KEYS)
       for (const [, child] of children) {
-        extractCorrelationIdsInternal(child, 1, out)
+        extractCorrelationIdsInternal(child, depth + 1, out)
       }
     }
   } catch {
@@ -129,7 +132,15 @@ export function summarizeValue(input: unknown, depth = 0): unknown {
       byteLength: (input as { byteLength: number }).byteLength,
     }
   }
-  if (depth >= SUMMARIZE_MAX_DEPTH) return '[MaxDepth]'
+  // #757: Map/Set/无自有可枚举属性的 class 实例输出骨架——for-in 会得 {}，
+  // 与空对象不可区分、误导排查。
+  if (input instanceof Map || input instanceof Set) {
+    return { type: input.constructor?.name ?? (input instanceof Map ? 'Map' : 'Set'), size: input.size }
+  }
+  if (Object.keys(input).length === 0 && input.constructor && input.constructor !== Object) {
+    return { type: input.constructor.name }
+  }
+  if (depth >= SUMMARIZE_MAX_DEPTH) return '…[truncated]'
   if (Array.isArray(input)) {
     return {
       length: input.length,
@@ -250,7 +261,7 @@ function normalizeLogValueInternal(
       ...(value.stack ? { stack: normalizeClip(value.stack) } : {}),
     };
   }
-  if (depth >= MAX_NORMALIZE_DEPTH) return "[MaxDepth]";
+  if (depth >= MAX_NORMALIZE_DEPTH) return "…[truncated]";
   if (!value || typeof value !== "object") return normalizeClip(String(value));
   if (state.seen.has(value)) return "[Circular]";
   state.seen.add(value);
@@ -258,6 +269,10 @@ function normalizeLogValueInternal(
   // TypedArray/DataView/Buffer 输出骨架：否则 getOwnPropertyDescriptors 会物化数十万键。
   if (value instanceof ArrayBuffer || ArrayBuffer.isView(value)) {
     return { type: value.constructor?.name ?? "TypedArray", byteLength: (value as { byteLength: number }).byteLength };
+  }
+  // #757: Map/Set 输出骨架——零自有可枚举属性会得 {}，与空对象不可区分。
+  if (value instanceof Map || value instanceof Set) {
+    return { type: value.constructor?.name ?? (value instanceof Map ? "Map" : "Set"), size: value.size };
   }
 
   if (Array.isArray(value)) {

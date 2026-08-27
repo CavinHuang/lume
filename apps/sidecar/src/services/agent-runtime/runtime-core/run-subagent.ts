@@ -726,12 +726,10 @@ export async function runTaskLinkedSubagent(input: {
   };
 }
 
-export function getResolvedAgentTools(
-  agent: Agent,
-  fallback: ToolDefinition[],
-): ToolDefinition[] {
-  const tools = (agent as unknown as { toolPool?: ToolDefinition[] }).toolPool;
-  return Array.isArray(tools) ? tools : fallback;
+export function getResolvedAgentTools(agent: Agent): ToolDefinition[] {
+  // #584:改经公开只读访问器取值。此前双重断言读私有 toolPool 并以
+  // "读不到就退 fallback" 静默兜底——重命名即 CI 全绿的行为漂移。
+  return [...agent.resolvedTools];
 }
 
 /**

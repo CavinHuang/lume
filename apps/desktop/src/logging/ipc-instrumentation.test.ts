@@ -1,12 +1,14 @@
 import { describe, expect, test } from 'bun:test'
 import { instrumentIpcCommand, SLOW_IPC_MS, type IpcCommandEvent, type IpcInstrumentDeps } from './ipc-instrumentation'
 
-function harness(quietNames: string[] = []) {
+function harness(quietNames: string[] = [], recordFailure?: IpcInstrumentDeps['recordFailure']) {
   const events: IpcCommandEvent[] = []
   const deps: IpcInstrumentDeps = {
     isQuiet: (name: string) => quietNames.includes(name),
     emit: (event) => { events.push(event) },
   }
+  // 未显式注入时走模块级默认限流器（各用例命令名互异，首条必放行）。
+  if (recordFailure) deps.recordFailure = recordFailure
   return { events, deps }
 }
 
@@ -34,12 +36,41 @@ describe('instrumentIpcCommand', () => {
     expect(events).toHaveLength(1)
     expect(events[0]!.level).toBe('warn')
     expect(events[0]!.event).toBe('command.failed')
-    expect(events[0]!.error?.message).toBe('kaboom')
+    expect((events[0]!.error as Error)?.message).toBe('kaboom')
 
     const thrown: unknown[] = []
     await instrumentIpcCommand(deps, 'boom2', {}, () => Promise.reject('plain-string')).catch((e) => thrown.push(e))
     expect(thrown).toEqual(['plain-string'])
-    expect(events[1]!.error).toBeUndefined()
+    // 非 Error 抛出值归一化后仍留详情，不再整体丢失。
+    expect(events[1]!.error).toBe('plain-string')
+  })
+
+  test('failed 埋点限流：未放行时不 emit 但照常 rethrow', async () => {
+    const { events, deps } = harness([], () => ({ allowed: false, suppressedCount: 3 }))
+    let caught = false
+    await instrumentIpcCommand(deps, 'spam', {}, () => {
+      throw new Error('x')
+    }).catch(() => { caught = true })
+    expect(caught).toBe(true)
+    expect(events).toHaveLength(0)
+  })
+
+  test('failed 埋点放行时透传 suppressedCount；为 0 不带该字段', async () => {
+    const { events, deps } = harness([], () => ({ allowed: true, suppressedCount: 7 }))
+    await instrumentIpcCommand(deps, 'a', {}, () => { throw new Error('x') }).catch(() => {})
+    expect(events[0]!.suppressedCount).toBe(7)
+
+    const { events: events2, deps: deps2 } = harness()
+    await instrumentIpcCommand(deps2, 'b', {}, () => { throw new Error('y') }).catch(() => {})
+    expect(events2[0]!.suppressedCount).toBeUndefined()
+  })
+
+  test('默认限流器：同名命令窗口内只发第一条 failed', async () => {
+    const { events, deps } = harness()
+    for (let i = 0; i < 3; i++) {
+      await instrumentIpcCommand(deps, 'rate_limit_probe', {}, () => { throw new Error('flood') }).catch(() => {})
+    }
+    expect(events).toHaveLength(1)
   })
 
   test('quiet 命令豁免成功路径的日志', async () => {

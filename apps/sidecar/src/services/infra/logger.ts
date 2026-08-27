@@ -50,7 +50,7 @@ let batchWriter: LogBatchNotificationWriter | null = null;
 let queue: LumeLogEventInput[] = [];
 let queueBytes = 0;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
-let inFlight: { batch: LumeLogBatch; attempts: number; timeout: ReturnType<typeof setTimeout> } | null = null;
+let inFlight: { batch: LumeLogBatch; attempts: number; timeout: ReturnType<typeof setTimeout> | null } | null = null;
 let droppedCount = 0;
 let droppedLevels = new Set<LogLevel>();
 let droppedFirstAt = "";
@@ -70,7 +70,8 @@ export function createDiagnosticLogSummary(input: unknown, maxChars = 500): stri
     text = String(redacted);
   }
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}...(truncated)`;
+  // #758: 截断标记与三端其余点位统一为单一风格。
+  return `${text.slice(0, maxChars)}…[truncated]`;
 }
 
 function isCredentialLikePathSegment(segment: string, previousSegment: string | undefined): boolean {
@@ -108,6 +109,11 @@ function byteLength(value: unknown): number {
 
 function shouldEmit(level: LogLevel): boolean {
   return LEVEL_ORDER[level] >= LEVEL_ORDER[minLevel];
+}
+
+/** 供埋点侧前置判定：该级别是否会写盘（含 kind=trace 免杀语义由 emit 内部处理）。 */
+export function shouldEmitLog(level: LogLevel): boolean {
+  return shouldEmit(level);
 }
 
 function isProtected(event: LumeLogEventInput): boolean {
@@ -193,28 +199,29 @@ function createBatch(): LumeLogBatch | null {
   return batch;
 }
 
-function armAckTimeout(batch: LumeLogBatch, attempts: number): ReturnType<typeof setTimeout> {
+function armAckTimeout(flight: { batch: LumeLogBatch; attempts: number; timeout: ReturnType<typeof setTimeout> | null }): ReturnType<typeof setTimeout> {
   return setTimeout(() => {
-    if (!inFlight || inFlight.batch.batchId !== batch.batchId) return;
-    if (attempts < 2 && batchWriter) {
+    if (inFlight !== flight) return;
+    if (flight.attempts < 2 && batchWriter) {
+      flight.attempts += 1;
       try {
-        batchWriter(batch);
-        clearTimeout(inFlight.timeout);
-        inFlight = { batch, attempts: attempts + 1, timeout: armAckTimeout(batch, attempts + 1) };
+        batchWriter(flight.batch);
+        // writer 可能同步 ACK；此时 ACK 已经推进了 inFlight，不能再覆盖新状态。
+        if (inFlight !== flight) return;
+        flight.timeout = armAckTimeout(flight);
         return;
       } catch {
         // Fall through to bounded failure handling.
       }
     }
+    if (inFlight !== flight) return;
     inFlight = null;
-    for (const event of batch.events) noteDropped(event);
-    writeEmergencyLog("sidecar log batch acknowledgement timed out", { batchId: batch.batchId });
+    for (const event of flight.batch.events) noteDropped(event);
+    writeEmergencyLog("sidecar log batch acknowledgement timed out", { batchId: flight.batch.batchId });
     scheduleFlush();
   }, ACK_TIMEOUT_MS);
 }
 
-// batchWriter 回调不得同步调用 acknowledgeLogBatch——inFlight 尚未赋值会导致 ack 早退、
-// stale inFlight 阻塞后续 flush；生产 ack 经 RPC 异步到达不受影响。
 function trySendBatch(): void {
   if (flushTimer) {
     clearTimeout(flushTimer);
@@ -223,10 +230,18 @@ function trySendBatch(): void {
   if (!batchWriter || inFlight) return;
   const batch = createBatch();
   if (!batch) return;
+  // #755: inFlight 先于 batchWriter 赋值——writer 内同步 ack 不再早退/stale 阻塞。
+  const flight = { batch, attempts: 1, timeout: null as ReturnType<typeof setTimeout> | null };
+  inFlight = flight;
   try {
     batchWriter(batch);
-    inFlight = { batch, attempts: 1, timeout: armAckTimeout(batch, 1) };
+    // writer 可能同步 ACK；ACK 后 inFlight 已被清空或推进到下一批。
+    if (inFlight !== flight) return;
+    flight.timeout = armAckTimeout(flight);
   } catch (error) {
+    if (inFlight !== flight) return;
+    if (flight.timeout) clearTimeout(flight.timeout);
+    inFlight = null;
     for (const event of batch.events.reverse()) {
       queue.unshift(event);
       queueBytes += byteLength(event);
@@ -242,7 +257,8 @@ export function setLogBatchNotificationWriter(writer: LogBatchNotificationWriter
 
 export function acknowledgeLogBatch(batchId: string): void {
   if (!inFlight || inFlight.batch.batchId !== batchId) return;
-  clearTimeout(inFlight.timeout);
+  const flight = inFlight;
+  if (flight.timeout) clearTimeout(flight.timeout);
   inFlight = null;
   trySendBatch();
 }

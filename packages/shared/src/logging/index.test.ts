@@ -9,7 +9,7 @@ describe('clipLogPreview', () => {
     const text = 'a'.repeat(LOG_PREVIEW_MAX_CHARS + 10)
     const clipped = clipLogPreview(text)
     expect(clipped.startsWith('a'.repeat(LOG_PREVIEW_MAX_CHARS))).toBe(true)
-    expect(clipped.endsWith('…(+10)')).toBe(true)
+    expect(clipped.endsWith('…[truncated]')).toBe(true)
     expect(clipped.length).toBeLessThanOrEqual(LOG_PREVIEW_MAX_CHARS + 12)
   })
 })
@@ -34,7 +34,7 @@ describe('summarizeValue', () => {
     // 第一层字段照常分类；更深层被深度帽截断（凭据同样不可达）。
     expect(out.prompt.apiKey).toBe('[redacted]')
     expect(out.prompt.note).toBe('hello')
-    expect(out.prompt.nested).toBe('[MaxDepth]')
+    expect(out.prompt.nested).toBe('…[truncated]')
     expect(JSON.stringify(out)).not.toContain('sk-secret')
     expect(JSON.stringify(out)).not.toContain('"p"')
   })
@@ -42,7 +42,7 @@ describe('summarizeValue', () => {
     const out = summarizeValue({ body: [{ token: 't' }, 'plain'] }) as { body: { length: number; items: unknown[] } }
     expect(out.body.length).toBe(2)
     // 数组元素位于深度 2 → 骨架化，凭据不可达；标量项仍可见。
-    expect(out.body.items[0]).toBe('[MaxDepth]')
+    expect(out.body.items[0]).toBe('…[truncated]')
     expect(out.body.items[1]).toBe('plain')
     expect(JSON.stringify(out)).not.toContain('"t"')
   })
@@ -50,7 +50,7 @@ describe('summarizeValue', () => {
     const out = summarizeValue({ id: 7, ok: true, nested: { deep: { deeper: 1 } }, list: [1, 2, 3] }) as Record<string, unknown>
     expect(out.id).toBe(7)
     expect(out.ok).toBe(true)
-    expect(JSON.stringify(out.nested)).toContain('[MaxDepth]')
+    expect(JSON.stringify(out.nested)).toContain('…[truncated]')
     expect((out.list as { length: number }).length).toBe(3)
   })
   test('对象键数量截断到 30', () => {
@@ -72,7 +72,7 @@ describe('summarizeValue', () => {
   test('循环引用安全终止', () => {
     const cyc: Record<string, unknown> = {}
     cyc.self = cyc
-    expect(JSON.stringify(summarizeValue(cyc))).toContain('[MaxDepth]')
+    expect(JSON.stringify(summarizeValue(cyc))).toContain('…[truncated]')
   })
   test('TypedArray 输出骨架摘要而非键物化', () => {
     expect(summarizeValue(new Uint8Array(256 * 1024))).toEqual({ type: 'Uint8Array', byteLength: 262144 })
@@ -81,6 +81,19 @@ describe('summarizeValue', () => {
     const out = summarizeValue({ chunk: Buffer.from('hello'), name: 'a' }) as Record<string, unknown>
     expect(out.chunk).toEqual({ type: 'Buffer', byteLength: 5 })
     expect(out.name).toBe('a')
+  })
+  test('Map/Set/无自有属性 class 实例输出骨架而非误导性空对象（#757）', () => {
+    expect(summarizeValue(new Map([['k', 1], ['k2', 2]]))).toEqual({ type: 'Map', size: 2 })
+    expect(summarizeValue(new Set([1, 2, 3]))).toEqual({ type: 'Set', size: 3 })
+    class Opaque {
+      describe(): string { return 'opaque' }
+    }
+    expect(summarizeValue(new Opaque())).toEqual({ type: 'Opaque' })
+    class WithOwn { public visible = 1 }
+    expect(summarizeValue(new WithOwn())).toEqual({ visible: 1 })
+    // 落盘路径（normalizeLogValue）同语义
+    const normalized = normalizeLogValue({ bag: new Set(['a']) }) as Record<string, unknown>
+    expect(normalized.bag).toEqual({ type: 'Set', size: 1 })
   })
 })
 
@@ -115,10 +128,16 @@ describe('extractCorrelationIds', () => {
     expect(extractCorrelationIds({ threadId: 42 })).toEqual({})
     expect(extractCorrelationIds({ threadId: `${'a'.repeat(200)}` })).toEqual({})
   })
-  test('深度超过一层不再下钻；数组与非对象直接返回空', () => {
-    expect(extractCorrelationIds({ a: { b: { threadId: 'deep-1' } } })).toEqual({})
+  test('深度超过两层不再下钻；数组与非对象直接返回空', () => {
+    expect(extractCorrelationIds({ a: { b: { c: { threadId: 'deep-1' } } } })).toEqual({})
     expect(extractCorrelationIds([1, 2])).toEqual({})
     expect(extractCorrelationIds('text')).toEqual({})
+  })
+  test('子层枚举可达深度 2（#757：{input:{traceContext:{traceId}}}）', () => {
+    expect(extractCorrelationIds({ input: { traceContext: { traceId: 'tr-1' } } })).toEqual({ traceId: 'tr-1' })
+    expect(extractCorrelationIds({ input: { runId: 'run-2' } })).toEqual({ runId: 'run-2' })
+    // 深度 2 节点自身查关联键后不再继续下钻
+    expect(extractCorrelationIds({ a: { b: { c: { threadId: 'too-deep' } } } })).toEqual({})
   })
 })
 
