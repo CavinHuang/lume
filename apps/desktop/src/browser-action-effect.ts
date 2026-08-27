@@ -10,7 +10,8 @@ export type BrowserActionEffectKind =
 
 export interface BrowserActionEffectSnapshot {
   dialogId?: string
-  domRevision: number
+  /** #604：DOM revision + 控件 IDL 状态指纹（checked/selectedIndex/value 零 mutation 也会进语义树）；"" = 采集失败 */
+  domRevision: string
   downloadIds: string[]
   generation: number
   lifecycle?: string
@@ -33,6 +34,7 @@ export function detectBrowserActionEffect(before: BrowserActionEffectSnapshot, a
   if (after.popupCount > before.popupCount) return { kind: "new_tab_requested" }
   if (after.downloadIds.some((downloadId) => !before.downloadIds.includes(downloadId))) return { kind: "download_started" }
   if (after.generation !== before.generation || after.url !== before.url) return { kind: "navigation", url: after.url }
-  if (after.domRevision > before.domRevision) return { kind: "dom_changed" }
+  // 指纹含控件状态串（非单调），任意分量变化即 dom_changed；两侧采集失败（""）不误报
+  if (after.domRevision !== before.domRevision) return { kind: "dom_changed" }
   return undefined
 }
