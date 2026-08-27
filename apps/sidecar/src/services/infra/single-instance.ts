@@ -2,6 +2,8 @@ import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { getConfigDir } from "./config-paths";
+// pid 存活判定与有界等待复用共享实现：EPERM 按存活处理，防止误判死导致假接管（#526）
+import { isProcessAlive, sleepSync } from "./index-mutation-lock";
 import { createLogger } from "./logger";
 
 const log = createLogger("sidecar");
@@ -23,7 +25,8 @@ export interface TakeoverPlan {
 export function planTakeover(input: {
   pidfileContent: string | null;
   currentPid: number;
-  isAlive: (pid: number) => boolean;
+  // boolean | undefined：undefined 表示身份不可判定，truthy 判定下视同不接管（fail-closed）
+  isAlive: (pid: number) => boolean | undefined;
   isSidecar: (pid: number) => boolean;
 }): TakeoverPlan {
   const raw = input.pidfileContent?.trim();
@@ -43,15 +46,6 @@ export function planTakeover(input: {
 
 function getPidFilePath(): string {
   return join(getConfigDir(), "sidecar.pid");
-}
-
-function isPidAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** 取 pid 的完整命令行；跨平台；取不到返回空串。 */
@@ -86,16 +80,6 @@ function isSidecarProcess(pid: number): boolean {
   return SIDECAR_ENTRY_MARKERS.some((marker) => cmd.includes(marker));
 }
 
-function sleepSync(ms: number): void {
-  // Node 主线程允许 Atomics.wait；用于 SIGTERM 后等旧进程退出的有界等待。
-  try {
-    const buf = new Int32Array(new SharedArrayBuffer(4));
-    Atomics.wait(buf, 0, 0, ms);
-  } catch {
-    // 退化：不等。旧进程会异步退出，重叠窗口极小。
-  }
-}
-
 /**
  * sidecar 单例守卫：boot 最早处调用。新实例发现仍存活的旧 sidecar 时，SIGTERM（必要时
  * SIGKILL）接管，再写入自己的 PID。根治「多个 sidecar 进程各自排程执行同一份 jobs.json，
@@ -115,7 +99,7 @@ export function acquireSingleInstance(): void {
   const plan = planTakeover({
     pidfileContent: prevContent,
     currentPid: process.pid,
-    isAlive: isPidAlive,
+    isAlive: isProcessAlive,
     isSidecar: isSidecarProcess
   });
 
@@ -128,10 +112,10 @@ export function acquireSingleInstance(): void {
     }
     // 有界等待旧进程退出，避免新旧 runners 短暂重叠导致的一次性双执行
     const deadline = Date.now() + 2000;
-    while (Date.now() < deadline && isPidAlive(plan.killPid)) {
+    while (Date.now() < deadline && isProcessAlive(plan.killPid)) {
       sleepSync(50);
     }
-    if (isPidAlive(plan.killPid) && isSidecarProcess(plan.killPid)) {
+    if (isProcessAlive(plan.killPid) && isSidecarProcess(plan.killPid)) {
       try {
         process.kill(plan.killPid, "SIGKILL");
       } catch {
