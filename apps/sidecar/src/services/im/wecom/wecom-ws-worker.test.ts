@@ -147,6 +147,13 @@ describe("parseWecomEvent", () => {
     expect(msg?.text).toBe("hi");
   });
 
+  it("#598 群聊内嵌 @（如邮箱 a@b.com）不触发门控，词首 @ 仍放行", () => {
+    const build = (content: string) => ({ headers: { req_id: "r" }, body: { chatid: "g", chattype: "group", from: { userid: "u" }, text: { content } } });
+    expect(parseWecomEvent(build("联系我 a@b.com"), makeAccount())).toBeNull();
+    // @ 在文本中间但前面是空白 → 仍是 at 形态，放行
+    expect(parseWecomEvent(build("hi @bot 在吗"), makeAccount())?.text).toBe("hi @bot 在吗");
+  });
+
   it("无 body 或无文本返回 null", () => {
     expect(parseWecomEvent({}, makeAccount())).toBeNull();
     expect(parseWecomEvent(null, makeAccount())).toBeNull();

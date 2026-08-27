@@ -566,16 +566,18 @@ export const planningReminderSnoozeInputSchema = planningReminderIdSchema
   .extend({ minutes: z.number().int().min(1).max(10_080) })
   .strict();
 
-export const imAccountCreateInputSchema = z.object({
-  provider: z.enum(["weixin", "dingtalk", "feishu", "wecom"]),
-  accountKey: z.string().optional(),
-  label: z.string().optional(),
-  token: z.string().trim().min(1),
-  uin: z.string().optional(),
-  workspaceId: z.string().optional(),
-  baseUrl: z.string().optional(),
-  enabled: z.boolean().optional(),
-});
+export const imAccountCreateInputSchema = z
+  .object({
+    provider: z.enum(["weixin", "dingtalk", "feishu", "wecom"]),
+    accountKey: z.string().max(256).optional(),
+    label: z.string().max(128).optional(),
+    token: z.string().trim().min(1).max(4096),
+    uin: z.string().max(128).optional(),
+    workspaceId: z.string().max(256).optional(),
+    baseUrl: z.string().max(2048).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
 
 export const imAccountUpdateInputSchema = z.object({
   id: idSchema,

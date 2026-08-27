@@ -69,6 +69,27 @@ const IM_PROVIDER_ICON_SERVICE: Partial<Record<ImProvider, string>> = {
   wecom: 'wecom',
 }
 
+/**
+ * #598：authUrl host 白名单（与 sidecar im-cli providers 的 allowedAuthUrlHosts
+ * 同语义），外开通道前二次校验，防非 CLI 来源的授权链接诱导外开钓鱼页。
+ */
+const IM_AUTH_URL_HOSTS: Record<ImProvider, string[]> = {
+  weixin: [],
+  dingtalk: ['login.dingtalk.com'],
+  feishu: ['feishu.cn', 'larksuite.com'],
+  wecom: ['work.weixin.qq.com'],
+}
+
+function isAllowedAuthUrl(url: string, provider: ImProvider): boolean {
+  const allowed = IM_AUTH_URL_HOSTS[provider] ?? []
+  try {
+    const hostname = new URL(url).hostname
+    return allowed.some((host) => hostname === host || hostname.endsWith(`.${host}`))
+  } catch {
+    return false
+  }
+}
+
 function ProviderBrandIcon({ provider, size = 16 }: { provider: ImProvider; size?: number }) {
   const service = IM_PROVIDER_ICON_SERVICE[provider]
   if (!service) return <Send size={size} className="shrink-0 text-[var(--text-2)]" />
@@ -296,7 +317,14 @@ export function ImSettings() {
         toast.error(started.error || '启动授权失败')
         return
       }
-      if (started.authUrl) await openExternal(started.authUrl)
+      if (started.authUrl) {
+        if (isAllowedAuthUrl(started.authUrl, provider as ImProvider)) {
+          await openExternal(started.authUrl)
+        } else {
+          toast.error('授权链接域名校验未通过，已阻止打开')
+          return
+        }
+      }
       setCliAuth((current) => ({
         ...current,
         [provider]: { phase: 'authorizing', sessionKey: started.sessionKey, polling: false },
