@@ -6,10 +6,12 @@ import { AGENT_IPC_CHANNELS, buildConnectionModelRef } from "@lume/shared";
 import {
   normalizeProviderId,
   parseModelRef,
-  resolveAgentDefaultStrategy,
   resolveModelCandidatesForChannel,
   resolveChannelDefaultModelId,
   resolveRequestedModelIdForChannel
+} from "../infra/model-refs";
+import {
+  resolveAgentDefaultStrategy
 } from "./model-selection";
 import { installConnectionVaultKey } from "./connection-credential-store";
 

@@ -1,5 +1,6 @@
 import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
+import { rename as renamePromise, unlink as unlinkPromise, writeFile as writeFilePromise } from "node:fs/promises"
 import { join, resolve } from "node:path"
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainEvent } from "electron"
 import {
@@ -41,7 +42,7 @@ import { BrowserNetworkGuard, isPublicAddress } from "./browser-network-guard"
 import { BrowserAuditLog } from "./browser-audit"
 import { AGENT_DOWNLOAD_LIMITS, AgentDownloadQuota, BrowserDownloadHistory, completeDownload, prepareDownload, removePartialDownload, safeDownloadFilename } from "./browser-downloads"
 import { BrowserCredentialVault } from "./browser-credentials"
-import { BrowserWorkspaceStore } from "./browser-workspace-store"
+import { BrowserWorkspaceStore, type BrowserWorkspaceLogEvent } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
@@ -65,6 +66,7 @@ type BrowserRuntimeOptions = {
   // 输入自然性（指针轨迹/按键驻留/逐字输入/滚轮分帧），默认开启；集成测试传 false 走直通注入
   humanizedInput?: boolean
   onInternalError?: (details: { method: string; actor: BrowserRequestContext["actor"]; tabId?: string; message: string }) => void
+  onWorkspaceEvent?: (event: BrowserWorkspaceLogEvent) => void
 }
 
 type BrowserTab = BrowserTabDescriptor & {
@@ -317,7 +319,7 @@ export class BrowserRuntime {
     this.browsingHistory = new BrowserHistoryStore(options.configDir)
     this.extensions = new BrowserExtensionStore(options.configDir)
     this.credentials = new BrowserCredentialVault(options.configDir, options.credentialStorage)
-    this.workspaces = new BrowserWorkspaceStore(options.configDir)
+    this.workspaces = new BrowserWorkspaceStore(options.configDir, options.onWorkspaceEvent)
     nativeTheme.on("updated", this.onThemeUpdated)
     this.annotations = new BrowserAnnotationManager({
       configDir: options.configDir,
@@ -610,40 +612,14 @@ export class BrowserRuntime {
 
   resetAgentCursor(): void { this.hideAgentCursor() }
 
-  // 用户接管是会话级暂停：同 session 任意 tab 处于 paused_by_user 时，
-  // Agent 不得开新 Tab 或认领其他 Tab 绕开暂停继续操作。
-  private hasPausedTakeoverTab(browserSessionId: string): boolean {
-    for (const tab of this.tabs.values()) {
-      if (tab.agentLease?.browserSessionId === browserSessionId && tab.agentControlState === "paused_by_user") return true
-    }
-    return false
-  }
-
-  // 共同操作模式：用户输入不再触发接管暂停，paused_by_user 仅保留为协议兼容状态（当前无置入路径）。
-  private resumeAgentControl(tabId: string, context: BrowserRequestContext): BrowserTabDescriptor {
-    if (context.actor !== "user") throw browserError("action_denied")
-    const tab = this.tabs.get(tabId)
-    if (!tab || tab.agentControlState !== "paused_by_user" || !tab.agentLease) throw browserError("invalid_browser_request")
-    tab.agentControlState = "active"
-    if (tab.handoff?.reason === "user_takeover") tab.handoff = undefined
-    tab.generation += 1
-    tab.inputSequence += 1
-    tab.agentLease = { ...tab.agentLease, generation: tab.generation }
-    this.inputLedger.clear(tab.tabId)
-    this.options.emit({ method: "browser:agent-control-resumed", params: { tabId: tab.tabId, generation: tab.generation } })
-    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
-    this.rememberTab(tab)
-    return publicTab(tab)
-  }
-
   private expectedAgentInputSender(tab: BrowserTab, sender: BrowserCdpCommandSender): BrowserCdpCommandSender {
     if (!tab.agentDispatching) return sender
     return {
       sendCommand: async (method, params = {}) => {
-        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
+        // #610:paused_by_user 无置入路径(共同操作模式下用户输入不再触发接管),
+        // 接管期中断检查已死——epoch 仲裁由输入队列在动作入队时完成
         this.inputLedger.expectCommand(tab.tabId, method, params)
         const result = await sender.sendCommand(method, params)
-        if (agentControlPaused(tab)) throw browserError("user_takeover_required")
         return result
       },
     }
@@ -667,7 +643,6 @@ export class BrowserRuntime {
     const deadline = Date.now() + 300
     let idlePolls = 0
     do {
-      if (agent && agentControlPaused(tab)) throw browserError("user_takeover_required")
       // #605：hover 等无效果动作原实现固定 50ms 轮询烧满 deadline；首个效果的检出延迟不变（首轮仍
       // 50ms），连续空轮拉长间隔以减少空转 CDP 往返。
       await delay(idlePolls < 2 ? 50 : 125)
@@ -795,7 +770,6 @@ export class BrowserRuntime {
     }
     if (method.startsWith("workspace:")) return this.dispatchWorkspace(method, params, context)
     if (method === "ensure") {
-      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
       return this.ensureTab(String(params.tabId ?? randomUUID()), context, params)
     }
     if (method === "mount:prepare") return this.prepareGuestMount(String(params.tabId ?? context.tabId ?? ""), context)
@@ -809,18 +783,13 @@ export class BrowserRuntime {
     if (method === "handoff") return this.handoffTabs(context, params)
     if (method === "resumeHandoff") return this.resumeHandoffTabs(context)
     if (method === "finalize") return this.finalizeTabs(context, params)
+    if (method === "pruneThread") return this.pruneThreadTabs(context, params)
     if (method === "share") return this.shareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "unshare") return this.unshareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "claim") {
-      if (context.actor === "agent" && this.hasPausedTakeoverTab(context.browserSessionId)) throw browserError("user_takeover_required")
       return this.claimTab(String(params.tabId ?? context.tabId ?? ""), context, params)
     }
     if (method === "close") {
-      // 被用户接管的 Tab 所有权已转移，Agent 不得关闭用户正在查看的页面
-      if (context.actor === "agent") {
-        const closeTarget = this.tabs.get(String(params.tabId ?? context.tabId ?? ""))
-        if (closeTarget?.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
-      }
       return this.closeTab(String(params.tabId ?? context.tabId ?? ""), context)
     }
     if (method === "bounds") return this.updateBounds(String(params.tabId ?? context.tabId ?? ""), params)
@@ -911,10 +880,9 @@ export class BrowserRuntime {
       if (context.actor !== "user") throw browserError("action_denied")
       return this.annotations.migrate(params.sessions)
     }
-    if (method === "agentControl:resume") return this.resumeAgentControl(String(params.tabId ?? context.tabId ?? ""), context)
-
     const tab = this.requireTab(String(params.tabId ?? context.tabId ?? ""), context)
-    if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
+    // #610:paused_by_user 相关接管检查已随置入路径移除——该状态自共同操作模式
+    // (PR#488)后无任何写入方,字段仅保留协议兼容且恒为 active
     if (tab.dialogOpen && method !== "dialog:handle" && method !== "dialog:get") throw browserError("dialog_blocking")
     if ((method === "reload" || method === "hardReload") && (!tab.webContents || tab.webContents.isDestroyed() || tab.guestState === "gone")) {
       return this.recoverGuest(tab)
@@ -929,7 +897,6 @@ export class BrowserRuntime {
       return this.actionQueue.run(queueKey, async () => {
         if (this.tabs.get(tab.tabId) !== tab) throw browserError("tab_not_found")
         if (tab.generation !== queuedGeneration) throw browserError("stale_target")
-        if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
         if (context.actor === "agent" && !canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation)) throw browserError("action_denied")
         const operationId = request.idempotencyKey || request.requestId || randomUUID()
         this.journal.write({
@@ -950,7 +917,6 @@ export class BrowserRuntime {
         }
         try {
           const result = await this.dispatchAction(tab, method, params, context)
-          if (context.actor === "agent" && tab.agentControlState === "paused_by_user") throw browserError("user_takeover_required")
           this.journal.write({
             operationId,
             method,
@@ -2607,6 +2573,12 @@ export class BrowserRuntime {
     const from = tab.lastAgentPointer
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const sender = this.expectedAgentInputSender(tab, debuggerRef)
+      // #614:语义 ref 路径携带解析时 URL——注入前最后一刻重验,文档已换则坐标
+      // 作废(盲击新文档不可控),报 stale_target 让模型重观察
+      if (typeof params.documentUrl === "string") {
+        const current = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
+        if (current.result?.value !== params.documentUrl) throw browserError("stale_target")
+      }
       if (method === "click" || method === "doubleClick") {
         await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { natural: this.humanizedInput, from })
       } else {
@@ -2883,6 +2855,10 @@ export class BrowserRuntime {
             await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: hitObjectId }).catch(() => undefined)
           }
         }
+        // 解析时快照 document URL:坐标注入前重验,页面自导航(SPA 定时跳转/
+        // 倒计时刷新)落在 generation/inputSequence 校验之后、鼠标事件落地之前的
+        // 毫秒级窗口内时拒绝盲击(#614)
+        const hrefSnapshot = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
         return {
           x,
           y,
@@ -2891,6 +2867,7 @@ export class BrowserRuntime {
           tagName: typeof details.tagName === "string" ? details.tagName : "",
           ...(typeof details.role === "string" ? { role: details.role } : {}),
           backendNodeId: entry.backendNodeId,
+          ...(typeof hrefSnapshot.result?.value === "string" ? { documentUrl: hrefSnapshot.result.value } : {}),
           editable: details.editable === true,
           ...(details.readOnly === true ? { readOnly: true } : {}),
           enabled: details.enabled !== false,
@@ -4265,6 +4242,20 @@ export class BrowserRuntime {
    * 修剪语义引用索引：identity 按 tab+generation 累积、entries 按新快照累积，
    * 换代/关 tab 后旧条目永不再命中。仅保留仍存活 tab+generation 的条目（#404）。
    */
+  // #613:线程硬删除级联回收其名下全部 agent tab(handoff 含),防
+  // workspaces.json 孤儿记录经 isRecoverable 永久留存。
+  private pruneThreadTabs(context: BrowserRequestContext, params: Record<string, unknown>): { ok: true; closed: number } {
+    const threadId = typeof params.threadId === "string" ? params.threadId : ""
+    if (!threadId) throw browserError("invalid_browser_request")
+    let closed = 0
+    for (const tab of [...this.tabs.values()]) {
+      if (tab.ownerThreadId !== threadId) continue
+      this.closeTab(tab.tabId, context)
+      closed += 1
+    }
+    return { ok: true, closed }
+  }
+
   private pruneSemanticRefSession(browserSessionId: string): void {
     const session = this.semanticRefSessions.get(browserSessionId)
     if (!session) return
@@ -4541,8 +4532,6 @@ function claimSnapshotKey(context: BrowserRequestContext, tabId: string): string
 function canContextUseTab(tab: BrowserTab, context: BrowserRequestContext): boolean {
   return context.actor === "user" || (canAgentUse(tab, context.browserSessionId, context.browserTurnId, tab.generation) && (!context.tabId || context.tabId === tab.tabId))
 }
-
-function agentControlPaused(tab: BrowserTab): boolean { return tab.agentControlState === "paused_by_user" }
 
 function annotationThreadId(tab: BrowserTab, params: Record<string, unknown>): string {
   const value = typeof params.threadId === "string" ? params.threadId.trim() : (tab.ownerThreadId ?? "")
@@ -5043,6 +5032,14 @@ class BrowserOperationJournal {
   private entries: JournalEntry[] = []
   private readonly path: string | null
   private readonly encryption?: BrowserRuntimeOptions["journalEncryption"]
+  // #612:变更型动作每次 write/complete 都在主进程热路径同步全量重写 500 条加密
+  // 数组(加密+writeFileSync+renameSync),动作密集时卡 UI 事件循环。改单飞异步
+  // 落盘:内存态即时生效,磁盘滞后一个微批;journal 仅审计消费(无读取方),
+  // 进程退出丢最后一帧可接受,exit 钩子同步兜底一次。
+  private flushing = false
+  private flushScheduled = false
+  private dirtyEpoch = 0
+  private flushedEpoch = 0
   constructor(configDir: () => string, encryption?: BrowserRuntimeOptions["journalEncryption"]) {
     this.encryption = encryption
     if (!encryption?.available || !encryption.encrypt) { this.path = null; return }
@@ -5058,15 +5055,38 @@ class BrowserOperationJournal {
   write(entry: JournalEntry): void {
     if (!this.path || !this.encryption) return
     this.entries = [...this.entries.filter((item) => item.operationId !== entry.operationId), entry].slice(-500)
-    const temporary = `${this.path}.${process.pid}.tmp`
-    writeFileSync(temporary, JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") }), "utf8")
-    try { renameSync(temporary, this.path) } catch { try { unlinkSync(temporary) } catch { /* best effort cleanup */ } }
+    this.scheduleFlush()
   }
   complete(operationId: string): void {
     if (!this.path || !this.encryption) return
     this.entries = this.entries.filter((entry) => entry.operationId !== operationId)
-    writeFileSync(this.path + ".tmp", JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") }), "utf8")
-    try { renameSync(this.path + ".tmp", this.path) } catch { try { unlinkSync(this.path + ".tmp") } catch { /* best effort cleanup */ } }
+    this.scheduleFlush()
+  }
+  private scheduleFlush(): void {
+    this.dirtyEpoch += 1
+    if (this.flushScheduled) return
+    this.flushScheduled = true
+    queueMicrotask(() => { void this.flushNow() })
+  }
+  private async flushNow(): Promise<void> {
+    this.flushing = true
+    try {
+      const epochAtSnapshot = this.dirtyEpoch
+      if (!this.path || !this.encryption?.encrypt) return
+      const payload = JSON.stringify({ version: 1, payload: this.encryption.encrypt(JSON.stringify(this.entries)).toString("base64") })
+      const temporary = `${this.path}.${process.pid}.tmp`
+      await writeFilePromise(temporary, payload, "utf8")
+      try { await renamePromise(temporary, this.path) } catch { await unlinkPromise(temporary).catch(() => {}) }
+      this.flushedEpoch = epochAtSnapshot
+    } finally {
+      this.flushing = false
+      // 落盘期间又有新写入:再排一轮把最新内存态带走;否则解除排程标记
+      if (this.flushedEpoch !== this.dirtyEpoch) {
+        queueMicrotask(() => { void this.flushNow() })
+      } else {
+        this.flushScheduled = false
+      }
+    }
   }
 }
 

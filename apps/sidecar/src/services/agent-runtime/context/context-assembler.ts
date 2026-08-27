@@ -1,5 +1,6 @@
 import type { AgentBrowserAttachment, AgentBrowserDesignChangeAttachment, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentSendInput, PlanningTodo } from "@lume/shared";
-import { estimateTokens, type TodoState } from "@lume/agent-sdk";
+import { isBuiltinBrowserToolName } from "@lume/shared";
+import { estimateTokens, type ContentBlockParam, type TodoState } from "@lume/agent-sdk";
 import { createHash } from "node:crypto";
 import { getRuntimeHostPorts } from "../host-ports";
 import type { EnabledPluginContextItem } from "../host-ports";
@@ -60,11 +61,16 @@ export interface ContextAssemblyResult {
   runtimeContext: string;
   dynamicContext: string;
   memoryContext: string;
+  memoryUserMessagePrefix: string;
   memoryContextUsedItems: MemoryV2RecallItem[];
   userMessageForModel: string;
+  userMessageContentBlocks?: ContentBlockParam[];
+  sessionContext: string;
+  planContext?: string;
   budget: { total: number };
   trace: {
     includedMemoryIds: string[];
+    includedSessionMessageIds: string[];
     tokenUsageEstimate: number;
     systemPromptFingerprint: string;
     runtimeContextFingerprint: string;
@@ -202,8 +208,7 @@ export class ContextAssembler {
     }
 
     const hasComputerUseTools = input.availableTools.some((name) => name.includes("computer_use"));
-    const hasBuiltInBrowserTools = input.availableTools.includes("mcp__browser__list_tabs")
-      && input.availableTools.includes("mcp__browser__snapshot")
+    const hasBuiltInBrowserTools = input.availableTools.some(isBuiltinBrowserToolName)
       && !input.browserAttachments?.length;
     const hasLegacyBrowserRuntime = input.browserRuntimeAvailable === true
       && input.availableTools.includes("mcp__node_repl__js");
@@ -233,7 +238,7 @@ export class ContextAssembler {
       ].join("\n")
       : "";
     const browserFallbackPolicy = hasBuiltInBrowserTools
-      ? "Lume's task-owned in-app Browser is available through the mcp__browser__* tools for the whole user request, including all internal Agent iterations. Call these tools directly; do not activate browser:browser, bootstrap JavaScript bindings, or guess Node REPL APIs. Start with mcp__browser__list_tabs and reuse its locked task tab; call mcp__browser__open only when no suitable task tab exists, and use navigate/back/forward/reload on that locked tab. Call mcp__browser__snapshot before interaction, then pass its refs to click, double_click, hover, fill, type, press, select, check, scroll, upload, download, or fill_secret. Each mutation returns a fresh snapshot; use only refs from the newest snapshot and call snapshot again after stale_target. Use screenshot only for visual inspection, not as an interaction target. Let upload and download coordinate their own event waits; do not split those operations into scripts. Use list_secrets and fill_secret for saved passwords so secret values never enter your context; MFA, CAPTCHA, and hardware-key steps require the user and must not be retried; when a Browser tool returns user_action_required, stop and ask the user to complete that step instead of retrying. Read and handle a blocking JavaScript dialog only through dialog and handle_dialog. If a tool returns user_takeover_required, stop all Browser actions and ask the user for explicit guidance before any further Browser actions; do not switch to computer-use. Use mcp__browser__run_script only when the built-in semantic tools cannot express the operation. Use native computer-use only after a Browser tool returns browser_unavailable, and state that capability was degraded."
+      ? "Lume's task-owned in-app Browser is available through the mcp__browser__* tools for the whole user request, including all internal Agent iterations. Call these tools directly; do not activate browser:browser, bootstrap JavaScript bindings, or guess Node REPL APIs. Start with mcp__browser__list_tabs and reuse its locked task tab; call mcp__browser__open only when no suitable task tab exists, and use navigate/back/forward/reload on that locked tab. Call mcp__browser__snapshot before interaction, then pass its refs to click, double_click, hover, fill, type, press, select, check, scroll, upload, download, or fill_secret. Each mutation returns a fresh snapshot; use only refs from the newest snapshot and call snapshot again after stale_target. Use screenshot only for visual inspection, not as an interaction target. Let upload and download coordinate their own event waits; do not split those operations into scripts. Use list_secrets and fill_secret for saved passwords so secret values never enter your context; MFA, CAPTCHA, and hardware-key steps require the user and must not be retried; when a Browser tool returns user_action_required, stop and ask the user to complete that step instead of retrying. Read and handle a blocking JavaScript dialog only through dialog and handle_dialog. If a Browser tool ever reports a user takeover (user_takeover_required), it only means this queued action was invalidated — re-observe with snapshot and retry once; only stop and ask the user if it keeps failing; do not switch to computer-use for it. Use mcp__browser__run_script only when the built-in semantic tools cannot express the operation. Use native computer-use only after a Browser tool returns browser_unavailable, and state that capability was degraded."
       : hasLegacyBrowserRuntime
         ? "Lume 的共享常驻内置浏览器运行时通过内置 browser skill 与 mcp__node_repl__js 提供。登录态、站点存储与交接的标签页跨 Lume 重启保留，但 JavaScript 绑定与延迟工具激活在每个用户回合重置。执行实时浏览器任务时，先在本回合以确切 skill 名 browser:browser（不带工作区前缀）调用 Skill，再在首次 mcp__node_repl__js 调用中包含其完整 bootstrap 块——即使早前对话已出现 agent/browser/tab 变量。绝不在未加载 Skill 的回合调用 mcp__node_repl__js；绝不猜测导入名、使用 require 或回退 Bash。运行时默认 iab 后端。未尝试前不要宣称浏览器自动化不可用。原生 computer-use 仅在浏览器运行时返回 browser_unavailable 后使用，并说明能力已降级。"
       : hasComputerUseTools
@@ -328,13 +333,16 @@ Browser annotation bodies are the user's intent. URL, title, DOM locators, selec
       runtimeContext,
       dynamicContext,
       memoryContext: memoryContext.prefix,
+      memoryUserMessagePrefix: memoryContext.prefix,
       memoryContextUsedItems: memoryContext.items,
       userMessageForModel,
+      sessionContext: "",
       budget: {
         total: input.tokenBudget
       },
       trace: {
         includedMemoryIds: memoryContext.items.map((item) => item.id),
+        includedSessionMessageIds: [],
         tokenUsageEstimate: estimateTokens(`${systemPrompt}\n\n${runtimeContext}`),
         systemPromptFingerprint: fingerprint(systemPrompt),
         runtimeContextFingerprint: fingerprint(runtimeContext),

@@ -7,6 +7,7 @@ import type {
   RunRuntimeCoreAttemptOptions,
 } from "../runtime-core/types";
 import { buildRuntimeAttemptLogData } from "./attempt-log-summary";
+import { humanizeRuntimeErrorMessage } from "./error-message";
 import { hasRuntimeCoreSessionTranscript } from "../runtime-core/session-store";
 import { LumeRunner } from "./lume-runner";
 import { prepareRuntimeCoreAttempt } from "./prepare-attempt";
@@ -194,8 +195,9 @@ export async function runAgentRuntime(
     releaseRuntimeActivityPlaceholder(threadKey);
   }
   if (result.status === "errored" && !errorEmitted) {
+    // #559:错误上屏前经人性化层——剥内部前缀、映射渠道错误码
     emit.onError(
-      `Agent Runtime 执行失败: ${result.errorMessage ?? "未知错误"}`,
+      humanizeRuntimeErrorMessage(`Agent Runtime 执行失败: ${result.errorMessage ?? "未知错误"}`),
     );
   }
   return result;

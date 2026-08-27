@@ -13,7 +13,7 @@
  * Threading a process-global dependency through every one of those param types
  * would be a large, invasive change for no gain. Instead we expose it via this
  * holder — the same pattern the codebase uses for other process singletons
- * (setAgentNotificationWriter, getAgentRuntimeStatusManager, ...).
+ * (getOutboundNotificationWriter, getAgentRuntimeStatusManager, ...).
  *
  * The default is the SDK's no-op client, so headless sidecar / CLI / tests keep
  * working unchanged (render falls back to static fetch).

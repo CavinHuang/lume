@@ -405,22 +405,32 @@ function sanitizeSingleLine(value: string): string {
 
 /**
  * 结果输出组装的完整管线：权限钳制注记在前、touched-files 清单收尾。
- * 抽出为独立导出是接线级测试面——runSidecarSubagent 本体直调不可行级 mock
- * （见 run.delegate.test S2 注释），漏传 codingReport 之类接线回归在此钉死。
+ * 全部键必选——可空以 `| undefined` 表达，调用点删任一实参由 typecheck
+ * TS2741 拦截（#729 终局审查：类型契约取代源码文本钉）。
  */
 export function composeSidecarRunOutput(input: {
   baseOutput: string;
   status: "completed" | "errored" | "aborted" | "timed_out";
-  codingReport?: { changedFiles?: string[] };
+  codingReport: { changedFiles?: string[] } | undefined;
   permissionModeAdjusted: boolean;
-  requestedPermissionMode?: string;
-  childPermissionMode?: string;
+  requestedPermissionMode: string | undefined;
+  childPermissionMode: string | undefined;
 }): string {
   const withModeNote =
     input.permissionModeAdjusted && input.childPermissionMode
-      ? `${input.baseOutput}\n\n[子代理权限模式: ${sanitizeSingleLine(String(input.requestedPermissionMode))} → ${sanitizeSingleLine(String(input.childPermissionMode))}（不得超过父线程权限）]`
+      ? `${input.baseOutput}\n\n[子代理权限模式: ${modeLabel(input.requestedPermissionMode)} → ${modeLabel(input.childPermissionMode)}（不得超过父线程权限）]`
       : input.baseOutput;
   return appendSubagentChangedFiles(withModeNote, input.status, input.codingReport);
+}
+
+/** 注记内的模型可控串：单行折断 + 长度上限（#729 终局审查）。
+ * 先按 96 units 粗截再展开——模型可控串无前置限长，防全长 code point
+ * 物化（96 units ≥ 48 code points 数学上限，结果等价，#773 review）。
+ * 按 code point 截断——UTF-16 直接 slice 会劈开代理对产出孤立转义。 */
+function modeLabel(value: string | undefined): string {
+  return Array.from(sanitizeSingleLine((value ?? "").slice(0, 96)))
+    .slice(0, 48)
+    .join("");
 }
 
 /**
@@ -716,12 +726,10 @@ export async function runTaskLinkedSubagent(input: {
   };
 }
 
-export function getResolvedAgentTools(
-  agent: Agent,
-  fallback: ToolDefinition[],
-): ToolDefinition[] {
-  const tools = (agent as unknown as { toolPool?: ToolDefinition[] }).toolPool;
-  return Array.isArray(tools) ? tools : fallback;
+export function getResolvedAgentTools(agent: Agent): ToolDefinition[] {
+  // #584:改经公开只读访问器取值。此前双重断言读私有 toolPool 并以
+  // "读不到就退 fallback" 静默兜底——重命名即 CI 全绿的行为漂移。
+  return [...agent.resolvedTools];
 }
 
 /**

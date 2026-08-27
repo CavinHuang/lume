@@ -1164,6 +1164,30 @@ describe("LumeRunner", () => {
     });
   });
 
+  test("总线错误终值经人性化层:#559 review P1 集成钉——渠道裸码不再直达上屏单源", async () => {
+    const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-humanize-bus-"));
+    dirs.push(agentDir);
+    const runner = await createRunner(agentDir, []);
+
+    await runner.runPreparedRuntimeCoreAttempt({
+      params: createTestParams("thread-1"),
+      prepared: createPrepared(agentDir),
+      options: { registerAbort: () => {}, unregisterAbort: () => {} },
+      createCanUseTool: () => async () => ({ behavior: "allow" }),
+      createRuntimeSession: async () => {
+        throw new Error("connection_disabled");
+      }
+    });
+
+    const runEnds = await readBusRunEnds(agentDir, "thread-1");
+    expect(runEnds).toHaveLength(1);
+    const detail = runEnds[0]!.detail as { result?: string };
+    // 变异基线:删掉 fail() 补发处的 humanizeRuntimeErrorMessage 包装,
+    // detail.result 退回裸码,本断言即红
+    expect(detail.result).toContain("连接配置");
+    expect(detail.result).not.toContain("connection_disabled");
+  });
+
   test("投影链已交付终值后 fail() 不再补发,同一 run 只一个总线终值(F3 互斥)", async () => {
     const agentDir = mkdtempSync(join(tmpdir(), "lume-runner-f3-mutex-"));
     dirs.push(agentDir);

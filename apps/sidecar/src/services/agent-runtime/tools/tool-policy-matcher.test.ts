@@ -5,16 +5,10 @@ import {
 } from "./tool-policy-matcher";
 
 describe("tool-policy-matcher", () => {
-  test("keeps plain web tools separate from Guanlan data-query tools", () => {
+  test("expands the plain web tool group", () => {
     expect(expandRuntimeToolPolicyEntries(["group:web"])).toEqual([
       "web_search",
       "web_fetch"
-    ]);
-    expect(expandRuntimeToolPolicyEntries(["group:data"])).toEqual([
-      "guanlan_search",
-      "guanlan_read",
-      "guanlan_hotnews",
-      "guanlan_research"
     ]);
   });
 
@@ -27,12 +21,5 @@ describe("tool-policy-matcher", () => {
     expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_recommend");
     expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_reading_profile");
     expect(expandRuntimeToolPolicyEntries(["group:reading"])).toContain("weread_book_context");
-  });
-
-  test("normalizes Guanlan compact aliases", () => {
-    expect(normalizeRuntimeToolPolicyEntry("guanlanSearch")).toBe("guanlan_search");
-    expect(normalizeRuntimeToolPolicyEntry("guanlanRead")).toBe("guanlan_read");
-    expect(normalizeRuntimeToolPolicyEntry("guanlanHotnews")).toBe("guanlan_hotnews");
-    expect(normalizeRuntimeToolPolicyEntry("guanlanResearch")).toBe("guanlan_research");
   });
 });

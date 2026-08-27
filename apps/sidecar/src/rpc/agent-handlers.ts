@@ -2,8 +2,6 @@ import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import type {
   AgentPendingInteractiveState,
-  AgentGenerateTitleInput,
-  AgentWelcomeSuggestionInput,
   AgentListSubagentRunsInput,
   AgentProxySettings,
   WorkspaceMcpConfig,
@@ -29,6 +27,7 @@ import {
   listTrashedThreads,
   emptyTrash,
 } from "../services/agent/agent-thread-manager";
+import { deleteImThreadBindingsForThreadIds } from "../services/im/im-thread-binding-store";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
@@ -153,6 +152,8 @@ import {
   workspaceMcpConfigInputSchema,
   workspaceSlugInputSchema,
   workspaceUpdateInputSchema,
+  agentGenerateTitleInputSchema,
+  agentWelcomeSuggestionInputSchema,
 } from "./schemas";
 import type { NotificationWriter, RpcHandler } from "./types";
 import { asObject, validateInput } from "./validation";
@@ -774,6 +775,8 @@ export function createAgentHandlers(
       await assertThreadNotRunningAfterGrace(input.threadId, "删除");
       log.info("[Agent 线程] 删除", { threadId: input.threadId.slice(0, 8) });
       deleteAgentThread(input.threadId);
+      // 同步清 IM 绑定（#588）：残留会让 IM 侧在已死线程的壳里从零失忆地对话
+      deleteImThreadBindingsForThreadIds(new Set([input.threadId]));
       getAgentRuntimeStatusManager().clearSession(input.threadId);
       context.planModePhaseTracker.clearSession(input.threadId);
       releaseThreadEventBridge(input.threadId);
@@ -785,6 +788,9 @@ export function createAgentHandlers(
         params,
         AGENT_IPC_CHANNELS.ARCHIVE_THREAD,
       );
+      // 与删除/回收站/移动同一护栏（#589）：归档运行中的线程会让 run 转入
+      // 不可见状态继续烧 token，完成后消息追加进列表里不存在的线程。
+      await assertThreadNotRunningAfterGrace(input.threadId, "归档");
       log.info("[Agent 线程] 归档", { threadId: input.threadId.slice(0, 8) });
       return archiveAgentThread(input.threadId);
     },
@@ -807,7 +813,10 @@ export function createAgentHandlers(
       log.info("[Agent 线程] 移入回收站", {
         threadId: input.threadId.slice(0, 8),
       });
-      return trashAgentThread(input.threadId);
+      const trashed = trashAgentThread(input.threadId);
+      // 入回收站即失活（#588）：IM 消息不再路由进已不可见的线程
+      deleteImThreadBindingsForThreadIds(new Set([input.threadId]));
+      return trashed;
     },
     [AGENT_IPC_CHANNELS.RESTORE_THREAD_FROM_TRASH]: async (params) => {
       const input = validateInput(
@@ -828,6 +837,7 @@ export function createAgentHandlers(
         threadId: input.threadId.slice(0, 8),
       });
       permanentlyDeleteAgentThread(input.threadId);
+      deleteImThreadBindingsForThreadIds(new Set([input.threadId]));
       getAgentRuntimeStatusManager().clearSession(input.threadId);
       context.planModePhaseTracker.clearSession(input.threadId);
       releaseThreadEventBridge(input.threadId);
@@ -847,6 +857,9 @@ export function createAgentHandlers(
         );
       }
       const deletedThreadIds = emptyTrash();
+      if (deletedThreadIds.length > 0) {
+        deleteImThreadBindingsForThreadIds(new Set(deletedThreadIds));
+      }
       for (const threadId of deletedThreadIds)
         releaseThreadEventBridge(threadId);
       log.info("[Agent 线程] 清空回收站", { count: deletedThreadIds.length });
@@ -1085,9 +1098,13 @@ export function createAgentHandlers(
     }),
     ...createCodingHandlers(),
     [AGENT_IPC_CHANNELS.GENERATE_TITLE]: async (params) =>
-      generateAgentTitle(params as AgentGenerateTitleInput),
+      generateAgentTitle(
+        validateInput(agentGenerateTitleInputSchema, params, AGENT_IPC_CHANNELS.GENERATE_TITLE),
+      ),
     [AGENT_IPC_CHANNELS.GENERATE_WELCOME_SUGGESTIONS]: async (params) =>
-      generateWelcomeSuggestions(params as AgentWelcomeSuggestionInput),
+      generateWelcomeSuggestions(
+        validateInput(agentWelcomeSuggestionInputSchema, params, AGENT_IPC_CHANNELS.GENERATE_WELCOME_SUGGESTIONS),
+      ),
     [AGENT_IPC_CHANNELS.STOP_THREAD]: async (params) => {
       const input = validateInput(
         agentThreadIdInputSchema,
@@ -1146,6 +1163,10 @@ export function createAgentHandlers(
         threadId: input.threadId,
         requestId: input.requestId,
         decision: input.decision,
+        // #558 review P0:schema 补字段后必须在此透传,否则重建仍会剥掉
+        ...(input.allowAlwaysScope
+          ? { allowAlwaysScope: input.allowAlwaysScope }
+          : {}),
         ...(input.threadPermissionMode
           ? { threadPermissionMode: input.threadPermissionMode }
           : {}),

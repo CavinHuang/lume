@@ -14,6 +14,8 @@ import {
   getAgentThreadMessages,
   getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
+  moveAgentThreadToWorkspace,
+  truncateAgentMessagesFrom,
   tryUpdateAgentThreadMeta,
   updateAgentThreadMeta,
   toggleAgentThreadPin,
@@ -32,6 +34,9 @@ import {
 import { getAgentMessageVersionStorePath, readAgentMessageVersionStore } from "./agent-message-version-store";
 import { resetAgentSubmissionStoreForTests } from "./agent-submission-store";
 import { resetPlanningTodoStoreForTests } from "../planning/planning-todo-store";
+import { runtimePermissionSessionStore } from "../agent-runtime/permissions/permission-session";
+import { markToolFingerprintAllowed, markToolPermissionSessionBypassed } from "../agent-runtime/interruption/tool-permission-session";
+import { getPermissionDeniedSummary, recordPermissionDenial } from "../agent-runtime/permissions/permission-denials";
 
 describe("agent-thread-manager advanced ops", () => {
   let previousConfigDir: string | undefined;
@@ -114,6 +119,60 @@ describe("agent-thread-manager advanced ops", () => {
     expect(readFileSync(join(resolved.filesRoot, "legacy.txt"), "utf-8")).toBe("legacy");
     expect(existsSync(join(resolved.lumeWorkDir, ".migration-v1.json"))).toBeTrue();
     expect(existsSync(legacyRoot)).toBeFalse();
+  });
+  test("moveAgentThreadToWorkspace 应保留 file context 并更新 workspaceId", () => {
+    const sourceWorkspace = createAgentWorkspace("源工作区", { projectPath: projectPath("source") });
+    const targetWorkspace = createAgentWorkspace("目标工作区", { projectPath: projectPath("target") });
+    const created = createAgentThread("迁移会话", undefined, sourceWorkspace.id);
+
+    const sourceWorkdir = resolveAgentThreadWorkdir(created.id);
+    writeFileSync(join(sourceWorkdir.lumeWorkDir, "note.txt"), "hello", "utf-8");
+    updateAgentThreadMeta(created.id, {
+      sdkThreadId: "sdk-session",
+      runtimeThreadId: "pi-session"
+    });
+
+    const moved = moveAgentThreadToWorkspace(created.id, targetWorkspace.id);
+
+    expect(moved.workspaceId).toBe(targetWorkspace.id);
+    expect(moved.sdkThreadId).toBeUndefined();
+    expect(moved.runtimeThreadId).toBeUndefined();
+    const movedWorkdir = resolveAgentThreadWorkdir(created.id);
+    expect(movedWorkdir.fileContextId).toBe(sourceWorkdir.fileContextId);
+    expect(movedWorkdir.lumeWorkDir).toBe(sourceWorkdir.lumeWorkDir);
+    expect(movedWorkdir.agentCwd).toBe(targetWorkspace.projectPath!);
+    expect(readFileSync(join(movedWorkdir.lumeWorkDir, "note.txt"), "utf-8")).toBe("hello");
+  });
+
+  test("moveAgentThreadToWorkspace 在无源工作目录时也应确保 file context 可用", () => {
+    const targetWorkspace = createAgentWorkspace("目标工作区", { projectPath: projectPath("empty-target") });
+    const created = createAgentThread("新会话");
+
+    const moved = moveAgentThreadToWorkspace(created.id, targetWorkspace.id);
+    const movedWorkdir = resolveAgentThreadWorkdir(created.id);
+
+    expect(moved.workspaceId).toBe(targetWorkspace.id);
+    expect(existsSync(movedWorkdir.lumeWorkDir)).toBeTrue();
+    expect(movedWorkdir.agentCwd).toBe(targetWorkspace.projectPath!);
+    expect(getAgentThreadMeta(created.id)?.workspaceId).toBe(targetWorkspace.id);
+  });
+
+  test("moveAgentThreadToWorkspace 不应覆盖既有 file context 文件", () => {
+    const sourceWorkspace = createAgentWorkspace("源工作区", { projectPath: projectPath("overwrite-source") });
+    const targetWorkspace = createAgentWorkspace("目标工作区", { projectPath: projectPath("overwrite-target") });
+    const created = createAgentThread("覆盖迁移会话", undefined, sourceWorkspace.id);
+
+    const workdir = resolveAgentThreadWorkdir(created.id);
+    writeFileSync(join(workdir.lumeWorkDir, "source.txt"), "source", "utf-8");
+    writeFileSync(join(workdir.lumeWorkDir, "target.txt"), "target", "utf-8");
+
+    const moved = moveAgentThreadToWorkspace(created.id, targetWorkspace.id);
+    const movedWorkdir = resolveAgentThreadWorkdir(created.id);
+
+    expect(moved.workspaceId).toBe(targetWorkspace.id);
+    expect(movedWorkdir.lumeWorkDir).toBe(workdir.lumeWorkDir);
+    expect(existsSync(join(movedWorkdir.lumeWorkDir, "source.txt"))).toBeTrue();
+    expect(existsSync(join(movedWorkdir.lumeWorkDir, "target.txt"))).toBeTrue();
   });
 
   test("JSONL 缺失时应回退到 runtime-core transcript 消息", () => {
@@ -303,6 +362,77 @@ describe("agent-thread-manager advanced ops", () => {
     deleteAgentThread(session.id);
 
     expect(existsSync(runtimeCoreSessionDir)).toBeFalse();
+  });
+
+  test("deleteAgentThread 回收审批会话与拒绝记录（#519）", () => {
+    const session = createAgentThread("权限清理会话");
+    const neighbor = createAgentThread("相邻会话");
+
+    // 预置三 Map 状态 + 相邻线程对照
+    runtimePermissionSessionStore.grantFingerprint(session.id, "fp:bash:alpha");
+    runtimePermissionSessionStore.bypass(session.id);
+    recordPermissionDenial({ threadId: session.id, toolName: "bash", rawInput: "rm -rf /", reasonCode: "denied_by_rule" });
+    runtimePermissionSessionStore.grantFingerprint(neighbor.id, "fp:write:beta");
+    runtimePermissionSessionStore.bypass(neighbor.id);
+    recordPermissionDenial({ threadId: neighbor.id, toolName: "write", rawInput: "/tmp/x", reasonCode: "denied_by_rule" });
+
+    deleteAgentThread(session.id);
+
+    expect(runtimePermissionSessionStore.isFingerprintGranted(session.id, "fp:bash:alpha")).toBeFalse();
+    expect(runtimePermissionSessionStore.isBypassed(session.id)).toBeFalse();
+    expect(getPermissionDeniedSummary(session.id)).toBe("");
+    // 相邻线程的授权/bypass/denials 不受串扰
+    expect(runtimePermissionSessionStore.isFingerprintGranted(neighbor.id, "fp:write:beta")).toBeTrue();
+    expect(runtimePermissionSessionStore.isBypassed(neighbor.id)).toBeTrue();
+    expect(getPermissionDeniedSummary(neighbor.id)).not.toBe("");
+
+    deleteAgentThread(neighbor.id);
+    expect(runtimePermissionSessionStore.isBypassed(neighbor.id)).toBeFalse();
+  });
+
+
+  test("truncateAgentMessagesFrom 应直接重建裁剪后的 transcript", () => {
+    const session = createAgentThread("truncate transcript");
+    const sessionManager = createOrResumeRuntimeCoreSessionManager(process.cwd(), session.id);
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "第一条" }],
+      timestamp: 1
+    });
+    sessionManager.appendMessage({
+      role: "assistant",
+      provider: "anthropic",
+      model: "claude-sonnet-4-5-20250929",
+      api: "anthropic-messages",
+      stopReason: "stop",
+      usage: {
+        input: 0,
+        output: 0,
+        cacheRead: 0,
+        cacheWrite: 0,
+        totalTokens: 0,
+        cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 }
+      },
+      content: [{ type: "text", text: "第二条" }],
+      timestamp: 2
+    });
+    sessionManager.appendMessage({
+      role: "user",
+      content: [{ type: "text", text: "第三条" }],
+      timestamp: 3
+    });
+
+    const messagesBefore = getAgentThreadMessages(session.id);
+    const runtimeCoreSessionDir = getRuntimeCoreSessionDirPath(session.id);
+    const kept = truncateAgentMessagesFrom(session.id, messagesBefore[2]!.id);
+    const messagesAfter = getAgentThreadMessages(session.id);
+
+    expect(kept.length).toBe(2);
+    expect(existsSync(runtimeCoreSessionDir)).toBeTrue();
+    expect(messagesAfter.length).toBe(2);
+    expect(messagesAfter[0]?.content).toBe("第一条");
+    expect(messagesAfter[1]?.content).toBe("第二条");
+    expect(getAgentThreadMeta(session.id)?.runtimeThreadId).toBeUndefined();
   });
 
   test("forkAgentThread 应同时重建 raw SDK transcript", () => {

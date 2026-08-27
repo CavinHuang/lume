@@ -156,7 +156,7 @@ export async function runRuntimeCoreMockSuccessAttempt(
     }
   } as any);
   updateRuntimeThreadMetaIfPresent(runtime, {
-    runtimeThreadId: session.threadId ?? session.sessionId
+    runtimeThreadId: session.sessionId
   });
   session.dispose();
   emit.onComplete();
@@ -333,7 +333,7 @@ export async function runRuntimeCoreMockCompactionAttempt(
     }
   } as any);
   updateRuntimeThreadMetaIfPresent(runtime, {
-    runtimeThreadId: session.threadId ?? session.sessionId
+    runtimeThreadId: session.sessionId
   });
   session.dispose();
   emit.onComplete();
@@ -432,7 +432,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
         timestamp: Date.now()
       });
       updateRuntimeThreadMetaIfPresent(runtime, {
-        runtimeThreadId: session.threadId ?? session.sessionId
+        runtimeThreadId: session.sessionId
       });
       emit.onComplete();
       return { status: "aborted" };
@@ -466,7 +466,7 @@ export async function runRuntimeCoreMockDelayedAttempt(
       timestamp: Date.now()
     });
     updateRuntimeThreadMetaIfPresent(runtime, {
-      runtimeThreadId: session.threadId ?? session.sessionId
+      runtimeThreadId: session.sessionId
     });
     emit.onComplete();
     return { status: "completed" };

@@ -25,6 +25,7 @@ import type {
   AgentWelcomeSuggestion,
   AgentWelcomeSuggestionInput,
   AgentWelcomeSuggestionsResult,
+  AgentToolPermissionAllowScope,
   AgentUserMessagePart,
   LumeRuntimeEvent,
   RuntimeCodingReport
@@ -36,7 +37,7 @@ import {
   appendAgentThreadSDKMessages,
   getAgentThreadMessages,
   getAgentThreadMeta,
-  getAgentThreadSDKMessages,
+  getRecentAgentThreadSDKMessages,
   readRuntimeCoreTranscriptMessages,
   replaceAgentThreadTranscript,
   tryUpdateAgentThreadMeta
@@ -53,10 +54,8 @@ import { getSessionStateManager } from "../agent-runtime/runner/session-state-ma
 import { ensureAgentEventsBridge } from "../agent-runtime/events/agent-events-bridge";
 import { submitAskUserQuestionAnswers as submitRuntimeAskUserQuestionAnswers } from "../agent-runtime/interruption/ask-user-question-session";
 import { submitToolPermissionDecision } from "../agent-runtime/interruption/tool-permission-session";
-import {
-  resolveAgentDefaultStrategy,
-  resolveRequestedModelIdForChannel
-} from "../channel/model-selection";
+import { resolveAgentDefaultStrategy } from "../channel/model-selection";
+import { resolveRequestedModelIdForChannel } from "../infra/model-refs";
 import {
   AGENT_TITLE_PROMPT_FROM_SUMMARY,
   isWeakGeneratedTitle,
@@ -89,7 +88,7 @@ import { getAgentSubmissionStore } from "./agent-submission-store";
 type AgentStreamEmitter = {
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   onMessageAppended?: (event: AgentMessageAppendedEvent) => void;
-  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" }) => void;
+  onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" | "stopped" }) => void;
   /** options.fromActiveRun=true 表示错误来自 run 执行链(runtime 会话内失败)——
    * 终值已由事件总线 run.end{isError} 单源交付,消费方不得再合成 run.failed(T7c)。 */
   onError: (error: string, options?: { fromActiveRun?: boolean }) => void;
@@ -167,6 +166,9 @@ function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStr
     dispatch.emit.onError(error instanceof Error ? error.message : String(error));
   },
   onQueuedBlocked: (dispatch, error) => {
+    // 校验失败的排队项永远等不到 execute：走 onError 让下游（IM 卡片 finish、
+    // 文本兜底）收尾，否则 emitter 监听随该项悬挂（#725 review S1）。
+    dispatch.emit.onError(error instanceof Error ? error.message : String(error));
     writeLogRecord({
       level: "warn",
       kind: "trace",
@@ -180,6 +182,10 @@ function createAgentRuntimeKernel(): AgentRuntimeKernel<AgentSendInput, AgentStr
       origin: dispatch.input.traceContext?.origin,
       data: { queuedMessageId: dispatch.id, reason: error instanceof Error ? error.message : String(error) }
     });
+  },
+  onQueuedRemoved: (dispatch) => {
+    // 用户移除排队项 = 主动取消：按 stopped 收尾（卡片映射 interrupted 态）
+    dispatch.emit.onComplete({ reason: "stopped" });
   }
   });
 }
@@ -570,12 +576,15 @@ function notifyAgentInteractionResolved(threadId: string): void {
   }
 }
 
-export function submitAgentToolPermission(input: AgentToolPermissionResponseInput): { ok: true } {
-  const handled = submitToolPermissionDecision(input);
-  if (handled) {
+export function submitAgentToolPermission(input: AgentToolPermissionResponseInput): {
+  ok: true;
+  effectiveScope?: AgentToolPermissionAllowScope;
+} {
+  const result = submitToolPermissionDecision(input);
+  if (result.handled) {
     getAgentRuntimeStatusManager().markStreaming(input.threadId);
     notifyAgentInteractionResolved(input.threadId);
-    return { ok: true };
+    return { ok: true, ...(result.effectiveScope ? { effectiveScope: result.effectiveScope } : {}) };
   }
   throw new Error("未找到待确认的工具权限请求");
 }
@@ -1132,6 +1141,9 @@ async function finalizeAgentSendStage({
       durationMs: Date.now() - sendStartTime,
       persistedSdkMessageCount: persistedSdkMessages.length
     });
+    // aborted 也是终态：必须走 onComplete 让下游（IM 卡片 finish/订阅退订）
+    // 收尾，否则监听器随 /stop 路径永久残留（#725 review S1）。
+    emit.onComplete({ reason: "stopped" });
   }
   if (runtimeResult.status === "errored") {
     log.error("[Agent 会话] 运行失败", {
@@ -1214,7 +1226,8 @@ async function prepareAgentSendStage({
     modelFacingUserMessage = [capabilityProjection.context, modelFacingUserMessage].filter(Boolean).join("\n\n");
   }
   if (!isManualCompactCommand) {
-    const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getAgentThreadSDKMessages(threadId));
+    // #554:发送路径只需文件尾部的后台任务通知,尾部有界读取替代全量解析
+    const pendingBackgroundTasks = buildPendingBackgroundTaskContext(getRecentAgentThreadSDKMessages(threadId));
     if (pendingBackgroundTasks) {
       modelFacingUserMessage = [modelFacingUserMessage, pendingBackgroundTasks].join("\n\n");
     }
@@ -1565,6 +1578,11 @@ async function runSendAgentMessage(
         && (stampedMessage.subtype === "context_compaction_started" || stampedMessage.subtype === "context_compaction_progress")
       ) {
         runtimeStatusManager.markCompacting(threadId);
+      }
+      // compact_boundary 到达即压缩完成：切回 streaming，phase 不再滞留
+      // compacting 直到 run 终态（#725 review R8：预存流转缺口）。
+      if (stampedMessage.type === "system" && stampedMessage.subtype === "compact_boundary") {
+        runtimeStatusManager.markStreaming(threadId);
       }
       if (shouldPersistAssistantTurnSdkMessage(stampedMessage)) {
         if (runtimeCompleted) {

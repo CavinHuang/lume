@@ -21,6 +21,7 @@ import { getThreadEventBus } from "../events/thread-event-bus";
 import { publishRunDomainEvent } from "../events/bus-bridge";
 import { createLogger } from "../../infra/logger";
 import { stableHashPayload } from "../../infra/payload-hash";
+import { humanizeRuntimeErrorMessage } from "./error-message";
 import { LumeRunObserver } from "./run-observer";
 import { fromAgentRuntimeRunResult } from "./run-result";
 import { applyResolvedThinkingLevel } from "./thinking-level";
@@ -284,8 +285,9 @@ export class LumeRunner {
     }
     if (resultWithCoding.status !== "completed") {
       // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
-      // F3:空流/引擎早夭(无 result 消息)时 projector 未开 run,总线无终值——补发
-      await this.publishRunEndIfMissing("error", resultWithCoding.errorMessage ?? "Agent SDK 执行失败");
+      // F3:空流/引擎早夭(无 result 消息)时 projector 未开 run,总线无终值——补发。
+      // 二轮 review P2:与 fail() 出口同一口径过人性化层,终值出口不双标
+      await this.publishRunEndIfMissing("error", humanizeRuntimeErrorMessage(resultWithCoding.errorMessage ?? "Agent SDK 执行失败"));
       await this.observer.flush();
       return this.finalizeResult(resultWithCoding);
     }
@@ -382,8 +384,9 @@ export class LumeRunner {
       this.emitMemoryContextUsed(runtimeSession.memoryContextUsedItems ?? []);
 
       updateRuntimeThreadMetaIfPresent(runtime, {
-        sdkThreadId: session.threadId ?? session.sessionId,
-        runtimeThreadId: session.threadId ?? session.sessionId
+        // #584:runtime-core 内 sessionId 即 threadId,不再双名兜底
+        sdkThreadId: session.sessionId,
+        runtimeThreadId: session.sessionId
       });
       await runtimeSession.refreshCodingChangeSet?.();
       return this.complete(
@@ -407,6 +410,13 @@ export class LumeRunner {
         if (browserSession) {
           await getActiveBrowserBroker()?.dispatch({
             method: "finalize_tabs",
+            // #613:回合结束不再静默清光 agent tab——active tab 兜底标 handoff
+            // 保活进 workspace store(下轮 context-assembler 重新注入上下文),
+            // 其余 tab 维持原清理语义。仅限 activeTabId,防 turnId 恒定导致
+            // 全线程 tab 无差别保活堆积。
+            params: browserSession.activeTabId
+              ? { keep: [{ tabId: browserSession.activeTabId, status: "handoff" as const }] }
+              : {},
             threadId: runtime.sessionId,
             browserSessionId: browserSession.browserSessionId,
             browserTurnId: browserSession.browserTurnId,
@@ -678,9 +688,13 @@ export class LumeRunner {
     // T7a:run.failed 已迁事件总线(run.end{isError}),旧路 emit 删除
     // F3:查询流未启动(或未交付终值)的失败,投影链不拥有终值——补发 run.end{error};
     // 流已交付终值则跳过,避免同一 run 双终值。
-    await this.publishRunEndIfMissing("error", errorMessage);
+    // #559 review P1:T7c 后 web 主上屏单源是总线 run.end(lifecycle-event-adapter
+    // 取 detail.result),必须在此过人性化层;fromActiveRun 抑制使 emit.onError 的
+    // humanized 文本到不了主聊天流。持久化面(observer/finalizeResult)另持原文保真。
+    const userFacingError = humanizeRuntimeErrorMessage(errorMessage);
+    await this.publishRunEndIfMissing("error", userFacingError);
     await this.observer.flush();
-    this.emit.onError(errorMessage);
+    this.emit.onError(userFacingError);
     return this.finalizeResult({ status: "errored", errorMessage });
   }
 

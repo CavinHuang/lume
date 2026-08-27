@@ -1,8 +1,9 @@
 import { shellKindConservative } from "@lume/agent-sdk";
-import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS } from "../ps-dangerous-verbs";
+import { PS_DELETE_COMMAND, PS_FULL_NAME_VERBS, PS_START_PROCESS_SHELL_SPAWN, hasPowerShellContentSignal } from "../ps-dangerous-verbs";
 import type {
   PermissionClassification,
-  PermissionClassifierInput
+  PermissionClassifierInput,
+  PermissionClassifierLlm
 } from "./permission-types";
 
 const CRITICAL_PATTERNS = [
@@ -43,21 +44,65 @@ const MEDIUM_PATTERNS = [
 // （POSIX bash 在场时 iex/ri 等撞名命令防误拦）
 const POWERSHELL_MEDIUM_PATTERNS = [
   new RegExp(String.raw`\b${PS_FULL_NAME_VERBS}\b`, "i"),
-  new RegExp(PS_DELETE_COMMAND, "i")
+  new RegExp(PS_DELETE_COMMAND, "i"),
+  // #713 review：Start-Process 参数列表间接拉起 shell（与 guardrail 确认档同源锚点）
+  new RegExp(PS_START_PROCESS_SHELL_SPAWN, "i")
 ];
 
 export interface PermissionClassifier {
   classify(input: PermissionClassifierInput): Promise<PermissionClassification>;
 }
 
-/**
- * 分类器工厂：纯启发式规则分类（无 LLM 兜底层——投机 LLM 链已删）。
- * config 的 permissions.classifier.enabled 只门控本启发式分类器是否参与决策。
- */
-export function createPermissionClassifier(): PermissionClassifier {
+export interface CreatePermissionClassifierOptions {
+  llm?: PermissionClassifierLlm;
+  timeoutMs?: number;
+  cacheTtlMs?: number;
+  cacheLimit?: number;
+}
+
+export function createPermissionClassifier(
+  options: CreatePermissionClassifierOptions = {}
+): PermissionClassifier {
+  const cache = new Map<string, { result: PermissionClassification; ts: number }>();
+  const timeoutMs = options.timeoutMs ?? 3_000;
+  const cacheTtlMs = options.cacheTtlMs ?? 5 * 60_000;
+  const cacheLimit = options.cacheLimit ?? 200;
+
   return {
     async classify(input) {
-      return classifyHeuristic(input);
+      const heuristic = classifyHeuristic(input);
+      if (heuristic.riskLevel !== "low" || !options.llm) {
+        return heuristic;
+      }
+
+      // 缓存键纳入方言（#707）：启发式词表选择依赖 shellKind，TTL 内方言读法漂移时
+      // 同一命令文本不得跨方言共享 LLM 结果。JSON 序列化作键：分隔符拼接在 command/path
+      // 含 "::" 时存在跨条目歧义碰撞。生产引擎缺省不传 shellKind（段为 null），注入通道
+      // （测试/未来方言上下文接线）生效。
+      const key = JSON.stringify([input.toolName, input.shellKind ?? null, input.command ?? "", input.path ?? ""]);
+      const cached = cache.get(key);
+      if (cached && Date.now() - cached.ts < cacheTtlMs) {
+        return cached.result;
+      }
+
+      try {
+        const response = await Promise.race([
+          options.llm(buildClassifierPrompt(input)),
+          new Promise<string>((_, reject) => setTimeout(() => reject(new Error("timeout")), timeoutMs))
+        ]);
+        const parsed = parseLlmClassification(response);
+        if (parsed) {
+          cache.set(key, { result: parsed, ts: Date.now() });
+          if (cache.size > cacheLimit) {
+            const first = cache.keys().next().value;
+            if (first) cache.delete(first);
+          }
+          return parsed;
+        }
+      } catch {
+        return heuristic;
+      }
+      return heuristic;
     }
   };
 }
@@ -78,9 +123,13 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
   const tool = input.toolName.toLowerCase();
   if (tool === "bash" || tool === "execute_command") {
     // 缺省方言用保守读法：bash 发现未决的冷启动窗口 fail-closed，与 guardrail 正则层同口径；
-    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）
+    // 平台/环境走可注入通道，方言门控不得绑死宿主进程平台（与 RuntimeToolSafetyContext 同形）。
+    // win32 叠加内容信号通道（#707）：装 POSIX bash 的 Windows 机上方言读作 bash、词表休眠，
+    // 文本呈强 PS 形态时无视方言激活；非 win32 不消费（与 guardrail 层同口径）
+    const platform = input.platform ?? process.platform;
     const powershellRulesActive =
-      (input.shellKind ?? shellKindConservative(input.platform ?? process.platform, input.env ?? process.env)) === "powershell";
+      (input.shellKind ?? shellKindConservative(platform, input.env ?? process.env)) === "powershell" ||
+      (platform === "win32" && hasPowerShellContentSignal(input.command ?? input.path ?? ""));
     const shellPatterns = powershellRulesActive ? [...MEDIUM_PATTERNS, ...POWERSHELL_MEDIUM_PATTERNS] : MEDIUM_PATTERNS;
     for (const pattern of shellPatterns) {
       if (pattern.test(value)) {
@@ -95,7 +144,9 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
     return {
       riskLevel: "low",
       reasonCode: "shell_read",
-      explanation: "Shell 命令未命中写入或高危模式",
+      // 中性理由（#707）：该文案经引擎 approval 透传直达审批卡，若陈述「无风险」
+      // 会与「请确认」同屏自相矛盾——只陈述结论，不替系统背书安全性
+      explanation: "Shell 命令不在自动放行范围内，需要用户确认",
       shouldAsk: false
     };
   }
@@ -137,7 +188,9 @@ export function classifyHeuristic(input: PermissionClassifierInput): PermissionC
   return {
     riskLevel: "low",
     reasonCode: "metadata_low",
-    explanation: "未命中高风险模式",
+    // 中性理由（#707 同源）：该文案经引擎 approval 透传直达审批卡（skill 等工具
+    // 未命中词表时走此 fallback），不得陈述「无风险」与「请确认」自相矛盾
+    explanation: "该操作不在自动放行范围内，需要用户确认",
     shouldAsk: false
   };
 }
@@ -152,4 +205,38 @@ function isSensitivePath(path: string): boolean {
 
 function isDependencyManifest(path: string): boolean {
   return /(^|[\\/])(package\.json|package-lock\.json|pnpm-lock\.yaml|yarn\.lock|bun\.lockb?)(?:$|[\\/])/i.test(path);
+}
+
+function buildClassifierPrompt(input: PermissionClassifierInput): string {
+  return [
+    "你是一个安全审计助手。判断以下操作的风险等级。",
+    `工具: ${input.toolName}`,
+    input.description ? `描述: ${input.description}` : "",
+    input.command ? `命令: ${input.command}` : "",
+    input.path ? `路径: ${input.path}` : "",
+    "只返回 JSON: {\"riskLevel\":\"low|medium|high|critical\",\"reason\":\"原因\",\"shouldAsk\":true}"
+  ].filter(Boolean).join("\n");
+}
+
+function parseLlmClassification(response: string): PermissionClassification | null {
+  try {
+    const parsed = JSON.parse(response.trim()) as Record<string, unknown>;
+    const rawRisk = parsed.riskLevel ?? parsed.risk;
+    if (
+      rawRisk !== "low" &&
+      rawRisk !== "medium" &&
+      rawRisk !== "high" &&
+      rawRisk !== "critical"
+    ) {
+      return null;
+    }
+    return {
+      riskLevel: rawRisk,
+      reasonCode: "llm_classifier",
+      explanation: typeof parsed.reason === "string" ? parsed.reason : "LLM 风险分类",
+      shouldAsk: parsed.shouldAsk === true
+    };
+  } catch {
+    return null;
+  }
 }

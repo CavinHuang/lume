@@ -11,11 +11,10 @@ export type PermissionRuntimeMode =
 
 export type PermissionAction = "allow" | "ask" | "deny";
 
-export type PermissionRuleScope = "session" | "workspace" | "global";
-
+// #519：PermissionRule.scope 已删除——matchPermissionRule 只看 tool/commandPattern/pathPattern/action，
+// session/workspace/global 作用域语义从未存在于判定逻辑。
 export interface PermissionRule {
   id?: string;
-  scope: PermissionRuleScope;
   tool: string;
   commandPattern?: string;
   pathPattern?: string;

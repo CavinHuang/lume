@@ -1122,7 +1122,92 @@ async fn spawn_kernel(options: &RuntimeOptions) -> Result<KernelSession> {
     })
 }
 
+/// #634：kernel 进程环境白名单。kernel-process 若继承宿主全量环境，任何 vm
+/// 边界失守都会把宿主侧注入的全部密钥暴露给 cell 代码（Buffer.constructor
+/// realm 逃逸直达 process.env）。只放行系统必需项、代理、untrusted allowlist
+/// 声明项与经 NODE_REPL_EXTRA_ENV_ALLOWLIST 显式扩展的条目。
+const KERNEL_ENV_BASELINE_ALLOW: &[&str] = &[
+    // 桌面生产以 Electron 可执行文件充当 node 运行时（LUME_NODE_REPL_ELECTRON
+    // → nodePath），依赖 sidecar 注入的该变量进入 node 模式——缺失则 kernel 以
+    // GUI 模式启动、JSONL 握手必超时。
+    "ELECTRON_RUN_AS_NODE",
+    "PATH",
+    "HOME",
+    "USERPROFILE",
+    "TEMP",
+    "TMP",
+    "TMPDIR",
+    "LANG",
+    "LC_ALL",
+    "TZ",
+    "HTTP_PROXY",
+    "HTTPS_PROXY",
+    "NO_PROXY",
+    "ALL_PROXY",
+    "http_proxy",
+    "https_proxy",
+    "no_proxy",
+    "all_proxy",
+];
+
+#[cfg(target_os = "windows")]
+const KERNEL_ENV_WINDOWS_BASELINE_ALLOW: &[&str] = &[
+    "SYSTEMROOT",
+    "SYSTEMDRIVE",
+    "COMSPEC",
+    "PATHEXT",
+    "WINDIR",
+    "APPDATA",
+    "LOCALAPPDATA",
+    "PROGRAMFILES",
+    "PROGRAMW6432",
+    "COMMONPROGRAMFILES",
+    "NUMBER_OF_PROCESSORS",
+    "PROCESSOR_ARCHITECTURE",
+    "USERNAME",
+    "USERDOMAIN",
+    "COMPUTERNAME",
+];
+
+fn collect_kernel_env_entries(untrusted_allowlist: &[String]) -> Vec<(String, std::ffi::OsString)> {
+    let mut names: Vec<String> = KERNEL_ENV_BASELINE_ALLOW
+        .iter()
+        .map(|name| (*name).to_string())
+        .collect();
+    #[cfg(target_os = "windows")]
+    names.extend(
+        KERNEL_ENV_WINDOWS_BASELINE_ALLOW
+            .iter()
+            .map(|name| (*name).to_string()),
+    );
+    // untrusted allowlist 声明的业务变量必须穿透到 kernel，worker 才能按同一
+    // 份白名单挑出 untrustedEnv；allowlist 即授权，天然安全。
+    names.extend(untrusted_allowlist.iter().cloned());
+    names.extend(split_loose(env::var("NODE_REPL_EXTRA_ENV_ALLOWLIST").ok()));
+    let mut seen = std::collections::HashSet::new();
+    let mut entries = Vec::new();
+    for name in names {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        if let Some(value) = env::var_os(&name) {
+            entries.push((name, value));
+        }
+    }
+    entries
+}
+
 fn configure_kernel_env(command: &mut Command, options: &RuntimeOptions) -> Result<()> {
+    // #634：kernel-process 若继承宿主全量环境，任何 vm 边界失守都会把宿主侧
+    // 注入的全部密钥暴露给 cell 代码（Buffer.constructor realm 逃逸直达
+    // process.env）。改为显式白名单（见 collect_kernel_env_entries），其余一律
+    // 不传。
+    command.env_clear();
+    for (name, value) in collect_kernel_env_entries(&options.untrusted_env_allowlist) {
+        command.env(name.as_str(), value);
+    }
+    // env_clear 后本循环对宿主继承值已是 no-op，但保留它兜底：若 allowlist 或
+    // 扩展口声明了下列控制变量名，回填值会被剥除，由下方显式设置统一接管。
     for name in [
         "LUME_CUA_RUNTIME_MANIFEST",
         "NODE_REPL_ACTIVE_EXEC_REGISTRY_DIR",
@@ -1373,7 +1458,59 @@ fn tail(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_version_tuple, split_hashes, tail};
+    use super::{collect_kernel_env_entries, parse_version_tuple, split_hashes, tail};
+
+    #[test]
+    fn kernel_env_allowlist_only_passes_declared_entries() {
+        // 测试进程必有 PATH；断言基线穿透。
+        let entries = collect_kernel_env_entries(&[]);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"PATH"), "baseline PATH must pass through");
+        // 未声明的变量（宿主 env 里存在与否不定）绝不出现在结果中——
+        // 结果集合必须等于「基线 ∪ allowlist ∪ extra」与进程 env 的交集。
+        let declared = vec!["PATH".to_string(), "NODE_REPL_TEST_MISSING_VAR".to_string()];
+        let entries = collect_kernel_env_entries(&declared);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(names.contains(&"PATH"));
+        // allowlist 声明但进程中不存在的条目被静默跳过，不产生空值注入
+        assert!(!names.contains(&"NODE_REPL_TEST_MISSING_VAR"));
+        // #634 review 加固：负向钉死「未声明的现存变量绝不透出」。cargo test 进程
+        // 必注入 CARGO_* 系列（不在任何 baseline）；若白名单机制整体回退为继承全量
+        // 环境，本断言红——此前仅有正向断言时该回退变异存活。
+        if std::env::var_os("CARGO_PKG_NAME").is_some() {
+            assert!(
+                !names.contains(&"CARGO_PKG_NAME"),
+                "undeclared process env must not leak into the kernel allowlist result"
+            );
+        }
+    }
+
+    #[test]
+    fn kernel_env_extra_allowlist_extends_pass_through() {
+        // NODE_REPL_EXTRA_ENV_ALLOWLIST 引用 baseline 外的自造变量验证扩展口穿透
+        // （#634 review 加固）：曾用 HOME 作探针，而 HOME 本就在 KERNEL_ENV_BASELINE_
+        // ALLOW 内，删掉扩展口解析行后结果仍含 HOME、测试恒绿（变异存活）。
+        let guard_extra = super::env::var("NODE_REPL_EXTRA_ENV_ALLOWLIST").ok();
+        let guard_canary = super::env::var("NODE_REPL_TEST_EXTRA_CANARY").ok();
+        unsafe { super::env::set_var("NODE_REPL_TEST_EXTRA_CANARY", "canary-value") };
+        unsafe { super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", "NODE_REPL_TEST_EXTRA_CANARY") };
+        let entries = collect_kernel_env_entries(&[]);
+        let names: Vec<&str> = entries.iter().map(|(name, _)| name.as_str()).collect();
+        assert!(
+            names.iter().any(|name| *name == "NODE_REPL_TEST_EXTRA_CANARY"),
+            "extra allowlist entry outside every baseline must pass through"
+        );
+        unsafe {
+            match &guard_extra {
+                Some(value) => super::env::set_var("NODE_REPL_EXTRA_ENV_ALLOWLIST", value),
+                None => super::env::remove_var("NODE_REPL_EXTRA_ENV_ALLOWLIST"),
+            }
+            match &guard_canary {
+                Some(value) => super::env::set_var("NODE_REPL_TEST_EXTRA_CANARY", value),
+                None => super::env::remove_var("NODE_REPL_TEST_EXTRA_CANARY"),
+            }
+        }
+    }
 
     #[test]
     fn parses_semver_and_prerelease_versions() {

@@ -274,38 +274,6 @@ registerToolMetadata({
   allowedInPlanMode: true
 });
 
-registerToolMetadata({
-  name: "guanlan_search",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 中文互联网搜索",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "guanlan_read",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 中文网页阅读",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "guanlan_hotnews",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 中文热榜",
-  allowedInPlanMode: true
-});
-
-registerToolMetadata({
-  name: "guanlan_research",
-  category: "network",
-  riskLevel: "low",
-  description: "Guanlan 研究证据包",
-  allowedInPlanMode: true
-});
-
 // 自动化定时工具
 registerToolMetadata({
   name: "automation_read",

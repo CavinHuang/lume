@@ -17,6 +17,8 @@ export interface LumeTraceStore {
   appendSpan(traceId: string, span: LumeTraceSpan): Promise<void>;
   updateSpan(traceId: string, spanId: string, patch: Partial<LumeTraceSpan>): Promise<void>;
   listByThread(threadId: string): Promise<LumeTrace[]>;
+  /** 文件后端的 trace 目录(#584 显式可选声明);内存/测试实现可不提供。 */
+  tracesDir?: string;
 }
 
 function writeTextAtomic(path: string, payload: string): void {
@@ -64,7 +66,7 @@ function readSpans(path: string): LumeTraceSpan[] {
 }
 
 class FileBackedLumeTraceStore implements LumeTraceStore {
-  private readonly tracesDir: string;
+  readonly tracesDir: string;
 
   constructor(sessionDir: string) {
     this.tracesDir = join(sessionDir, "traces");

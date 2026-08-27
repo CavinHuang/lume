@@ -120,6 +120,45 @@ describe("lume-config-service", () => {
     });
   });
 
+  test("projectInstructionsEnabled：布尔透传、非法值丢弃、工作区覆盖生效(#670)", () => {
+    // 缺省 → 归一化输出不含该键（语义上视为 true）
+    const initial = getEffectiveLumeConfig();
+    expect(initial.agent?.projectInstructionsEnabled).toBeUndefined();
+
+    updateLumeConfigSection({
+      source: "system",
+      path: "agent.projectInstructionsEnabled",
+      value: false,
+      summary: "disable project instructions",
+    });
+    expect(getEffectiveLumeConfig().agent?.projectInstructionsEnabled).toBe(false);
+
+    updateLumeConfigSection({
+      source: "user",
+      path: "agent.projectInstructionsEnabled",
+      value: true,
+      summary: "enable project instructions",
+    });
+    expect(getEffectiveLumeConfig().agent?.projectInstructionsEnabled).toBe(true);
+
+    // 工作区覆盖：仅该 slug 的有效配置翻转
+    updateLumeConfigSection({
+      source: "user",
+      workspaceSlug: "default",
+      path: "agent.projectInstructionsEnabled",
+      value: false,
+      summary: "disable for workspace",
+    });
+    expect(getEffectiveLumeConfig().agent?.projectInstructionsEnabled).toBe(true);
+    expect(getEffectiveLumeConfig("default").agent?.projectInstructionsEnabled).toBe(false);
+
+    // 非法值（字符串）被归一化丢弃，回落全局层
+    const file = YAML.parse(readFileSync(getLumeConfigYamlPath(), "utf-8")) as LumeConfigFile;
+    file.workspaces = { ...file.workspaces, broken: { agent: { projectInstructionsEnabled: "yes" as unknown as boolean } } };
+    writeFileSync(getLumeConfigYamlPath(), YAML.stringify(file), "utf-8");
+    expect(getEffectiveLumeConfig("broken").agent?.projectInstructionsEnabled).toBe(true);
+  });
+
   test("应规范化 Computer Use 的 agent surface 和 sky 模型列表", () => {
     updateLumeConfigSection({
       source: "system",
@@ -161,20 +200,15 @@ describe("lume-config-service", () => {
     expect(getEffectiveLumeConfig("default").agent?.followUpQueueMode).toBeUndefined();
   });
 
-  test("应识别 guanlan 搜索后端并同步启用顺序到环境变量", () => {
+  test("应按配置同步搜索后端启用顺序到环境变量", () => {
     const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
-    const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;
-    const prevGuanlanPython = process.env.LUME_GUANLAN_PYTHON;
-    const prevLumePython = process.env.LUME_PYTHON;
     try {
-      process.env.LUME_PYTHON = "/custom/python";
       updateLumeConfigSection({
         source: "system",
         path: "webSearch",
         value: {
           strategy: "priority",
           providers: {
-            guanlan: { enabled: true },
             exa: { enabled: false, apiKey: "exa-key" },
             bing: { enabled: true },
             duckduckgo: { enabled: false }
@@ -184,50 +218,11 @@ describe("lume-config-service", () => {
 
       const effective = getEffectiveLumeConfig("default");
 
-      expect(effective.webSearch?.providers?.guanlan).toEqual({ enabled: true });
-      expect(process.env.LUME_WEB_SEARCH_PROVIDERS).toBe("guanlan,bing");
-      expect(process.env.LUME_GUANLAN_ENABLED).toBe("1");
-      expect(process.env.LUME_GUANLAN_PYTHON).toBe("/custom/python");
-    } finally {
-      if (prevProviders === undefined) delete process.env.LUME_WEB_SEARCH_PROVIDERS;
-      else process.env.LUME_WEB_SEARCH_PROVIDERS = prevProviders;
-      if (prevGuanlanEnabled === undefined) delete process.env.LUME_GUANLAN_ENABLED;
-      else process.env.LUME_GUANLAN_ENABLED = prevGuanlanEnabled;
-      if (prevGuanlanPython === undefined) delete process.env.LUME_GUANLAN_PYTHON;
-      else process.env.LUME_GUANLAN_PYTHON = prevGuanlanPython;
-      if (prevLumePython === undefined) delete process.env.LUME_PYTHON;
-      else process.env.LUME_PYTHON = prevLumePython;
-    }
-  });
-
-  test("禁用 guanlan 时不设置 guanlan 启用标记", () => {
-    const prevProviders = process.env.LUME_WEB_SEARCH_PROVIDERS;
-    const prevGuanlanEnabled = process.env.LUME_GUANLAN_ENABLED;
-    const prevGuanlanPython = process.env.LUME_GUANLAN_PYTHON;
-    try {
-      updateLumeConfigSection({
-        source: "system",
-        path: "webSearch",
-        value: {
-          providers: {
-            guanlan: { enabled: false },
-            bing: { enabled: true }
-          }
-        }
-      });
-
-      getEffectiveLumeConfig("default");
-
+      expect(effective.webSearch?.providers?.bing).toEqual({ enabled: true });
       expect(process.env.LUME_WEB_SEARCH_PROVIDERS).toBe("bing");
-      expect(process.env.LUME_GUANLAN_ENABLED).toBe("");
-      expect(process.env.LUME_GUANLAN_PYTHON).toBe("");
     } finally {
       if (prevProviders === undefined) delete process.env.LUME_WEB_SEARCH_PROVIDERS;
       else process.env.LUME_WEB_SEARCH_PROVIDERS = prevProviders;
-      if (prevGuanlanEnabled === undefined) delete process.env.LUME_GUANLAN_ENABLED;
-      else process.env.LUME_GUANLAN_ENABLED = prevGuanlanEnabled;
-      if (prevGuanlanPython === undefined) delete process.env.LUME_GUANLAN_PYTHON;
-      else process.env.LUME_GUANLAN_PYTHON = prevGuanlanPython;
     }
   });
 

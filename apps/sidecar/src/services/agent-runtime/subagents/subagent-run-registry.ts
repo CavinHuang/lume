@@ -114,8 +114,27 @@ class SubagentRunRegistry {
     }
   }
 
+  // #616①:persist 全量 pretty-print 重写 0.5-1.5MB,一个 subagent 生命周期
+  // 4-8 次状态变更线性叠加写放大。非关键变更(如 runtimeRunIds 追加、非状态
+  // 字段 patch)标 dirty 由微批冲刷;创建与状态迁移保持同步落盘语义。
+  private persistDirty = false;
+  private persistScheduled = false;
+
+  private schedulePersist(): void {
+    this.persistDirty = true;
+    if (this.persistScheduled) return;
+    this.persistScheduled = true;
+    queueMicrotask(() => {
+      this.persistScheduled = false;
+      if (!this.persistDirty) return;
+      this.persistDirty = false;
+      this.persist();
+    });
+  }
+
   private persist(): void {
     this.ensureLoaded();
+    this.pruneMemoryRuns();
     const runs = Array.from(this.runs.values())
       .sort((a, b) => b.updatedAt - a.updatedAt)
       .slice(0, MAX_PERSISTED_RUNS)
@@ -130,6 +149,19 @@ class SubagentRunRegistry {
         error: error instanceof Error ? error.message : String(error)
       });
       throw error;
+    }
+  }
+
+  /** 内存 Map 与磁盘副本同口径裁剪:仅淘汰已终态的最老 run(运行中/未终态永不逐出)。 */
+  private pruneMemoryRuns(): void {
+    if (this.runs.size <= MAX_PERSISTED_RUNS * 2) return;
+    const terminal = [...this.runs.values()]
+      .filter((run) => this.terminalStatuses.has(run.status))
+      .sort((a, b) => a.updatedAt - b.updatedAt);
+    const excess = Math.min(terminal.length, this.runs.size - MAX_PERSISTED_RUNS);
+    for (let index = 0; index < excess; index += 1) {
+      const run = terminal[index];
+      if (run) this.runs.delete(run.runId);
     }
   }
 
@@ -256,7 +288,7 @@ class SubagentRunRegistry {
     if (ids.includes(normalized)) return cloneRun(existing);
     const next: SubagentRun = { ...existing, runtimeRunIds: [...ids, normalized], updatedAt: Date.now() };
     this.runs.set(runId, next);
-    this.persist();
+    this.schedulePersist();
     return cloneRun(next);
   }
 
@@ -282,7 +314,9 @@ class SubagentRunRegistry {
     }
 
     this.runs.set(runId, next);
-    this.persist();
+    // 状态迁移同步落盘(恢复语义关键);其余字段 patch 微批冲刷(#616①)
+    if (next.status !== previousStatus || (next.status && this.terminalStatuses.has(next.status))) this.persist();
+    else this.schedulePersist();
     if (next.status !== previousStatus) {
       const payload = subagentLogFields(next, {
         event: "run_status_changed",

@@ -56,6 +56,8 @@ import { QueryController } from './query-controller.js'
 import { loadFilesystemSkills } from './skills/fs-loader.js'
 import type { FileCheckpoint, FileCheckpointState } from './utils/file-checkpoints.js'
 import { getContextWindowSize } from './utils/tokens.js'
+import { createAutoCompactState } from './utils/compact.js'
+import { projectPersistedToolResultMeta } from './utils/messages.js'
 import { matchesAnyToolPattern } from './utils/tool-approval.js'
 import { createExecuteTool, createToolSearchTool, isToolSearchEnabled, setDeferredTools } from './tools/tool-search.js'
 import { detectDanglingToolUses, INTERRUPTED_TOOL_PLACEHOLDER } from './interrupt-recovery.js'
@@ -228,6 +230,9 @@ export function sessionMessagesFromHistory(
   messages: NormalizedMessageParam[],
   previous?: SessionMessage[],
 ): SessionMessage[] {
+  // 重建路径同样必须过 _meta 白名单（#709 第 1 项）：引擎侧 tool_result 携带
+  // 全量 _meta，若照落持久轨，live 路径建立的最小集合不变量即被旁路。
+  const sanitized = messages.map((message) => sanitizeRebuiltToolResultMeta(message))
   // Realign with the previous list so rebuilt messages keep their original
   // uuids — fileCheckpointState is keyed by user-message uuid, and fresh
   // uuids here would orphan every checkpoint (#363). Alignment pairs each
@@ -261,12 +266,27 @@ export function sessionMessagesFromHistory(
       )
     }
   }
-  return messages.map((message, index) =>
+  return sanitized.map((message, index) =>
     toSessionMessage(
       message.role as SessionMessage['role'],
       message.content,
       uuidByIndex.get(index),
     ))
+}
+
+function sanitizeRebuiltToolResultMeta(message: NormalizedMessageParam): NormalizedMessageParam {
+  if (!Array.isArray(message.content)) return message
+  if (!message.content.some((block: any) => block?.type === 'tool_result')) return message
+  return {
+    ...message,
+    content: message.content.map((block: any) => {
+      if (block?.type !== 'tool_result') return block
+      const projected = projectPersistedToolResultMeta(block._meta)
+      if (projected) return { ...block, _meta: projected }
+      const { _meta: _dropped, ...rest } = block
+      return rest
+    }),
+  }
 }
 
 export class Agent {
@@ -298,6 +318,11 @@ export class Agent {
   private explicitSkillNames = new Set<string>()
   private fileSkillNames = new Set<string>()
   private fileCheckpointState: FileCheckpointState = {}
+  /** 压缩熔断器跨 run 持久状态（#725 review R6/R7）：proactive 计数与
+   *  prompt_too_long 恢复计数各自独立、共享阈值常量；随 Agent 实例存续，
+   *  每 run 传入 engine、终值回读。manual /compact 成功即清零重新武装。 */
+  private autoCompactState = createAutoCompactState()
+  private promptTooLongRecoveryFailures = 0
   /** Thread-level read-state: shared by every engine this Agent creates so the
    *  stale-read guard survives across runs instead of resetting per user
    *  message (#569). Hosts may inject a per-thread instance via
@@ -445,7 +470,7 @@ export class Agent {
       .map((name) => runtimeByName.get(name))
       .filter((candidate): candidate is ToolDefinition => !!candidate)
     const remainingDeferred = deferred.filter((candidate) => !this.activatedToolNames.has(candidate.name))
-    const enableToolSearch = isToolSearchEnabled(remainingDeferred, options.model || this.modelId)
+    const enableToolSearch = isToolSearchEnabled(remainingDeferred, options.model || this.modelId, this.baseOptions.toolSearchMode)
     this.deferredToolPool = enableToolSearch ? remainingDeferred : []
     setDeferredTools(this.deferredToolPool)
     if (this.deferredToolPool.length === 0) {
@@ -716,6 +741,11 @@ export class Agent {
     }
   }
 
+  /** 公开只读快照(#584):此前 run-subagent 以双重断言伸入私有 toolPool,重命名即静默 fallback。 */
+  get resolvedTools(): readonly ToolDefinition[] {
+    return this.toolPool
+  }
+
   /** Resolve the tool pools for one run: shared by runSinglePrompt and resumeInterruptedRun. */
   private getRunTools(
     _opts: AgentOptions,
@@ -927,18 +957,29 @@ export class Agent {
         : `command:${this.sid}:compact`),
       fileCheckpointState: this.fileCheckpointState,
       fileStateCache: this.fileStateCache,
+      // 压缩熔断器跨 run 持久（#725 review R6/R7）：engine 每 run 新建，
+      // 计数器若随实例归零则熔断门结构性不可达；终值在 finally 回读。
+      autoCompactState: this.autoCompactState,
+      promptTooLongRecoveryFailures: this.promptTooLongRecoveryFailures,
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
       contextController: opts.contextController,
       completionGuard: opts.completionGuard,
     })
     this.currentEngine = engine
 
-    for (const msg of this.buildRunHistory(preRunInputCount)) {
-      engine.messages.push(msg)
-    }
+    try {
+      for (const msg of this.buildRunHistory(preRunInputCount)) {
+        engine.messages.push(msg)
+      }
 
-    for (const queued of this.drainQueuedSdkEvents()) {
-      yield queued
+      for (const queued of this.drainQueuedSdkEvents()) {
+        yield queued
+      }
+    } finally {
+      // 主 try/finally 尚未接管的窗口（buildRunHistory 抛出 / 消费者在此段
+      // break）：不清理会让 #357 的互斥检查把 Agent 永久锁死在
+      // "agent is running"（PR#725 衍生收口）。
+      if (this.currentEngine === engine) this.currentEngine = null
     }
 
     // No auth_status event: the entry check above guarantees a host-injected
@@ -959,18 +1000,14 @@ export class Agent {
           // _meta 白名单投影（#567 第 5 项）：整包透传会把工具私有元数据带进
           // 持久权威轨，但全丢会让 computer-use 台账跨 run 清零、provider 侧
           // toolName 降级为 "tool"。只携带跨 run 有消费方的最小集合。
-          const projectedMeta = event.result._meta as Record<string, unknown> | undefined
-          const whitelistedMeta = projectedMeta ? {
-            ...(projectedMeta.computerUseAction !== undefined ? { computerUseAction: projectedMeta.computerUseAction } : {}),
-            ...(projectedMeta.toolName !== undefined ? { toolName: projectedMeta.toolName } : {}),
-          } : undefined
+          const whitelistedMeta = projectPersistedToolResultMeta(event.result._meta)
           this.sessionMessages.push(toSessionMessage('user', [{
             type: 'tool_result',
             tool_use_id: event.result.tool_use_id,
             tool_name: event.result.tool_name,
             content: event.result.content ?? event.result.output,
             is_error: event.result.is_error === true,
-            ...(whitelistedMeta && Object.keys(whitelistedMeta).length > 0 ? { _meta: whitelistedMeta } : {}),
+            ...(whitelistedMeta ? { _meta: whitelistedMeta } : {}),
           }]))
           persistScheduler.schedule()
         } else if (event.type === 'system') {
@@ -1016,6 +1053,9 @@ export class Agent {
       if (compactionBoundarySeen || opts.toolContinuations?.length) {
         this.sessionMessages = sessionMessagesFromHistory(finalEngineMessages, this.sessionMessages)
       }
+      // 熔断器终值回读：下一 run 的 engine 从本 Agent 的累计值起步（#725 review R6/R7）。
+      this.autoCompactState = engine.getAutoCompactState()
+      this.promptTooLongRecoveryFailures = engine.getPromptTooLongRecoveryFailures()
       persistedSessionEvent = await this.persistCurrentSession(cwd, opts)
     }
 

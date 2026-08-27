@@ -1,16 +1,8 @@
 import type { LumeConfigAgentDefaultStrategy } from "@lume/shared";
 
-// 纯函数簇已下移 runtime-core/model-candidates(#289 分层切边);此处 re-export 维持既有 import 路径。
-export {
-  resolveChannelDefaultModelId,
-  resolveRequestedModelIdForChannel,
-  resolveModelCandidatesForChannel
-} from "../agent-runtime/runtime-core/model-candidates";
-
-export interface ModelRef {
-  provider: string;
-  model: string;
-}
+// 模型适配的 API 协议族决策由 model-runtime/connection-provider 按
+// channel.provider/openaiApiMode 直判——本文件曾有平行实现
+// resolveChannelModelSelection(baseUrl 推断),因生产零消费于 #627 清偿中删除。
 
 export type AgentDefaultStrategySource = "thread-override" | "global-default" | "empty";
 
@@ -19,38 +11,6 @@ export interface ResolvedAgentDefaultStrategy {
   channelId?: string;
   modelRef?: string;
   fallbackModelRefs: string[];
-}
-
-const PROVIDER_ALIAS: Record<string, string> = {
-  "z.ai": "zai",
-  "z-ai": "zai",
-  zhipu: "zai",
-  "kimi-code": "kimi-coding"
-};
-
-export function normalizeProviderId(provider: string): string {
-  const normalized = provider.trim().toLowerCase();
-  return PROVIDER_ALIAS[normalized] ?? normalized;
-}
-
-export function parseModelRef(raw: string, defaultProvider: string): ModelRef | null {
-  const trimmed = raw.trim();
-  if (!trimmed) {
-    return null;
-  }
-  const slashIndex = trimmed.indexOf("/");
-  if (slashIndex === -1) {
-    return {
-      provider: normalizeProviderId(defaultProvider),
-      model: trimmed
-    };
-  }
-  const provider = normalizeProviderId(trimmed.slice(0, slashIndex));
-  const model = trimmed.slice(slashIndex + 1).trim();
-  if (!provider || !model) {
-    return null;
-  }
-  return { provider, model };
 }
 
 function normalizeOptionalValue(value?: string): string | undefined {
@@ -108,3 +68,4 @@ export function resolveAgentDefaultStrategy(input: {
     fallbackModelRefs: []
   };
 }
+

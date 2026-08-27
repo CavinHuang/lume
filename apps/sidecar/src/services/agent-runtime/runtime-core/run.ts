@@ -30,11 +30,12 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
 } from "@lume/shared";
+import { isBuiltinBrowserToolName } from "@lume/shared";
+import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
-import { stableHashPayload } from "../../infra/payload-hash";
 import {
   createRoutingPiAiProvider,
   type PiAiProviderRoute,
@@ -86,7 +87,6 @@ import {
   buildPluginIdIndex,
   PLUGIN_MCP_WORKSPACE_SLUG,
 } from "../plugins/plugin-mcp-bridge.js";
-import { clearRuntimeToolDescriptors } from "../tools/tool-descriptor-session";
 import { getThreadFileStateCache } from "../tools/thread-file-state-cache";
 import {
   createCodingRunTracker,
@@ -129,6 +129,8 @@ import {
   applyWorkflowHookEffectsSafely,
 } from "./workflow-hook-safety";
 import { resolvePromptCachePolicy, resolveSdkApiType } from "./request-policy";
+// #289 分层守卫:runtime-core 不得引用上层 runner——humanize 已下沉 shared,直取底层
+import { humanizeRuntimeErrorMessage } from "@lume/shared";
 import {
   getResolvedAgentTools,
 } from "./run-subagent";
@@ -257,8 +259,9 @@ export type CreateRuntimeCoreSessionInput = SessionIdentityInput &
   RuntimeControlFlags;
 
 export interface RuntimeCoreSessionLike {
+  // #584 三名一物收口:sessionId 即 threadId(runtime-core 内两者恒同值),
+  // 不再保留可选拼写让下游各自兜底翻译。
   sessionId: string;
-  threadId?: string;
   model?: RuntimeCoreResolvedModel;
   messages: Array<{ role: string }>;
   agent: {
@@ -659,7 +662,7 @@ async function assembleSessionContext({
   initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
   subagentDefinition: AgentDefinition | undefined;
 }) {
-  const runtimeSkills = toolset.availableToolNames.includes("mcp__browser__snapshot")
+  const runtimeSkills = toolset.availableToolNames.some(isBuiltinBrowserToolName)
     && !input.browserAttachments?.length
     ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
     : surfaceSkills;
@@ -880,7 +883,9 @@ async function createRuntimeCoreSessionImpl(
               id: toolUseId,
               name: toolName,
               input: toolInput.input,
-              inputHash: stableHashPayload(toolInput.input),
+              inputHash: createHash("sha256")
+                .update(JSON.stringify(toolInput.input ?? null))
+                .digest("hex"),
               kind: toolKind,
             },
           };
@@ -1111,6 +1116,30 @@ async function createRuntimeCoreSessionImpl(
     sessionDir,
     pendingCleanup,
   });
+
+  // #560:MCP 连接失败原本只进 system prompt/日志——本轮静默缺一组工具，直到模型
+  // 回答「我没有这个工具」。组装完成即向线程投影 runtime.warning 给用户。
+  // review P2:reason 可能含 ENOENT 路径等内部细节,过 #559 人性化层再上屏;
+  // id 按 pluginName 固定,web 端 sonner 同 id 自动聚合,坏 server 不每 run 刷屏。
+  for (const diagnostic of [
+    ...(workspaceMcpRuntime.diagnostics ?? []),
+    ...(pluginMcpRuntime.diagnostics ?? []),
+  ]) {
+    try {
+      const message = humanizeRuntimeErrorMessage(`${diagnostic.pluginName}：${diagnostic.reason}`);
+      input.emitRuntimeEvent?.({
+        id: `${input.lumeSessionId}:${runId}:runtime.warning:${diagnostic.pluginName}`,
+        type: "runtime.warning",
+        threadId: input.lumeSessionId,
+        runId,
+        createdAt: new Date().toISOString(),
+        message,
+        source: "mcp"
+      });
+    } catch {
+      // 投影失败不阻断 run 组装
+    }
+  }
 
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
@@ -1394,11 +1423,8 @@ async function createRuntimeCoreSessionImpl(
           messageMetadata: input.messageMetadata,
         },
       }),
-    registerGeneratedRuntimeTools: (tools) =>
-      ToolRuntime.registerGeneratedTools({
-        tools,
-        sessionId: input.lumeSessionId,
-      }),
+    // registerGeneratedRuntimeTools 不再需要：生成的 ToolSearch/ExecuteTool 定义自带
+    // runtimeMetadata，canUseTool 直接从定义组装 descriptor（#541 双载体合一）
     ...(input.userMessage?.trim() ? { completionGuard } : {}),
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
@@ -1434,15 +1460,11 @@ async function createRuntimeCoreSessionImpl(
 
   const agent = createAgent(agentOptions);
   pendingCleanup.push(() => agent.close());
-  pendingCleanup.push(() => {
-    clearRuntimeToolDescriptors(input.lumeSessionId);
-  });
   await agent.getInitializationResult();
-  const resolvedTools = getResolvedAgentTools(agent, toolset.tools);
+  const resolvedTools = getResolvedAgentTools(agent);
 
   const session: RuntimeCoreSessionLike = {
     sessionId: input.lumeSessionId,
-    threadId: input.lumeSessionId,
     model: input.resolvedModel ?? {
       id: input.resolvedModelId,
       provider: input.provider,
@@ -1476,14 +1498,15 @@ async function createRuntimeCoreSessionImpl(
           error: error instanceof Error ? error.message : String(error),
         });
       }
-      clearRuntimeToolDescriptors(input.lumeSessionId);
       // file-access-ledger 与线程级 fileStateCache 不随 run 清理（#569）：
       // 跨消息 stale 防护依赖记录存活；清理挂点=线程删除。
+      // descriptor-session 已随 #541 双载体合一删除，无清理挂点。
     },
   };
 
   const userMessageForModel = buildRuntimeUserMessageInput({
     userMessage: contextAssembly.userMessageForModel,
+    contentBlocks: contextAssembly.userMessageContentBlocks,
     attachments: input.messageAttachments,
     workspaceSlug: input.workspaceSlug,
     threadId: input.lumeSessionId,
@@ -1527,7 +1550,9 @@ function resolvePersistedToolContinuation(
   const call = toolCall as Record<string, unknown>;
   if (typeof call.id !== "string" || typeof call.name !== "string")
     return undefined;
-  const inputHash = stableHashPayload(call.input);
+  const inputHash = createHash("sha256")
+    .update(JSON.stringify(call.input ?? null))
+    .digest("hex");
   if (typeof call.inputHash === "string" && call.inputHash !== inputHash) {
     throw new Error("cold-start continuation 的工具输入指纹不匹配");
   }

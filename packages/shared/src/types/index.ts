@@ -19,6 +19,7 @@ export * from "./connector";
 export * from "./reading";
 export * from "./workspace-bootstrap";
 export * from "./heartbeat";
+export * from "./rpc-error";
 export * from "./automation";
 export * from "./voice-dictation";
 export * from "./github-release";

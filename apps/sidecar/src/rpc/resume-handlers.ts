@@ -16,6 +16,7 @@ import { createFileBackedLumeTraceStore } from "../services/agent-runtime/trace/
 import {
   agentThreadIdInputSchema,
   discardInterruptedRunInputSchema,
+  forkThreadInputSchema,
   getEventsInputSchema,
   getPendingResumeInputSchema,
   listRunStatesInputSchema,
@@ -177,10 +178,7 @@ export function createResumeHandlers(
       return clearAgentThreadMessages(input.threadId);
     },
     [AGENT_IPC_CHANNELS.FORK_THREAD]: async (params) => {
-      const input = params as { threadId: string; upToMessageId: string };
-      if (!input.threadId || !input.upToMessageId) {
-        throw new Error("FORK_THREAD requires threadId and upToMessageId");
-      }
+      const input = validateInput(forkThreadInputSchema, params, AGENT_IPC_CHANNELS.FORK_THREAD);
       return forkAgentThread(input.threadId, input.upToMessageId);
     },
   };

@@ -12,8 +12,6 @@ interface ConnectorToolConfig {
   /** 注入的动作名;缺省注入全部。 */
   enabledActions?: readonly string[];
   readOnlyActions: ReadonlySet<string>;
-  /** 排除的动作(缺省注入全部时的黑名单模式)。 */
-  excludedActions?: readonly string[];
 }
 
 const GMAIL_READ_ONLY = new Set([
@@ -80,9 +78,11 @@ type ExecutionError = NonNullable<
  */
 function describeExecutionError(service: string, actionName: string, error: ExecutionError): string {
   const head = `${service}.${actionName} failed (${error.code}): ${error.message}`;
+  // @cfworker/json-schema 的 OutputUnit 形制:{ keyword, instanceLocation, error }——
+  // 字段名与违规原因在 instanceLocation/error 里(没有 instancePath/message)
   const details = Array.isArray(error.details)
-    ? (error.details as Array<{ instancePath?: string; keyword?: string; message?: string }>)
-        .map((unit) => `${unit.instancePath || "(input)"} ${unit.keyword ?? ""} ${unit.message ?? ""}`.trim())
+    ? (error.details as Array<{ instanceLocation?: string; keyword?: string; error?: string }>)
+        .map((unit) => `${unit.instanceLocation || "(input)"} ${unit.keyword ?? ""}: ${unit.error ?? ""}`.trim())
         .filter(Boolean)
         .join("; ")
     : "";
@@ -97,7 +97,7 @@ function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
     return [];
   }
   const enabled =
-    config.enabledActions ?? actions.map((action) => action.name).filter((name) => !config.excludedActions?.includes(name));
+    config.enabledActions ?? actions.map((action) => action.name);
   return actions
     .filter((action) => enabled.includes(action.name))
     .map((action) => ({
@@ -107,8 +107,9 @@ function toolsForService(config: ConnectorToolConfig): ToolDefinition[] {
         inputSchema: action.inputSchema as unknown as ToolInputSchema,
         isReadOnly: config.readOnlyActions.has(action.name),
         isConcurrencySafe: config.readOnlyActions.has(action.name),
-        async call(input) {
-          const result = await executeConnectorAction(config.service, action.name, input ?? {});
+        async call(input, context) {
+          // 中断 run 时取消在途 HTTP:副作用型动作(发送/修改)不应在用户中止后继续外发
+          const result = await executeConnectorAction(config.service, action.name, input ?? {}, context.abortSignal);
           if (!result.ok) {
             throw new Error(
               result.error

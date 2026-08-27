@@ -1169,6 +1169,8 @@ const lumeConfigPermissionRuleSchema = z
     commandPattern: z.string().optional(),
     pathPattern: z.string().optional(),
     action: z.enum(["allow", "ask", "deny"]),
+    // scope 字段已从类型层删除（#519，判定逻辑从不读取）：schema 暂保留 optional
+    // 以兼容旧渲染层 bundle 发来的含 scope payload（strict 下同步删除会拒收），过渡期后可移除
     scope: z.enum(["session", "workspace", "global"]).optional(),
   })
   .strict();
@@ -1254,7 +1256,6 @@ const lumeConfigWebSearchSchema = z
     strategy: z.enum(["priority", "joint"]).optional(),
     providers: z
       .object({
-        guanlan: lumeConfigWebSearchProviderSchema.optional(),
         exa: lumeConfigWebSearchProviderSchema.optional(),
         pipellm: lumeConfigWebSearchProviderSchema.optional(),
         zhipu: lumeConfigWebSearchProviderSchema.optional(),
@@ -1345,6 +1346,16 @@ export const lumeConfigUpdateInputSchema = z.union([
     value: z.enum(["off", "low", "medium", "high", "max"]).nullable(),
   }),
   lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("agent.projectInstructionsEnabled"),
+    value: z.boolean(),
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    // 存量缺口:输入框队列模式选择器的保存(updateAgentFollowUpQueueMode)一直
+    // 因缺此 union 成员被参数校验拒绝(#715 review 发现)
+    path: z.literal("agent.followUpQueueMode"),
+    value: z.enum(["steer", "queue", "interrupt"]).nullable(),
+  }),
+  lumeConfigUpdateBaseSchema.extend({
     path: z.literal("agent.permissionMode"),
     value: z
       .enum(["default", "acceptEdits", "bypassPermissions", "plan", "dontAsk"])
@@ -1357,6 +1368,10 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("permissions.approvals"),
     value: lumeConfigPermissionApprovalsSchema,
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("permissions.classifier.enabled"),
+    value: z.boolean(),
   }),
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("webSearch"),
@@ -1486,6 +1501,8 @@ export const submitToolPermissionInputSchema = z.object({
   threadId: idSchema,
   requestId: idSchema,
   decision: z.enum(["allow_once", "allow_always", "deny"]),
+  // #558:「始终允许」作用域档位——缺省 exact;不声明会被 zod strip 静默丢弃
+  allowAlwaysScope: z.enum(["exact", "command", "tool"]).optional(),
   threadPermissionMode: z.enum(["bypassPermissions"]).optional(),
 });
 
@@ -1754,3 +1771,55 @@ export const oauthAnswerParamsSchema = z.object({
 }).strict();
 
 export const oauthCancelParamsSchema = z.object({ sessionId: idSchema.optional() }).strict();
+
+// ---------------------------------------------------------------------------
+// #522 裸 cast 收口：此前八处跨进程入参绕过 validateInput 体系，破坏
+// "入参非法即 throw" 契约。逐处补 schema 后统一走 validateInput。
+// ---------------------------------------------------------------------------
+
+export const forkThreadInputSchema = z.object({
+  threadId: idSchema,
+  upToMessageId: idSchema,
+}).strict();
+
+export const routineGetByDateInputSchema = z.object({
+  date: z.string().min(1),
+}).strict();
+
+export const routineTriggerEntryInputSchema = z.object({
+  entryId: z.string().min(1),
+}).strict();
+
+export const testSearchBackendInputSchema = z.object({
+  provider: z.enum(["exa", "tavily", "brave", "duckduckgo", "pipellm", "zhipu", "bing"]),
+  apiKey: z.string().optional(),
+}).strict();
+
+export const githubReleaseListOptionsSchema = z.object({
+  perPage: z.number().int().positive().optional(),
+  page: z.number().int().positive().optional(),
+  includePrerelease: z.boolean().optional(),
+}).strict();
+
+export const agentGenerateTitleInputSchema = z.object({
+  sourceText: z.string().optional(),
+  userMessage: z.string().optional(),
+  modelRef: z.string().optional(),
+  channelId: z.string().optional(),
+  modelId: z.string().optional(),
+}).strict();
+
+export const agentWelcomeSuggestionInputSchema = z.object({
+  workspaceSlug: z.string().optional(),
+  workspaceName: z.string().optional(),
+}).strict();
+
+export const desktopAssistantSettingsInputSchema = z.object({
+  enabled: z.boolean(),
+  allowedApps: z.array(z.string()),
+  retentionHours: z.number(),
+  maxStorageBytes: z.number(),
+  proactiveEnabled: z.boolean().optional(),
+  notificationsEnabled: z.boolean().optional(),
+  dailyWrapEnabled: z.boolean().optional(),
+});

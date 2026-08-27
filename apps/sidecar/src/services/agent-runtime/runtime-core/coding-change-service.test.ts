@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -13,6 +14,7 @@ import {
   getCodingReviewSources,
   getCodingRepositoryPublishState,
   parseUnifiedDiff,
+  runGitCommandInline,
   searchCodingDiffLines,
   searchCodingReview
 } from "./coding-change-service";
@@ -32,6 +34,21 @@ function createGitWorkspace(root: string, content: string): void {
   execFileSync("git", ["config", "core.autocrlf", "false"], { cwd: root });
   execFileSync("git", ["add", "."], { cwd: root });
   execFileSync("git", ["commit", "-qm", "baseline"], { cwd: root });
+}
+
+// bun 1.3.14 Windows：expect().rejects 匹配器与部分被拒 promise 组合会无限挂死；
+// 此助手为 rejects.toThrow 的等价实现（未拒绝/消息不符均必败且输出实际错误）
+async function expectReject(promise: Promise<unknown>, messagePart?: string): Promise<void> {
+  let caught: unknown;
+  try {
+    await promise;
+  } catch (error) {
+    caught = error;
+  }
+  expect(caught).toBeInstanceOf(Error);
+  if (messagePart !== undefined) {
+    expect((caught as Error).message).toContain(messagePart);
+  }
 }
 
 afterEach(() => {
@@ -331,13 +348,13 @@ describe("coding-change-service", () => {
     expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: root, encoding: "utf8" }).trim())
       .toBe("src/index.ts");
 
-    await expect(applyCodingDiffAction(root, {
+    await expectReject(applyCodingDiffAction(root, {
       threadId: "thread-test",
       path: "src/index.ts",
       scope: "file",
       action: "unstage",
       expectedDiffHash: unstaged.diffHash,
-    })).rejects.toThrow("刷新 Diff");
+    }), "刷新 Diff");
 
     const staged = await getCodingFileDiff(root, "src/index.ts");
     if (staged.kind !== "text") throw new Error("expected text diff");
@@ -404,12 +421,12 @@ describe("coding-change-service", () => {
     ]);
     writeFileSync(join(root, "src", "second.ts"), "export const second = 'newer';\n");
 
-    await expect(applyCodingDiffAction(root, {
+    await expectReject(applyCodingDiffAction(root, {
       threadId: "thread-test",
       scope: "section",
       action: "stage",
       files: diffs.map((file) => ({ path: file.path, expectedDiffHash: file.diffHash })),
-    })).rejects.toThrow("刷新 Diff");
+    }), "刷新 Diff");
     expect(execFileSync("git", ["diff", "--cached", "--name-only"], { cwd: root, encoding: "utf8" }).trim())
       .toBe("");
   }, 30_000);
@@ -455,7 +472,7 @@ describe("coding-change-service", () => {
     tempDirs.push(root);
     createGitWorkspace(root, "export const value = 1;\n");
 
-    await expect(getCodingFileOpenTargets(root, "../outside.ts")).rejects.toThrow("超出项目目录");
+    await expectReject(getCodingFileOpenTargets(root, "../outside.ts"), "超出项目目录");
   }, 30_000);
 
   test("仅提交已暂存内容并将当前分支推送到 upstream", async () => {
@@ -535,7 +552,7 @@ describe("coding-change-service", () => {
     if (!state.available) throw new Error(state.reason);
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'newer';\n");
 
-    await expect(applyCodingRepositoryPublishAction(root, {
+    await expectReject(applyCodingRepositoryPublishAction(root, {
       threadId: "thread-test",
       action: "commit",
       message: "test: stale worktree",
@@ -544,7 +561,7 @@ describe("coding-change-service", () => {
       expectedIndexHash: state.indexHash,
       includeUnstagedChanges: true,
       expectedWorktreeHash: state.worktreeHash,
-    })).rejects.toThrow("工作区已变化");
+    }), "工作区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
   }, 30_000);
 
@@ -559,14 +576,178 @@ describe("coding-change-service", () => {
     writeFileSync(join(root, "src", "index.ts"), "export const value = 'newer';\n");
     execFileSync("git", ["add", "--", "src/index.ts"], { cwd: root });
 
-    await expect(applyCodingRepositoryPublishAction(root, {
+    await expectReject(applyCodingRepositoryPublishAction(root, {
       threadId: "thread-test",
       action: "commit",
       message: "test: stale commit",
       expectedBranch: state.branch,
       expectedHead: state.head,
       expectedIndexHash: state.indexHash,
-    })).rejects.toThrow("暂存区已变化");
+    }), "暂存区已变化");
     expect(execFileSync("git", ["rev-list", "--count", "HEAD"], { cwd: root, encoding: "utf8" }).trim()).toBe("1");
+  }, 30_000);
+
+  test("接近但不超水位的变更保持 Publish 可用且指纹齐全（水位下界对照）", async () => {
+    const root = makeTempDir("lume-coding-publish-under-limit-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    // 12MB 随机二进制：base85 编码后实测 ≈16.21MB（精确翻车输入点 ≈13MiB），
+    // 对 16MiB 水位余量 ~3.4%，跨 zlib 压缩级别漂移仅 0.02%——钉的是下界存活而非水位精确值
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(12 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const state = await getCodingRepositoryPublishState(root);
+    if (!state.available) throw new Error(`预期可用但降级: ${state.reason}`);
+    expect(state.worktreeHash).toMatch(/^[0-9a-f]{64}$/);
+    expect(state.canCommit).toBe(true);
+  }, 30_000);
+
+  test("分区级 unstage 在 patch 超限时报变更过大而非没有可 Unstage 的 Diff", async () => {
+    const root = makeTempDir("lume-coding-section-big-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const diff = await getCodingFileDiff(root, "assets/bundle.bin");
+    await expect(applyCodingDiffAction(root, {
+      threadId: "thread-test",
+      scope: "section",
+      action: "unstage",
+      files: [{ path: diff.path, expectedDiffHash: diff.diffHash }],
+    })).rejects.toThrow("分区变更超过");
+  }, 30_000);
+
+  test("staged 超大可读文本的 diff 读取报文件过大而非静默空内容", async () => {
+    const root = makeTempDir("lume-coding-huge-text-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    // base64 无 \0：git 视为文本走 readGitTextSource；抛错来自新增的 cat-file -s
+    // 10MB blob 预检（非 git show 水位），见 readGitTextSource 内注释
+    writeFileSync(join(root, "src", "huge.txt"), randomBytes(20 * 1024 * 1024).toString("base64"));
+    execFileSync("git", ["add", "src/huge.txt"], { cwd: root });
+
+    await expect(getCodingFileDiff(root, "src/huge.txt", { reviewSource: { kind: "staged" } }))
+      .rejects.toThrow("文件过大");
+  }, 60_000);
+
+  test("staged 大二进制产物使 git 输出超限时 Publish 状态降级为不可用而非全量累积", async () => {
+    const root = makeTempDir("lume-coding-publish-big-binary-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    // 不可压缩随机数据：--binary 的 zlib 压不动，base85 编码后 diff 输出必然超 16MB 水位
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    await expect(getCodingRepositoryPublishState(root)).resolves.toMatchObject({
+      available: false,
+      reason: "暂存区变更超过 16MB 补丁上限，请拆分提交",
+    });
+  }, 30_000);
+
+  test("未暂存大变更不再阻断仅提交已暂存内容，但包含未暂存时被拦截", async () => {
+    const root = makeTempDir("lume-coding-publish-worktree-big-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    // 已 staged 的正常小文件 + 已跟踪文件的超大未暂存修改（worktree patch 超限）
+    writeFileSync(join(root, "src", "huge.ts"), "export const data = '';\n");
+    execFileSync("git", ["add", ".",], { cwd: root });
+    execFileSync("git", ["commit", "-qm", "add huge placeholder"], { cwd: root });
+    writeFileSync(join(root, "src", "index.ts"), "export const value = 'staged change';\n");
+    execFileSync("git", ["add", "src/index.ts"], { cwd: root });
+    writeFileSync(join(root, "src", "huge.ts"), `export const data = "${randomBytes(17 * 1024 * 1024).toString("base64")}";\n`);
+
+    const state = await getCodingRepositoryPublishState(root);
+    if (!state.available) throw new Error(`预期可用但降级: ${state.reason}`);
+    expect(state.canCommit).toBe(true);
+    expect(state.worktreeHash).toBeUndefined();
+
+    // 包含未暂存变更时被 service 守卫显式拦截（须在 commit 前断言，否则 HEAD 已变化先命中）
+    await expect(applyCodingRepositoryPublishAction(root, {
+      threadId: "thread-test",
+      action: "commit",
+      message: "test: include unstaged",
+      expectedBranch: state.branch,
+      expectedHead: state.head,
+      expectedIndexHash: state.indexHash,
+      includeUnstagedChanges: true,
+      expectedWorktreeHash: state.worktreeHash,
+    })).rejects.toThrow("工作区变更超过 16MB");
+
+    // 仅提交已 staged 内容不受 worktree 超限影响
+    const result = await applyCodingRepositoryPublishAction(root, {
+      threadId: "thread-test",
+      action: "commit",
+      message: "test: commit staged only",
+      expectedBranch: state.branch,
+      expectedHead: state.head,
+      expectedIndexHash: state.indexHash,
+    });
+    expect(result.commitHash).toBeTruthy();
+    expect(execFileSync("git", ["show", "HEAD:src/index.ts"], { cwd: root, encoding: "utf8" })).toContain("'staged change'");
+
+    // 包含未暂存变更时被显式拦截（schema 层要求 expectedWorktreeHash，service 层兜底）
+    await expectReject(applyCodingRepositoryPublishAction(root, {
+      threadId: "thread-test",
+      action: "commit",
+      message: "test: include unstaged",
+      expectedBranch: state.branch,
+      expectedHead: state.head,
+      expectedIndexHash: state.indexHash,
+      includeUnstagedChanges: true,
+      expectedWorktreeHash: state.worktreeHash,
+    }));
+
+  }, 30_000);
+
+  test("单文件 diff 超限时 stage/unstage 报变更过大而非没有可应用的 Diff", async () => {
+    const root = makeTempDir("lume-coding-stage-big-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'before';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    const staged = await getCodingFileDiff(root, "assets/bundle.bin", { reviewSource: { kind: "staged" } });
+    if (staged.kind !== "binary") throw new Error("expected binary diff");
+    await expectReject(applyCodingDiffAction(root, {
+      threadId: "thread-test",
+      path: "assets/bundle.bin",
+      scope: "file",
+      action: "unstage",
+      expectedDiffHash: staged.diffHash,
+    }), "16MB");
+
+    // 已跟踪文件的超大未暂存修改（stage 场景走 worktree diff，同样超限）
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    const unstaged = await getCodingFileDiff(root, "assets/bundle.bin", { reviewSource: { kind: "unstaged" } });
+    if (unstaged.kind !== "binary") throw new Error("expected binary diff");
+    await expectReject(applyCodingDiffAction(root, {
+      threadId: "thread-test",
+      path: "assets/bundle.bin",
+      scope: "file",
+      stageFilter: "unstaged",
+      action: "stage",
+      expectedDiffHash: unstaged.diffHash,
+    }), "16MB");
+  }, 60_000);
+
+  test("主线程版 runGitCommandInline 同样受字节水位保护且不影响正常输出", async () => {
+    const root = makeTempDir("lume-coding-inline-watermark-");
+    tempDirs.push(root);
+    createGitWorkspace(root, "export const value = 'baseline';\n");
+    mkdirSync(join(root, "assets"), { recursive: true });
+    writeFileSync(join(root, "assets", "bundle.bin"), randomBytes(17 * 1024 * 1024));
+    execFileSync("git", ["add", "assets/bundle.bin"], { cwd: root });
+
+    // 生产路径（Electron utilityProcess.fork → Node 运行时）实际执行的主线程版实现
+    await expect(runGitCommandInline(["diff", "--cached", "--binary", "--full-index", "--no-color"], root))
+      .resolves.toBeNull();
+
+    await expect(runGitCommandInline(["rev-parse", "HEAD"], root)).resolves.toMatch(/^[0-9a-f]{40}/);
+
   }, 30_000);
 });

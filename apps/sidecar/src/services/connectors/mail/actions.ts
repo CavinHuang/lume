@@ -174,7 +174,9 @@ export function createMailActions<const TService extends string>(
 
   const getEmailAction: ProviderActionDefinition<"get_email"> = defineProviderAction(service, {
     name: "get_email",
-    description: mailText("Fetch and parse one Mail Service message without marking it as read."),
+    description: mailText(
+      "Fetch and parse one Mail Service message without marking it as read. Attachments are metadata only — content download is not available.",
+    ),
     requiredScopes: [],
     inputSchema: s.object(
       mailText("The input payload for fetching one Mail Service email."),

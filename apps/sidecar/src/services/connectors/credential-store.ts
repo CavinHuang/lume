@@ -58,6 +58,17 @@ function readStore(): ConnectorCredentialFile {
     storeUnreadable = false;
     return { version: 1, credentials: parsed.credentials };
   } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code === "ENOENT") {
+      // 读窗口内文件被并发删除:视作空库,无需恢复路径
+      storeUnreadable = false;
+      return emptyFile();
+    }
+    if (!isVaultCorruption(error)) {
+      // 瞬时 IO 错误(EBUSY/EIO/EPERM…,常见于杀软/备份短暂持锁)≠ 文件损坏:
+      // 置位 storeUnreadable 会让后续「断开」走"删坏文件即恢复"路径清掉整个
+      // vault。原样上抛 fail-closed,调用方收到错误远好于静默丢光凭证。
+      throw error;
+    }
     storeUnreadable = true;
     logger.error(
       "connector-credentials.json 无法解析,vault 内容按未配置展示;写入将被拒绝以免覆盖现存凭证",
@@ -65,6 +76,12 @@ function readStore(): ConnectorCredentialFile {
     );
     return emptyFile();
   }
+}
+
+/** 仅解析类失败(坏 JSON/结构不符)算真损坏;IO 错误可能是瞬时的,不得触发恢复性删除。 */
+export function isVaultCorruption(error: unknown): boolean {
+  if (error instanceof SyntaxError) return true;
+  return error instanceof Error && error.message === "shape_invalid";
 }
 
 function writeStore(file: ConnectorCredentialFile): void {

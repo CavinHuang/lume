@@ -1,9 +1,13 @@
 
 import {
   appendFileSync,
+  closeSync,
   existsSync,
+  fstatSync,
+  openSync,
   readdirSync,
   readFileSync,
+  readSync,
   renameSync,
   rmSync,
   statSync,
@@ -30,6 +34,7 @@ import {
   getAgentWorkspacePath,
   getAgentSessionsIndexPath
 } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { ensureWorkspaceAgentAssets, getAgentWorkspace } from "./agent-workspace-manager";
 import { getAgentSubmissionStore } from "./agent-submission-store";
@@ -44,6 +49,9 @@ import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./a
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
 import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
 import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
+import { clearToolPermissionSession } from "../agent-runtime/interruption/tool-permission-session";
+import { cancelPendingAskUserQuestionBySession } from "../agent-runtime/interruption/ask-user-question-session";
+import { clearPermissionDenials } from "../agent-runtime/permissions/permission-denials";
 import { extractAssistantReasoningText, extractRenderableAssistantText } from "./content-extraction";
 import {
   createOrResumeRuntimeCoreSessionManager,
@@ -119,17 +127,6 @@ function writeTextAtomic(path: string, payload: string): void {
   renameSync(tmpPath, path);
 }
 
-function backupCorruptFile(filePath: string, label: string): void {
-  if (!existsSync(filePath)) return;
-  const backupPath = `${filePath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(filePath, backupPath);
-    log.warn("backed up corrupt thread file", { label, backupPath });
-  } catch (error) {
-    log.warn("failed to back up corrupt thread file", { label, backupPath, error });
-  }
-}
-
 /**
  * 线程索引读缓存：key 含 resolved path（LUME_CONFIG_DIR 可变），mtime+size 失效。
  * 返回 structuredClone 深拷贝——withThreadIndexMutation 的 fn 会原地 mutate 索引对象，
@@ -174,7 +171,8 @@ function readIndex(): AgentThreadsIndex {
     return structuredClone(index);
   } catch (error) {
     log.error("failed to read thread index", { error, indexPath });
-    backupCorruptFile(indexPath, "Agent 线程");
+    const backupPath = backupCorruptFile(indexPath);
+    if (backupPath) log.warn("backed up corrupt thread file", { label: "Agent 线程", backupPath });
     indexCache = null;
     return { version: INDEX_VERSION, threads: [] };
   }
@@ -401,16 +399,51 @@ function toSdkAssistantTextMessage(message: AgentMessage): FlatAssistantSdkMessa
   };
 }
 
+function parseSdkMessageLines(raw: string): SDKMessage[] {
+  return raw
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as SDKMessage);
+}
+
+/**
+ * 发送路径专用的尾部有界读取(#554):sdkMessages.jsonl append-only 只增不减,
+ * 后台任务上下文语义只依赖文件末尾,全量读解析在 TTFT 关键路径上白付 400-700ms。
+ * #554 ceiling:窗口固定 1MB;若最后一条人类消息落在窗口之外(单轮 tool_result
+ * 海量堆积),会退化为"无人类边界"语义——多注入少量更早的任务通知,slice(-8)
+ * 与 6KB 截断兜底,可接受。文件缺失/不可读返回空数组。
+ */
+export function getRecentAgentThreadSDKMessages(id: string, maxBytes = 1024 * 1024): SDKMessage[] {
+  const sdkMessagesPath = getAgentThreadMessagesPath(id);
+  if (!existsSync(sdkMessagesPath)) return [];
+  let fd: number | undefined;
+  try {
+    fd = openSync(sdkMessagesPath, "r");
+    const size = fstatSync(fd).size;
+    if (size <= maxBytes) {
+      return parseSdkMessageLines(readFileSync(fd, "utf-8"));
+    }
+    const buffer = Buffer.alloc(maxBytes);
+    readSync(fd, buffer, 0, maxBytes, size - maxBytes);
+    const raw = buffer.toString("utf-8");
+    // 窗口起点大概率落在行中间:丢弃残行,从首个完整行开始
+    const firstNewline = raw.indexOf("\n");
+    if (firstNewline < 0) return [];
+    return parseSdkMessageLines(raw.slice(firstNewline + 1));
+  } catch (error) {
+    log.error("failed to read recent SDK messages", { error, threadId: id });
+    return [];
+  } finally {
+    if (fd !== undefined) closeSync(fd);
+  }
+}
+
 export function getAgentThreadSDKMessages(id: string): SDKMessage[] {
   const sdkMessagesPath = getAgentThreadMessagesPath(id);
   if (existsSync(sdkMessagesPath)) {
     try {
-      const raw = readFileSync(sdkMessagesPath, "utf-8");
-      return raw
-        .split("\n")
-        .map((line) => line.trim())
-        .filter(Boolean)
-        .map((line) => JSON.parse(line) as SDKMessage);
+      return parseSdkMessageLines(readFileSync(sdkMessagesPath, "utf-8"));
     } catch (error) {
       log.error("failed to read SDK messages", { error, threadId: id });
     }
@@ -587,6 +620,11 @@ export function deleteAgentThread(id: string): void {
   // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
   clearRuntimeFileAccessLedger(id);
   clearThreadFileStateCache(id);
+  // 审批会话状态随线程删除回收（#519）：grants/bypassed/denials 三 Map 只增不减的清理入口；
+  // pending 审批与 ask-user 等待一并取消，避免悬挂至超时。
+  clearToolPermissionSession(id);
+  cancelPendingAskUserQuestionBySession(id);
+  clearPermissionDenials(id);
   try { deleteAgentThreadLocked(id); } finally { release(); }
 }
 
@@ -685,6 +723,22 @@ function deleteAgentThreadLocked(id: string): void {
   getAgentSubmissionStore().deleteThread(id);
   // #517:guidance 是纯内存态,线程硬删除时同步清理防 Map 只增不减
   runGuidanceStore.discardThread(id);
+  // #519:审批/提问会话与拒绝记录随线程硬删除回收——grants/bypass/denials
+  // 三 Map 按 thread 键只增不减;pending resolver 一并取消防悬挂至超时
+  clearToolPermissionSession(id);
+  cancelPendingAskUserQuestionBySession(id);
+  clearPermissionDenials(id);
+  // #613:级联回收线程名下全部 agent tab(含 handoff),防 workspace store
+  // 孤儿记录永久留存。惰性动态 import 同 node-repl 回收先例,防模块环。
+  void import("../browser/browser-broker-holder")
+    .then((module) => module.getActiveBrowserBroker()?.dispatch({
+      method: "prune_thread_tabs",
+      params: { threadId: id },
+      threadId: id,
+      browserSessionId: `browser-tools:${id}`,
+      browserTurnId: `browser-tools:${id}`
+    }).catch(() => undefined))
+    .catch(() => undefined);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {

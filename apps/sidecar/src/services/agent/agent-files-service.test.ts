@@ -1,19 +1,30 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { getWorkspaceResourcesPath } from "../infra/config-paths";
 import {
+  copyFolderToSession,
+  copyFolderToWorkspace,
   convertLegacyFileRef,
   createFileReferenceBinding,
+  deleteAgentFile,
+  deleteWorkspaceFile,
+  exportLegacyResourceToProject,
   getAgentSessionPath,
   listAgentDirectory,
   listProjectDirectory,
   listWorkspaceRootDirectory,
   listWorkspaceDirectory,
   moveAuthorizedFileRef,
+  moveAgentFile,
+  moveWorkspaceFile,
+  movePathWithFallback,
   promoteFileRefToProject,
+  renameAgentFile,
+  renameWorkspaceFile,
+  readAgentPath,
   readAuthorizedFileRef,
   readGuardedFileRef,
   readWorkspaceRootPath,
@@ -27,6 +38,7 @@ import {
   saveFilesToAgentSessionStreamed,
   saveFilesToWorkspaceRoot,
   saveFilesToWorkspace,
+  searchAgentWorkspaceFiles,
   searchAuthorizedFiles,
   statAuthorizedFileRef,
   writeAuthorizedFileRef,
@@ -119,7 +131,8 @@ describe("agent-files-service file ops", () => {
 
     const resolved = resolveAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: "./.visible.md" });
     expect(resolved.relativePath).toBe(".visible.md");
-    expect(resolved.absolutePath).toBe(join(projectPath, ".visible.md"));
+    // resolver 返回 canonical（realpath）路径（macOS tmpdir /var→/private/var）
+    expect(resolved.absolutePath).toBe(realpathSync(join(projectPath, ".visible.md")));
 
     const listed = listProjectDirectory(workspace.slug);
     expect(listed.find((entry) => entry.name === ".visible.md")).toMatchObject({
@@ -205,7 +218,8 @@ describe("agent-files-service file ops", () => {
     });
 
     expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
-    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(join(workdir.filesRoot, "brief.md"));
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(realpathSync(join(workdir.filesRoot, "brief.md")));
   });
 
   test("browser uploads resolve only current thread project and session files", () => {
@@ -225,7 +239,11 @@ describe("agent-files-service file ops", () => {
       relativePath: "files/session.txt",
     })).toString("base64url")}`;
 
-    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([projectFile, sessionFile]);
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([
+      realpathSync(projectFile),
+      realpathSync(sessionFile),
+    ]);
     const outside = join(configDir, "outside-upload.txt");
     writeFileSync(outside, "outside", "utf8");
     expect(() => resolveAuthorizedBrowserUploadPaths(thread.id, [outside])).toThrow("不属于当前任务");
@@ -290,9 +308,11 @@ describe("agent-files-service file ops", () => {
     });
     const second = watchAuthorizedFileRef(ref, () => undefined);
     writeFileSync(join(projectPath, "watch.txt"), "after", "utf-8");
+    // 文件监听事件在 CI 高负载下可能晚于 3s 到达(曾实测 flake);放宽到与
+    // 邻近 watcher 用例一致的 15s 超时,失败仍会以 timeout 断言暴露
     expect(await Promise.race([
       changed.then(() => "changed" as const),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 3_000)),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 15_000)),
     ])).toBe("changed");
     expect(unwatchAuthorizedFileRef(first.watchId)).toEqual({ ok: true });
     expect(unwatchAuthorizedFileRef(second.watchId)).toEqual({ ok: true });
@@ -397,6 +417,24 @@ describe("agent-files-service file ops", () => {
     expect(() => moveAuthorizedFileRef(parent, child)).toThrow("自身");
     expect(existsSync(join(workdir.filesRoot, "parent", "child"))).toBeTrue();
   });
+  test("旧版资源只读导出到项目且拒绝覆盖和符号链接", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "project");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("project", { projectPath });
+    const resources = getWorkspaceResourcesPath(workspace.slug);
+    writeFileSync(join(resources, "legacy.txt"), "legacy", "utf-8");
+
+    const exported = exportLegacyResourceToProject(workspace.slug, "legacy.txt", "error");
+    expect(existsSync(exported.path)).toBeTrue();
+    expect(() => exportLegacyResourceToProject(workspace.slug, "legacy.txt", "error")).toThrow("未覆盖");
+
+    const outside = join(configDir, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "secret.txt"), "secret", "utf-8");
+    symlinkSync(outside, join(resources, "outside-link"), "junction");
+    expect(() => exportLegacyResourceToProject(workspace.slug, "outside-link", "error")).toThrow("符号链接");
+  });
 
   test("应通过 threads/<threadId> 新目录结构解析 workspace slug", () => {
     createTempConfigDir();
@@ -441,6 +479,82 @@ describe("agent-files-service file ops", () => {
     expect(getAgentSessionPath(workspace.slug, thread.id)).toBe(sessionDir);
     expect(existsSync(join(sessionDir, "image.png"))).toBeTrue();
     expect(existsSync(legacyDir)).toBeFalse();
+  });
+
+  test("应支持重命名文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-c";
+    const sessionId = "session-c";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const filePath = join(sessionDir, "old-name.txt");
+    writeFileSync(filePath, "hello", "utf-8");
+
+    const result = renameAgentFile(workspaceSlug, sessionId, filePath, "new-name.txt");
+    expect(result.ok).toBeTrue();
+    expect(existsSync(result.path)).toBeTrue();
+    expect(readdirSync(sessionDir)).toContain("new-name.txt");
+    expect(readdirSync(sessionDir)).not.toContain("old-name.txt");
+  });
+
+  test("应支持移动文件到目标目录", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-d";
+    const sessionId = "session-d";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const sourceDir = join(sessionDir, "src");
+    const targetDir = join(sessionDir, "dst");
+    mkdirSync(sourceDir, { recursive: true });
+    mkdirSync(targetDir, { recursive: true });
+    const sourcePath = join(sourceDir, "task.md");
+    writeFileSync(sourcePath, "# task", "utf-8");
+
+    const result = moveAgentFile(workspaceSlug, sessionId, sourcePath, targetDir);
+    expect(result.ok).toBeTrue();
+    expect(existsSync(result.path)).toBeTrue();
+    expect(existsSync(sourcePath)).toBeFalse();
+  });
+
+  test("应支持搜索工作区文件", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-e";
+    const sessionId = "session-e";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const docsDir = join(sessionDir, "docs");
+    mkdirSync(docsDir, { recursive: true });
+    writeFileSync(join(sessionDir, "README.md"), "root", "utf-8");
+    writeFileSync(join(docsDir, "agent-guide.md"), "guide", "utf-8");
+    writeFileSync(join(docsDir, "notes.txt"), "notes", "utf-8");
+
+    const result = searchAgentWorkspaceFiles(workspaceSlug, sessionId, "ag", 20, sessionDir);
+    expect(result.total).toBeGreaterThan(0);
+    expect(result.entries.some((entry) => entry.name === "agent-guide.md")).toBeTrue();
+  });
+
+  test("readAgentPath 应支持线程工作区相对路径并拒绝越界路径", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-plan-relative";
+    const sessionId = "session-plan-relative";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    mkdirSync(join(sessionDir, "plans"), { recursive: true });
+    writeFileSync(join(sessionDir, "plans", "plan.md"), "# plan", "utf-8");
+
+    expect(readAgentPath(workspaceSlug, sessionId, "plans/plan.md")).toEqual({
+      content: "# plan",
+      truncated: false
+    });
+    expect(() => readAgentPath(workspaceSlug, sessionId, "../plan.md")).toThrow("目标路径超出线程工作目录");
+  });
+
+  test("readAgentPath 超过 20MB 上限时抛错且不全量载入", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-preview-limit";
+    const sessionId = "session-preview-limit";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    mkdirSync(sessionDir, { recursive: true });
+    // 21MB 全零文件：statSync 前置检查保证不会读入内存（写盘仅几十 ms）
+    writeFileSync(join(sessionDir, "big.txt"), Buffer.alloc(21 * 1024 * 1024, 0x61));
+
+    expect(() => readAgentPath(workspaceSlug, sessionId, "big.txt")).toThrow("文件过大");
   });
 
   test("线程附件路径 helper 应转换线程内路径并拒绝越界或缺失文件", () => {
@@ -705,6 +819,174 @@ describe("agent-files-service file ops", () => {
     expect(entry?.externalAttachment).toBeUndefined();
   });
 
+  test("copyFolderToSession 应复制文件夹并为根目录记录外部附加元信息", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-h";
+    const sessionId = "session-h";
+    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-src-"));
+    createdDirs.push(sourceRoot);
+    writeFileSync(join(sourceRoot, "note.txt"), "hello", "utf-8");
+
+    copyFolderToSession({
+      workspaceSlug,
+      threadId: sessionId,
+      sourcePath: sourceRoot
+    });
+
+    const entries = listAgentDirectory(workspaceSlug, sessionId);
+    const folderName = sourceRoot.split(/[\\/]/).filter(Boolean).pop();
+    const entry = entries.find((item) => item.name === folderName);
+    expect(entry?.isDirectory).toBeTrue();
+    expect(entry?.externalAttachment).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: sourceRoot
+    });
+  });
+
+  test("copyFolderToSession 应拒绝文件 sourcePath 和同名目标目录", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-h2";
+    const sessionId = "session-h2";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const fileSourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-file-src-"));
+    const fileSource = join(fileSourceRoot, "single.txt");
+    const folderSourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-existing-src-"));
+    createdDirs.push(fileSourceRoot, folderSourceRoot);
+    writeFileSync(fileSource, "hello", "utf-8");
+    writeFileSync(join(folderSourceRoot, "note.txt"), "hello", "utf-8");
+    mkdirSync(join(sessionDir, folderSourceRoot.split(/[\\/]/).filter(Boolean).pop() as string), { recursive: true });
+
+    expect(() => copyFolderToSession({
+      workspaceSlug,
+      threadId: sessionId,
+      sourcePath: fileSource
+    })).toThrow("源目录不存在");
+
+    expect(() => copyFolderToSession({
+      workspaceSlug,
+      threadId: sessionId,
+      sourcePath: folderSourceRoot
+    })).toThrow("目标路径已存在同名文件");
+  });
+
+  test("copyFolderToWorkspace 应复制文件夹并为根目录记录外部附加元信息", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-i";
+    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-ws-src-"));
+    createdDirs.push(sourceRoot);
+    writeFileSync(join(sourceRoot, "note.txt"), "hello", "utf-8");
+
+    copyFolderToWorkspace({
+      workspaceSlug,
+      sourcePath: sourceRoot
+    });
+
+    const entries = listWorkspaceDirectory(workspaceSlug);
+    const folderName = sourceRoot.split(/[\\/]/).filter(Boolean).pop();
+    const entry = entries.find((item) => item.name === folderName);
+    expect(entry?.isDirectory).toBeTrue();
+    expect(entry?.externalAttachment).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: sourceRoot
+    });
+  });
+
+  test("copyFolderToWorkspace 应拒绝文件 sourcePath 和同名目标目录", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-i2";
+    const resourcesDir = getWorkspaceResourcesPath(workspaceSlug);
+    const fileSourceRoot = mkdtempSync(join(tmpdir(), "lume-ws-folder-file-src-"));
+    const fileSource = join(fileSourceRoot, "single.txt");
+    const folderSourceRoot = mkdtempSync(join(tmpdir(), "lume-ws-folder-existing-src-"));
+    createdDirs.push(fileSourceRoot, folderSourceRoot);
+    writeFileSync(fileSource, "hello", "utf-8");
+    writeFileSync(join(folderSourceRoot, "note.txt"), "hello", "utf-8");
+    mkdirSync(join(resourcesDir, folderSourceRoot.split(/[\\/]/).filter(Boolean).pop() as string), { recursive: true });
+
+    expect(() => copyFolderToWorkspace({
+      workspaceSlug,
+      sourcePath: fileSource
+    })).toThrow("源目录不存在");
+
+    expect(() => copyFolderToWorkspace({
+      workspaceSlug,
+      sourcePath: folderSourceRoot
+    })).toThrow("目标路径已存在同名文件");
+  });
+
+  test("rename/move/delete 应同步外部附加元信息", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-j";
+    const sessionId = "session-j";
+    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
+    const nestedDir = join(sessionDir, "docs");
+    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-agent-files-rename-src-"));
+    const sourcePath = join(sourceRoot, "note.md");
+    createdDirs.push(sourceRoot);
+    mkdirSync(nestedDir, { recursive: true });
+    writeFileSync(sourcePath, "# note", "utf-8");
+
+    saveFilesToAgentSession({
+      workspaceSlug,
+      threadId: sessionId,
+      files: [{ filename: "docs/note.md", sourcePath }]
+    });
+
+    const renamed = renameAgentFile(workspaceSlug, sessionId, join(nestedDir, "note.md"), "renamed.md");
+    let docsEntries = listAgentDirectory(workspaceSlug, sessionId, nestedDir);
+    expect(docsEntries.find((item) => item.name === "renamed.md")?.externalAttachment).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: sourcePath
+    });
+
+    const archiveDir = join(sessionDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+    moveAgentFile(workspaceSlug, sessionId, renamed.path, archiveDir);
+    let archiveEntries = listAgentDirectory(workspaceSlug, sessionId, archiveDir);
+    expect(archiveEntries.find((item) => item.name === "renamed.md")?.externalAttachment).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: sourcePath
+    });
+
+    deleteAgentFile(workspaceSlug, sessionId, join(archiveDir, "renamed.md"));
+    archiveEntries = listAgentDirectory(workspaceSlug, sessionId, archiveDir);
+    expect(archiveEntries.find((item) => item.name === "renamed.md")).toBeUndefined();
+  });
+
+  test("workspace rename/move/delete 应同步外部附加元信息", () => {
+    createTempConfigDir();
+    const workspaceSlug = "workspace-k";
+    const resourcesDir = getWorkspaceResourcesPath(workspaceSlug);
+    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-workspace-rename-src-"));
+    const sourcePath = join(sourceRoot, "report.md");
+    createdDirs.push(sourceRoot);
+    writeFileSync(sourcePath, "# report", "utf-8");
+
+    saveFilesToWorkspace({
+      workspaceSlug,
+      files: [{ filename: "report.md", sourcePath }]
+    });
+
+    const renamed = renameWorkspaceFile(workspaceSlug, join(resourcesDir, "report.md"), "report-final.md");
+    let entries = listWorkspaceDirectory(workspaceSlug);
+    expect(entries.find((item) => item.name === "report-final.md")?.externalAttachment).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: sourcePath
+    });
+
+    const archiveDir = join(resourcesDir, "archive");
+    mkdirSync(archiveDir, { recursive: true });
+    moveWorkspaceFile(workspaceSlug, renamed.path, archiveDir);
+    entries = listWorkspaceDirectory(workspaceSlug, archiveDir);
+    expect(entries.find((item) => item.name === "report-final.md")?.externalAttachment).toEqual({
+      label: "外部附加",
+      absoluteSourcePath: sourcePath
+    });
+
+    deleteWorkspaceFile(workspaceSlug, join(archiveDir, "report-final.md"));
+    entries = listWorkspaceDirectory(workspaceSlug, archiveDir);
+    expect(entries.find((item) => item.name === "report-final.md")).toBeUndefined();
+  });
 });
 
 describe("promoteFileRefToProject", () => {
@@ -810,5 +1092,85 @@ describe("promoteFileRefToProject", () => {
       { source: "legacy", scopeId: workspace.slug, relativePath: "legacy.txt" },
       workspace.slug
     )).toThrow("项目尚未绑定本地目录");
+  });
+});
+
+describe("movePathWithFallback Windows 占用重试与降级（#552）", () => {
+  let tempDir = "";
+
+  function createTempMoveDir(): void {
+    tempDir = mkdtempSync(join(tmpdir(), "lume-move-fallback-"));
+  }
+
+  function epermError(): Error {
+    return Object.assign(new Error("EBUSY: resource busy"), { code: "EPERM" });
+  }
+
+  test("EPERM 短退避重试成功则不降级", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "b.txt");
+    writeFileSync(src, "data", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, (s, t) => {
+      calls += 1;
+      if (calls === 1) throw epermError();
+      renameSync(s, t);
+    });
+
+    expect(calls).toBe(2);
+    expect(existsSync(dst)).toBe(true);
+    expect(existsSync(src)).toBe(false);
+  });
+
+  test("EPERM 持续占用走 copy+delete 降级且内容完整", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "nested", "b.txt");
+    mkdirSync(join(tempDir, "nested"), { recursive: true });
+    writeFileSync(src, "payload-content", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw epermError();
+    });
+
+    expect(calls).toBe(3); // 初次 + 2 次退避重试
+    expect(readFileSync(dst, "utf-8")).toBe("payload-content");
+    expect(existsSync(src)).toBe(false);
+  }, 10_000);
+
+  test("EXDEV 直接降级不重试", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "b.txt");
+    writeFileSync(src, "cross-device", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+    });
+
+    expect(calls).toBe(1);
+    expect(readFileSync(dst, "utf-8")).toBe("cross-device");
+    expect(existsSync(src)).toBe(false);
+  });
+
+  test("非占用错误码立即抛出不重试不降级", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "missing.txt");
+    const dst = join(tempDir, "b.txt");
+
+    let calls = 0;
+    expect(() => movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    })).toThrow();
+
+    expect(calls).toBe(1);
+    expect(existsSync(dst)).toBe(false);
   });
 });

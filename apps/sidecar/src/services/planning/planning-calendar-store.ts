@@ -1,3 +1,4 @@
+import { createRequire } from "node:module";
 import { randomUUID } from "node:crypto";
 import type {
   ActivePlanningReminder,
@@ -20,9 +21,18 @@ import type {
   PlanningTodoChangeEvent,
 } from "@lume/shared";
 import { normalizePlanningTodoTitle } from "@lume/shared";
-import { openSqlite, type SqliteDatabase } from "../infra/open-sqlite";
 import { getPlanningTodoStore } from "./planning-todo-store";
 
+interface Statement {
+  all(...params: unknown[]): unknown[];
+  get(...params: unknown[]): unknown;
+  run(...params: unknown[]): unknown;
+}
+interface Db {
+  exec(sql: string): void;
+  prepare(sql: string): Statement;
+  close(): void;
+}
 interface EventRow {
   id: string;
   title: string;
@@ -75,7 +85,7 @@ export class PlanningCalendarConflictError extends Error {
 }
 
 export class PlanningCalendarStore {
-  readonly #db: SqliteDatabase;
+  readonly #db: Db;
   readonly #now: () => number;
   readonly #onChange?: (event: PlanningTodoChangeEvent) => void;
 
@@ -84,7 +94,31 @@ export class PlanningCalendarStore {
     now?: () => number;
     onChange?: (event: PlanningTodoChangeEvent) => void;
   }) {
-    this.#db = openSqlite(input.dbPath);
+    const runtimeRequire = createRequire(import.meta.url);
+    if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
+      const Database = (
+        runtimeRequire("bun:sqlite") as {
+          Database: new (path: string) => {
+            exec(sql: string): void;
+            query(sql: string): Statement;
+            close(): void;
+          };
+        }
+      ).Database;
+      const db = new Database(input.dbPath);
+      this.#db = {
+        exec: (sql) => db.exec(sql),
+        prepare: (sql) => db.query(sql),
+        close: () => db.close(),
+      };
+    } else {
+      const DatabaseSync = (
+        runtimeRequire("node:sqlite") as {
+          DatabaseSync: new (path: string) => Db;
+        }
+      ).DatabaseSync;
+      this.#db = new DatabaseSync(input.dbPath);
+    }
     this.#now = input.now ?? Date.now;
     this.#onChange = input.onChange;
     this.#db.exec(
@@ -116,14 +150,48 @@ export class PlanningCalendarStore {
       .prepare(
         `SELECT * FROM planning_calendar_event${where.length ? ` WHERE ${where.join(" AND ")}` : ""} ORDER BY start_at,id LIMIT ?`,
       )
-      .all(...params) as EventRow[];
-    return rows.map((row) => this.#eventFromRow(row));
+      .all(...params) as unknown as EventRow[];
+    // #593②:#eventFromRow 原对每行各发 3 次查询(group 全表查重复 N 次),默认
+    // 500 行 ≈1500+ 次同步 sqlite 查询且拉长 claimDueReminders 写锁窗口。
+    // groups/tags/reminders 三路一次批量预载,行内查表 O(1)。
+    const groupsById = new Map(this.listGroups("calendar").map((group) => [group.id, group]));
+    const eventIds = rows.map((row) => row.id);
+    const tagsByEvent = new Map<string, PlanningTag[]>();
+    const remindersByTarget = new Map<string, PlanningReminder[]>();
+    if (eventIds.length > 0) {
+      const placeholders = eventIds.map(() => "?").join(",");
+      for (const tagged of this.#db
+        .prepare(
+          `SELECT et.event_id AS __event_id, t.* FROM planning_tag t JOIN planning_calendar_event_tag et ON et.tag_id=t.id WHERE et.event_id IN (${placeholders}) ORDER BY t.name`,
+        )
+        .all(...eventIds) as unknown as Array<TagRow & { __event_id: string }>) {
+        const list = tagsByEvent.get(tagged.__event_id) ?? [];
+        list.push(tagFromRow(tagged));
+        tagsByEvent.set(tagged.__event_id, list);
+      }
+      for (const reminder of this.#db
+        .prepare(
+          `SELECT * FROM planning_reminder WHERE target_type='calendar_event' AND target_id IN (${placeholders}) ORDER BY COALESCE(snoozed_until,trigger_at)`,
+        )
+        .all(...eventIds) as unknown as ReminderRow[]) {
+        const list = remindersByTarget.get(reminder.target_id) ?? [];
+        list.push(reminderFromRow(reminder));
+        remindersByTarget.set(reminder.target_id, list);
+      }
+    }
+    return rows.map((row) =>
+      this.#eventFromRow(row, {
+        groupsById,
+        tags: tagsByEvent.get(row.id) ?? [],
+        reminders: remindersByTarget.get(row.id) ?? [],
+      }),
+    );
   }
 
   getEvent(eventId: string): PlanningCalendarEvent {
     const row = this.#db
       .prepare("SELECT * FROM planning_calendar_event WHERE id = ?")
-      .get(eventId) as EventRow | undefined;
+      .get(eventId) as unknown as EventRow | undefined;
     if (!row) throw new Error("日程不存在");
     return this.#eventFromRow(row);
   }
@@ -304,7 +372,7 @@ export class PlanningCalendarStore {
         .prepare(
           "SELECT * FROM planning_group WHERE scope=? ORDER BY sort_order,name",
         )
-        .all(scope) as GroupRow[]
+        .all(scope) as unknown as GroupRow[]
     ).map(groupFromRow);
   }
   createGroup(input: PlanningGroupCreateInput): PlanningGroup {
@@ -396,7 +464,7 @@ export class PlanningCalendarStore {
     return (
       this.#db
         .prepare("SELECT * FROM planning_tag ORDER BY name")
-        .all() as TagRow[]
+        .all() as unknown as TagRow[]
     ).map(tagFromRow);
   }
   createTag(input: PlanningTagCreateInput): PlanningTag {
@@ -552,7 +620,7 @@ export class PlanningCalendarStore {
       .prepare(
         "SELECT * FROM planning_reminder WHERE status='pending' AND COALESCE(snoozed_until,trigger_at)<=? ORDER BY COALESCE(snoozed_until,trigger_at)",
       )
-      .all(now) as ReminderRow[];
+      .all(now) as unknown as ReminderRow[];
     return rows.flatMap((row) => {
       const target = this.#targetSummary(row.target_type, row.target_id);
       return target ? [{ ...reminderFromRow(row), ...target }] : [];
@@ -563,7 +631,7 @@ export class PlanningCalendarStore {
       .prepare(
         "SELECT * FROM planning_reminder WHERE status='pending' AND COALESCE(snoozed_until,trigger_at)<=? AND last_notified_at IS NULL ORDER BY COALESCE(snoozed_until,trigger_at)",
       )
-      .all(now) as ReminderRow[];
+      .all(now) as unknown as ReminderRow[];
     if (!rows.length) return [];
     const result: ActivePlanningReminder[] = [];
     this.#transaction(() => {
@@ -599,7 +667,14 @@ export class PlanningCalendarStore {
     this.#db.close();
   }
 
-  #eventFromRow(row: EventRow): PlanningCalendarEvent {
+  #eventFromRow(
+    row: EventRow,
+    preload?: {
+      groupsById?: Map<string, PlanningGroup>;
+      tags?: PlanningTag[];
+      reminders?: PlanningReminder[];
+    },
+  ): PlanningCalendarEvent {
     return {
       id: row.id,
       title: row.title,
@@ -610,13 +685,16 @@ export class PlanningCalendarStore {
       ...(row.group_id
         ? {
             groupId: row.group_id,
-            group: this.listGroups("calendar").find(
-              (item) => item.id === row.group_id,
-            ),
+            group: preload?.groupsById
+              ? preload.groupsById.get(row.group_id)
+              : this.listGroups("calendar").find(
+                  (item) => item.id === row.group_id,
+                ),
           }
         : {}),
-      tags: this.#eventTags(row.id),
-      reminders: this.#targetReminders("calendar_event", row.id),
+      tags: preload?.tags ?? this.#eventTags(row.id),
+      reminders:
+        preload?.reminders ?? this.#targetReminders("calendar_event", row.id),
       ...(row.workspace_id ? { workspaceId: row.workspace_id } : {}),
       ...(row.todo_id ? { todoId: row.todo_id } : {}),
       revision: row.revision,
@@ -630,7 +708,7 @@ export class PlanningCalendarStore {
         .prepare(
           "SELECT t.* FROM planning_tag t JOIN planning_calendar_event_tag et ON et.tag_id=t.id WHERE et.event_id=? ORDER BY t.name",
         )
-        .all(eventId) as TagRow[]
+        .all(eventId) as unknown as TagRow[]
     ).map(tagFromRow);
   }
   #targetReminders(
@@ -642,7 +720,7 @@ export class PlanningCalendarStore {
         .prepare(
           "SELECT * FROM planning_reminder WHERE target_type=? AND target_id=? ORDER BY COALESCE(snoozed_until,trigger_at)",
         )
-        .all(type, id) as ReminderRow[]
+        .all(type, id) as unknown as ReminderRow[]
     ).map(reminderFromRow);
   }
   #replaceEventTags(eventId: string, tagIds: string[]): void {
@@ -712,7 +790,7 @@ export class PlanningCalendarStore {
   #getReminder(id: string): PlanningReminder | undefined {
     const row = this.#db
       .prepare("SELECT * FROM planning_reminder WHERE id=?")
-      .get(id) as ReminderRow | undefined;
+      .get(id) as unknown as ReminderRow | undefined;
     return row ? reminderFromRow(row) : undefined;
   }
   #targetSummary(

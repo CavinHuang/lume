@@ -1,5 +1,4 @@
 import { AGENT_IPC_CHANNELS, type BrowserReferenceGrantInput } from "@lume/shared";
-import { setAgentNotificationWriter } from "../services/agent/agent-notification-service";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
 import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { createAgentHandlers } from "./agent-handlers";
@@ -76,7 +75,8 @@ function validateBrowserInput<T>(schema: z.ZodType<T>, params: unknown): T {
 }
 
 export function createRpcHandlers(context: CreateRpcHandlersContext): Record<string, RpcHandler> {
-  setAgentNotificationWriter(context.writeNotification);
+  // #580:agent 域通知写入器改由组合根经 outbound-notification 注入,
+  // handler 工厂不再偷偷装配全局 setter。
   const planModePhaseTracker = new PlanModePhaseTracker();
   const runtimeStatusManager = getAgentRuntimeStatusManager();
   const notifyPlanModePhaseChange = (
@@ -144,6 +144,10 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     };
   }
   if (context.browserBroker) {
+    // review 留痕:browser:* 域有意不入 #522 validateInput 收口体系——入参
+    // 形状由 browser-broker 逐字段守卫(browser-reference-candidates/grant
+    // 系列的 per-call guard)与反向 MAC/序号契约兜底,render:result 对端即
+    // renderer 自身。如需统一收口须连 broker 守卫一并上移。
     handlers["browser:settings"] = async (params) => {
       const settingsParams = validateBrowserInput(browserSettingsInputSchema, params ?? {});
       extensionBackendEnabled = settingsParams.extensionBackendEnabled === true;

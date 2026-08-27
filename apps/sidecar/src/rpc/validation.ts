@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RPC_ERROR_CODES } from "@lume/shared";
 
 export { z };
 
@@ -24,5 +25,9 @@ export function validateInput<T>(schema: z.ZodType<T>, payload: unknown, method:
   const firstIssue = parsed.error.issues[0];
   const path = firstIssue?.path.join(".") || "root";
   const message = firstIssue?.message || "参数校验失败";
-  throw new Error(`${method} 参数非法: ${path} - ${message}`);
+  // 附稳定 code + 定位 details,经 #579 chokepoint 透传,校验错误不再塌缩为 E_RPC。
+  throw Object.assign(new Error(`${method} 参数非法: ${path} - ${message}`), {
+    code: RPC_ERROR_CODES.INVALID_PARAMS,
+    details: { method, path },
+  });
 }

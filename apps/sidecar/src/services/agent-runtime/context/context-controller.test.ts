@@ -77,6 +77,52 @@ describe("Kernel context controller", () => {
     expect(JSON.stringify(compacted[1]?.content)).toContain("...(truncated by Lume context controller)...");
   });
 
+  test("#633 sheds oversized image blocks in array-form tool results", () => {
+    const bigImage = { type: "image", source: { type: "base64", media_type: "image/png", data: "x".repeat(80_000) } };
+    const smallImage = { type: "image", source: { type: "base64", media_type: "image/png", data: "tiny" } };
+    const blocks = [{ type: "tool_result", tool_use_id: "tool-1", content: [bigImage, smallImage] }];
+    const messages = [{ role: "user", content: blocks }];
+
+    const compacted = microCompactKernelMessages(messages, { maxToolResultChars: 50_000 });
+    const result = (compacted[0]?.content as typeof blocks)[0]?.content as unknown[];
+
+    expect(result).toHaveLength(2);
+    // 占位文案来自 SDK compactToolResultContent 的 micro-compaction 语义
+    expect(result?.[0]).toEqual({
+      type: "text",
+      text: expect.stringContaining("omitted by micro-compaction")
+    });
+    // 小图必须原样到达模型，否则视觉能力回退（#364 语义）
+    expect(result?.[1]).toBe(smallImage);
+  });
+
+  test("#633 truncates oversized text blocks inside array-form tool results", () => {
+    const blocks = [{
+      type: "tool_result",
+      tool_use_id: "tool-1",
+      content: [{ type: "text", text: `${"a".repeat(60)}${"b".repeat(60)}` }]
+    }];
+    const messages = [{ role: "user", content: blocks }];
+
+    const compacted = microCompactKernelMessages(messages, { maxToolResultChars: 40 });
+    const inner = (compacted[0]?.content as typeof blocks)[0]?.content as { text: string }[];
+
+    // 数组内 text 块截断文案来自 SDK compactToolResultContent
+    expect(inner[0]?.text).toContain("...(truncated)...");
+    expect((inner[0]?.text ?? "").length).toBeLessThan(120);
+  });
+
+  test("#633 keeps array-form tool results by reference when nothing exceeds budget", () => {
+    const content = [{ type: "image", source: { type: "base64", data: "small" } }];
+    const blocks = [{ type: "tool_result", tool_use_id: "tool-1", content }];
+    const messages = [{ role: "user", content: blocks }];
+
+    const compacted = microCompactKernelMessages(messages, { maxToolResultChars: 50_000 });
+    const result = (compacted[0]?.content as typeof blocks)[0]?.content;
+
+    expect(result).toBe(content);
+  });
+
   test("strips afterglow from assistant text blocks before compaction", () => {
     const messages = sanitizeKernelContextMessages([{
       role: "assistant",

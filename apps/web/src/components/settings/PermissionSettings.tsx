@@ -8,11 +8,14 @@ import type {
 } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   getEffectiveLumeConfig,
   updateAgentPermissionMode,
+  updateAgentProjectInstructionsEnabled,
+  updatePermissionClassifierEnabled,
   updatePermissionsSection,
 } from '@/lib/desktop-api/lume-config'
 import {
@@ -41,7 +44,7 @@ const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   map: Map,
 }
 
-type SavingTarget = null | 'mode' | 'rules'
+type SavingTarget = null | 'mode' | 'rules' | 'projectInstructions' | 'classifier'
 
 const RULE_ACTION_OPTIONS: Array<{
   value: LumeConfigPermissionRuleAction
@@ -151,6 +154,36 @@ export function PermissionSettings() {
     }
   }
 
+  // #670 行为告知:项目指令(CLAUDE.md/AGENTS.md)自动注入开关,缺省开启。
+  const projectInstructionsEnabled = config?.agent?.projectInstructionsEnabled !== false
+  const handleProjectInstructionsEnabledChange = async (enabled: boolean) => {
+    setSaving('projectInstructions')
+    try {
+      const nextConfig = await updateAgentProjectInstructionsEnabled(enabled, selectedWorkspaceSlug)
+      setConfig(nextConfig)
+    } catch (error) {
+      console.error('[PermissionSettings] save project instructions FAILED:', error)
+      toast.error('保存项目指令设置失败')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  const handleClassifierEnabledChange = async (value: boolean) => {
+    setSaving('classifier')
+    try {
+      const nextConfig = await updatePermissionClassifierEnabled(value, selectedWorkspaceSlug)
+      setConfig(nextConfig)
+      setDraft(buildPermissionSettingsDraft(nextConfig))
+      toast.success(`风险分类器设置已保存到 ${scopeLabel}`)
+    } catch (error) {
+      console.error('[PermissionSettings] save classifier FAILED:', error)
+      toast.error('保存风险分类器设置失败')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   const savePermissionSettings = async () => {
     if (!config || !draft) return
     setSaving('rules')
@@ -242,6 +275,42 @@ export function PermissionSettings() {
               </Button>
             )
           })}
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
+        title="风险分类器"
+        description="「少询问」依据内置窄正则词表判定低风险并自动放行，「默认」档不做词表驱动的放行——两档审批差异由这张词表决定。"
+      >
+        <div className="flex items-start justify-between gap-4">
+          <div className="min-w-0">
+            <div className="text-body font-medium text-[var(--text-1)]">启发式风险分类</div>
+            <p className="mt-1 text-ui leading-5 text-[var(--text-3)]">
+              关闭后不再有任何词表自动放行，白名单外命令逐条确认；工具声明的低风险豁免与可证只读免审不受影响。
+            </p>
+          </div>
+          <Switch
+            checked={config?.permissions?.classifier?.enabled !== false}
+            disabled={saving !== null}
+            onCheckedChange={(checked) => void handleClassifierEnabledChange(checked)}
+          />
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
+        title="项目指令"
+        description="自动加载项目目录中的 CLAUDE.md / AGENTS.md 注入 Agent 系统提示（就近向上解析，单文件超 32KB 截断）。会话头部会显示当前生效的指令文件。"
+      >
+        <div className="flex items-center justify-between gap-3 py-1">
+          <div className="min-w-0">
+            <div className="text-ui font-medium text-[var(--text-1)]">项目指令自动注入</div>
+            <div className="mt-0.5 text-caption text-[var(--text-3)]">关闭后不读取项目指令文件</div>
+          </div>
+          <Switch
+            checked={projectInstructionsEnabled}
+            disabled={saving !== null}
+            onCheckedChange={(checked) => void handleProjectInstructionsEnabledChange(checked)}
+          />
         </div>
       </SettingsCard>
 

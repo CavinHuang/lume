@@ -167,12 +167,10 @@ describe("tool-metadata", () => {
     }
   });
 
-  test("classifies Guanlan tools as low-risk plan-safe network reads", () => {
+  test("classifies web tools as low-risk plan-safe network reads", () => {
     for (const name of [
-      "guanlan_search",
-      "guanlan_read",
-      "guanlan_hotnews",
-      "guanlan_research"
+      "web_search",
+      "web_fetch"
     ]) {
       expect(getToolMetadata(name)).toMatchObject({
         category: "network",

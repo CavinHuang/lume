@@ -22,6 +22,7 @@ export async function searchMemoryTool(input: MemorySearchToolInput): Promise<Me
     workspaceSlug: input.workspaceSlug,
     query: input.query,
     maxResults: input.maxResults,
+    minScore: input.minScore,
     scopes: resolveMemoryV2SearchScopes(input)
   });
   return v2Results.map((item) => ({

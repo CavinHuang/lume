@@ -4,7 +4,9 @@ import {
   type DesktopContextSuspensionReason,
   type DesktopProactiveProposalStatus,
 } from "@lume/shared";
+import { desktopAssistantSettingsInputSchema } from "./schemas";
 import type { RpcHandler } from "./types";
+import { validateInput } from "./validation";
 
 interface DesktopContextRpcService {
   unlock(key: Buffer): void;
@@ -57,7 +59,10 @@ export function createDesktopContextHandlers(service: DesktopContextRpcService):
     [DESKTOP_CONTEXT_IPC_CHANNELS.LIST_APPS]: async () => service.listApps(),
     [DESKTOP_CONTEXT_IPC_CHANNELS.GET_SETTINGS]: async () => service.getSettings(),
     [DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_SETTINGS]: async (params) => {
-      return service.updateSettings(readRecord(params) as unknown as DesktopAssistantSettings);
+      // #522：此前零校验直接进持久化（任意字段可写入）；zod strip 剥离未知字段
+      return service.updateSettings(
+        validateInput(desktopAssistantSettingsInputSchema, params, DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_SETTINGS),
+      );
     },
     [DESKTOP_CONTEXT_IPC_CHANNELS.GET_STATUS]: async () => service.getStatus(),
     [DESKTOP_CONTEXT_IPC_CHANNELS.CLEAR]: async () => service.clear(),

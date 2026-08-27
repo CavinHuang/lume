@@ -6,7 +6,7 @@ import { createAgentThread } from "../../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../../agent/agent-workspace-manager";
 import { createChannel } from "../../channel/channel-manager";
 import { installConnectionVaultKey } from "../../channel/connection-credential-store";
-import { getAgentSessionWorkspacePath } from "../../infra/config-paths";
+import { getAgentThreadRootPath } from "../../infra/config-paths";
 import { getRuntimeCoreSessionDir } from "./session-store";
 import { runRuntimeCoreAttempt } from "../runner/attempt";
 
@@ -84,9 +84,8 @@ describe("runtime-core attempt observability", () => {
     expect(runFiles.some((file) => file.endsWith(".json"))).toBeTrue();
     expect(runFiles.some((file) => file.endsWith(".items.jsonl"))).toBeTrue();
     expect(traceFiles.some((file) => file.endsWith(".json"))).toBeTrue();
-    // entries 机制已随 #529 迁移残骸批次删除：runtime-state.json 不应再被写入
-    expect(existsSync(join(sessionDir, "runtime-state.json"))).toBeFalse();
-    expect(existsSync(join(getAgentSessionWorkspacePath(workspace.slug, thread.id), "systemPrompt.md"))).toBeFalse();
+    expect(existsSync(join(sessionDir, "runtime-state.json"))).toBeTrue();
+    expect(existsSync(join(getAgentThreadRootPath(workspace.slug, thread.id), "systemPrompt.md"))).toBeFalse();
 
     rmSync(configDir, { recursive: true, force: true });
   }, 20_000);

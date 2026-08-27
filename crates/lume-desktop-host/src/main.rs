@@ -1,3 +1,5 @@
+mod logging;
+
 use std::{env, fs, io::ErrorKind};
 
 use anyhow::{bail, Context, Result};
@@ -18,7 +20,7 @@ fn private_unix_socket_mode() -> u32 {
 #[tokio::main]
 async fn main() {
     if let Err(error) = run().await {
-        eprintln!("lume_desktop_host failed: {error:#}");
+        logging::emit_log("fatal", "host.lifecycle", "host.failed", &format!("lume_desktop_host failed: {error:#}"), None);
         std::process::exit(1);
     }
 }
@@ -122,7 +124,7 @@ where
                             match start_desktop_event_monitor() {
                                 Ok(monitor) => event_monitor = Some(monitor),
                                 Err(error) => {
-                                    eprintln!("desktop event monitor unavailable: {error:#}")
+                                    logging::emit_log("warn", "host.event_monitor", "monitor.unavailable", &format!("desktop event monitor unavailable: {error:#}"), None)
                                 }
                             }
                         }
@@ -178,7 +180,7 @@ async fn serve(endpoint: &str, token: String) -> Result<()> {
         first = false;
         server.connect().await?;
         if let Err(error) = handle_stream(server, token.clone()).await {
-            eprintln!("desktop host client disconnected: {error:#}");
+            logging::emit_log("warn", "host.pipe", "client.disconnected", &format!("desktop host client disconnected: {error:#}"), None);
         }
     }
 }
@@ -199,7 +201,7 @@ async fn serve(endpoint: &str, token: String) -> Result<()> {
     loop {
         let (stream, _) = listener.accept().await?;
         if let Err(error) = handle_stream(stream, token.clone()).await {
-            eprintln!("desktop host client disconnected: {error:#}");
+            logging::emit_log("warn", "host.pipe", "client.disconnected", &format!("desktop host client disconnected: {error:#}"), None);
         }
     }
 }

@@ -10,6 +10,7 @@ import {
   normalizeImAccountLabel
 } from "@lume/shared";
 import { getImConfigPath } from "../infra/config-paths";
+import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { decryptSecret, encryptSecret } from "../infra/secret-crypto";
 import { createLogger } from "../infra/logger";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
@@ -53,14 +54,9 @@ function imConfigLockPath(): string {
 }
 
 /** 仅 JSON.parse 失败（真损坏）才备份重建；瞬态 IO 读错误不备份，防止把好文件"备份后清空"。 */
-function backupCorruptFile(filePath: string): void {
-  const backupPath = `${filePath}.corrupt-${Date.now()}`;
-  try {
-    renameSync(filePath, backupPath);
-    log.warn("backed up corrupt IM config", { backupPath });
-  } catch (error) {
-    log.warn("failed to back up corrupt IM config", { backupPath, error: error instanceof Error ? error.message : String(error) });
-  }
+function backupCorruptImConfigFile(filePath: string): void {
+  const backupPath = backupCorruptFile(filePath);
+  if (backupPath) log.warn("backed up corrupt IM config", { backupPath });
 }
 
 function readConfigUnlocked(): ImConfig {
@@ -83,7 +79,7 @@ function readConfigUnlocked(): ImConfig {
     };
   } catch {
     // 文件截断损坏：先备份再重建，防止后续写操作把空配置落盘静默清空全部账号（含加密 token）
-    backupCorruptFile(path);
+    backupCorruptImConfigFile(path);
     return { version: CONFIG_VERSION, accounts: [] };
   }
 }

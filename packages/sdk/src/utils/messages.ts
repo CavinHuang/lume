@@ -6,6 +6,8 @@
  */
 
 import { readFile } from 'node:fs/promises'
+import { DESKTOP_ACTION_PHASES } from '@lume/shared'
+import type { NormalizedMessageParam } from '../providers/types.js'
 
 /**
  * Normalize messages for the LLM API.
@@ -60,8 +62,8 @@ export async function hydrateEphemeralImageReferences(
 }
 
 export function releaseEphemeralImageReferences(
-  messages: Array<{ role: string; content: any }>,
-): Array<{ role: string; content: any }> {
+  messages: NormalizedMessageParam[],
+): NormalizedMessageParam[] {
   return messages.map((message) => ({
     ...message,
     content: releaseEphemeralValue(message.content),
@@ -69,22 +71,87 @@ export function releaseEphemeralImageReferences(
 }
 
 export function collectInternalContextBlocks(
-  messages: Array<{ role: string; content: any }>,
+  messages: NormalizedMessageParam[],
 ): string[] {
   return messages.flatMap((message) => Array.isArray(message.content)
     ? message.content.flatMap((block: any) => isInternalContextBlock(block) ? [block.text] : [])
     : [])
 }
 
-export function renderComputerUseActionFacts(messages: Array<{ role: string; content: any }>): string {
+const FACT_FIELD_MAX_CHARS = 64
+const FACT_APP_MAX_CHARS = 80
+/** 单条 tool_result 持久化的批量台账事实上限：防异常生产者刷爆持久轨。 */
+const FACT_BATCH_MAX_ENTRIES = 32
+
+/**
+ * Normalize a raw computer-use ledger fact into the minimal validated shape
+ * allowed on the persistent track and in rendered "Authoritative" context
+ * (#709 item 2): phase must be a known enum value, string fields are
+ * length-capped, unknown fields are dropped. Returns null when validation fails.
+ */
+export function normalizeComputerUseActionFact(value: unknown): {
+  actionId: string
+  action: string
+  phase: string
+  window?: { id?: number; app: string }
+} | null {
+  if (!value || typeof value !== 'object') return null
+  const record = value as Record<string, any>
+  if (typeof record.actionId !== 'string' || !record.actionId) return null
+  if (typeof record.action !== 'string' || !record.action) return null
+  const phase = typeof record.phase === 'string' && (DESKTOP_ACTION_PHASES as readonly string[]).includes(record.phase)
+    ? record.phase
+    : null
+  if (!phase) return null
+  const app = typeof record.window?.app === 'string' && record.window.app ? record.window.app : undefined
+  const id = typeof record.window?.id === 'number' && Number.isFinite(record.window.id)
+    ? record.window.id
+    : undefined
+  return {
+    actionId: record.actionId.slice(0, FACT_FIELD_MAX_CHARS),
+    action: record.action.slice(0, FACT_FIELD_MAX_CHARS),
+    phase,
+    ...(app ? { window: { ...(id !== undefined ? { id } : {}), app: app.slice(0, FACT_APP_MAX_CHARS) } } : {}),
+  }
+}
+
+/**
+ * `_meta` whitelist projection for tool_result blocks entering the persistent
+ * sessionMessages track (#567 item 5; shape-tightened in #709 items 1+2): only
+ * cross-run consumers survive, and the computer-use fact is shape-validated
+ * instead of copied wholesale. The live push path and the history rebuild path
+ * both route through here so the minimal-set invariant holds structurally.
+ */
+export function projectPersistedToolResultMeta(meta: unknown): Record<string, unknown> | undefined {
+  if (!meta || typeof meta !== 'object' || Array.isArray(meta)) return undefined
+  const source = meta as Record<string, unknown>
+  const projected: Record<string, unknown> = {}
+  const actionFact = normalizeComputerUseActionFact(source.computerUseAction)
+  if (actionFact) projected.computerUseAction = actionFact
+  // 批量台账事实（get_window_state / node-repl 桥）逐条验形后随持久轨存活，
+  // 跨压缩边界的动作轨迹不再只剩 singular 最新一条（#725 review R1/R10 遗留）。
+  if (Array.isArray(source.computerUseActions)) {
+    const facts = source.computerUseActions
+      .map(normalizeComputerUseActionFact)
+      .filter((fact): fact is NonNullable<typeof fact> => fact !== null)
+      .slice(0, FACT_BATCH_MAX_ENTRIES)
+    if (facts.length > 0) projected.computerUseActions = facts
+  }
+  if (typeof source.toolName === 'string' && source.toolName) projected.toolName = source.toolName
+  return Object.keys(projected).length > 0 ? projected : undefined
+}
+
+export function renderComputerUseActionFacts(messages: NormalizedMessageParam[]): string {
   const facts = new Map<string, string>()
   const recordFact = (fact: any): void => {
-    if (!fact || typeof fact.actionId !== 'string' || typeof fact.phase !== 'string') return
-    const app = typeof fact.window?.app === 'string' ? fact.window.app : 'unknown app'
-    const windowId = typeof fact.window?.id === 'number' ? `#${fact.window.id}` : ''
-    const action = typeof fact.action === 'string' ? fact.action : 'action'
-    const suffix = fact.phase === 'verified' ? 'verified complete' : 'not verified complete'
-    facts.set(fact.actionId, `${fact.actionId}: ${action} on ${app}${windowId}; phase=${fact.phase}; ${suffix}`)
+    // 形状收紧（#709 第 2 项）：phase 枚举校验 + 字段截断后渲染，非法事实整条丢弃。
+    const normalized = normalizeComputerUseActionFact(fact)
+    if (!normalized) return
+    const { actionId, action, phase } = normalized
+    const app = normalized.window?.app ?? 'unknown app'
+    const windowId = typeof normalized.window?.id === 'number' ? `#${normalized.window.id}` : ''
+    const suffix = phase === 'verified' ? 'verified complete' : 'not verified complete'
+    facts.set(actionId, `${actionId}: ${action} on ${app}${windowId}; phase=${phase}; ${suffix}`)
   }
   const visit = (value: any): void => {
     if (Array.isArray(value)) {
@@ -105,8 +172,8 @@ export function renderComputerUseActionFacts(messages: Array<{ role: string; con
 }
 
 export function stripInternalContextBlocks(
-  messages: Array<{ role: string; content: any }>,
-): Array<{ role: string; content: any }> {
+  messages: NormalizedMessageParam[],
+): NormalizedMessageParam[] {
   return messages.flatMap((message) => {
     if (!Array.isArray(message.content)) return [message]
     const content = message.content.filter((block: any) => !isInternalContextBlock(block))

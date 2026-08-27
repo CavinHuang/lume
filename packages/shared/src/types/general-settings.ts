@@ -160,7 +160,7 @@ export interface ExportLogsResult {
   sizeBytes: number
 }
 
-export type WebSearchProvider = "guanlan" | "exa" | "tavily" | "brave" | "duckduckgo" | "pipellm" | "zhipu" | "bing"
+export type WebSearchProvider = "exa" | "tavily" | "brave" | "duckduckgo" | "pipellm" | "zhipu" | "bing"
 
 export interface TestSearchBackendInput {
   provider: WebSearchProvider

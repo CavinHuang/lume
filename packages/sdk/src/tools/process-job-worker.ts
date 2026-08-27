@@ -101,6 +101,8 @@ function stopTree(child) {
       stdio: 'ignore',
       windowsHide: true
     })
+    // 无监听的 error 事件计入 sidecar uncaughtException 五击止损（#548 同类）
+    killer.once('error', () => {})
     killer.unref()
     return
   }
@@ -115,9 +117,14 @@ readProcessIdentity(process.pid, (identity) => {
     if (!finished) updateState({})
   } catch {}
 })
+// ELECTRON_RUN_AS_NODE 是本 worker 自身运行所需（sidecar 经 Electron utilityProcess
+// fork），但对命令子进程是污染：后台命令里启动 Electron 会退化为纯 node，剔除之（#538）
+const childEnv = { ...process.env }
+delete childEnv.ELECTRON_RUN_AS_NODE
+
 const child = cp.spawn(spec.command, spec.args, {
   cwd: spec.cwd,
-  env: process.env,
+  env: childEnv,
   detached: process.platform !== 'win32',
   windowsHide: true,
   stdio: ['ignore', 'pipe', 'pipe']
