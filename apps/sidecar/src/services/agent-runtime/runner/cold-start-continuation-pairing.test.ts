@@ -41,6 +41,7 @@ describe("冷启动续跑 toolCall.inputHash 配对(#531 复审 M3)", () => {
       runId: "run-1",
       toolUseId: "tu_1",
       toolName: "Bash",
+      risk: "low",
       input,
       canAllowAlways: true,
       reason: "pairing"
