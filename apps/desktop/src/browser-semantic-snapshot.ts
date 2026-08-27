@@ -18,6 +18,33 @@ export interface BrowserSemanticTree {
   refs: BrowserSemanticRef[]
 }
 
+/** #604：语义快照复用的帧级验证凭证——frameRevision 含 DOM revision 与控件 IDL 状态，null = 该帧不可信 */
+export type BrowserSemanticFrameRevision = {
+  frameId: string
+  frameRevision: string | null
+  loaderId: string
+}
+
+/** 复用上界：closed shadow 等浏览器级盲区无任何变更信号，超时一律走全扫兜底 */
+export const SEMANTIC_SNAPSHOT_REUSE_TTL_MS = 5_000
+
+/** 所有帧凭证可信（未检出零信号内容/采集失败）且未超 TTL 时才允许复用 */
+export function reusableSemanticFrameState(state: BrowserSemanticFrameRevision[], cachedAt: number, nowMs: number): boolean {
+  return state.length > 0
+    && state.every((frame) => frame.frameRevision !== null && frame.loaderId.length > 0)
+    && nowMs - cachedAt <= SEMANTIC_SNAPSHOT_REUSE_TTL_MS
+}
+
+/** 帧序敏感的逐帧凭证比对：任一帧 revision/loaderId/身份变化即视为页面已变 */
+export function sameSemanticFrameState(left: BrowserSemanticFrameRevision[], right: BrowserSemanticFrameRevision[]): boolean {
+  return left.length === right.length && left.every((frame, index) => {
+    const candidate = right[index]
+    return candidate?.frameRevision === frame.frameRevision
+      && candidate.frameId === frame.frameId
+      && candidate.loaderId === frame.loaderId
+  })
+}
+
 type AxValue = { value?: unknown }
 type AxProperty = { name?: unknown; value?: AxValue }
 type AxNode = {
