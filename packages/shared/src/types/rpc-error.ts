@@ -21,15 +21,28 @@ export interface LumeRpcErrorShape {
 }
 
 /**
- * 稳定跨进程错误码。覆盖 #579 契约落地后**新增**的显式 code——存量手写 shape
- * 码(E_NOT_IMPLEMENTED/connection_* 等)仍在各自定义点,待统一批迁再入账,
- * 本表暂不作唯一事实源承诺,新增业务 code 一律在此登记,勿依赖 name 兜底值。
+ * 稳定跨进程错误码单一台账:sidecar 出站错误一律引用此表字面量值,
+ * 勿依赖 name 兜底值;新增业务 code 在此登记。
  */
 export const RPC_ERROR_CODES = {
   /** 入参校验失败(validateInput) */
   INVALID_PARAMS: "E_INVALID_PARAMS",
   /** 无更具体语义时的兜底码(desktop 侧约定不附着到 rejection) */
   RPC: "E_RPC",
+  /** RPC 消息超出尺寸上限(process-transport 分帧) */
+  MESSAGE_TOO_LARGE: "E_MESSAGE_TOO_LARGE",
+  /** RPC 帧行非合法 JSON */
+  BAD_JSON: "E_BAD_JSON",
+  /** RPC 帧结构非法(method/params 缺失等) */
+  BAD_REQUEST: "E_BAD_REQUEST",
+  /** 未注册的 method */
+  NOT_IMPLEMENTED: "E_NOT_IMPLEMENTED",
+  /** 连接凭证库密钥注入被拒(desktop 启动关键路径) */
+  CONNECTION_VAULT_KEY_INVALID: "connection_vault_key_invalid",
+  /** 密文加密密钥注入被拒(desktop 启动关键路径) */
+  SECRET_ENCRYPTION_KEY_INVALID: "secret_encryption_key_invalid",
+  /** desktop 浏览器主进程通道断开/不可用 */
+  BROWSER_UNAVAILABLE: "browser_unavailable",
 } as const;
 
 /**
