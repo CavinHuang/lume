@@ -134,6 +134,8 @@ import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
 import { instrumentIpcCommand } from './logging/ipc-instrumentation'
+import { createLogLiveForwarder } from './logging/live-forwarder'
+import { stableStringify } from './logging/settings-diff'
 import {
   createChromeNativeHostInstallPlan,
   writeChromeNativeHostRegistration,
@@ -161,7 +163,7 @@ import { SettingsBroker } from './settings/settings-broker'
 import { createBrowserRuntime, type BrowserRuntime } from './browser-runtime'
 import { discoverChromeProfiles, importChromeProfile, importConnectedChromeCookies, type ImportedCookie } from './browser-import'
 import type { BrowserSettings,
-  LumeLogLevel, LumeLogEventInput,} from '@lume/shared'
+  LumeLogLevel, LumeLogEventInput, LumeLogError,} from '@lume/shared'
 import type { LumeDiagnosticCaptureSettings, LumeLogDigestPolicy } from '@lume/shared'
 import { nativeEventToIntent, summarizeValue, normalizeHostLevel, LUME_LOGGING_DEFAULTS } from '@lume/shared'
 import { QUIET_RPC_METHODS as QUIET_SIDECAR_RPC_METHODS } from '@lume/shared'
@@ -442,14 +444,24 @@ async function logIpcCommand<T>(name: string, args: unknown, run: () => Promise<
         command: e.name,
         args: summarizeValue(e.args),
         ...(e.result !== undefined ? { result: summarizeValue(e.result) } : {}),
+        ...(e.suppressedCount !== undefined ? { suppressedCount: e.suppressedCount } : {}),
       },
-      ...(e.error ? { error: e.error } : {}),
+      ...(e.error !== undefined ? { error: e.error as LumeLogError } : {}),
     })),
   }, name, args, run)
 }
 
-function handleLogged(channel: string, handler: (event: Electron.IpcMainInvokeEvent, ...args: any[]) => unknown): void {
-  ipcMain.handle(channel, (event, ...args) => logIpcCommand(channel, args[0], () => handler(event, ...args)))
+function handleLogged(
+  channel: string,
+  // 契约：本包装仅把 args[0] 作为参数摘要进埋点日志，handler 只收单个 payload。
+  // 未来多参 handler 必须另起 ipcMain.handle 并自行埋点，避免静默丢参。
+  handler: (event: Electron.IpcMainInvokeEvent, payload?: unknown) => unknown,
+): void {
+  ipcMain.handle(channel, (event, payload) => {
+    // sender 校验先于埋点：拒绝路径不得把未信任载荷的摘要写进日志。
+    validateIpcSender(event, getTrustedWindows())
+    return logIpcCommand(channel, payload, () => handler(event, payload))
+  })
 }
 
 function writeRateLimitedTrayWarning(event, message, ownerWebContentsId, data = {}) {
@@ -2558,15 +2570,23 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       rendererLogSubscriptions.get(context.ownerWebContentsId)?.()
       const target = getTrustedWindows().find((win) => win.webContents.id === context.ownerWebContentsId)
       if (!target) throw new Error('trusted renderer is unavailable')
+      // #753: 推送先过合流/背压闸（100ms 合并 + 单推上限），再发往 renderer。
+      const forwarder = createLogLiveForwarder({
+        isAlive: () => !target.isDestroyed() && !target.webContents.isDestroyed(),
+        send: (payload) => target.webContents.send('lume:event:logs:live', payload),
+      })
       const unsubscribe = getLoggingService().subscribe((events) => {
         if (target.isDestroyed() || target.webContents.isDestroyed()) {
           rendererLogSubscriptions.get(context.ownerWebContentsId)?.()
           rendererLogSubscriptions.delete(context.ownerWebContentsId)
           return
         }
-        target.webContents.send('lume:event:logs:live', { events })
+        forwarder.push(events)
       })
-      rendererLogSubscriptions.set(context.ownerWebContentsId, unsubscribe)
+      rendererLogSubscriptions.set(context.ownerWebContentsId, () => {
+        forwarder.dispose()
+        unsubscribe()
+      })
       return { ok: true }
     }
     case 'desktop_log_live_unsubscribe':
@@ -3109,8 +3129,9 @@ function createSidecarHost({ onNotification }) {
               const previous = (previousPersisted && typeof previousPersisted === 'object'
                 ? (previousPersisted as Record<string, unknown>)
                 : {}) as Record<string, unknown>
+              // #758: 裸 JSON.stringify 对嵌套对象键序敏感，会报假阳性变更键；改键序稳定比较。
               const changedKeys = Object.keys(incoming)
-                .filter((key) => JSON.stringify(incoming[key]) !== JSON.stringify(previous[key]))
+                .filter((key) => stableStringify(incoming[key]) !== stableStringify(previous[key]))
                 // dev trace 归一（持久化 info → 生效 trace）是既定语义而非用户变更，不计入审计。
                 .filter((key) => !(key === 'consoleLevel' && !app.isPackaged
                   && incoming.consoleLevel === LUME_LOGGING_DEFAULTS.consoleLevel))
@@ -3531,7 +3552,6 @@ handleLogged('lume:window-control', async (event, op) => {
   }
 })
 handleLogged('lume:relaunch', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   setImmediate(() => {
     app.relaunch()
     app.exit(0)
@@ -3539,7 +3559,6 @@ handleLogged('lume:relaunch', async (event) => {
   return null
 })
 handleLogged('lume:update:check', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   autoUpdater.autoDownload = false
   autoUpdater.autoInstallOnAppQuit = false
@@ -3547,7 +3566,6 @@ handleLogged('lume:update:check', async (event) => {
   return createUpdateInfo(result?.updateInfo, app.getVersion())
 })
 handleLogged('lume:update:download', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   const sender = event.sender
   const progressState = { previousTransferred: 0, started: false }
@@ -3589,14 +3607,13 @@ handleLogged('lume:update:download', async (event) => {
   })
 })
 handleLogged('lume:update:download-asset', async (event, payload) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
-  if (!payload || typeof payload.url !== 'string') throw new Error('缺少更新安装包地址')
-  await downloadMacUpdateAsset(payload.url, event.sender)
+  const assetUrl = (payload as { url?: unknown } | undefined)?.url
+  if (typeof assetUrl !== 'string') throw new Error('缺少更新安装包地址')
+  await downloadMacUpdateAsset(assetUrl, event.sender)
   return null
 })
 handleLogged('lume:update:install', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   if (!app.isPackaged) return null
   if (pendingMacUpdatePath) {
     const dmgPath = pendingMacUpdatePath
@@ -3638,7 +3655,6 @@ handleLogged('lume:update:install', async (event) => {
 })
 
 handleLogged('lume:app:signature', async (event) => {
-  validateIpcSender(event, getTrustedWindows())
   const macSignatureStable = await detectMacSignatureStable({
     platform: process.platform,
     isPackaged: app.isPackaged,

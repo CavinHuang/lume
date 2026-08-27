@@ -633,6 +633,43 @@ describe("searchMemoryV2", () => {
     expect(results.some((item) => item.statement === suppressed.statement)).toBe(false);
   });
 
+  test("treats expired entries as stale without mutating the store during search", async () => {
+    const store = createMemoryV2Store();
+    const created = store.writeEntry({
+      kind: "preference",
+      targetScope: "global",
+      statement: "User wants to be called Alice.",
+      confidence: "high",
+      claim: {
+        subject: "user/self",
+        predicate: "preferred_name",
+        object: "Alice"
+      }
+    });
+    const expired = store.updateEntry({
+      scope: "global",
+      id: created.frontmatter.id,
+      validTo: "2000-01-01T00:00:00.000Z",
+      expectedRevision: created.frontmatter.revision
+    });
+
+    const results = await searchMemoryV2({
+      store,
+      query: "我叫什么名字？",
+      maxResults: 5,
+      semantic: "off"
+    });
+
+    expect(results[0]).toMatchObject({
+      id: expired.frontmatter.id,
+      status: "suspected_stale"
+    });
+    const persisted = store.listEntries({ scopes: ["global"], includeStatuses: ["active", "suspected_stale"] })
+      .find((entry) => entry.frontmatter.id === expired.frontmatter.id);
+    expect(persisted?.frontmatter.status).toBe("active");
+    expect(persisted?.frontmatter.revision).toBe(expired.frontmatter.revision);
+  });
+
   test("minScore filters candidates before rerank on every return path (#538)", async () => {
     await smartAddMemoryV2Candidate({
       workspaceSlug: "demo",
@@ -733,6 +770,67 @@ describe("overrides 门控与 rerank 序 (#521)", () => {
     });
 
     expect(results.some((item) => item.statement === "User wants to be called Alice.")).toBe(true);
+  });
+
+  test("keeps a claim when a correction targets an unrelated clause(#521)", async () => {
+    await seedNameClaim("User wants to be called Alice.", "Alice");
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "实际上 instead 这个功能应该怎么配置？我叫什么名字？",
+      maxResults: 5,
+      semantic: "off"
+    });
+
+    expect(results.some((item) => item.statement === "User wants to be called Alice.")).toBe(true);
+  });
+
+  test("does not treat a bare replacement followed by another topic as a name correction(#521)", async () => {
+    await seedNameClaim("User wants to be called Alice.", "Alice");
+
+    for (const query of [
+      "以后改为 Bob，配置这个功能。我叫什么名字？",
+      "以后改为 Bob。配置这个功能。我叫什么名字？"
+    ]) {
+      const results = await searchMemoryV2({
+        workspaceSlug: "demo",
+        query,
+        maxResults: 5,
+        semantic: "off"
+      });
+      expect(results.some((item) => item.statement === "User wants to be called Alice.")).toBe(true);
+    }
+  });
+
+  test("recognizes an English name correction containing a comma(#521)", async () => {
+    await seedNameClaim("User wants to be called Alice.", "Alice");
+
+    const results = await searchMemoryV2({
+      workspaceSlug: "demo",
+      query: "Actually, call me Bob. What's my name?",
+      maxResults: 5,
+      semantic: "off"
+    });
+
+    expect(results.some((item) => item.statement === "User wants to be called Alice.")).toBe(false);
+  });
+
+  test("does not treat ordinary negation or discourse markers as corrections(#521)", async () => {
+    await seedNameClaim("User wants to be called Alice.", "Alice");
+
+    for (const query of [
+      "我叫什么名字不是重点，配置这个功能应该怎么做？",
+      "Actually, what's my name?",
+      "Instead, what is my name?"
+    ]) {
+      const results = await searchMemoryV2({
+        workspaceSlug: "demo",
+        query,
+        maxResults: 5,
+        semantic: "off"
+      });
+      expect(results.some((item) => item.statement === "User wants to be called Alice.")).toBe(true);
+    }
   });
 
   test("rerank order overrides legacy scores for final selection(#521)", async () => {

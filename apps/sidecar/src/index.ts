@@ -22,7 +22,8 @@ import {
   setLogBatchNotificationWriter,
   writeEmergencyLog,
   writeLogRecord,
-  setLogFileLevel,} from "./services/infra/logger";
+  setLogFileLevel,
+  shouldEmitLog,} from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_UNITS } from "./rpc/process-transport";
 import { browserRpcErrorFromPayload, classifyBrowserRequestTimeout, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
@@ -373,7 +374,9 @@ async function handleRpcLine(line: string): Promise<void> {
         rpcRequestId: String(payload.id),
         data: { method, params: summarizeValue(payload.params) }
       });
-    } else if (!QUIET_RPC_METHODS.has(method)) {
+    } else if (!QUIET_RPC_METHODS.has(method) && shouldEmitLog("debug")) {
+      // #755: 生产 info 门下每笔 RPC 白付 params/result 摘要成本——级别门前置，
+      // 摘要只在事件确定要写时才求值。
       emitRpcLog({
         level: "debug",
         context: "rpc.server",
@@ -383,7 +386,11 @@ async function handleRpcLine(line: string): Promise<void> {
         durationMs,
         ...correlation,
         rpcRequestId: String(payload.id),
-        data: { method, params: summarizeValue(payload.params), result: summarizeValue(result) }
+        data: {
+          method,
+          get params() { return summarizeValue(payload.params) },
+          get result() { return summarizeValue(result) },
+        },
       });
     }
     writeResponse({ id: payload.id, result });

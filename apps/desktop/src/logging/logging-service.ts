@@ -7,6 +7,8 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises'
+import { createReadStream, createWriteStream } from 'node:fs'
+import { finished } from 'node:stream/promises'
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
 import type {
@@ -213,7 +215,8 @@ export class LoggingService {
   private droppedFirstAt = ''
   private droppedLastAt = ''
   private listeners = new Set<LiveListener>()
-  private snapshotActive = false
+  /** 快照型操作（导出/清空）计数：任一在途即暂停 flush；单布尔无法表达并发嵌套（#752）。 */
+  private snapshotOps = 0
   private lastSaturatedWarnAt = 0
 
   constructor(options: LoggingServiceOptions) {
@@ -312,7 +315,7 @@ export class LoggingService {
   }
 
   async flush(): Promise<void> {
-    if (this.snapshotActive) {
+    if (this.snapshotOps > 0) {
       return
     }
     if (this.flushTimer) {
@@ -330,9 +333,9 @@ export class LoggingService {
   async close(): Promise<void> {
     await this.flush()
     // 尾窗补偿按队列深度定遍数（每批 ≤100 条）：突发 3000 条也要全部落盘。
-    // passes 上限防关停期持续生产者造成死循环；snapshotActive（导出/清空）时尊重暂停语义。
+    // passes 上限防关停期持续生产者造成死循环；快照操作（导出/清空）在途时尊重暂停语义。
     let passes = Math.ceil(this.queue.length / MAX_BATCH_EVENTS) + 2
-    while (this.queue.length > 0 && passes > 0 && !this.snapshotActive) {
+    while (this.queue.length > 0 && passes > 0 && this.snapshotOps === 0) {
       await this.flush()
       passes -= 1
     }
@@ -446,29 +449,46 @@ export class LoggingService {
 
   async exportAll(): Promise<ExportLogsResult> {
     await this.flush()
-    this.snapshotActive = true
+    this.snapshotOps += 1
     try {
       const snapshot = await this.listFiles()
       const exportDir = join(this.logsDir, 'exports')
       await mkdir(exportDir, { recursive: true })
       const fileName = `lume-logs-${this.now().toISOString().replace(/[:.]/g, '-')}.txt`
       const path = join(exportDir, fileName)
-      const chunks: string[] = []
-      for (const file of [...snapshot.files].reverse()) {
-        chunks.push(`===== ${file.name} =====`, await readFile(join(this.logsDir, file.name), 'utf8'), '')
+      // 分段流式写出（#752）：内存只持有单文件读副本，杜绝全量 readFile + join 的双份峰值。
+      const out = createWriteStream(path, { encoding: 'utf8', mode: 0o600 })
+      const writeChunk = (chunk: string): Promise<void> =>
+        new Promise<void>((resolve, reject) => {
+          out.write(chunk, (error) => (error ? reject(error) : resolve()))
+        })
+      try {
+        // listFiles 已按修改时间倒序返回，导出保持最新日志分节在前。
+        for (const [index, file] of snapshot.files.entries()) {
+          await writeChunk(`===== ${file.name} =====\n`)
+          const source = createReadStream(join(this.logsDir, file.name), 'utf8')
+          for await (const chunk of source) {
+            await writeChunk(typeof chunk === 'string' ? chunk : chunk.toString('utf8'))
+          }
+          // 原实现 chunks.join('\n') 的分节空行语义：节与节之间隔一空行，末节单换行收尾。
+          const isLast = index === snapshot.files.length - 1
+          await writeChunk(isLast ? '\n' : '\n\n')
+        }
+      } finally {
+        out.end()
       }
-      await writeFile(path, chunks.join('\n'), { encoding: 'utf8', mode: 0o600 })
+      await finished(out)
       const info = await stat(path)
       return { path: '', fileName, sizeBytes: info.size }
     } finally {
-      this.snapshotActive = false
-      if (this.queue.length > 0) this.scheduleFlush()
+      this.snapshotOps -= 1
+      if (this.snapshotOps === 0 && this.queue.length > 0) this.scheduleFlush()
     }
   }
 
   async clear(): Promise<number> {
     await this.flush()
-    this.snapshotActive = true
+    this.snapshotOps += 1
     try {
       const snapshot = await this.listFiles()
       await Promise.all(snapshot.files.map((file) => rm(join(this.logsDir, file.name), { force: true })))
@@ -477,8 +497,8 @@ export class LoggingService {
       this.activeSize = 0
       return snapshot.files.length
     } finally {
-      this.snapshotActive = false
-      if (this.queue.length > 0) this.scheduleFlush()
+      this.snapshotOps -= 1
+      if (this.snapshotOps === 0 && this.queue.length > 0) this.scheduleFlush()
     }
   }
 
@@ -575,7 +595,9 @@ export class LoggingService {
   }
 
   private isProtected(event: LumeLogEventV2): boolean {
-    return LEVEL_ORDER[event.level] >= LEVEL_ORDER.warn || TRACE_SPINE_EVENTS.has(event.event)
+    // #755: info 整档入保护——dev trace 洪水下驱逐只能落在 trace/debug 档，
+    // 各源 info（含终端里程碑与普通业务 info）不得成为驱逐对象。
+    return LEVEL_ORDER[event.level] >= LEVEL_ORDER.info || TRACE_SPINE_EVENTS.has(event.event)
   }
 
   private noteDropped(event: LumeLogEventV2): void {

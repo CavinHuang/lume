@@ -24,12 +24,12 @@ import {
   type MemoryV2QueryPlan
 } from "./claim";
 import type {
+  MemoryV2Claim,
   MemoryV2Entry,
   MemoryV2RecallItem,
   MemoryV2Scope,
   MemoryV2SemanticRole
 } from "./types";
-import { MemoryCommandService } from "./command-service";
 
 export interface MemoryV2SearchInput {
   workspaceSlug?: string;
@@ -73,12 +73,11 @@ export async function searchMemoryV2(input: MemoryV2SearchInput): Promise<Memory
   });
   const queryPlan = input.queryPlan ?? await resolveMemoryV2QueryPlan(query, queryPlanner);
   const scopes = input.scopes ?? (input.workspaceSlug ? ["global", "workspace"] : ["global"]);
-  const loadedEntries = store.listEntries({
+  const loadedEntries = markExpiredEntriesStaleForRecall(store.listEntries({
       workspaceSlug: input.workspaceSlug,
       scopes,
       includeStatuses: ["active", "suspected_stale"]
-    });
-  expireEntries(loadedEntries, input.workspaceSlug);
+    }));
   const entryCandidates = entryRecallCandidates(
     loadedEntries.filter((entry) => readActivation(entry.frontmatter).recall)
       .filter((entry) => !currentMessageOverridesClaim(entry, query, queryPlan))
@@ -302,29 +301,26 @@ function markdownRecallCandidates(input: {
   return items;
 }
 
-function expireEntries(entries: MemoryV2Entry[], workspaceSlug?: string): void {
+// Expiration is persisted by the background organizer; recall only needs a local stale view.
+function markExpiredEntriesStaleForRecall(entries: MemoryV2Entry[]): MemoryV2Entry[] {
   const now = Date.now();
-  const service = new MemoryCommandService();
-  for (const entry of entries) {
-    if (entry.frontmatter.status !== "active" || !entry.frontmatter.valid_to) continue;
+  return entries.map((entry) => {
+    if (entry.frontmatter.status !== "active" || !entry.frontmatter.valid_to) return entry;
     const expiresAt = Date.parse(entry.frontmatter.valid_to);
-    if (!Number.isFinite(expiresAt) || expiresAt > now) continue;
-    try {
-      service.markSuspectedStale({
-        workspaceSlug: workspaceSlug ?? "",
-        id: entry.frontmatter.id,
-        scope: entry.frontmatter.scope
-      });
-      entry.frontmatter.status = "suspected_stale";
-    } catch {
-      continue;
-    }
-  }
+    if (!Number.isFinite(expiresAt) || expiresAt > now) return entry;
+    return {
+      ...entry,
+      frontmatter: {
+        ...entry.frontmatter,
+        status: "suspected_stale"
+      }
+    };
+  });
 }
 
 function currentMessageOverridesClaim(entry: MemoryV2Entry, query: string, queryPlan: MemoryV2QueryPlan): boolean {
   const claim = claimFromEntry(entry);
-  if (!claim || !/(?:纠正|改为|改成|不是|不再|instead|actually|from now on)/i.test(query)) return false;
+  if (!claim) return false;
   // #521:"不是/不再/actually"是日常高频词,普通疑问句即可误触。抑制需同时满足:
   // predicate 命中计划口径(isClaimMatchForQuery 同款归一化)+ claim.subject 与
   // 计划主体一致(跨主体保护:纠正用户名不得抑制 assistant 名字记忆)。
@@ -338,7 +334,43 @@ function currentMessageOverridesClaim(entry: MemoryV2Entry, query: string, query
   if (queryPlan.querySubject && claim.subject.trim().toLowerCase() !== queryPlan.querySubject.trim().toLowerCase()) {
     return false;
   }
-  return !query.toLowerCase().includes(claim.object.toLowerCase());
+  return correctionClauseMatchesClaim(query, claim) && !query.toLowerCase().includes(claim.object.toLowerCase());
+}
+
+function correctionClauseMatchesClaim(query: string, claim: MemoryV2Claim): boolean {
+  const clauses = query.split(/[。！？!?;；\n]+/).map((clause) => clause.trim()).filter(Boolean);
+  const predicateCue = correctionPredicateCue(claim.predicate);
+  return clauses.some((clause, index) => {
+    if (predicateCue.test(clause) && /(?:纠正|改为|改成|from now on)/i.test(clause)) return true;
+    if (isPreferredNamePredicate(claim.predicate)
+      && /(?:叫我|称呼我(?:为)?|call me)\s*["“”']?[\p{L}\p{N}_-]+/iu.test(clause)) {
+      return true;
+    }
+    const bareReplacement = /^(?:以后|从现在起|从今以后|之后|今后)?\s*(?:改为|改成|instead|from now on)\s*["“”']?[\p{L}\p{N}_-]+["“”']?$/iu.test(clause);
+    return bareReplacement && predicateCue.test(clauses[index + 1] ?? "");
+  });
+}
+
+function isPreferredNamePredicate(predicate: string): boolean {
+  const normalized = predicate.trim().toLowerCase();
+  return normalized === "preferred_name" || normalized === "identity";
+}
+
+function correctionPredicateCue(predicate: string): RegExp {
+  const normalized = predicate.trim().toLowerCase();
+  if (isPreferredNamePredicate(normalized)) {
+    return /名字|称呼|叫我|name|nickname|call(?:ed)?/i;
+  }
+  if (normalized === "writing_style") {
+    return /写作风格|文风|语气|表达风格|措辞|行文|writing style|voice|tone/i;
+  }
+  if (normalized === "preference") {
+    return /偏好|喜欢|默认|习惯|prefer|preference|default|habit/i;
+  }
+  if (normalized === "source_of_truth") {
+    return /事实源|真实数据源|source of truth/i;
+  }
+  return new RegExp(normalized.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "i");
 }
 
 function scoreRecallCandidates(

@@ -64,6 +64,8 @@ function publishTraceRecorderEvent(event: TraceRecorderEvent): void {
   }
   if (event.type === "trace.ended") {
     const failed = event.trace.status === "failed";
+    // #757: spine 终点补 startedAt 差值——否则判断回复卡在哪需人肉减时间戳。
+    const durationMs = Date.parse(event.trace.endedAt ?? "") - Date.parse(event.trace.startedAt);
     writeLogRecord({
       level: failed ? "error" : "info",
       kind: "trace",
@@ -74,6 +76,7 @@ function publishTraceRecorderEvent(event: TraceRecorderEvent): void {
       traceId: correlationTraceId,
       runId: event.trace.runId,
       threadId: event.trace.threadId,
+      ...(Number.isFinite(durationMs) && durationMs >= 0 ? { durationMs } : {}),
       data: { storeTraceId: event.trace.id }
     });
     return;

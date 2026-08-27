@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LoggingService, normalizeLogValue } from '../src/logging/logging-service.ts'
@@ -242,7 +242,7 @@ test('content keys are previewed instead of redacted', async () => {
     })
     assert.equal(event.data.apiKey, '[redacted]')
     assert.ok(event.data.prompt.startsWith('z'.repeat(200)))
-    assert.ok(event.data.prompt.endsWith('…(+300)'))
+    assert.ok(event.data.prompt.endsWith('…[truncated]'))
   } finally {
     await service.close()
     await rmRetry(configDir)
@@ -340,6 +340,103 @@ test('dev trace env precedence matrix', async () => {
     else process.env.LUME_LOG_CONSOLE_LEVEL = prevConsole
     if (prevLegacy === undefined) delete process.env.LUME_LOG_LEVEL
     else process.env.LUME_LOG_LEVEL = prevLegacy
+    await rmRetry(configDir)
+  }
+})
+
+// #752: exportAll 分段流式写出——导出文本格式保持「header\n内容\n\n」分节不变。
+test('exportAll produces sectioned text export in reverse-chronological order', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-export-'))
+  const service = new LoggingService({ configDir, terminal: { write: () => true } })
+  try {
+    await service.listFiles()
+    const olderPath = join(configDir, 'logs', 'older.log')
+    const newerPath = join(configDir, 'logs', 'newer.log')
+    await Bun.write(olderPath, 'alpha-line')
+    await Bun.write(newerPath, 'beta-line')
+    await utimes(olderPath, new Date('2026-01-01T00:00:00.000Z'), new Date('2026-01-01T00:00:00.000Z'))
+    await utimes(newerPath, new Date('2026-01-02T00:00:00.000Z'), new Date('2026-01-02T00:00:00.000Z'))
+    const result = await service.exportAll()
+    assert.ok(result.sizeBytes > 0)
+    assert.match(result.fileName, /^lume-logs-.*\.txt$/)
+    const exported = await readFile(join(configDir, 'logs', 'exports', result.fileName), 'utf8')
+    assert.equal(
+      exported,
+      '===== newer.log =====\nbeta-line\n\n===== older.log =====\nalpha-line\n',
+    )
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// #752: snapshotActive 单布尔收敛为计数——并发的 export/clear 必须都结束后才恢复 flush，
+// 不能先结束的一个把暂停语义提前解除（否则 clear 未完时事件已写盘、导出内容撕裂）。
+test('flush stays paused until every concurrent snapshot op completes (#752)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-snapshot-'))
+  const service = new LoggingService({ configDir, terminal: { write: () => true }, now: () => new Date() })
+  try {
+    await service.listFiles()
+    await Bun.write(join(configDir, 'logs', 'lume-2026-07-16.ndjson'), '{"v":1}\n')
+
+    let gateResolve
+    const gate = new Promise((resolve) => { gateResolve = resolve })
+    const origListFiles = service.listFiles.bind(service)
+    let listCalls = 0
+    service.listFiles = async () => {
+      listCalls += 1
+      if (listCalls === 1) await gate
+      return origListFiles()
+    }
+
+    const exporting = service.exportAll()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    const clearing = service.clear()
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    // clear 已完成而 export 仍卡在游标读取：此刻入队的事件必须仍处暂停语义之下。
+    service.emit({ level: 'info', source: 'main', context: 'probe', event: 'app.started', message: 'during-export' })
+    await service.flush()
+    assert.equal(service.queue.length, 1, '并发快照未全部结束前 flush 必须保持暂停')
+
+    gateResolve()
+    await Promise.all([exporting, clearing])
+    await service.flush()
+    assert.equal(service.queue.length, 0, '全部快照结束后队列必须恢复冲刷')
+  } finally {
+    await service.close()
+    await rmRetry(configDir)
+  }
+})
+
+// #755: dev trace 洪水下，各源 info（含终端里程碑）不得被无保护驱逐。
+// 构造要点：info 必须排在前 100 条之后（躲过同步洪水触发 flush#1 的首批 splice），
+// 随后洪水把队列顶过 5000 上限，才会走到 enqueue 的驱逐路径。
+test('queue saturation protects info events from trace floods (#755)', async () => {
+  const configDir = await mkdtemp(join(tmpdir(), 'lume-logging-infoprotect-'))
+  const service = new LoggingService({
+    configDir,
+    terminal: { write: () => true },
+    now: () => new Date('2026-08-26T00:00:00.000Z'),
+    settings: { fileLevel: 'trace' },
+  })
+  try {
+    for (let i = 0; i < 200; i++) {
+      service.emit({ level: 'trace', source: 'main', context: 'agent.dispatch', event: 'provider.stream.delta', message: `warm-${i}` })
+    }
+    service.emit({ level: 'info', source: 'main', context: 'desktop.lifecycle', event: 'app.started', message: 'milestone' })
+    service.emit({ level: 'info', source: 'sidecar', context: 'sidecar.lifecycle', event: 'sidecar.ready', message: 'ready' })
+    service.emit({ level: 'info', source: 'main', context: 'agent.dispatch', event: 'log.message', message: 'ordinary-info' })
+    for (let i = 0; i < 5_200; i++) {
+      service.emit({ level: 'trace', source: 'main', context: 'agent.dispatch', event: 'provider.stream.delta', message: `noise-${i}` })
+    }
+    const drained = []
+    service.subscribe((events) => { drained.push(...events) })
+    await service.close()
+    const drainedEvents = drained.map((e) => `${e.level}:${e.event}`)
+    assert.ok(drainedEvents.includes('info:app.started'), '终端里程碑 info 不得被驱逐')
+    assert.ok(drainedEvents.includes('info:sidecar.ready'), 'sidecar.ready 不得被驱逐')
+    assert.ok(drainedEvents.includes('info:log.message'), '普通 info 不得被 dev trace 洪水驱逐 (#755)')
+  } finally {
     await rmRetry(configDir)
   }
 })
