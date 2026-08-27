@@ -356,7 +356,7 @@ async function renderGitHubIssuesList(
 		if (issue.pull_request) continue; // Skip PRs in issues list
 		const labels = issue.labels.length > 0 ? ` [${issue.labels.map(l => l.name).join(", ")}]` : "";
 		md += `- **#${issue.number}** ${issue.title}${labels}\n`;
-		md += `  by @${issue.user.login} · ${issue.comments} comments · ${issue.created_at}\n\n`;
+		md += `  by @${issue.user?.login ?? "(deleted)"} · ${issue.comments} comments · ${issue.created_at}\n\n`;
 	}
 
 	return { content: md, ok: true };
