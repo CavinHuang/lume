@@ -1,32 +1,47 @@
 import type { LumeToolDescriptor } from "../tools/tool-types";
-import { COMMAND_CONNECTOR_PATTERN, allowsCommandScopeGrant, buildPermissionFingerprint } from "./permission-rules";
+import {
+  GRANT_PREFIX_SCOPE_MARK,
+  GRANT_TOOL_SCOPE_MARK,
+  allowsCommandScopeGrant,
+  buildPermissionFingerprint,
+  matchEncodedGrants
+} from "./permission-rules";
 import type { AgentToolPermissionAllowScope } from "@lume/shared";
+import { toolGrantId, toolGrantMirror } from "./persisted-grant-store";
 
 export interface PermissionSessionGrantInput {
   threadId: string;
   descriptor: LumeToolDescriptor;
   input: unknown;
+  /** 携带时授权跨线程生效（workspace 持久集兜底，#775） */
+  workspaceSlug?: string;
+}
+
+/** allow_always 附带的持久化定位信息；无 workspaceSlug 的运行保持纯内存（行为同前） */
+export interface GrantOrigin {
+  workspaceSlug?: string;
+  toolName?: string;
 }
 
 export interface PermissionSessionStore {
   grant(input: PermissionSessionGrantInput): void;
   grantFingerprint(threadId: string, fingerprint: string): void;
-  /** 按「始终允许」作用域档位写入宽指纹（#558），返回实际生效档（宽档被否决时降级 exact）。 */
-  grantFingerprintWithScope(threadId: string, fingerprint: string, scope: AgentToolPermissionAllowScope): AgentToolPermissionAllowScope;
+  /**
+   * 按「始终允许」作用域档位写入宽指纹（#558），返回实际生效档（宽档被否决时降级 exact）。
+   * 携带 origin.workspaceSlug 时同步镜像到 workspace 持久集并落盘（#775）。
+   */
+  grantFingerprintWithScope(
+    threadId: string,
+    fingerprint: string,
+    scope: AgentToolPermissionAllowScope,
+    origin?: GrantOrigin
+  ): AgentToolPermissionAllowScope;
   bypass(threadId: string): void;
   isGranted(input: PermissionSessionGrantInput): boolean;
   isFingerprintGranted(threadId: string, fingerprint: string): boolean;
   isBypassed(threadId: string): boolean;
   clear(threadId: string): void;
 }
-
-/**
- * 宽指纹编码：exact 档存原串；command/tool 档加前缀标记后与 exact 共存于同一
- * 集合。`>` = 同命令前缀（请求指纹以已授 key 开头且落在词边界），`*` = 同工具。
- * ponytail: 单 Set 编码复用既有存储，撤销/查看入口出现前不引入第二数据结构。
- */
-const PREFIX_SCOPE_MARK = ">";
-const TOOL_SCOPE_MARK = "*";
 
 function splitFingerprint(fingerprint: string): { name: string; key: string } | null {
   const idx = fingerprint.indexOf(":");
@@ -42,13 +57,13 @@ function commandScopeFingerprint(fingerprint: string): string | null {
   // review P1:shell 连接符后缀(`&&`/`||`/`;`)会以空白开头命中词边界,
   // bash 类指纹必须 simple/只读才给前缀档,否则调用方降级 exact
   if (!allowsCommandScopeGrant(parts.name, parts.key)) return null;
-  return `${PREFIX_SCOPE_MARK}${parts.name}:${command}`;
+  return `${GRANT_PREFIX_SCOPE_MARK}${parts.name}:${command}`;
 }
 
 function toolScopeFingerprint(fingerprint: string): string | null {
   const parts = splitFingerprint(fingerprint);
   if (!parts || !parts.name) return null;
-  return `${TOOL_SCOPE_MARK}${parts.name}`;
+  return `${GRANT_TOOL_SCOPE_MARK}${parts.name}`;
 }
 
 export function createPermissionSessionStore(): PermissionSessionStore {
@@ -70,56 +85,44 @@ export function createPermissionSessionStore(): PermissionSessionStore {
   const grantFingerprintWithScope = (
     threadId: string,
     fingerprint: string,
-    scope: AgentToolPermissionAllowScope
+    scope: AgentToolPermissionAllowScope,
+    origin?: GrantOrigin
   ): AgentToolPermissionAllowScope => {
     grantFingerprint(threadId, fingerprint);
     // 三轮 review(UI F6):返回实际生效档——宽档被否决时静默降级 exact,
     // 上游据此生成如实的 toast 回执,不再宣称未生效的作用域
+    let effectiveScope: AgentToolPermissionAllowScope = "exact";
+    let encoded: string | null = null;
     if (scope === "tool") {
-      const encoded = toolScopeFingerprint(fingerprint.trim());
-      if (encoded) {
-        grantsFor(threadId).add(encoded);
-        return "tool";
-      }
-      return "exact";
+      encoded = toolScopeFingerprint(fingerprint.trim());
+      effectiveScope = encoded ? "tool" : "exact";
+    } else if (scope === "command") {
+      encoded = commandScopeFingerprint(fingerprint.trim());
+      effectiveScope = encoded ? "command" : "exact";
     }
-    if (scope === "command") {
-      const encoded = commandScopeFingerprint(fingerprint.trim());
-      if (encoded) {
-        grantsFor(threadId).add(encoded);
-        return "command";
-      }
+    if (encoded) grantsFor(threadId).add(encoded);
+
+    // #775:workspace 级持久镜像——同一次授权的编码集原样跨线程、跨重启生效
+    const workspaceSlug = origin?.workspaceSlug?.trim();
+    if (workspaceSlug) {
+      const fingerprints = [fingerprint.trim(), ...(encoded ? [encoded] : [])];
+      toolGrantMirror.upsert({
+        id: toolGrantId(workspaceSlug, fingerprints),
+        workspaceSlug,
+        scope: effectiveScope,
+        toolName: origin?.toolName ?? splitFingerprint(fingerprint.trim())?.name ?? "",
+        fingerprints,
+        createdAt: new Date().toISOString(),
+      });
     }
-    return "exact";
+    return effectiveScope;
   };
   const isFingerprintGranted = (threadId: string, fingerprint: string): boolean => {
     const normalized = fingerprint.trim();
     if (!normalized) return false;
     const grants = grantsByThread.get(threadId);
     if (!grants) return false;
-    if (grants.has(normalized)) return true;
-    for (const grant of grants) {
-      // 同工具档：工具名一致即放行
-      if (grant.startsWith(TOOL_SCOPE_MARK) && normalized.startsWith(grant.slice(1) + ":")) {
-        return true;
-      }
-      // 同命令前缀档：key 以已授命令开头且止于词边界（不放行 `ls` → `lsblk`）。
-      // 二轮 review P1:匹配侧必须与建档侧同一否决口径——rest 含连接符/管道/
-      // 重定向/命令替换时不得放行,否则 `npm test` 授档后
-      // `npm test && curl … | sh` 以空白开头照样命中。
-      if (grant.startsWith(PREFIX_SCOPE_MARK)) {
-        const grantedKey = grant.slice(PREFIX_SCOPE_MARK.length);
-        const rest = normalized.slice(grantedKey.length);
-        if (
-          normalized.startsWith(grantedKey)
-          && (rest === ""
-            || (/^\s/.test(rest) && !COMMAND_CONNECTOR_PATTERN.test(rest)))
-        ) {
-          return true;
-        }
-      }
-    }
-    return false;
+    return matchEncodedGrants(grants, normalized);
   };
 
   return {
@@ -138,10 +141,13 @@ export function createPermissionSessionStore(): PermissionSessionStore {
       bypassedThreads.add(normalized);
     },
     isGranted(input) {
-      return isFingerprintGranted(input.threadId, buildPermissionFingerprint({
+      const fingerprint = buildPermissionFingerprint({
         descriptor: input.descriptor,
         rawInput: input.input
-      }));
+      });
+      // 线程内集合优先；未命中且带 workspace 时查持久集（#775 跨线程语义）
+      if (isFingerprintGranted(input.threadId, fingerprint)) return true;
+      return toolGrantMirror.match(input.workspaceSlug, fingerprint);
     },
     isFingerprintGranted,
     isBypassed(threadId) {
