@@ -38,8 +38,9 @@ function parseGitLabUrl(url: string): GitLabUrl | null {
 
 		// Skip - prefix
 		if (rest[0] !== "-") return null;
+		if (rest.length < 2) return null;
 
-		const [, type, ...remaining] = rest as [string, ...string[]];
+		const [, type, ...remaining] = rest as [string, string, ...string[]];
 
 		// File: gitlab.com/{ns}/{proj}/-/blob/{ref}/{path}
 		if (type === "blob" && remaining.length >= 2) {

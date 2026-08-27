@@ -117,10 +117,12 @@ async function renderListing(ids: number[], timeout: number, title: string, sign
 	let output = `# ${title}\n\n`;
 	const stories = await fetchItems(ids, timeout, 20, signal);
 
+	let seq = 0;
 	for (let i = 0; i < stories.length; i++) {
 		const story = stories[i];
 		if (!story) continue;
-		output += `${i + 1}. **${story.title}**\n`;
+		seq++;
+		output += `${seq}. **${story.title}**\n`;
 		if (story.url) {
 			output += `   ${story.url}\n`;
 		}
