@@ -119,6 +119,7 @@ function toPublicAccount(account: StoredImAccount): ImAccount {
     hasToken: Boolean(account.encryptedToken),
     cursor: account.cursor,
     contextToken: account.contextToken,
+    lastInteractedSenderId: account.lastInteractedSenderId,
     lastError: account.lastError,
     lastStartedAt: account.lastStartedAt,
     lastStoppedAt: account.lastStoppedAt,
@@ -249,6 +250,24 @@ function createImAccountUnlocked(config: ImConfig, input: ImAccountCreateInput):
 
 export function updateImAccount(id: string, input: ImAccountUpdateInput): ImAccount {
   return mutateConfig((config) => updateImAccountUnlocked(config, id, input));
+}
+
+/**
+ * 记录 DM 最近互动发送者（#544 镜像建群的目标用户来源）。
+ * 仅在值变化时落盘，避免高频 DM 消息反复原子写整文件；
+ * 不走 ImAccountUpdateInput——该字段是 sidecar 内部状态，防止 RPC 路径篡改。
+ */
+export function recordImDmInteraction(accountId: string, senderId?: string): void {
+  const next = senderId?.trim();
+  if (!next) return;
+  mutateConfig((config) => {
+    const index = config.accounts.findIndex((item) => item.id === accountId);
+    if (index === -1) return;
+    const account = config.accounts[index] as StoredImAccount;
+    if (account.lastInteractedSenderId === next) return;
+    config.accounts[index] = { ...account, lastInteractedSenderId: next, updatedAt: Date.now() };
+    writeConfigUnlocked(config);
+  });
 }
 
 function updateImAccountUnlocked(config: ImConfig, id: string, input: ImAccountUpdateInput): ImAccount {

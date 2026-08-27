@@ -30,7 +30,7 @@ import { getRuntimeCoreSessionDir } from "../agent-runtime/runtime-core/session-
 import { revertCodingRun } from "../agent-runtime/runtime-core/coding-run-checkpoint-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger, writeLogRecord } from "../infra/logger";
-import { getImAccount, getImRuntimeAccount } from "./im-config-manager";
+import { getImAccount, getImRuntimeAccount, recordImDmInteraction } from "./im-config-manager";
 import { hasSeenImMessage, rememberImMessage } from "./im-seen-message-store";
 import {
   deleteImThreadBindingByPeer,
@@ -941,6 +941,11 @@ export async function routeInboundImMessage(
   deps: ImMessageRouterDeps = {}
 ): Promise<{ threadId: string }> {
   log.info("收到入站消息", { provider: message.provider, accountId: message.accountId, peerId: message.peerId, peerKind: message.peerKind, peerName: message.peerName, textLength: message.text.length });
+
+  // #544 会话镜像：DM 最近互动发送者持久化（反向建镜像群的目标用户来源）
+  if (message.peerKind === "dm") {
+    recordImDmInteraction(message.accountId, message.senderId);
+  }
 
   // 统一去重（#157）：四渠道 at-least-once 重投（WS 重连/服务端重试/进程重启）只处理一次。
   // messageId 缺失（部分事件类型无 id）跳过去重，避免 key 塌缩吞掉整账号消息。

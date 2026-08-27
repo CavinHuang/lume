@@ -88,6 +88,10 @@ export function getImThreadBindingsPath(): string {
   return join(getConfigDir(), "im-thread-bindings.json");
 }
 
+export function getImMirrorConfigPath(): string {
+  return join(getConfigDir(), "im-mirror-config.json");
+}
+
 export function getImSeenMessagesPath(): string {
   return join(getConfigDir(), "im-seen-messages.json");
 }
