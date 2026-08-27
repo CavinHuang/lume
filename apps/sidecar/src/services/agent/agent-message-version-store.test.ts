@@ -70,4 +70,64 @@ describe("agent-message-version-store", () => {
     expect(loaded?.messages[0]?.content).toBe("hello");
     expect(loaded?.visibleGroupIds).toEqual(["group-1"]);
   });
+
+  // #527-1：超限时最旧的不可见组连同其消息被裁剪；可见组与其消息永不触碰
+  test("超 300 组写入时裁剪最旧不可见组，可见链完整保留", () => {
+    const store = createEmptyAgentMessageVersionStore("session-prune");
+    const visibleIds: string[] = [];
+    for (let i = 0; i < 310; i += 1) {
+      const groupId = `group-${i}`;
+      const messageId = `message-${i}`;
+      store.groups.push({
+        groupId,
+        turnId: `turn-${i}`,
+        role: "user",
+        latestMessageId: messageId,
+        messageIds: [messageId],
+        createdAt: i,
+        updatedAt: i
+      });
+      store.messages.push({
+        messageId,
+        groupId,
+        role: "user",
+        versionIndex: 1,
+        isLatestVersion: true,
+        createdAt: i,
+        content: `content-${i}`
+      });
+      if (i >= 300) visibleIds.push(groupId); // 最新的 10 组可见，300 个旧组不可见
+    }
+    store.visibleGroupIds.push(...visibleIds);
+
+    writeAgentMessageVersionStore("session-prune", store);
+    const loaded = readAgentMessageVersionStore("session-prune");
+
+    expect(loaded?.groups.length).toBe(300);
+    expect(loaded?.visibleGroupIds).toEqual(visibleIds);
+    // 被裁的是最旧不可见段 group-0..9；最新可见组的消息必须原样保留
+    expect(loaded?.groups.map((group) => group.groupId)).not.toContain("group-0");
+    expect(loaded?.groups.at(-1)?.groupId).toBe("group-309");
+    expect(
+      loaded?.messages.find((record) => record.messageId === "message-309")?.content
+    ).toBe("content-309");
+    // 被裁组（group-0..9）的消息必须级联消失
+    expect(loaded?.messages.some((record) => /^group-\d+$/.test(record.groupId) && Number(record.groupId.slice(6)) < 10)).toBe(false);
+  });
+
+  test("未超限的 store 不触发任何裁剪", () => {
+    const store = createEmptyAgentMessageVersionStore("session-small");
+    store.groups.push({
+      groupId: "g1",
+      turnId: "t1",
+      role: "user",
+      latestMessageId: "m1",
+      messageIds: ["m1"],
+      createdAt: 1,
+      updatedAt: 2
+    });
+    store.visibleGroupIds.push("g1");
+    writeAgentMessageVersionStore("session-small", store);
+    expect(readAgentMessageVersionStore("session-small")?.groups.length).toBe(1);
+  });
 });

@@ -50,6 +50,11 @@ export interface AgentMessageVersionStore {
 
 const STORE_VERSION = 1;
 const STORE_FILENAME = "message-versions.json";
+// #527-1：版本组回收上限。此前组只增不减——重发截断后的不可见旧分支会随会话
+// 无限累积，写放大随之线性恶化。策略保守：仅裁剪「不在 visibleGroupIds」的组
+// （被编辑链取代的历史分支），按 updatedAt 最旧优先；可见链与其最新版本记录
+// 永不触碰。若不可见组不足以回落到上限（全可见超限），保持原样不裁。
+const MAX_STORED_GROUPS = 300;
 const log = createLogger("agent-message-version-store");
 
 function writeTextAtomic(path: string, payload: string): void {
@@ -111,8 +116,14 @@ export function readAgentMessageVersionStore(sessionId: string): AgentMessageVer
 
 export function writeAgentMessageVersionStore(sessionId: string, store: AgentMessageVersionStore): void {
   const path = getAgentMessageVersionStorePath(sessionId);
+  const normalized = normalizeStore(sessionId, store);
+  const prunedGroups = pruneInvisibleGroups(normalized.groups, normalized.visibleGroupIds);
   const payload: AgentMessageVersionStore = {
-    ...normalizeStore(sessionId, store),
+    ...normalized,
+    groups: prunedGroups.groups,
+    messages: prunedGroups.droppedGroupIds.size > 0
+      ? normalized.messages.filter((record) => !prunedGroups.droppedGroupIds.has(record.groupId))
+      : normalized.messages,
     version: STORE_VERSION,
     sessionId,
     updatedAt: Date.now()
@@ -120,6 +131,34 @@ export function writeAgentMessageVersionStore(sessionId: string, store: AgentMes
   // #527-1：紧凑序列化降写放大——每次创建版本都会全量重写本文件，
   // pretty print 在长会话下让磁盘字节与耗时同步翻倍
   writeTextAtomic(path, JSON.stringify(payload));
+}
+
+/**
+ * 超限时按 updatedAt 最旧优先裁剪不可见组；返回被裁组 id 集合供消息级联过滤。
+ * 不可见组不足 excess 时能裁多少裁多少（随编辑链增长渐进收敛到上限）；
+ * 可见组永不触碰——即使可见数量本身已超上限。
+ */
+function pruneInvisibleGroups(
+  groups: AgentMessageVersionGroupRecord[],
+  visibleGroupIds: string[]
+): { groups: typeof groups; droppedGroupIds: Set<string> } {
+  if (groups.length <= MAX_STORED_GROUPS) {
+    return { groups, droppedGroupIds: new Set() };
+  }
+  const visible = new Set(visibleGroupIds);
+  const excess = groups.length - MAX_STORED_GROUPS;
+  const dropped = groups
+    .filter((group) => !visible.has(group.groupId))
+    .sort((a, b) => a.updatedAt - b.updatedAt)
+    .slice(0, excess);
+  if (dropped.length === 0) {
+    return { groups, droppedGroupIds: new Set() };
+  }
+  const droppedIds = new Set(dropped.map((group) => group.groupId));
+  return {
+    groups: groups.filter((group) => !droppedIds.has(group.groupId)),
+    droppedGroupIds: droppedIds
+  };
 }
 
 export function ensureAgentMessageVersionStore(sessionId: string): AgentMessageVersionStore {
