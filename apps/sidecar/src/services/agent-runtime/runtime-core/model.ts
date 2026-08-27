@@ -1,7 +1,7 @@
 import type { Api, KnownProvider, Model } from "./model-types";
 import { DEFAULT_CONTEXT_WINDOW } from "@lume/agent-sdk";
 import { findModelMeta } from "@lume/shared";
-import { resolveModelCandidatesForChannel } from "./model-candidates";
+import { resolveModelCandidatesForChannel } from "../../infra/model-refs";
 import { adaptModelCapabilities, resolveAgentThinkingLevel } from "./model-capabilities";
 import { prioritizeProvidersForBaseUrl, shouldApplyChannelBaseUrl } from "./provider-routing";
 import { resolveRuntimeProviderCandidates } from "./provider-resolution";

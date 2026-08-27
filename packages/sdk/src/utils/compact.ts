@@ -186,7 +186,7 @@ export function createAutoCompactState(): AutoCompactState {
 
 /** Check the current request against the resolved model window. */
 export function shouldAutoCompact(
-  messages: any[],
+  messages: NormalizedMessageParam[],
   model: string,
   state: AutoCompactState,
   options: {
@@ -760,10 +760,10 @@ function isCompactionFailureReason(value: unknown): value is CompactionFailureRe
 }
 
 export function microCompactMessages(
-  messages: any[],
+  messages: NormalizedMessageParam[],
   maxToolResultChars: number = 50000,
-): any[] {
-  return messages.map((msg: any) => {
+): NormalizedMessageParam[] {
+  return messages.map((msg) => {
     if (typeof msg.content === 'string') return msg
     if (!Array.isArray(msg.content)) return msg
 

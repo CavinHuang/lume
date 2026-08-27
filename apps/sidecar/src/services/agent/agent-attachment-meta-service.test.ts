@@ -10,7 +10,7 @@ import {
   readWorkspaceAttachmentMeta,
   upsertAttachmentMeta
 } from "./agent-attachment-meta-service";
-import { getAgentSessionWorkspacePath, getWorkspaceResourcesPath } from "../infra/config-paths";
+import { getAgentThreadRootPath, getWorkspaceResourcesPath } from "../infra/config-paths";
 
 const createdDirs: string[] = [];
 const originalConfigDir = process.env.LUME_CONFIG_DIR;
@@ -33,7 +33,7 @@ describe("agent-attachment-meta-service", () => {
   test("records external attachment metadata for a thread target path", () => {
     createTempConfigDir();
     const scope = { kind: "thread" as const, workspaceSlug: "ws", threadId: "thread-a" };
-    const threadRoot = getAgentSessionWorkspacePath(scope.workspaceSlug, scope.threadId);
+    const threadRoot = getAgentThreadRootPath(scope.workspaceSlug, scope.threadId);
     const targetPath = join(threadRoot, "notes.txt");
     writeFileSync(targetPath, "hello", "utf-8");
 
@@ -82,7 +82,7 @@ describe("agent-attachment-meta-service", () => {
   test("rename and move keep metadata aligned with the new target path", () => {
     createTempConfigDir();
     const scope = { kind: "thread" as const, workspaceSlug: "ws", threadId: "thread-b" };
-    const threadRoot = getAgentSessionWorkspacePath(scope.workspaceSlug, scope.threadId);
+    const threadRoot = getAgentThreadRootPath(scope.workspaceSlug, scope.threadId);
     const sourceDir = join(threadRoot, "docs");
     const sourceFile = join(sourceDir, "note.txt");
     const renamedDir = join(threadRoot, "docs-renamed");
@@ -156,7 +156,7 @@ describe("agent-attachment-meta-service", () => {
   test("malformed metadata does not get silently overwritten on mutation", () => {
     createTempConfigDir();
     const scope = { kind: "thread" as const, workspaceSlug: "ws", threadId: "thread-corrupt" };
-    const threadRoot = getAgentSessionWorkspacePath(scope.workspaceSlug, scope.threadId);
+    const threadRoot = getAgentThreadRootPath(scope.workspaceSlug, scope.threadId);
     const targetPath = join(threadRoot, "notes.txt");
     const metadataPath = join(threadRoot, ".context", "external-attachments.json");
     writeFileSync(targetPath, "hello", "utf-8");

@@ -7,9 +7,7 @@ import {
   UI_STATE_IPC_CHANNELS
 } from "@lume/shared";
 import type {
-  GitHubReleaseListOptions,
   NetworkDiagnosticResult,
-  TestSearchBackendInput,
   UpdateGeneralSettingsInput,
   UpdateUiStateInput
 } from "@lume/shared";
@@ -36,9 +34,11 @@ import { getSidecarNativeHealth } from "../services/infra/native-runtime";
 import {
   clearCacheInputSchema,
   githubReleaseByTagInputSchema,
+  githubReleaseListOptionsSchema,
   lumeConfigEffectiveInputSchema,
   lumeConfigUpdateInputSchema,
   systemConfigUpdateInputSchema,
+  testSearchBackendInputSchema,
   updateGeneralSettingsInputSchema,
   updateUiStateInputSchema
 } from "./schemas";
@@ -148,7 +148,11 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
         )
       ),
     [GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND]: async (params) => {
-      const input = (params ?? {}) as TestSearchBackendInput;
+      const input = validateInput(
+        testSearchBackendInputSchema,
+        params ?? {},
+        GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND
+      );
       return testSearchBackend(input);
     },
     [LUME_CONFIG_IPC_CHANNELS.GET_EFFECTIVE]: async (params) => {
@@ -196,7 +200,9 @@ export function createSystemHandlers(context: SystemHandlersContext): Record<str
     [SYSTEM_CONFIG_IPC_CHANNELS.NETWORK_DIAGNOSTIC]: async () => runNetworkDiagnostic(),
     [GITHUB_RELEASE_IPC_CHANNELS.GET_LATEST_RELEASE]: async () => getLatestGitHubRelease(),
     [GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES]: async (params) =>
-      listGitHubReleases((params ?? {}) as GitHubReleaseListOptions),
+      listGitHubReleases(
+        validateInput(githubReleaseListOptionsSchema, params ?? {}, GITHUB_RELEASE_IPC_CHANNELS.LIST_RELEASES)
+      ),
     [GITHUB_RELEASE_IPC_CHANNELS.GET_RELEASE_BY_TAG]: async (params) => {
       const input = validateInput(
         githubReleaseByTagInputSchema,

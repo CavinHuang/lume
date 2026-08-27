@@ -10,6 +10,8 @@ export interface JsonRpcResponse {
   error?: {
     code: string;
     message: string;
+    /** 与 @lume/shared LumeRpcErrorShape 对齐(toLumeRpcErrorShape 出站实际携带) */
+    details?: unknown;
   };
 }
 

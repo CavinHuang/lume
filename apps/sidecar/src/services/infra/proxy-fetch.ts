@@ -1,6 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { getActiveProxyConfig } from "../system/proxy-settings-manager";
+// #578:经 holder 取代理配置,infra 不再上行依赖 system 域(组合根注入读取器)。
+import { getActiveProxyConfig } from "./proxy-config-holder";
 
 const execFileAsync = promisify(execFile);
 const STATUS_SENTINEL = "__LUME_STATUS__:";
