@@ -792,6 +792,9 @@ async function createRuntimeCoreSessionImpl(
     input.agentDir,
   );
   const runId = input.runId ?? input.lumeSessionId;
+  // #527-11：store 无状态（仅 runsDir 路径），run 生命周期内复用单实例，
+  // 避免每个后台事件重复 mkdirSync 构造
+  const runContinuationStore = createFileBackedRunContinuationStore(sessionDir);
   const backgroundProcessJobIds = new Set<string>();
   const consumedBackgroundProcessJobIds = new Set<string>();
   const consumedBackgroundSubagentRunIds = new Set<string>();
@@ -869,7 +872,7 @@ async function createRuntimeCoreSessionImpl(
         toolName.toLowerCase() === "processoutput" ? "read" : "execute";
       const toolUseId = toolInput.result.tool_use_id || task.id;
       const now = new Date().toISOString();
-      const store = createFileBackedRunContinuationStore(sessionDir);
+      const store = runContinuationStore;
       void store
         .get(input.runId)
         .then((existing) => {
@@ -951,9 +954,7 @@ async function createRuntimeCoreSessionImpl(
       event.subtype === "task_notification" &&
       event.status !== "attention"
     ) {
-      const continuationStore =
-        createFileBackedRunContinuationStore(sessionDir);
-      void continuationStore
+      void runContinuationStore
         .get(input.runId)
         .then((continuation) => {
           if (!continuation || continuation.version !== 2) return;
@@ -1439,7 +1440,7 @@ async function createRuntimeCoreSessionImpl(
       systemPrompt,
       memoryContext: contextAssembly.memoryContext,
       sessionMessages: context.messages,
-      toolSchemaTokens: estimateToolSchemaTokens(toolset.tools),
+      toolSchemaTokens,
     }),
     persistSession: true,
     enableFileCheckpointing,
