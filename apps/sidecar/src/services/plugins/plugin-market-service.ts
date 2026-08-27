@@ -95,6 +95,7 @@ import {
 import {
   FilePluginStateStore,
   type PluginInstallRecord,
+  type PluginStateFile,
 } from "../agent-runtime/plugins/plugin-state-store";
 import { PluginRegistry } from "../agent-runtime/plugins/plugin-registry";
 import { getPluginPackageService } from "./plugin-package-service";
@@ -283,6 +284,7 @@ export class PluginMarketService {
     let failedCount = 0;
     const syncTimes: number[] = [];
     const expiryTimes: number[] = [];
+    const pluginState = await this.stateStore().read();
 
     const runtimeConfig = getEffectivePluginRuntimeConfig(input.workspaceSlug);
     const registry = new PluginRegistry({
@@ -302,6 +304,7 @@ export class PluginMarketService {
         input.workspaceSlug,
         "local",
         "installed",
+        pluginState,
       );
       item.id = `installed:${plugin.pluginId}`;
       const source = { type: "local" as const, path: plugin.root };
@@ -361,13 +364,15 @@ export class PluginMarketService {
                 await this.inspectPluginSource(
                   input.workspaceSlug,
                   entry.source,
+                  pluginState,
                 )
               ).normalized;
             const item = this.toMarketItem(
               normalized,
               input.workspaceSlug,
               entry.source.type,
-              await this.resolveInstallState(normalized),
+              this.resolveInstallStateFromSnapshot(normalized, pluginState),
+              pluginState,
             );
             item.id = `${source.id}:${entry.id}`;
             const fingerprint = pluginSnapshotFingerprint(
@@ -974,9 +979,10 @@ export class PluginMarketService {
   private async inspectPluginSource(
     workspaceSlug: string,
     source: PluginSourceRef,
+    state?: PluginStateFile,
   ): Promise<SidecarInspectPluginResult> {
     if (source.type === "subscribed-market") {
-      return this.inspectPluginSource(workspaceSlug, source.resolved);
+      return this.inspectPluginSource(workspaceSlug, source.resolved, state);
     }
     const normalized =
       source.type === "github"
@@ -988,7 +994,9 @@ export class PluginMarketService {
       normalized,
       permissionSummary: summarizePermissions(normalized.permissions),
       permissionsHash,
-      installState: await this.resolveInstallState(normalized),
+      installState: state
+        ? this.resolveInstallStateFromSnapshot(normalized, state)
+        : await this.resolveInstallState(normalized),
       enableState: this.resolveEnableState(normalized.pluginId, workspaceSlug),
       diagnostics: normalized.diagnostics as AgentPluginDiagnostic[],
     };
@@ -1829,7 +1837,13 @@ export class PluginMarketService {
   private async resolveInstallState(
     plugin: NormalizedPlugin,
   ): Promise<"not-installed" | "installed" | "update-available"> {
-    const state = await this.stateStore().read();
+    return this.resolveInstallStateFromSnapshot(plugin, await this.stateStore().read());
+  }
+
+  private resolveInstallStateFromSnapshot(
+    plugin: NormalizedPlugin,
+    state: PluginStateFile,
+  ): "not-installed" | "installed" | "update-available" {
     const record = state.plugins[plugin.pluginId];
     if (!record?.activeVersion) return "not-installed";
     if (record.activeVersion === plugin.version) return "installed";
@@ -1947,8 +1961,9 @@ export class PluginMarketService {
     workspaceSlug: string,
     sourceType: PluginSourceRef["type"],
     installState: PluginMarketItem["installState"] = "not-installed",
+    state?: PluginStateFile,
   ): PluginMarketItem {
-    const installMetadata = this.readInstallMetadata(plugin.pluginId);
+    const installMetadata = this.readInstallMetadata(plugin.pluginId, state);
     return {
       id: `${sourceType}:inline:plugin:${plugin.pluginId}`,
       pluginId: plugin.pluginId,
@@ -1980,15 +1995,15 @@ export class PluginMarketService {
 
   private readInstallMetadata(
     pluginId: string,
+    state?: PluginStateFile,
   ): Pick<
     PluginMarketItem,
     "installedVersion" | "rollbackVersion" | "installedPermissionsHash"
   > {
     try {
-      const raw = JSON.parse(readFileSync(this.config.statePath, "utf-8")) as {
+      const record = state?.plugins[pluginId] ?? (JSON.parse(readFileSync(this.config.statePath, "utf-8")) as {
         plugins?: Record<string, PluginInstallRecord>;
-      };
-      const record = raw.plugins?.[pluginId];
+      }).plugins?.[pluginId];
       const active = record?.activeVersion;
       if (!active) return {};
       const versions = Object.values(record.versions ?? {}).sort(
