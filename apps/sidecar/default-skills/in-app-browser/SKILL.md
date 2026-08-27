@@ -72,7 +72,7 @@ version: "1.0"
 | `confirmation_unavailable` | 确认通道异常(非用户拒绝) | 可重试一次;持续出现说明通道故障,如实告知用户 |
 | `confirmation_timeout` | 确认弹窗等待超时,动作未执行(弹窗可能仍开着) | 告知用户完成或关闭弹窗;不要立即重试以免叠出第二个弹窗 |
 | `user_action_required` | CAPTCHA/MFA/硬件密钥步骤 | 停下请用户完成该步;换措辞重试也会被拒(按元素语义识别),不要尝试 |
-| `user_takeover_required` | 协议级接管信号(当前流程下极少出现) | 停止全部浏览器动作,向用户说明并等待明确指示后再继续 |
+| `user_takeover_required` | 兼容性错误码:排队动作已失效(当前流程通常不产出) | 重新 `snapshot` 后最多重试一次;持续失败才询问用户,不要等待不存在的「交回控制」事件 |
 | `navigation_timeout` | 页面加载超上限被中断,页面可能仍在后台继续加载 | 先 `snapshot` 确认实际状态再决定;不要立即重试同一 `navigate`,持续超时改开新 tab 或如实告知用户 |
 | `browser_unavailable` | 浏览器运行时不可用 | 可重试;确认不可用后说明能力降级,才考虑原生 computer-use |
 

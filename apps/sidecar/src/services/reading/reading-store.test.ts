@@ -337,7 +337,7 @@ describe("reading-store", () => {
       author: "Mary Shelley",
       track: "lume",
       source: {
-        kind: "gutenberg",
+        kind: "manual",
         externalId: "84"
       },
       progressPercent: 12

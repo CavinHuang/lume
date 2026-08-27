@@ -228,13 +228,7 @@ export const setPluginActiveVersionInputSchema = z
   })
   .strict();
 
-export const getPluginAuditLogInputSchema = z.object({
-  pluginId: idSchema,
-  workspaceSlug: idSchema.optional(),
-  limit: z.number().int().positive().optional(),
-});
-
-export const verifySchema = z
+const verifySchema = z
   .object({
     method: z.enum(["tcp-port", "chrome-extension", "http-get", "none"]),
     detail: z.string().optional(),

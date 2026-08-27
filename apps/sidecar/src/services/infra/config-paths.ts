@@ -125,10 +125,6 @@ export function getGlobalStructuredMemoryDbPath(): string {
   return join(getStructuredMemoryDir(), "global.sqlite");
 }
 
-export function getGlobalMemoryAuditDbPath(): string {
-  return join(getStructuredMemoryDir(), "audit.sqlite");
-}
-
 export function getLumeConfigYamlPath(): string {
   return join(getConfigDir(), "lume.yaml");
 }
@@ -147,10 +143,6 @@ export function getPluginAuditPath(): string {
 
 export function getLumeJsonPath(): string {
   return join(getConfigDir(), "lume.json");
-}
-
-export function getUserProfilePath(): string {
-  return join(getConfigDir(), "user-profile.json");
 }
 
 export function getAgentSessionsIndexPath(): string {
@@ -266,10 +258,6 @@ export function getWorkspaceMemoryDir(workspaceSlug: string): string {
   return ensureDir(join(getAgentWorkspacePath(workspaceSlug), "memory"), "记忆目录");
 }
 
-export function getWorkspaceLongTermMemoryPath(workspaceSlug: string): string {
-  return join(getAgentWorkspacePath(workspaceSlug), "MEMORY.md");
-}
-
 export function getWorkspaceMemoryDbPath(workspaceSlug: string): string {
   return join(getWorkspaceMetaPath(workspaceSlug), "memory.sqlite");
 }
@@ -288,10 +276,6 @@ export function getMemoryLocalModelsDir(): string {
 
 export function getAgentConfigDir(): string {
   return ensureDir(join(getConfigDir(), "agent"), "Agent 配置目录");
-}
-
-export function getAgentRuntimeConfigPath(): string {
-  return join(getAgentConfigDir(), "config.json");
 }
 
 export function getAutomationConfigDir(): string {
@@ -352,10 +336,6 @@ export function getReadingShareCardsDir(): string {
 
 export function getReadingExportsDir(): string {
   return ensureDir(join(getReadingDir(), "exports"), "读书导出目录");
-}
-
-export function getReadingQuotesPath(): string {
-  return join(getReadingDir(), "quotes.json");
 }
 
 export function getReadingRunsDir(): string {

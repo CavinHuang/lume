@@ -106,7 +106,6 @@ export async function runRuntimeCoreMockSuccessAttempt(
     }
   } as any);
   sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
-  sessionManager.appendThinkingLevelChange("medium");
   sessionManager.appendMessage({
     role: "user",
     content: [{ type: "text", text: input.userMessage }],
@@ -278,7 +277,6 @@ export async function runRuntimeCoreMockCompactionAttempt(
   prepared: MockPreparedAttempt
 ): Promise<AgentRuntimeRunResult> {
   const { input, runtime } = params;
-  const summary = (process.env.LUME_AGENT_RUNTIME_MOCK_COMPACTION_SUMMARY || "mock compaction summary").trim();
   const upstream = await createRuntimeCoreSession({
     lumeSessionId: runtime.sessionId,
     cwd: prepared.agentCwd,
@@ -305,8 +303,7 @@ export async function runRuntimeCoreMockCompactionAttempt(
   const { session, sessionManager } = upstream;
   logMockSessionPersistence("mock_compaction", runtime.sessionId, sessionManager);
   sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
-  sessionManager.appendThinkingLevelChange("medium");
-  const currentLeafId = sessionManager.appendMessage({
+  sessionManager.appendMessage({
     role: "user",
     content: [{ type: "text", text: input.userMessage }],
     timestamp: Date.now()
@@ -325,9 +322,6 @@ export async function runRuntimeCoreMockCompactionAttempt(
     }
   } as any);
   emit.onSdkMessage({ type: "system", subtype: "compact_boundary" } as any);
-  sessionManager.appendCompaction(summary, currentLeafId, 0, {
-    source: "mock-runtime-core"
-  });
   emit.onSdkMessage({
     type: "result",
     stop_reason: "completed",
@@ -379,7 +373,6 @@ export async function runRuntimeCoreMockDelayedAttempt(
   const { session, sessionManager } = upstream;
   logMockSessionPersistence("mock_delayed", runtime.sessionId, sessionManager);
   sessionManager.appendModelChange(prepared.modelResolution.provider, prepared.modelResolution.resolvedModelId);
-  sessionManager.appendThinkingLevelChange("medium");
   sessionManager.appendMessage({
     role: "user",
     content: [{ type: "text", text: input.userMessage }],

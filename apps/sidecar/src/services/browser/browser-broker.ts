@@ -83,7 +83,6 @@ export class BrowserBroker {
       apiSupportOverrides,
     }
   }
-  setPluginEnabled(enabled: boolean): void { this.setPluginState({ browserEnabled: enabled }) }
   setPluginState(state: Partial<{ browserEnabled: boolean; chromeEnabled: boolean; extensionBackendEnabled: boolean; hostConnected: boolean; agentBrowserUseEnabled: boolean }>): void {
     const next = {
       browserEnabled: state.browserEnabled ?? this.browserPluginEnabled,
@@ -110,7 +109,6 @@ export class BrowserBroker {
     this.onStateChange?.({ ...next, generation: this.generation })
   }
   setExternalState(state: { chromeEnabled?: boolean; extensionBackendEnabled?: boolean; hostConnected?: boolean }): void { this.setPluginState(state) }
-  revoke(): void { this.setPluginEnabled(false) }
   async connectedChromeImportStatus(): Promise<{ available: boolean }> {
     return { available: (await this.connectedChromeRuntime())?.cookieExport === true }
   }

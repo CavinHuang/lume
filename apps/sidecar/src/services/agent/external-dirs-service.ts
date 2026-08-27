@@ -7,6 +7,7 @@ import {
   getAgentFileContextRootPath,
 } from "../infra/config-paths";
 import { isPathWithinRoot } from "../agent-runtime/permissions/permission-rules";
+import { validatePathSegment } from "./agent-file-paths";
 import { createLogger } from "../infra/logger";
 
 const log = createLogger("agent-external-dirs");
@@ -27,13 +28,6 @@ class ExternalDirsReadError extends Error {
     super(message);
     this.name = "ExternalDirsReadError";
   }
-}
-
-function validatePathSegment(value: string, label: string): string {
-  if (!/^[a-zA-Z0-9._-]+$/.test(value) || value === "." || value === "..") {
-    throw new Error(`${label} 非法`);
-  }
-  return value;
 }
 
 function getWorkspaceRootPathUnsafe(workspaceSlug: string): string {

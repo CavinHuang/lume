@@ -8,6 +8,7 @@ import type {
   LumeWorkflowHookExecutionError,
   LumeWorkflowHookExecutionResult
 } from "./hook-effects";
+import { createRuntimeEventWorkflowHookService, createSecurityWorkflowHookService, createTraceWorkflowHookService } from "./hook-services";
 import type { LumeWorkflowHookHandlerContext } from "./hook-services";
 
 export class LumeWorkflowHookBus {
@@ -84,27 +85,15 @@ function createNoopHookContext(): LumeWorkflowHookHandlerContext {
         }),
         extractCandidates: async () => []
       },
-      security: {
-        evaluatePermissionDecision: async () => ({})
-      },
+      security: createSecurityWorkflowHookService(),
       suggestion: {
         evaluateSessionSuggestions: async () => {}
       },
       persona: {
         ensurePersona: async () => {}
       },
-      runtimeEvents: {
-        buildDiagnosticEvent: (input) => ({
-          type: "workflow_hook.diagnostic",
-          ...input
-        })
-      },
-      trace: {
-        buildHookTrace: (input) => ({
-          type: "workflow_hook",
-          ...input
-        })
-      },
+      runtimeEvents: createRuntimeEventWorkflowHookService(),
+      trace: createTraceWorkflowHookService(),
       clock: {
         now: () => new Date()
       }

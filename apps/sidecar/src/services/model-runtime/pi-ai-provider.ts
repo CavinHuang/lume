@@ -528,10 +528,6 @@ export class PiAiProvider implements LLMProvider {
   }
 }
 
-export function createPiAiProvider(options: PiAiProviderOptions): LLMProvider {
-  return new PiAiProvider(options);
-}
-
 class RoutingPiAiProvider implements LLMProvider {
   readonly apiType: ApiType;
 

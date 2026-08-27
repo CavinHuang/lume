@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { PlanningOperationKind, PlanningTodo, PlanningTodoRelation } from "@lume/shared";
+import type { PlanningOperationKind, PlanningTodo } from "@lume/shared";
 
 export type PlanningExecutionSurface = "main" | "quick-input" | "im" | "routine" | "automation" | "subagent" | "recovery";
 export type PlanningOperationName = "list" | "get" | "create" | "update" | "complete" | "reopen" | "delete" | "restore" | "start";
@@ -127,10 +127,3 @@ function resolveRecord(context: ExecutionSurfaceContext): ContextRecord {
 function snapshot(context: ContextRecord): ExecutionSurfaceContext {
   return { surface: context.surface, threadId: context.threadId, ...(context.workspaceId ? { workspaceId: context.workspaceId } : {}), ...(context.clientSubmissionId ? { clientSubmissionId: context.clientSubmissionId } : {}), ...(context.runId ? { runId: context.runId } : {}), ...(context.continuationOperationId ? { continuationOperationId: context.continuationOperationId } : {}), ...(context.globalPlanningRead ? { globalPlanningRead: true } : {}), planningScopeGrants: [...context.planningScopeGrants], authorizedTodoIds: [...context.authorizedTodoIds] };
 }
-
-export function planningSurfaceFromTrustedOrigin(origin: "main_window" | "quick_input"): PlanningExecutionSurface {
-  return origin === "quick_input" ? "quick-input" : "main";
-}
-
-export type PlanningPrimaryRelation = PlanningTodoRelation;
-export type PlanningContinuationKind = PlanningOperationKind;

@@ -3,7 +3,8 @@ import { afterEach, describe, expect, test } from "bun:test"
 import { mkdtemp, rm, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { decodeTextFile, readTextFileRange } from "./text-file.js"
+import { createHash } from "node:crypto"
+import { decodeTextFile, readTextFileRange, readTextFileWithDigest } from "./text-file.js"
 
 const roots: string[] = []
 
@@ -147,5 +148,21 @@ describe("readTextFileRange", () => {
 
     expect(ranged.totalLines).toBe(2)
     expect(ranged.content).toBe("alpha\nbeta\n")
+  })
+})
+
+describe("readTextFileWithDigest", () => {
+  // #527-8: digest must be over RAW disk bytes (same basis as ledger hashFile);
+  // normalized decode output must not change the fingerprint.
+  test("rawSha256 equals sha256 of raw disk bytes", async () => {
+    const BOM = String.fromCharCode(0xfeff)
+    const CRLF = String.fromCharCode(13, 10)
+    const samples = ["a" + CRLF + "b", BOM + "a" + CRLF + "b" + CRLF, "plain"]
+    for (const raw of samples) {
+      const filePath = await makeFile("digest.txt", raw)
+      const bytes = await readFile(filePath)
+      const withDigest = await readTextFileWithDigest(filePath)
+      expect(withDigest.rawSha256).toBe(createHash("sha256").update(bytes).digest("hex"))
+    }
   })
 })

@@ -1,3 +1,5 @@
+import { readProgressPercent, readWereadTimestamp } from "./weread-payload";
+
 export type WereadReadingDepth = "deep" | "medium" | "light" | "shelved_unread" | "notebook_only";
 
 export interface WereadReadingSignal {
@@ -67,7 +69,7 @@ export function buildWereadReadingProfile(
     const noteCount = notebook ? readNumber(notebook.raw.noteCount) ?? 0 : 0;
     const inShelf = Boolean(shelf);
     const inNotebooks = Boolean(notebook);
-    const lastReadAt = readTimestamp(shelf?.raw, shelf?.bookInfo, notebook?.raw, notebook?.bookInfo);
+    const lastReadAt = readWereadTimestamp(shelf?.raw, shelf?.bookInfo, notebook?.raw, notebook?.bookInfo);
     const progressPercent = readProgressPercent(shelf?.raw, shelf?.bookInfo, notebook?.raw, notebook?.bookInfo);
     return {
       bookId,
@@ -204,32 +206,6 @@ function summarizeCategories(categoriesByBookId: Map<string, string[]>): Array<{
   }
   return Array.from(counts, ([name, bookCount]) => ({ name, bookCount }))
     .sort((left, right) => right.bookCount - left.bookCount || left.name.localeCompare(right.name, "zh-CN"));
-}
-
-function readProgressPercent(...records: Array<Record<string, unknown> | undefined>): number | undefined {
-  for (const record of records) {
-    if (!record) continue;
-    const value = readNumber(record.readingProgress)
-      ?? readNumber(record.progressPercent)
-      ?? readNumber(record.progress)
-      ?? readNumber(record.readProgress);
-    if (typeof value === "number") return value > 0 && value < 1 ? value * 100 : value;
-  }
-  return undefined;
-}
-
-function readTimestamp(...records: Array<Record<string, unknown> | undefined>): number | undefined {
-  for (const record of records) {
-    if (!record) continue;
-    const value = readNumber(record.lastReadAt)
-      ?? readNumber(record.readUpdateTime)
-      ?? readNumber(record.lectureReadUpdateTime)
-      ?? readNumber(record.lastReadTime)
-      ?? readNumber(record.updateTime)
-      ?? readNumber(record.updatedAt);
-    if (typeof value === "number" && value > 0) return value < 100_000_000_000 ? value * 1000 : value;
-  }
-  return undefined;
 }
 
 function formatDate(timestamp: number): string {

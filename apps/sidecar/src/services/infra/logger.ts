@@ -377,22 +377,3 @@ export function writeLogRecord(input: {
 }
 
 export const logger = createLogger("app");
-
-export function getLogsDir(): string {
-  const configDir = process.env.LUME_CONFIG_DIR?.trim()
-    || (process.env.HOME ? join(process.env.HOME, ".lume") : join(tmpdir(), "lume"));
-  return join(configDir, "logs");
-}
-
-export function getCurrentLogFileName(date = new Date()): string {
-  return `lume-${date.toISOString().slice(0, 10)}.ndjson`;
-}
-
-export function getCurrentLogPath(): string {
-  return join(getLogsDir(), getCurrentLogFileName());
-}
-
-/** @deprecated The Electron main process is now the only ordinary log file writer. */
-export function shouldWriteLogFile(): boolean {
-  return false;
-}

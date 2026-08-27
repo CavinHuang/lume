@@ -255,10 +255,6 @@ export function getNextAutomationRunAt(schedule: AutomationSchedule, fromMs = Da
   return getNextCronRunAt(schedule.cronExpr ?? "", fromMs, schedule.timezone);
 }
 
-export function getAutomationTimezone(schedule: AutomationSchedule): string {
-  return resolveTimezone(schedule.timezone);
-}
-
 function resolveTimezone(timezone?: string): string {
   const resolved = timezone?.trim() || Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
   try {

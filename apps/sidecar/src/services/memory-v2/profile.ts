@@ -1,13 +1,11 @@
-import type { MemoryV2Candidate, MemoryV2Entry, MemoryV2RecallItem } from "./types";
+import type { MemoryV2Candidate, MemoryV2RecallItem } from "./types";
 import {
   MEMORY_CLAIM_PREFERRED_NAME,
   MEMORY_CLAIM_SUBJECT_ASSISTANT,
   MEMORY_CLAIM_SUBJECT_USER,
-  claimFromEntry,
   inferMemoryV2Claim
 } from "./claim";
 
-const PROFILE_TAGS = new Set(["profile", "identity", "preferred-name"]);
 const PREFERRED_NAME_RE = /preferred[-_\s]?name|nickname|被称呼|称呼|叫我|喊我|我的名字|我叫|user wants to be called/i;
 const WORKSPACE_SCOPE_RE = /(?:这个|当前)?(?:工作区|项目)|workspace|project/i;
 
@@ -68,14 +66,6 @@ export function extractAssistantPreferredNameCandidate(input: {
   };
 }
 
-export function isProfileEntry(entry: MemoryV2Entry): boolean {
-  if (claimFromEntry(entry)?.predicate === MEMORY_CLAIM_PREFERRED_NAME) return true;
-  return isProfileMemory({
-    tags: entry.frontmatter.tags,
-    statement: entry.statement
-  });
-}
-
 export function isProfileRecallItem(item: MemoryV2RecallItem): boolean {
   if (item.reason === "profile memory") return true;
   // 与旧 kind 判定等价：kind∈{preference,fact} ⟺ role∉{decision,lesson,state}
@@ -92,33 +82,6 @@ export function isPreferredNameMemory(input: {
   if (inferMemoryV2Claim(input)?.predicate === MEMORY_CLAIM_PREFERRED_NAME) return true;
   const tags = new Set((input.tags ?? []).map((tag) => tag.trim().toLowerCase()));
   return tags.has("preferred-name") || PREFERRED_NAME_RE.test(input.statement);
-}
-
-export function memoryEntryToRecallItem(entry: MemoryV2Entry, reason = "profile memory"): MemoryV2RecallItem {
-  return {
-    id: entry.frontmatter.id,
-    kind: entry.frontmatter.kind,
-    semanticRole: entry.frontmatter.semantic_role,
-    scope: entry.frontmatter.scope,
-    status: entry.frontmatter.status === "suspected_stale" ? "suspected_stale" : "active",
-    statement: entry.statement,
-    path: entry.path,
-    citation: entry.path,
-    reason,
-    score: 100,
-    pinned: entry.frontmatter.pinned,
-    tags: entry.frontmatter.tags,
-    claim: claimFromEntry(entry)
-  };
-}
-
-function isProfileMemory(input: {
-  tags?: string[];
-  statement: string;
-}): boolean {
-  const tags = new Set((input.tags ?? []).map((tag) => tag.trim().toLowerCase()));
-  if ([...PROFILE_TAGS].some((tag) => tags.has(tag))) return true;
-  return PREFERRED_NAME_RE.test(input.statement);
 }
 
 function extractAssistantPreferredName(text: string): string | undefined {

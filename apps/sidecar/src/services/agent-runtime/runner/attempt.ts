@@ -1,5 +1,4 @@
 import { createLogger } from "../../infra/logger";
-import { getRuntimeHostPorts } from "../host-ports";
 import { resolveMockAttempt } from "./mock-attempt";
 import type {
   AgentRuntimeRunParams,
@@ -13,7 +12,6 @@ import { hasRuntimeCoreSessionTranscript } from "../runtime-core/session-store";
 import { LumeRunner } from "./lume-runner";
 import { prepareRuntimeCoreAttempt } from "./prepare-attempt";
 import {
-  getEffectiveLumeConfig,
   getEffectivePluginRuntimeConfig,
 } from "../../system/lume-config-service";
 import { PluginPermissionRuntime } from "../plugins/permission-runtime.js";
@@ -159,36 +157,6 @@ export function releaseRuntimeActivityPlaceholder(threadId: string): void {
   if (entry?.placeholder) activePiSessions.delete(threadId);
 }
 
-export function resolveRuntimeModelAttemptParams(
-  params: AgentRuntimeRunParams,
-): AgentRuntimeRunParams[] {
-  const workspaceSlug = params.runtime.workspaceId
-    ? getRuntimeHostPorts().getWorkspace(params.runtime.workspaceId)?.slug
-    : undefined;
-  const fallbackRefs =
-    getEffectiveLumeConfig(workspaceSlug).models?.agent?.fallbackModelRefs ??
-    [];
-  const refs = uniqueModelRefs([params.runtime.modelRef, ...fallbackRefs]);
-  const attempts: AgentRuntimeRunParams[] = [
-    { ...params, runtime: { ...params.runtime } },
-  ];
-  for (const modelRef of refs) {
-    if (modelRef === params.runtime.modelRef) continue;
-    const binding = getRuntimeHostPorts().resolveChannelModelBinding(modelRef, "chat");
-    if (!binding) continue;
-    attempts.push({
-      ...params,
-      runtime: {
-        ...params.runtime,
-        modelRef,
-        channelId: binding.channel.id,
-        resolvedModelId: binding.modelId,
-      },
-    });
-  }
-  return attempts;
-}
-
 export async function runAgentRuntime(
   params: AgentRuntimeRunParams,
   emit: AgentRuntimeEmitter,
@@ -233,43 +201,6 @@ export async function runAgentRuntime(
     );
   }
   return result;
-}
-
-function uniqueModelRefs(values: Array<string | undefined>): string[] {
-  const result: string[] = [];
-  for (const value of values) {
-    const trimmed = value?.trim();
-    if (!trimmed || result.includes(trimmed)) continue;
-    result.push(trimmed);
-  }
-  return result;
-}
-
-export function isRuntimeModelFallbackRetryable(
-  errorMessage?: string,
-): boolean {
-  if (!errorMessage) return false;
-  const value = errorMessage.toLowerCase();
-  return (
-    value.includes("timeout") ||
-    value.includes("timed out") ||
-    value.includes("rate limit") ||
-    value.includes("429") ||
-    value.includes("temporar") ||
-    value.includes("500") ||
-    value.includes("502") ||
-    value.includes("503") ||
-    value.includes("504") ||
-    value.includes("econnreset") ||
-    value.includes("econnrefused") ||
-    value.includes("etimedout") ||
-    value.includes("enotfound") ||
-    value.includes("network") ||
-    value.includes("unavailable") ||
-    value.includes("fetch failed") ||
-    value.includes("connection refused") ||
-    value.includes("socket hang up")
-  );
 }
 
 export async function stopAgentRuntime(threadId: string): Promise<boolean> {

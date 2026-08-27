@@ -57,19 +57,3 @@ export function matchesAny(name: string, patterns: CompiledPattern[]): boolean {
   return false;
 }
 
-/**
- * Build a higher-order matcher function from allow/deny pattern lists.
- * Deny takes precedence; if allow is empty all non-denied names pass.
- */
-export function makeMatcher(
-  allowPatterns: CompiledPattern[],
-  denyPatterns: CompiledPattern[],
-  normalizeFn: (s: string) => string
-): (name: string) => boolean {
-  return (name) => {
-    const normalized = normalizeFn(name);
-    if (matchesAny(normalized, denyPatterns)) return false;
-    if (allowPatterns.length === 0) return true;
-    return matchesAny(normalized, allowPatterns);
-  };
-}

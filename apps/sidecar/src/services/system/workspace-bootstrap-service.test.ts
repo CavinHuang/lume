@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { getAgentWorkspacePath } from "../infra/config-paths";
 import {
-  buildSystemPrompt,
   ensureBootstrapFiles,
   filterComponentsForSessionType,
   resolveLoadedLongTermMemoryPath,
@@ -111,18 +110,6 @@ describe("workspace-bootstrap-service", () => {
       agents: "agents",
       tools: "tools"
     });
-  });
-
-  test("buildSystemPrompt 保持 legacy formatter 行为但不作为 runtime 入口", () => {
-    const prompt = buildSystemPrompt({
-      soul: "soul",
-      workspace: "workspace",
-      heartbeat: "heartbeat"
-    });
-
-    expect(prompt).toContain("## Soul");
-    expect(prompt).toContain("## Workspace Brief");
-    expect(prompt).toContain("## Heartbeat Tasks");
   });
 
   test("resolveLoadedLongTermMemoryPath 仅存在旧 memory.md 时应返回 null", () => {

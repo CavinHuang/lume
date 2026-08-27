@@ -6,6 +6,7 @@ import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryDreamResult, type
 import { appendAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 // #580 review fix:出站通知直连 infra 单点,不经 agent 域借道。
 import { getOutboundNotificationWriter } from "../infra/outbound-notification";
+import { isProcessAlive } from "../infra/index-mutation-lock";
 import { runDreamOrganizer } from "./dream-organizer";
 import { buildDreamEvidenceWindow, type DreamEvidenceCursor } from "./dream-evidence";
 import { rebuildDerivedMemoryViews } from "./derived-views";
@@ -229,13 +230,16 @@ function changedItemCount(result: MemoryDreamResult): number {
     + result.actions.pending;
 }
 
+// 异步作用域锁不能复用同步的 withIndexMutationLock（会在 await 前提前释放），
+// 仅就地继承其 takeover/release token 复核语义（#526）
 async function withScopeLock<TResult>(jobsDir: string, run: () => Promise<TResult>): Promise<TResult> {
   const lockPath = join(jobsDir, "consolidation.lock");
   acquireScopeLock(lockPath);
   try {
     return await run();
   } finally {
-    if (existsSync(lockPath)) unlinkSync(lockPath);
+    // 仅清自己持有的锁；内容非本人（被竞争方换锁）不得误删他人活锁
+    if (readLockOwner(lockPath)?.pid === process.pid) unlinkSync(lockPath);
   }
 }
 
@@ -251,6 +255,8 @@ function acquireScopeLock(lockPath: string): void {
   } catch {
     const owner = readLockOwner(lockPath);
     if (owner && !isProcessAlive(owner.pid)) {
+      // 判死与清除间可能被竞争方换锁——删前重读身份，不一致即按争用拒绝
+      if (readLockOwner(lockPath)?.pid !== owner.pid) throw new Error("当前作用域已有记忆整理任务在运行");
       unlinkSync(lockPath);
       return acquireScopeLock(lockPath);
     }
@@ -264,15 +270,6 @@ function readLockOwner(path: string): { pid: number } | undefined {
     return typeof parsed.pid === "number" ? { pid: parsed.pid } : undefined;
   } catch {
     return undefined;
-  }
-}
-
-function isProcessAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
   }
 }
 

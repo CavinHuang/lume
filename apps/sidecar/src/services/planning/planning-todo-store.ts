@@ -1,5 +1,4 @@
 import { mkdirSync } from "node:fs";
-import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type {
@@ -20,9 +19,7 @@ import type {
 } from "@lume/shared";
 import { createPlanningOperation, normalizePlanningTodoTitle, reducePlanningOperation, validatePlanningTodoDueFields } from "@lume/shared";
 import { getConfigDir } from "../infra/config-paths";
-
-interface Statement { all(...params: unknown[]): unknown[]; get(...params: unknown[]): unknown; run(...params: unknown[]): unknown; }
-interface Db { exec(sql: string): void; prepare(sql: string): Statement; close(): void; }
+import { openSqlite, type SqliteDatabase } from "../infra/open-sqlite";
 
 interface TodoRow {
   id: string; title: string; normalized_title: string; description: string | null; status: PlanningTodo["status"];
@@ -42,7 +39,7 @@ export class PlanningTodoNotFoundError extends Error {
 }
 
 export class PlanningTodoStore {
-  readonly #db: Db;
+  readonly #db: SqliteDatabase;
   readonly #now: () => number;
   readonly #timezone: () => string;
   readonly #onChange?: (event: PlanningTodoChangeEvent) => void;
@@ -51,15 +48,7 @@ export class PlanningTodoStore {
   constructor(input: { dbPath: string; now?: () => number; timezone?: () => string; onChange?: (event: PlanningTodoChangeEvent) => void }) {
     this.#dbPath = input.dbPath;
     mkdirSync(dirname(input.dbPath), { recursive: true });
-    const runtimeRequire = createRequire(import.meta.url);
-    if (typeof (globalThis as { Bun?: unknown }).Bun !== "undefined") {
-      const Database = (runtimeRequire("bun:sqlite") as { Database: new (path: string) => { exec(sql: string): void; query(sql: string): Statement; close(): void } }).Database;
-      const db = new Database(input.dbPath);
-      this.#db = { exec: (sql) => db.exec(sql), prepare: (sql) => db.query(sql), close: () => db.close() };
-    } else {
-      const DatabaseSync = (runtimeRequire("node:sqlite") as { DatabaseSync: new (path: string) => Db }).DatabaseSync;
-      this.#db = new DatabaseSync(input.dbPath);
-    }
+    this.#db = openSqlite(input.dbPath);
     this.#now = input.now ?? Date.now;
     this.#timezone = input.timezone ?? (() => Intl.DateTimeFormat().resolvedOptions().timeZone);
     this.#onChange = input.onChange;
@@ -78,7 +67,7 @@ export class PlanningTodoStore {
     else if (input.view === "completed") where.push("deleted_at IS NULL AND status = 'completed'");
     else if (input.view === "open" || input.view === "today" || input.view === "upcoming" || !input.view) where.push("deleted_at IS NULL AND status = 'open'");
     if (input.search?.trim()) { where.push("(title LIKE ? OR description LIKE ?)"); const query = `%${input.search.trim()}%`; params.push(query, query); }
-    const rows = this.#db.prepare(`SELECT * FROM planning_todo${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`).all(...params) as unknown as TodoRow[];
+    const rows = this.#db.prepare(`SELECT * FROM planning_todo${where.length ? ` WHERE ${where.join(" AND ")}` : ""}`).all(...params) as TodoRow[];
     const timezone = this.#timezone();
     const today = localDate(this.#now(), timezone);
     // #593①:bucket 逐条预计算——此前 filter 与 sort 比较器内每次重算 dueBucket,
@@ -103,7 +92,7 @@ export class PlanningTodoStore {
   }
 
   get(todoId: string, includeDeleted = true): PlanningTodo {
-    const row = this.#db.prepare("SELECT * FROM planning_todo WHERE id = ?").get(todoId) as unknown as TodoRow | undefined;
+    const row = this.#db.prepare("SELECT * FROM planning_todo WHERE id = ?").get(todoId) as TodoRow | undefined;
     if (!row || (!includeDeleted && row.deleted_at !== null)) throw new PlanningTodoNotFoundError();
     return rowToTodo(row);
   }
@@ -164,7 +153,7 @@ export class PlanningTodoStore {
   }
 
   snapshotWorkspaceTodos(workspaceId: string): PlanningTodo[] {
-    return (this.#db.prepare("SELECT * FROM planning_todo WHERE workspace_id = ? ORDER BY created_at, id").all(workspaceId) as unknown as TodoRow[]).map(rowToTodo);
+    return (this.#db.prepare("SELECT * FROM planning_todo WHERE workspace_id = ? ORDER BY created_at, id").all(workspaceId) as TodoRow[]).map(rowToTodo);
   }
 
   restoreWorkspaceSnapshot(snapshot: readonly PlanningTodo[], operationId: string): void {
@@ -190,7 +179,7 @@ export class PlanningTodoStore {
   }
 
   removeWorkspace(workspaceId: string, mode: "keepHistory" | "deleteLumeData"): { count: number; conflicts: number } {
-    const rows = this.#db.prepare("SELECT * FROM planning_todo WHERE workspace_id = ?").all(workspaceId) as unknown as TodoRow[];
+    const rows = this.#db.prepare("SELECT * FROM planning_todo WHERE workspace_id = ?").all(workspaceId) as TodoRow[];
     let conflicts = 0;
     const now = this.#now();
     const eventSeqs = new Map<string, number>();
@@ -245,7 +234,7 @@ export class PlanningTodoStore {
   }
   markThreadLinksTrashed(threadId: string): void { this.#db.prepare("UPDATE planning_todo_link SET lifecycle = 'trashed' WHERE thread_id = ? AND lifecycle = 'active'").run(threadId); }
   listPrimaryThreads(todoId: string): Array<{ threadId: string; lastReferencedAt: number; lifecycle: string }> {
-    return this.#db.prepare("SELECT thread_id AS threadId, last_referenced_at AS lastReferencedAt, lifecycle FROM planning_todo_link WHERE todo_id = ? AND relation = 'primary' ORDER BY last_referenced_at DESC").all(todoId) as unknown as Array<{ threadId: string; lastReferencedAt: number; lifecycle: string }>;
+    return this.#db.prepare("SELECT thread_id AS threadId, last_referenced_at AS lastReferencedAt, lifecycle FROM planning_todo_link WHERE todo_id = ? AND relation = 'primary' ORDER BY last_referenced_at DESC").all(todoId) as Array<{ threadId: string; lastReferencedAt: number; lifecycle: string }>;
   }
   listPrimaryTodosForThread(threadId: string): PlanningTodo[] {
     const rows = this.#db.prepare("SELECT todo_id AS todoId FROM planning_todo_link WHERE thread_id = ? AND relation = 'primary' AND lifecycle = 'active' ORDER BY last_referenced_at DESC").all(threadId) as Array<{ todoId: string }>;
@@ -371,7 +360,7 @@ export class PlanningTodoStore {
   #publish(event: PlanningTodoChangeEvent): void { queueMicrotask(() => this.#onChange?.(event)); }
 }
 
-function migrate(db: Db): void {
+function migrate(db: SqliteDatabase): void {
   const versionRow = db.prepare("PRAGMA user_version").get() as Record<string, unknown> | undefined;
   const version = Number(versionRow?.user_version ?? Object.values(versionRow ?? {})[0] ?? 0);
   db.exec("BEGIN IMMEDIATE");
@@ -417,7 +406,7 @@ function migrate(db: Db): void {
   if (values.length === 0 || values.some((value) => value !== "ok")) throw new Error("planning.sqlite 完整性检查失败");
 }
 
-function createSchema(db: Db): void {
+function createSchema(db: SqliteDatabase): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS planning_todo (
       id TEXT PRIMARY KEY, title TEXT NOT NULL, normalized_title TEXT NOT NULL, description TEXT,

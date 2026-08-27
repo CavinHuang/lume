@@ -10,8 +10,9 @@ import {
   resolveToolApprovalInterruption,
   updateToolApprovalSession
 } from "./approval-service";
+import type { LumeInterruption } from "./interruption";
 import { listPendingRuntimeCoreInterruptions } from "./interruption-pending";
-import { runtimePermissionSessionStore } from "../permissions/permission-session";
+import { runtimePermissionSessionStore, type GrantOrigin } from "../permissions/permission-session";
 import { PendingRequestRegistry } from "./pending-request-registry";
 import { createLogger } from "../../infra/logger";
 
@@ -40,11 +41,13 @@ function resolveTimeoutMs(): number {
 export function markToolFingerprintAllowed(
   threadId: string,
   fingerprint?: string,
-  scope: AgentToolPermissionAllowScope = "exact"
+  scope: AgentToolPermissionAllowScope = "exact",
+  origin?: GrantOrigin
 ): AgentToolPermissionAllowScope {
   const normalized = fingerprint?.trim();
   if (!normalized) return "exact";
-  return runtimePermissionSessionStore.grantFingerprintWithScope(threadId, normalized, scope);
+  // #775：origin.workspaceSlug 在场时同步镜像 workspace 持久授权并落盘
+  return runtimePermissionSessionStore.grantFingerprintWithScope(threadId, normalized, scope, origin);
 }
 
 export function markToolPermissionSessionBypassed(...threadIds: Array<string | undefined>): void {
@@ -172,7 +175,8 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
       effectiveScope = markToolFingerprintAllowed(
         persisted.originThreadId ?? persisted.threadId,
         persisted.grantSuggestion.fingerprint,
-        input.allowAlwaysScope
+        input.allowAlwaysScope,
+        { workspaceSlug: persisted.workspaceSlug, toolName: persisted.toolName }
       );
     }
     return { handled, ...(effectiveScope ? { effectiveScope } : {}) };
@@ -192,10 +196,12 @@ export function submitToolPermissionDecision(input: AgentToolPermissionResponseI
   let effectiveScope: AgentToolPermissionAllowScope | undefined;
   if (input.decision === "allow_always") {
     // #558:按用户选择的档位写宽指纹（缺省 exact 保持逐字节）
+    // #775：请求携带 workspaceSlug 时落盘为 workspace 级持久授权
     effectiveScope = markToolFingerprintAllowed(
       meta.request.originThreadId ?? meta.threadId,
       meta.request.grantSuggestion?.fingerprint,
-      input.allowAlwaysScope
+      input.allowAlwaysScope,
+      { workspaceSlug: meta.request.workspaceSlug, toolName: meta.request.toolName }
     );
   }
   pendingToolPermissionResolvers.settle(input.requestId, input.decision);
@@ -209,7 +215,10 @@ export function cancelPendingToolPermissionBySession(threadId: string): void {
   );
 }
 
-export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[] {
+// #527-6：同 ask-user——可注入已扫描的持久化中断，聚合 handler 复用一次扫描
+export function listPendingToolPermissionRequests(
+  persistedInterruptions?: LumeInterruption[],
+): AgentToolPermissionRequest[] {
   const liveRequests = pendingToolPermissionResolvers.list().map(({ meta }) => ({
     ...meta.request,
     threadId: meta.approvalSessionId,
@@ -219,7 +228,7 @@ export function listPendingToolPermissionRequests(): AgentToolPermissionRequest[
         : {}
     ))
   }));
-  mergePersistedToolPermissionRequests(liveRequests);
+  mergePersistedToolPermissionRequests(liveRequests, persistedInterruptions);
   return liveRequests;
 }
 
@@ -234,9 +243,12 @@ function findPersistedToolPermissionRequest(threadId: string, requestId: string)
   return null;
 }
 
-function mergePersistedToolPermissionRequests(target: AgentToolPermissionRequest[]): void {
+function mergePersistedToolPermissionRequests(
+  target: AgentToolPermissionRequest[],
+  persistedInterruptions?: LumeInterruption[],
+): void {
   const seen = new Set(target.map((request) => request.requestId));
-  const persisted = listPendingRuntimeCoreInterruptions();
+  const persisted = persistedInterruptions ?? listPendingRuntimeCoreInterruptions();
   for (const interruption of persisted) {
     if (interruption.type !== "tool_approval" && interruption.type !== "automation_approval") continue;
     const payload = interruption.payload as AgentToolPermissionRequest;

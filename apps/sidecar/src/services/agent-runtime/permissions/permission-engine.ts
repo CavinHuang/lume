@@ -93,7 +93,9 @@ export class PermissionEngine {
     if (this.session.isGranted({
       threadId: input.context.threadId,
       descriptor: input.descriptor,
-      input: input.input
+      input: input.input,
+      // #775：携带 workspace 时未命中线程集再查 workspace 持久授权
+      ...(input.context.workspaceSlug ? { workspaceSlug: input.context.workspaceSlug } : {})
     })) {
       return allow("session_allow", "本次会话已允许相同工具输入", riskLevel, input);
     }

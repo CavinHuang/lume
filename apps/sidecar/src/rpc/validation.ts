@@ -17,10 +17,6 @@ export function asString(value: unknown): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-export function asNumber(value: unknown): number | undefined {
-  return typeof value === "number" ? value : undefined;
-}
-
 export function validateInput<T>(schema: z.ZodType<T>, payload: unknown, method: string): T {
   const parsed = schema.safeParse(payload);
   if (parsed.success) {

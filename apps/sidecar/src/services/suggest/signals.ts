@@ -353,15 +353,3 @@ export function isMeaningfulRule(rule: string): boolean {
     return false;
   return true;
 }
-
-/**
- * 是否为明确触发词（供 orchestrator 快速判断是否需要评估）。
- * Lume 适配：签名从 Proma 的 `(userMessages: string[])` 收窄为单条文本。
- */
-export function hasStrongSignal(text: string): boolean {
-  if (CORRECTION_PATTERNS.some((re) => re.test(text))) return true;
-  if (FOLLOWUP_PATTERNS.some((re) => re.test(text))) return true;
-  if (AUTOMATION_PATTERNS.some((re) => re.test(text))) return true;
-  if (TODO_PATTERNS.some((re) => re.test(text))) return true;
-  return false;
-}
