@@ -272,7 +272,12 @@ export class BrowserBroker {
         ? input.method
         : new Set(["submitForm", "send", "delete", "purchase", "authorize"]).has(input.method) ? "click" : normalized.method
       const request: BrowserActionRequest = { requestId: randomUUID(), context, method, params, ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}) }
-      const result = await transport.request(request)
+      let result: unknown
+      try {
+        result = await transport.request(request)
+      } finally {
+        if (normalized.method === "finalize") this.clearClaimSnapshots(backend, context)
+      }
       if (normalized.method === "openTabs") this.rememberClaimSnapshots(backend, context, result)
       if (normalized.method === "claim" && typeof params.referenceGrantId === "string") this.pendingReferenceGrants.delete(params.referenceGrantId)
       return adaptBrowserResult(input.method, result)
@@ -336,8 +341,8 @@ export class BrowserBroker {
   }
 
   private rememberClaimSnapshots(backend: "iab" | "extension", context: BrowserRequestContext, value: unknown): void {
+    this.clearClaimSnapshots(backend, context)
     const prefix = claimSnapshotPrefix(backend, context)
-    for (const key of this.claimSnapshots.keys()) if (key.startsWith(prefix)) this.claimSnapshots.delete(key)
     for (const item of browserUserTabArray(value)) {
       if (!item || typeof item !== "object") continue
       const descriptor = item as Record<string, unknown>
@@ -353,6 +358,11 @@ export class BrowserBroker {
         ...(Number.isInteger(descriptor.generation) ? { generation: Number(descriptor.generation) } : {}),
       })
     }
+  }
+
+  private clearClaimSnapshots(backend: "iab" | "extension", context: BrowserRequestContext): void {
+    const prefix = claimSnapshotSessionPrefix(backend, context)
+    for (const key of this.claimSnapshots.keys()) if (key.startsWith(prefix)) this.claimSnapshots.delete(key)
   }
 
   private referenceGrantForClaim(backend: "iab" | "extension", context: BrowserRequestContext, claimHandle: string | undefined, params: Record<string, unknown>): { referenceGrantId?: string } {
@@ -422,6 +432,10 @@ function browserUserTabArray(value: unknown): unknown[] {
 
 function claimSnapshotPrefix(backend: "iab" | "extension", context: BrowserRequestContext): string {
   return `${backend}\u0000${context.browserSessionId}\u0000${context.browserTurnId}\u0000`
+}
+
+function claimSnapshotSessionPrefix(backend: "iab" | "extension", context: BrowserRequestContext): string {
+  return `${backend}\u0000${context.browserSessionId}\u0000`
 }
 
 function isReferenceableUrl(value: string, backend: "iab" | "extension"): boolean {

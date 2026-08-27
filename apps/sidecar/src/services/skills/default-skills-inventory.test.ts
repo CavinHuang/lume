@@ -98,6 +98,8 @@ describe("default skills inventory", () => {
     expect(content).toContain("[ref=e12]");
     expect(content).toContain("`fill_secret`");
     expect(content).toContain("user_takeover_required");
+    expect(content).toContain("重新 `snapshot` 后最多重试一次");
+    expect(content).not.toContain("等待明确指示后再继续");
     expect(content).toContain("repeated_action_failure");
     expect(content).toContain("navigation_timeout");
     expect(content).toContain("confirmation_unavailable");

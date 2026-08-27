@@ -5,7 +5,7 @@
  */
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
-import { mkdir, rename, rm, writeFile } from "node:fs/promises";
+import { mkdir, rename, rm } from "node:fs/promises";
 import { dirname, join, posix } from "node:path";
 import {
   normalizePluginManifests,
@@ -16,6 +16,7 @@ import { PluginMarketError } from "./plugin-market-errors";
 
 const execFileAsync = promisify(execFile);
 const GITHUB_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024;
+const GITHUB_API_MAX_BYTES = 8 * 1024 * 1024;
 
 export interface GitHubTreeEntry {
   path: string;
@@ -192,9 +193,14 @@ export interface PluginMarketGitHubDeps {
   fetchText(url: string): Promise<string>;
   /** #525-10:signal 贯穿 + 分块字节上限的 body 统一消费口 */
   readRemoteBody(response: Response, maxBytes?: number, oversize?: () => Error): Promise<Buffer>;
+  writeRemoteBodyToFile(response: Response, target: string, maxBytes: number, oversize?: () => Error): Promise<number>;
 }
 
 export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
+  async function readGitHubApiJson<T>(response: Response): Promise<T> {
+    return JSON.parse((await deps.readRemoteBody(response, GITHUB_API_MAX_BYTES)).toString("utf8")) as T;
+  }
+
   async function inspectGitHubPlugin(
     source: Extract<PluginSourceRef, { type: "github" }>,
     tree?: GitHubTreeEntry[] | null,
@@ -303,7 +309,7 @@ export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
         `读取 GitHub 仓库树失败: ${response.status}`,
       );
     }
-    const payload = (await response.json()) as { tree?: GitHubTreeEntry[] };
+    const payload = await readGitHubApiJson<{ tree?: GitHubTreeEntry[] }>(response);
     return payload.tree ?? [];
   }
 
@@ -322,9 +328,9 @@ export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
           },
         );
         if (response.ok) {
-          const payload = (await response.json()) as {
+          const payload = await readGitHubApiJson<{
             default_branch?: string;
-          };
+          }>(response);
           if (typeof payload.default_branch === "string")
             ref = payload.default_branch;
         }
@@ -361,7 +367,7 @@ export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
         },
       );
       if (response.ok) {
-        const commit = (await response.json()) as { sha?: string };
+        const commit = await readGitHubApiJson<{ sha?: string }>(response);
         if (commit.sha && /^[a-f0-9]{40}$/i.test(commit.sha))
           return commit.sha.toLowerCase();
       }
@@ -402,14 +408,14 @@ export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
     }
     await mkdir(stage, { recursive: true });
     const archive = join(stage, "source.tar.gz");
-    // #525-10:分块流式落盘上限——原 arrayBuffer 后才查,chunked 无
-    // content-length 时最坏 512MB 已整体入内存
-    const bytes = await deps.readRemoteBody(
+    // #525-10:边读边写磁盘并累计上限；不再把最多 512MB 的 chunk
+    // 收集成单个 Buffer 后才落盘。
+    await deps.writeRemoteBodyToFile(
       response,
+      archive,
       GITHUB_ARCHIVE_MAX_BYTES,
       () => new PluginMarketError("install_failed", "GitHub 源归档超过 512 MB 限制"),
     );
-    await writeFile(archive, new Uint8Array(bytes));
     const listed = await execFileAsync("tar", ["-tzf", archive], {
       maxBuffer: 8 * 1024 * 1024,
     });

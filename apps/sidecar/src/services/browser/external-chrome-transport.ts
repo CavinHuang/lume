@@ -3,12 +3,15 @@ import { spawnSync } from "node:child_process";
 import { createServer, type Server, type Socket } from "node:net";
 import { existsSync, lstatSync, readFileSync, rmSync } from "node:fs";
 import { basename, resolve } from "node:path";
-import type { BrowserActionRequest, BrowserErrorCode } from "@lume/shared";
+import { MAX_RPC_MESSAGE_BYTES, type BrowserActionRequest, type BrowserErrorCode } from "@lume/shared";
 import type { BrowserMainTransport } from "./browser-broker";
 
 const APP_SERVER_PROTOCOL_VERSION = 2;
 const NATIVE_HOST_PROTOCOL_VERSION = 5;
-const MAX_MESSAGE_BYTES = 2 * 1024 * 1024;
+const MAX_INBOUND_MESSAGE_BYTES = MAX_RPC_MESSAGE_BYTES;
+// Native Host protocol v5 对 app-server 入站行仍使用 2MB 上限。发送前本地拒绝
+// 单个超限请求，避免 Host 断线并连带打断同连接上的其他在途请求。
+const MAX_OUTBOUND_MESSAGE_BYTES = 2 * 1024 * 1024;
 
 type Pending = {
   resolve: (value: unknown) => void;
@@ -192,6 +195,8 @@ export class ExternalChromeTransport implements BrowserMainTransport {
   }
 
   private dropPeer(error: Error): void {
+    const pendingError = error as Error & { code?: BrowserErrorCode };
+    pendingError.code ??= "executed_unknown";
     const peer = this.peer;
     this.peer = null;
     if (peer) {
@@ -201,7 +206,7 @@ export class ExternalChromeTransport implements BrowserMainTransport {
     }
     for (const [id, pending] of this.pending) {
       clearTimeout(pending.timer);
-      pending.reject(error);
+      pending.reject(pendingError);
       this.pending.delete(id);
     }
     this.generation += 1;
@@ -238,8 +243,9 @@ function sendSecure(peer: BridgePeer, value: unknown): void {
   if (!state.sessionKey) throw new Error("external browser secure channel is unavailable");
   const sequence = (state.sendSequence ?? 0) + 1;
   const payload = Buffer.from(JSON.stringify(value));
-  state.sendSequence = sequence;
   peer.send({ sequence, payload: payload.toString("base64url"), mac: signFrame(state.sessionKey, sequence, payload) });
+  // 只有写入成功才消费序号；本地大小校验失败时下一条请求仍应使用同一序号。
+  state.sendSequence = sequence;
 }
 function receiveSecure(peer: BridgePeer, envelope: Record<string, any>): Record<string, any> {
   const state = peer as PeerSecurity;
@@ -287,19 +293,20 @@ class LineJsonPeer implements BridgePeer {
   send(value: unknown): void {
     if (this.closed) throw new Error("socket closed");
     const payload = Buffer.from(JSON.stringify(value));
-    if (payload.length > MAX_MESSAGE_BYTES) throw new Error("browser bridge message too large");
+    if (payload.length > MAX_OUTBOUND_MESSAGE_BYTES) throw new Error("browser bridge message too large");
     this.socket.write(Buffer.concat([payload, Buffer.from("\n")]));
   }
   close(): void { if (!this.closed) { this.closed = true; this.socket.destroy(); } }
   private read(chunk: Buffer): void {
     this.buffer = Buffer.concat([this.buffer, chunk]);
-    if (this.buffer.length > MAX_MESSAGE_BYTES) { this.close(); return; }
     for (let newline = this.buffer.indexOf(10); newline >= 0; newline = this.buffer.indexOf(10)) {
       const payload = this.buffer.subarray(0, newline)
       this.buffer = this.buffer.subarray(newline + 1)
       if (!payload.length) continue
+      if (payload.length > MAX_INBOUND_MESSAGE_BYTES) { this.close(); return }
       try { this.onMessage?.(JSON.parse(payload.toString("utf8"))); } catch { this.close(); return; }
     }
+    if (this.buffer.length > MAX_INBOUND_MESSAGE_BYTES) this.close();
   }
 }
 

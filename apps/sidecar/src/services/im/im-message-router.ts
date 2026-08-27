@@ -533,7 +533,7 @@ async function routeImApprovalCommand(
   if (binding.peerKind === "group") {
     await sendBoundTextMessage({
       binding,
-      text: "群聊审批未启用，请在 Lume 桌面端处理，请在 Lume 桌面端处理。"
+      text: "群聊审批未启用，请在 Lume 桌面端处理。"
     });
     return { threadId: binding.threadId };
   }
@@ -972,9 +972,24 @@ export async function routeInboundImMessage(
     staleRebind = true;
   }
   const approvalCommand = parseImApprovalCommand(message.text);
-  if (existing && approvalCommand.type !== "none") {
+  if (approvalCommand.type !== "none") {
     log.info("处理审批命令", { peerId: message.peerId, requestId: approvalCommand.type === "command" ? approvalCommand.requestId : undefined });
-    return routeImApprovalCommand(existing, approvalCommand, deps);
+    let result: { threadId: string };
+    if (existing) {
+      result = await routeImApprovalCommand(existing, approvalCommand, deps);
+    } else {
+      await (deps.sendBoundTextMessage ?? sendBoundImTextMessage)({
+        binding: transientBindingForReply(message),
+        text: approvalCommand.type === "invalid"
+          ? approvalCommand.message
+          : "请先发送任意消息建立会话，再处理审批。"
+      });
+      result = { threadId: "" };
+    }
+    if (message.messageId) {
+      rememberImMessage(message.provider, message.accountId, message.messageId);
+    }
+    return result;
   }
   // 会话内斜杠命令（/help /new /stop /now /model）
   const chatCommand = parseImCommand(message.text);

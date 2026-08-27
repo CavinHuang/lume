@@ -85,4 +85,13 @@ describe("cron feasibility AND semantics (#452)", () => {
     const from = Date.parse("2026-07-28T00:00:00.000Z");
     expect(getNextCronRunAt("30 9 * * *", from, "UTC")).toBe(Date.parse("2026-07-28T09:30:00.000Z"));
   });
+
+  test("稀疏闰年 cron 跳到真实下一次命中而非扫描一年后返回 null", () => {
+    const from = Date.parse("2026-08-24T00:00:00.000Z");
+
+    expect(getNextCronRunAt("0 0 29 2 *", from, "UTC"))
+      .toBe(Date.parse("2028-02-29T00:00:00.000Z"));
+    expect(getNextCronRunAt("0 0 29 2 1", from, "UTC"))
+      .toBe(Date.parse("2044-02-29T00:00:00.000Z"));
+  });
 });

@@ -140,8 +140,12 @@ export function cronDateFeasible(expr: string): boolean {
 export function matchCronExpression(expr: string, date: Date, timezone?: string): boolean {
   const parts = expr.trim().split(/\s+/);
   if (parts.length !== 5) return false;
-  const values = zonedCronValues(date, timezone);
+  return cronPartsMatch(parts, zonedCronValues(date, timezone));
+}
+
+function cronPartsMatch(parts: string[], values: number[], startIndex = 0): boolean {
   return parts.every((field, index) => {
+    if (index < startIndex) return true;
     const spec = CRON_FIELD_SPECS[index];
     return spec ? cronFieldMatches(field, spec, values[index]!) : false;
   });
@@ -153,19 +157,43 @@ export function getNextCronRunAt(expr: string, fromMs: number, timezone?: string
   // 不再逐分钟空转满年（#408）
   if (!cronDateFeasible(expr)) return null;
   const resolvedTimezone = resolveTimezone(timezone);
+  const parts = expr.trim().split(/\s+/);
   const candidate = new Date(fromMs);
   candidate.setSeconds(0, 0);
   let timestamp = candidate.getTime() + 60_000;
-  const maxTimestamp = fromMs + 366 * 24 * 60 * 60_000;
+  // Gregorian 日历每 400 年完整重复。按 UTC 日/小时分层跳过不可能命中的区间，
+  // 既覆盖 2/29 + weekday 这类可能相隔数十年的合法表达式，又避免逐分钟空转。
+  const maxTimestamp = fromMs + 400 * 366 * 24 * 60 * 60_000;
   const previousLocalMinute = zonedMinuteKey(new Date(fromMs), resolvedTimezone);
 
   while (timestamp <= maxTimestamp) {
-    const date = new Date(timestamp);
-    const localMinute = zonedMinuteKey(date, resolvedTimezone);
-    if (localMinute !== previousLocalMinute && matchCronExpression(expr, date, resolvedTimezone)) {
-      return timestamp;
+    const dayEnd = Math.min(
+      Math.floor(timestamp / 86_400_000) * 86_400_000 + 86_340_000,
+      maxTimestamp,
+    );
+    const dayCanMatch = cronPartsMatch(parts, zonedCronValuesResolved(new Date(timestamp), resolvedTimezone), 2)
+      || cronPartsMatch(parts, zonedCronValuesResolved(new Date(dayEnd), resolvedTimezone), 2);
+    if (!dayCanMatch) {
+      timestamp = dayEnd + 60_000;
+      continue;
     }
-    timestamp += 60_000;
+    const hourEnd = Math.min(
+      Math.floor(timestamp / 3_600_000) * 3_600_000 + 3_540_000,
+      dayEnd,
+    );
+    const hourCanMatch = cronPartsMatch(parts, zonedCronValuesResolved(new Date(timestamp), resolvedTimezone), 1)
+      || cronPartsMatch(parts, zonedCronValuesResolved(new Date(hourEnd), resolvedTimezone), 1);
+    if (!hourCanMatch) {
+      timestamp = hourEnd + 60_000;
+      continue;
+    }
+    while (timestamp <= hourEnd) {
+      const date = new Date(timestamp);
+      const values = zonedCronValuesResolved(date, resolvedTimezone);
+      const localMinute = zonedMinuteKey(date, resolvedTimezone);
+      if (localMinute !== previousLocalMinute && cronPartsMatch(parts, values)) return timestamp;
+      timestamp += 60_000;
+    }
   }
 
   return null;
@@ -244,8 +272,11 @@ function validateMisfirePolicy(value: AutomationSchedule["misfirePolicy"]): void
 }
 
 function zonedCronValues(date: Date, timezone?: string): number[] {
-  const resolvedTimezone = resolveTimezone(timezone);
-  const parts = getCronPartsFormatter(resolvedTimezone).formatToParts(date);
+  return zonedCronValuesResolved(date, resolveTimezone(timezone));
+}
+
+function zonedCronValuesResolved(date: Date, timezone: string): number[] {
+  const parts = getCronPartsFormatter(timezone).formatToParts(date);
   const values = Object.fromEntries(parts.map((part) => [part.type, part.value]));
   const weekday = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].indexOf(values.weekday ?? "");
   return [

@@ -1,9 +1,9 @@
 import type { DailyRoutine, RoutineEntryStatus, RoutineResult } from "@lume/shared"
 import { createAutomationJob, setAutomationJobProvenance } from "../automation/automation-manager"
 import { listAutomationJobs } from "../automation/automation-manager"
-import { startAutomationRunner, refreshAutomationRunnerJobs } from "../automation/automation-runner-service"
+import { startAutomationRunner, refreshAutomationRunnerJobs, listLatestAutomationRunsByJob } from "../automation/automation-runner-service"
 import { getActivityExecutor } from "./routine-activities"
-import { readRoutine, writeRoutine, appendRoutineRun, listAutomationRunsForJob, getLatestAssistantResponse } from "./routine-store"
+import { readRoutine, writeRoutine, appendRoutineRun, getLatestAssistantResponse } from "./routine-store"
 import { createLogger } from "../infra/logger"
 
 import { localDateKey } from "./routine-date"
@@ -159,18 +159,27 @@ export function syncRoutineStatus(): void {
   if (!routine) return
 
   const jobs = listAutomationJobs()
+  const jobsById = new Map(jobs.map((job) => [job.id, job]))
+  const latestRuns = listLatestAutomationRunsByJob(
+    routine.entries.flatMap((entry) => {
+      if (!entry.automationJobId) return []
+      const job = jobsById.get(entry.automationJobId)
+      const needsRun = (entry.status === "completed" && (!entry.result || entry.result.summary?.startsWith("任务执行完成，线程:")))
+        || (entry.status !== "completed" && job?.enabled === false && Boolean(job.lastRunAt))
+      return needsRun ? [entry.automationJobId] : []
+    })
+  )
   let changed = 0
 
   for (const entry of routine.entries) {
     if (!entry.automationJobId) continue
 
-    const job = jobs.find((j) => j.id === entry.automationJobId)
+    const job = jobsById.get(entry.automationJobId)
     if (!job) continue
 
     // Backfill result for completed entries that are missing it
     if (entry.status === "completed" && !entry.result) {
-      const runs = listAutomationRunsForJob(entry.automationJobId, 1)
-      const latestRun = runs[0]
+      const latestRun = latestRuns.get(entry.automationJobId)
       if (latestRun) {
         const llmReply = latestRun.threadId
           ? getLatestAssistantResponse(latestRun.threadId)
@@ -184,8 +193,7 @@ export function syncRoutineStatus(): void {
     if (entry.status === "completed") {
       // Try to upgrade fallback results to actual LLM responses
       if (entry.result?.summary?.startsWith("任务执行完成，线程:")) {
-        const runs = listAutomationRunsForJob(entry.automationJobId, 1)
-        const latestRun = runs[0]
+        const latestRun = latestRuns.get(entry.automationJobId)
         if (latestRun?.threadId) {
           const llmReply = getLatestAssistantResponse(latestRun.threadId)
           if (llmReply) {
@@ -198,8 +206,7 @@ export function syncRoutineStatus(): void {
     }
 
     if (!job.enabled && job.lastRunAt) {
-      const runs = listAutomationRunsForJob(entry.automationJobId, 1)
-      const latestRun = runs[0]
+      const latestRun = latestRuns.get(entry.automationJobId)
       const llmReply = latestRun?.threadId
         ? getLatestAssistantResponse(latestRun.threadId)
         : undefined

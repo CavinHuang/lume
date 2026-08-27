@@ -25,6 +25,7 @@ const { createAutomationJob } = await import("./automation-manager");
 // mock 注册之前，stub 对已绑定真实引用的被测模块不生效（bun mock 时序）
 const {
   listAutomationRuns,
+  listLatestAutomationRunsByJob,
   refreshAutomationRunnerJobs,
   resolveAutomationModelKind,
   resolveAutomationRunOutcome,
@@ -67,6 +68,22 @@ describe("automation-runner-service", () => {
       process.env.LUME_CONFIG_DIR = oldConfigDir;
     }
     rmSync(tempConfigDir, { recursive: true, force: true });
+  });
+
+  it("一次扫描返回多个 job 的最新 run", async () => {
+    const { getAutomationRunsPath } = await import("../infra/config-paths");
+    writeFileSync(getAutomationRunsPath(), [
+      { id: "run-a-old", jobId: "job-a", startedAt: 1 },
+      { id: "run-b", jobId: "job-b", startedAt: 3 },
+      { id: "run-a-new", jobId: "job-a", startedAt: 4 },
+      { id: "run-other", jobId: "job-other", startedAt: 5 },
+    ].map((run) => JSON.stringify(run)).join("\n"), "utf-8");
+
+    const latest = listLatestAutomationRunsByJob(["job-a", "job-b"]);
+
+    expect(latest.get("job-a")?.id).toBe("run-a-new");
+    expect(latest.get("job-b")?.id).toBe("run-b");
+    expect(latest.has("job-other")).toBeFalse();
   });
 
   it("立即执行受理即返回 running 回执，真实运行记录异步落盘(#586)", async () => {
