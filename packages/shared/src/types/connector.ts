@@ -6,8 +6,29 @@ export const CONNECTOR_IPC_CHANNELS = {
   SAVE_CLIENT_CONFIG: "connector:save-client-config",
   SAVE_CREDENTIAL: "connector:save-credential",
   START_AUTH: "connector:start-auth",
-  DISCONNECT: "connector:disconnect"
+  DISCONNECT: "connector:disconnect",
+  GET_POOL_METRICS: "connector:get-pool-metrics"
 } as const;
+
+/** IMAP 连接池指标快照(#790):GET_POOL_METRICS 只读返回,进程级累计口径。
+ * 全部为事件数而非连接数——勿按「销毁数 = error_destroy + Σmiss_*」换算。 */
+export interface ImapPoolMetricsPayload {
+  /** 借出命中池内兼容连接。 */
+  pool_hit: number;
+  /** 新建连接成功(= LOGIN 次数,衡量复用收益的直接口径)。 */
+  created: number;
+  miss_ttl: number;
+  miss_dead: number;
+  miss_host: number;
+  miss_auth: number;
+  miss_unselected: number;
+  /** 传输层错误导致的销毁;业务错(uid_not_found 等)健康回流不计入(#806 口径)。 */
+  error_destroy: number;
+  /** 池内空闲条目数(全账号,含尚未被清扫摘除的 dead 条目):可复用容量的上界。 */
+  idle_connections: number;
+  /** error_destroy 按 kind 细分占比的论证数据;watchdog 与 mapLibraryError kind 同表。 */
+  error_destroy_kinds: Record<string, number>;
+}
 
 /** 连接器的配置向导描述(由 provider definition 单源下发,web 按此渲染表单与指引)。 */
 export interface ConnectorSetupField {
