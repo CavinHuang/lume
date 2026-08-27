@@ -7,11 +7,27 @@ import type {
 } from "@lume/agent-sdk";
 import { builtinProviders } from "@earendil-works/pi-ai/providers/all";
 import { PROVIDER_DEFAULT_URLS, type Channel } from "@lume/shared";
-import { decryptApiKey, getChannelById } from "../channel/channel-manager";
+import { decryptApiKey, getChannelById, updateChannel } from "../channel/channel-manager";
 import { getConnectionOAuthProviderId, resolveConnectionOAuthAuth } from "../channel/connection-oauth-service";
 import { createRoutingPiAiProvider, type PiAiProviderRoute } from "./pi-ai-provider";
 
 const BUILTIN_PROVIDERS = builtinProviders();
+
+/**
+ * 运行期渠道不可用时同步降级健康徽章（#595）：否则 healthStatus 停留在上次
+ * 显式测试的结果上，绿点成了遗像，用户无法把「run 老是失败」和渠道故障关联。
+ */
+function throwWithHealthDegradation(channel: Channel, message: string): never {
+  try {
+    updateChannel(channel.id, {
+      healthStatus: "unavailable",
+      healthMessage: message,
+    });
+  } catch {
+    // 降级失败不影响原错误上抛
+  }
+  throw new Error(message);
+}
 
 export async function createConnectionLlmProvider(input: {
   channel: Channel;
@@ -65,17 +81,28 @@ export async function createConnectionPiAiRoute(input: {
   sessionId?: string;
   signal?: AbortSignal;
 }): Promise<PiAiProviderRoute> {
-  if (!input.channel.enabled) throw new Error("connection_disabled");
+  if (!input.channel.enabled) throwWithHealthDegradation(input.channel, "connection_disabled");
   const configuredModel = input.channel.models.find((item) => item.id === input.modelId);
-  if (configuredModel && !configuredModel.enabled) throw new Error("connection_model_disabled");
+  if (configuredModel && !configuredModel.enabled) throwWithHealthDegradation(input.channel, "connection_model_disabled");
   const routeModelId = stripMatchingConnectionProviderPrefix(input.channel, input.modelId);
-  const oauth = await resolveConnectionOAuthAuth(input.channel.id, input.signal);
+  const oauth = await resolveConnectionOAuthAuth(input.channel.id, input.signal).catch((error: unknown) => {
+    // review P1:用户主动停止 run(abort)≠ 渠道故障,不得误标红徽章;
+    // single-flight 下 A run 的 abort reject 还会击中并发等待的 B run,更须排除。
+    if (input.signal?.aborted || (error instanceof Error && error.name === "AbortError")) {
+      throw error;
+    }
+    // OAuth refresh 运行期失败同样降级徽章（#595）：凭据吊销/过期不该只进 run 错误
+    throwWithHealthDegradation(
+      input.channel,
+      `connection_oauth_credential_unavailable: ${error instanceof Error ? error.message : String(error)}`
+    );
+  });
   if (input.channel.authType === "oauth" && !oauth) {
-    throw new Error("connection_oauth_credential_unavailable");
+    throwWithHealthDegradation(input.channel, "connection_oauth_credential_unavailable");
   }
   const apiKey = oauth?.auth.apiKey ?? decryptApiKey(input.channel.id);
   if (input.channel.authType === "api-key" && !apiKey) {
-    throw new Error("connection_api_key_unavailable");
+    throwWithHealthDegradation(input.channel, "connection_api_key_unavailable");
   }
   const catalogModel = findConnectionCatalogModel(input.channel, routeModelId, oauth?.providerId);
   const apiType = resolveConnectionApiType(input.channel, configuredModel?.protocol, catalogModel?.api);

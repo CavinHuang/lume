@@ -42,7 +42,7 @@ import { BrowserNetworkGuard, isPublicAddress } from "./browser-network-guard"
 import { BrowserAuditLog } from "./browser-audit"
 import { AGENT_DOWNLOAD_LIMITS, AgentDownloadQuota, BrowserDownloadHistory, completeDownload, prepareDownload, removePartialDownload, safeDownloadFilename } from "./browser-downloads"
 import { BrowserCredentialVault } from "./browser-credentials"
-import { BrowserWorkspaceStore } from "./browser-workspace-store"
+import { BrowserWorkspaceStore, type BrowserWorkspaceLogEvent } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
 import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
@@ -66,6 +66,7 @@ type BrowserRuntimeOptions = {
   // 输入自然性（指针轨迹/按键驻留/逐字输入/滚轮分帧），默认开启；集成测试传 false 走直通注入
   humanizedInput?: boolean
   onInternalError?: (details: { method: string; actor: BrowserRequestContext["actor"]; tabId?: string; message: string }) => void
+  onWorkspaceEvent?: (event: BrowserWorkspaceLogEvent) => void
 }
 
 type BrowserTab = BrowserTabDescriptor & {
@@ -318,7 +319,7 @@ export class BrowserRuntime {
     this.browsingHistory = new BrowserHistoryStore(options.configDir)
     this.extensions = new BrowserExtensionStore(options.configDir)
     this.credentials = new BrowserCredentialVault(options.configDir, options.credentialStorage)
-    this.workspaces = new BrowserWorkspaceStore(options.configDir)
+    this.workspaces = new BrowserWorkspaceStore(options.configDir, options.onWorkspaceEvent)
     nativeTheme.on("updated", this.onThemeUpdated)
     this.annotations = new BrowserAnnotationManager({
       configDir: options.configDir,
@@ -782,6 +783,7 @@ export class BrowserRuntime {
     if (method === "handoff") return this.handoffTabs(context, params)
     if (method === "resumeHandoff") return this.resumeHandoffTabs(context)
     if (method === "finalize") return this.finalizeTabs(context, params)
+    if (method === "pruneThread") return this.pruneThreadTabs(context, params)
     if (method === "share") return this.shareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "unshare") return this.unshareTab(String(params.tabId ?? context.tabId ?? ""), context)
     if (method === "claim") {
@@ -4240,6 +4242,20 @@ export class BrowserRuntime {
    * 修剪语义引用索引：identity 按 tab+generation 累积、entries 按新快照累积，
    * 换代/关 tab 后旧条目永不再命中。仅保留仍存活 tab+generation 的条目（#404）。
    */
+  // #613:线程硬删除级联回收其名下全部 agent tab(handoff 含),防
+  // workspaces.json 孤儿记录经 isRecoverable 永久留存。
+  private pruneThreadTabs(context: BrowserRequestContext, params: Record<string, unknown>): { ok: true; closed: number } {
+    const threadId = typeof params.threadId === "string" ? params.threadId : ""
+    if (!threadId) throw browserError("invalid_browser_request")
+    let closed = 0
+    for (const tab of [...this.tabs.values()]) {
+      if (tab.ownerThreadId !== threadId) continue
+      this.closeTab(tab.tabId, context)
+      closed += 1
+    }
+    return { ok: true, closed }
+  }
+
   private pruneSemanticRefSession(browserSessionId: string): void {
     const session = this.semanticRefSessions.get(browserSessionId)
     if (!session) return

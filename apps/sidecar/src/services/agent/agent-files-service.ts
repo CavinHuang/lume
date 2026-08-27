@@ -17,6 +17,7 @@ import {
   readdirSync,
   rmSync,
   statSync,
+  chmodSync,
   watch,
   type FSWatcher,
   writeFileSync,
@@ -36,6 +37,7 @@ import {
 } from "node:path";
 import { lstat, readdir, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
+import { createLogger } from "../infra/logger";
 import type {
   AttachWorkspaceResourceToThreadInput,
   AttachWorkspaceResourceToThreadResult,
@@ -57,6 +59,8 @@ import {
   getAgentWorkspacesDir,
 } from "../infra/config-paths";
 import { getMemoryV2ScopePaths } from "../memory-v2/paths";
+
+const log = createLogger("agent-files-service");
 import { listMemorySourceFilesForScope } from "../memory-v2/source-files";
 import {
   resolveAgentThreadLumeWorkDir,
@@ -193,10 +197,30 @@ function enrichEntriesWithAttachmentMeta(
   });
 }
 
+// #616②:threadId→workspaceSlug 归属天然稳定(目录不迁移),但反查每次同步穷举
+// workspaces 根并对每个 workspace 做 existsSync(Windows 单次 stat ≈0.1-0.5ms),
+// 文件面板密集操作逐 RPC 放大。TTL 缓存:未命中也缓存(null),新线程创建后的
+// 首个 TTL 窗口内反查不到时自然过期自愈。
+const WORKSPACE_SLUG_CACHE_TTL_MS = 5_000;
+const workspaceSlugCache = new Map<string, { at: number; slug: string | null }>();
+
 export function resolveWorkspaceSlugBySessionId(
   sessionId: string,
 ): string | null {
   validatePathSegment(sessionId, "sessionId");
+  const cached = workspaceSlugCache.get(sessionId);
+  if (cached && Date.now() - cached.at < WORKSPACE_SLUG_CACHE_TTL_MS) {
+    return cached.slug;
+  }
+  const slug = resolveWorkspaceSlugBySessionIdUncached(sessionId);
+  workspaceSlugCache.set(sessionId, { at: Date.now(), slug });
+  if (workspaceSlugCache.size > 2_000) workspaceSlugCache.clear();
+  return slug;
+}
+
+function resolveWorkspaceSlugBySessionIdUncached(
+  sessionId: string,
+): string | null {
   const workspacesDir = getAgentWorkspacesDir();
   if (!existsSync(workspacesDir)) return null;
   for (const entry of readdirSync(workspacesDir, { withFileTypes: true })) {
@@ -358,7 +382,7 @@ export function renameAuthorizedFileRef(
 export function moveAuthorizedFileRef(
   ref: FileRef,
   targetDirectory: FileRef,
-): { ok: true; ref: FileRef } {
+): { ok: true; ref: FileRef; warning?: string } {
   assertWritableFileRef(ref);
   assertWritableFileRef(targetDirectory);
   if (ref.scopeId !== targetDirectory.scopeId)
@@ -376,13 +400,14 @@ export function moveAuthorizedFileRef(
   }
   const target = join(directory.absolutePath, basename(source.absolutePath));
   if (existsSync(target)) throw new Error("目标路径已存在同名文件");
-  movePathWithFallback(source.absolutePath, target);
+  const moveWarning = movePathWithFallback(source.absolutePath, target);
   return {
     ok: true,
     ref: {
       ...ref,
       relativePath: relative(source.rootPath, target).split(sep).join("/"),
     },
+    ...(moveWarning ? { warning: moveWarning } : {}),
   };
 }
 
@@ -474,24 +499,162 @@ function validateNewName(newName: string): string {
   return trimmed;
 }
 
-function movePathWithFallback(sourcePath: string, targetPath: string): void {
+// #552:Windows 杀毒/索引器对刚写入文件的瞬时句柄占用表现为 EPERM/EBUSY（round11 对抗审计：
+// 与 #771 对齐全平台重试+降级；mount 点清空风险由上层工作区边界约束兜底）。
+const MOVE_BUSY_RETRY_DELAYS_MS = [50, 150];
+
+/** 同步短退避，避免瞬时占用直接走 O(总字节) 同步拷贝阻塞 RPC 循环；环境异常退化为不等。 */
+function sleepSync(ms: number): void {
   try {
-    renameSync(sourcePath, targetPath);
-    return;
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+  } catch {
+    // ignore
+  }
+}
+
+// 移动/重命名最终失败会直达前端 toast，常见 errno 翻译成可行动的中文（#552 UX review round7）
+const MOVE_ERRNO_MESSAGES: Record<string, string> = {
+  EACCES: "没有操作权限，请检查文件权限或是否被其他程序占用",
+  EPERM: "没有操作权限，请检查文件权限或是否被其他程序占用",
+  ENOSPC: "磁盘空间不足，请清理后重试",
+  ENOENT: "文件或目录不存在，可能已被移动或删除",
+  EEXIST: "目标位置已存在同名文件",
+  EISDIR: "目标是目录，无法完成该操作",
+  ENOTDIR: "路径中包含非目录项",
+  EMFILE: "系统打开的文件过多，请稍后重试",
+};
+
+function errnoOf(error: unknown): string | undefined {
+  return typeof error === "object" && error !== null && "code" in error
+    ? String((error as NodeJS.ErrnoException).code)
+    : undefined;
+}
+
+function translateMoveError(error: unknown): Error {
+  const code = errnoOf(error);
+  const hint = typeof code === "string" ? MOVE_ERRNO_MESSAGES[code] : undefined;
+  if (!hint) return error instanceof Error ? error : new Error(String(error));
+  return new Error(hint);
+}
+
+/**
+ * #552 合并版：保留告警链与 errno 中文化（本分支），并采纳 main(#771) 的
+ * 可注入 rename 供测试钉死重试/降级序列；占用重试全平台生效——main 的测试
+ * 已在 Ubuntu 钉死该语义，POSIX 挂载点场景由「源清理失败保副本+告警」兜底。
+ * 返回 undefined=干净完成；有值=移动成功但源副本清理失败（占用窗口），
+ * 调用方必须透传到 RPC 结果供前端提示，否则旧路径文件"复活"无从解释。
+ */
+export function movePathWithFallback(
+  sourcePath: string,
+  targetPath: string,
+  rename: typeof renameSync = renameSync
+): string | undefined {
+  try {
+    return movePathWithFallbackInner(sourcePath, targetPath, rename);
   } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "EXDEV") {
+    throw translateMoveError(error);
+  }
+}
+
+function movePathWithFallbackInner(
+  sourcePath: string,
+  targetPath: string,
+  rename: typeof renameSync
+): string | undefined {
+  let firstErrorCode: string | undefined;
+  try {
+    rename(sourcePath, targetPath);
+    return undefined;
+  } catch (error) {
+    // EXDEV=跨设备直接降级；EPERM/EBUSY 全平台短退避重试吸收瞬态占用——
+    // main(#771) 的测试已在 Ubuntu 钉死该语义；POSIX 挂载点等永久占用场景由
+    // 「复制成功后源清理失败保副本+告警」兜底，不会清空挂载内容（#552 合并裁定）
+    const code = errnoOf(error);
+    if (code !== "EXDEV" && code !== "EPERM" && code !== "EBUSY") {
       throw error;
     }
+    firstErrorCode = code;
   }
+  // 占用类错误通常毫秒~秒级释放：先短退避重试 rename，命中即免去整棵拷贝（仅 EXDEV 直接降级）
+  if (firstErrorCode !== "EXDEV") {
+    for (const delayMs of MOVE_BUSY_RETRY_DELAYS_MS) {
+      sleepSync(delayMs);
+      try {
+        rename(sourcePath, targetPath);
+        log.info("文件移动占用重试成功", { code: firstErrorCode, sourcePath, targetPath, retriedAfterMs: delayMs });
+        return undefined;
+      } catch (error) {
+        const code = errnoOf(error);
+        if (code !== "EPERM" && code !== "EBUSY") {
+          throw error;
+        }
+      }
+    }
+  }
+  log.info("文件移动降级为拷贝+删除", { code: firstErrorCode, sourcePath, targetPath });
   try {
     mkdirSync(dirname(targetPath), { recursive: true });
     rmSync(targetPath, { recursive: true, force: true });
-    cpSync(sourcePath, targetPath, { recursive: true });
-    rmSync(sourcePath, { recursive: true, force: true });
+    cpSync(sourcePath, targetPath, { recursive: true, preserveTimestamps: true });
+    try {
+      removeSourceAfterCopy(sourcePath);
+    } catch (error) {
+      // 源清理失败不回滚：此时 target 已是完整副本，删掉它才是数据丢失；保留双份由用户重试清理。
+      // 必须留痕并透传 warning——RPC 仍返回 ok，不提示则旧路径"复活"的源副本无从解释（#552 review round4）
+      const detail = error instanceof Error ? error.message : String(error);
+      log.warn("移动降级拷贝后源清理失败，已保留完整目标副本与残留源", {
+        sourcePath,
+        targetPath,
+        error: detail,
+      });
+      return `移动已完成，但旧位置文件因被占用未能清理（${detail}），请稍后手动删除`;
+    }
   } catch (error) {
-    rmSync(targetPath, { recursive: true, force: true });
+    // 清场自身失败不得顶替原始错误
+    try {
+      rmSync(targetPath, { recursive: true, force: true });
+    } catch {
+      // 残留半截 target 可接受，优先暴露拷贝根因
+    }
     throw error;
+  }
+  return undefined;
+}
+
+/**
+ * 拷贝完成后的源清理。Windows/Electron 的 rmSync 不清 FILE_ATTRIBUTE_READONLY
+ * （.git/objects、npm 包内文件普遍只读，force 只压 ENOENT），失败时先递归清只读属性再重试一次。
+ */
+function removeSourceAfterCopy(sourcePath: string): void {
+  try {
+    rmSync(sourcePath, { recursive: true, force: true });
+    return;
+  } catch (firstError) {
+    if (process.platform !== "win32") throw firstError;
+    try {
+      clearReadOnlyRecursive(sourcePath);
+      rmSync(sourcePath, { recursive: true, force: true });
+      log.info("源清理经只读属性清除后成功", { sourcePath });
+    } catch {
+      throw firstError; // 重试仍失败：保留原始错误（占用/权限），由调用方走 warning 路径
+    }
+  }
+}
+
+function clearReadOnlyRecursive(root: string): void {
+  // lstat 不跟随链接：junction/symlink 指向源树之外（全局 store、用户目录）时
+  // chmod 会越出授权范围，成环还会无界递归——链接条目直接跳过（rmSync 本身也不跟随）
+  const stat = lstatSync(root, { throwIfNoEntry: false });
+  if (!stat || stat.isSymbolicLink()) return;
+  if (stat.isDirectory()) {
+    for (const entry of readdirSync(root)) {
+      clearReadOnlyRecursive(join(root, entry));
+    }
+  }
+  try {
+    chmodSync(root, stat.isDirectory() ? 0o777 : 0o666);
+  } catch {
+    // 单个条目清属性失败不阻断整体重试
   }
 }
 
@@ -653,7 +816,7 @@ export function exportLegacyResourceToProject(
   workspaceSlug: string,
   targetPath: string,
   conflict: "error",
-): { ok: true; path: string } {
+): { ok: true; path: string; } {
   if (conflict !== "error") {
     throw new Error("旧版资源导出必须显式使用不覆盖策略");
   }
@@ -699,7 +862,7 @@ export function exportLegacyResourceToProject(
 export function promoteFileRefToProject(
   ref: FileRef,
   workspaceSlug: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; } {
   if (ref.source === "project") throw new Error("项目文件无需晋升");
   const rootPath = resolveFileRefRoot(ref);
   const lexicalSource = resolveSafePathWithin(
@@ -852,7 +1015,7 @@ export function renameAgentFile(
   sessionId: string,
   targetPath: string,
   newName: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
   if (resolve(resolved) === resolve(rootPath)) {
@@ -872,20 +1035,20 @@ export function renameAgentFile(
   assertAttachmentMetadataHealthy(
     getThreadAttachmentScope(workspaceSlug, sessionId),
   );
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getThreadAttachmentScope(workspaceSlug, sessionId),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function renameWorkspaceFile(
   workspaceSlug: string,
   targetPath: string,
   newName: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
   const resolved = resolveSafePath(
     resourcesDir,
@@ -907,20 +1070,20 @@ export function renameWorkspaceFile(
     throw new Error("目标名称已存在");
   }
   assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(workspaceSlug));
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getWorkspaceAttachmentScope(workspaceSlug),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function renameWorkspaceRootFile(
   workspaceSlug: string,
   targetPath: string,
   newName: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
   const resolved = resolveSafePath(
     workspaceRoot,
@@ -941,8 +1104,8 @@ export function renameWorkspaceRootFile(
   if (existsSync(nextPath)) {
     throw new Error("目标名称已存在");
   }
-  movePathWithFallback(resolved, nextPath);
-  return { ok: true, path: nextPath };
+  const moveWarning = movePathWithFallback(resolved, nextPath);
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function moveAgentFile(
@@ -950,7 +1113,7 @@ export function moveAgentFile(
   sessionId: string,
   targetPath: string,
   targetDir: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resolved = resolveSafeTarget(workspaceSlug, sessionId, targetPath);
   const rootPath = resolveSessionDir(workspaceSlug, sessionId);
   const resolvedTargetDir = resolveSafeTarget(
@@ -986,20 +1149,20 @@ export function moveAgentFile(
   assertAttachmentMetadataHealthy(
     getThreadAttachmentScope(workspaceSlug, sessionId),
   );
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getThreadAttachmentScope(workspaceSlug, sessionId),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function moveWorkspaceFile(
   workspaceSlug: string,
   targetPath: string,
   targetDir: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const resourcesDir = resolveWorkspaceResourcesDir(workspaceSlug);
   const resolved = resolveSafePath(
     resourcesDir,
@@ -1037,20 +1200,20 @@ export function moveWorkspaceFile(
   }
 
   assertAttachmentMetadataHealthy(getWorkspaceAttachmentScope(workspaceSlug));
-  movePathWithFallback(resolved, nextPath);
+  const moveWarning = movePathWithFallback(resolved, nextPath);
   moveAttachmentMeta(
     getWorkspaceAttachmentScope(workspaceSlug),
     resolved,
     nextPath,
   );
-  return { ok: true, path: nextPath };
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 export function moveWorkspaceRootFile(
   workspaceSlug: string,
   targetPath: string,
   targetDir: string,
-): { ok: true; path: string } {
+): { ok: true; path: string; warning?: string } {
   const workspaceRoot = resolveWorkspaceRootDir(workspaceSlug);
   const resolved = resolveSafePath(
     workspaceRoot,
@@ -1087,14 +1250,18 @@ export function moveWorkspaceRootFile(
     throw new Error("目标路径已存在同名文件");
   }
 
-  movePathWithFallback(resolved, nextPath);
-  return { ok: true, path: nextPath };
+  const moveWarning = movePathWithFallback(resolved, nextPath);
+  return { ok: true, path: nextPath, ...(moveWarning ? { warning: moveWarning } : {}) };
 }
 
 function spawnDetached(command: string, args: string[]): void {
   const child = spawn(command, args, {
     detached: true,
     stdio: "ignore",
+  });
+  // 无 error 监听会踩中 sidecar uncaughtException 五击止损通道（#548）；吞错但必须留痕
+  child.once("error", (error) => {
+    log.warn("spawnDetached 失败（打开文件/文件夹）", { command, args, error: error.message });
   });
   child.unref();
 }
@@ -1622,7 +1789,7 @@ export function saveFilesToAgentSession(
         ...(scope.fileContextId
           ? {
               ref: {
-                source: "session" as const,
+                source: "session",
                 scopeId: scope.fileContextId,
                 relativePath: threadPath,
               },
@@ -1733,7 +1900,7 @@ export async function saveFilesToAgentSessionStreamed(
         ...(scope.fileContextId
           ? {
               ref: {
-                source: "session" as const,
+                source: "session",
                 scopeId: scope.fileContextId,
                 relativePath: threadPath,
               },

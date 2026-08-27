@@ -679,7 +679,7 @@ function ModelActionSettings({
         <div className="flex items-center justify-between gap-3 border-b border-[var(--border)] py-3">
           <div className="min-w-0">
             <div className="text-[13px] font-semibold leading-5 text-[var(--text-1)]">推理强度</div>
-            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">影响回复前的思考深度</div>
+            <div className="mt-0.5 text-[12px] leading-4 text-[var(--text-3)]">影响回复前的思考深度，仅作用于主对话；未配置时按「中」执行。记忆整理、建议生成等后台辅助恒按「中」，不受此档位控制</div>
           </div>
           <ThinkingLevelPicker value={thinkingLevel} onChange={onThinkingLevelChange} inline />
         </div>
@@ -1468,11 +1468,19 @@ function ProviderListItem({
         </span>
         <span className="min-w-0 flex-1">
           <span className="block truncate text-[13px] font-semibold leading-5">{row.label}</span>
-          <span className="block truncate text-[11px] leading-4 text-[var(--text-3)]">
-            {row.channel ? `${row.channel.models?.length ?? 0} 模型` : '未配置'}
+          <span
+            className="block truncate text-[11px] leading-4 text-[var(--text-3)]"
+            title={unavailable ? row.channel?.healthMessage : undefined}
+          >
+            {unavailable && row.channel?.healthMessage
+              ? row.channel.healthMessage
+              : row.channel ? `${row.channel.models?.length ?? 0} 模型` : '未配置'}
           </span>
         </span>
-        <span className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]">
+        <span
+          className="flex items-center gap-1 text-[11px] font-medium text-[var(--text-2)]"
+          title={unavailable ? row.channel?.healthMessage : undefined}
+        >
           <span className={cn(
             'size-1.5 rounded-full',
             unavailable

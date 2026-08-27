@@ -625,28 +625,30 @@ function WorkspaceFilesPanel({ workspace }: { workspace: AgentWorkspace }) {
     const fallbackName = selectedPath.split('/').filter(Boolean).pop() ?? selectedPath
     const newName = window.prompt('重命名为', fallbackName)?.trim()
     if (!newName || newName === fallbackName) return
-    await sidecarCall(AGENT_IPC_CHANNELS.RENAME_WORKSPACE_ROOT_FILE, {
+    const result = await sidecarCall<{ ok: true; path: string; warning?: string }>(AGENT_IPC_CHANNELS.RENAME_WORKSPACE_ROOT_FILE, {
       workspaceSlug: workspace.slug,
       path: selectedPath,
       newName,
     })
+    if (result.warning) toast.warning(result.warning)
     setSelectedPath('')
     setPreview(null)
-    toast.success('已重命名')
+    if (!result.warning) toast.success('已重命名')
   })
 
   const handleMove = () => runFileAction('move', async () => {
     if (!selectedPath) return
     const targetDir = window.prompt('移动到目录（使用 . 表示根目录）', '.')?.trim()
     if (targetDir === undefined) return
-    await sidecarCall(AGENT_IPC_CHANNELS.MOVE_WORKSPACE_ROOT_FILE, {
+    const result = await sidecarCall<{ ok: true; path: string; warning?: string }>(AGENT_IPC_CHANNELS.MOVE_WORKSPACE_ROOT_FILE, {
       workspaceSlug: workspace.slug,
       path: selectedPath,
       targetDir,
     })
+    if (result.warning) toast.warning(result.warning)
     setSelectedPath('')
     setPreview(null)
-    toast.success('已移动')
+    if (!result.warning) toast.success('已移动')
   })
 
   const handleDeleteFile = () => runFileAction('delete', async () => {

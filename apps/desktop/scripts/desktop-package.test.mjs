@@ -161,7 +161,8 @@ test('macOS release uses Developer ID when configured and otherwise falls back t
 
 test('update installation keeps renderer IPC pending until the updater takes over', () => {
   const main = readFileSync(resolve(DESKTOP_ROOT, 'src/main.ts'), 'utf8')
-  const handlerStart = main.indexOf("ipcMain.handle('lume:update:install'")
+  // update-install 注册经 handleLogged 包装（IPC 埋点），哨兵同步更新。
+  const handlerStart = main.indexOf("handleLogged('lume:update:install'")
   const handlerEnd = main.indexOf('// Windows 任务栏图标', handlerStart)
   const handler = main.slice(handlerStart, handlerEnd)
 

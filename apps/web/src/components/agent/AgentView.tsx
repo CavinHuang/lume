@@ -72,8 +72,13 @@ export function AgentView({
   const activeAskUserQuestion = activeToolPermission || activeDesktopActionRequest
     ? undefined
     : pendingAskUserQuestions[0]
+  // 动线 F3:审批卡被 Esc 收起成 pill 后不再遮蔽输入框——「收起去干别的」才成立
+  const [permissionCollapsed, setPermissionCollapsed] = useState(false)
+  useEffect(() => {
+    setPermissionCollapsed(false)
+  }, [activeToolPermission?.requestId])
   const hasComposerOverlay = Boolean(
-    activeToolPermission || activeDesktopActionRequest || activeAskUserQuestion
+    (activeToolPermission && !permissionCollapsed) || activeDesktopActionRequest || activeAskUserQuestion
   )
 
   const threads = useAtomValue(agentThreadsAtom)
@@ -344,8 +349,15 @@ export function AgentView({
                 />
               </div>
               {activeToolPermission && (
-                <div className="absolute inset-x-0 bottom-0 z-30">
-                  <PermissionBanner threadId={threadId} request={activeToolPermission} />
+                <div className="pointer-events-none absolute inset-x-0 bottom-0 z-30">
+                  {/* 三轮 review P3:容器全宽,收起态 pill 两侧透明区不得吞 composer 点击 */}
+                  <div className="pointer-events-auto">
+                    <PermissionBanner
+                      threadId={threadId}
+                      request={activeToolPermission}
+                      onHiddenChange={setPermissionCollapsed}
+                    />
+                  </div>
                 </div>
               )}
               {activeDesktopActionRequest && (

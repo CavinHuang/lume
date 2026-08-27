@@ -8,11 +8,13 @@ import type {
 } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import { cn } from '@/lib/utils'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import {
   getEffectiveLumeConfig,
   updateAgentPermissionMode,
+  updateAgentProjectInstructionsEnabled,
   updatePermissionClassifierEnabled,
   updatePermissionsSection,
 } from '@/lib/desktop-api/lume-config'
@@ -34,7 +36,6 @@ import {
 } from './permission-settings-state'
 
 import { Input } from '@/components/ui/input'
-import { Switch } from '@/components/ui/switch'
 const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   shield: Shield,
   pencil: Pencil,
@@ -43,7 +44,7 @@ const ICON_MAP: Record<PermissionModeIconKey, typeof Shield> = {
   map: Map,
 }
 
-type SavingTarget = null | 'mode' | 'rules' | 'classifier'
+type SavingTarget = null | 'mode' | 'rules' | 'projectInstructions' | 'classifier'
 
 const RULE_ACTION_OPTIONS: Array<{
   value: LumeConfigPermissionRuleAction
@@ -148,6 +149,21 @@ export function PermissionSettings() {
     } catch (error) {
       console.error('[PermissionSettings] save mode FAILED:', error)
       toast.error('保存权限模式失败')
+    } finally {
+      setSaving(null)
+    }
+  }
+
+  // #670 行为告知:项目指令(CLAUDE.md/AGENTS.md)自动注入开关,缺省开启。
+  const projectInstructionsEnabled = config?.agent?.projectInstructionsEnabled !== false
+  const handleProjectInstructionsEnabledChange = async (enabled: boolean) => {
+    setSaving('projectInstructions')
+    try {
+      const nextConfig = await updateAgentProjectInstructionsEnabled(enabled, selectedWorkspaceSlug)
+      setConfig(nextConfig)
+    } catch (error) {
+      console.error('[PermissionSettings] save project instructions FAILED:', error)
+      toast.error('保存项目指令设置失败')
     } finally {
       setSaving(null)
     }
@@ -277,6 +293,23 @@ export function PermissionSettings() {
             checked={config?.permissions?.classifier?.enabled !== false}
             disabled={saving !== null}
             onCheckedChange={(checked) => void handleClassifierEnabledChange(checked)}
+          />
+        </div>
+      </SettingsCard>
+
+      <SettingsCard
+        title="项目指令"
+        description="自动加载项目目录中的 CLAUDE.md / AGENTS.md 注入 Agent 系统提示（就近向上解析，单文件超 32KB 截断）。会话头部会显示当前生效的指令文件。"
+      >
+        <div className="flex items-center justify-between gap-3 py-1">
+          <div className="min-w-0">
+            <div className="text-ui font-medium text-[var(--text-1)]">项目指令自动注入</div>
+            <div className="mt-0.5 text-caption text-[var(--text-3)]">关闭后不读取项目指令文件</div>
+          </div>
+          <Switch
+            checked={projectInstructionsEnabled}
+            disabled={saving !== null}
+            onCheckedChange={(checked) => void handleProjectInstructionsEnabledChange(checked)}
           />
         </div>
       </SettingsCard>

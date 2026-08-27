@@ -224,9 +224,6 @@ function normalizePermissionRules(value: unknown): LumeConfigPermissionRule[] {
         ? { pathPattern: item.pathPattern.trim() }
         : {}),
       action,
-      ...(item.scope === "session" || item.scope === "workspace" || item.scope === "global"
-        ? { scope: item.scope }
-        : {})
     });
   }
   return rules;
@@ -491,12 +488,14 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   }
 }
 
+
 export const KNOWN_LUME_SECTION_KEYS: readonly string[] = [
   "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch",
   // 顶层文件段(LumeConfigFile),normalizeLumeConfigFile 消费
   "version", "workspaces",
 ];
 const KNOWN_AGENT_KEYS = new Set(["permissionMode", "thinkingLevel", "followUpQueueMode", "maxAutoTurnContinuations"]);
+
 
 function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
   if (!isPlainObject(value)) {
@@ -587,6 +586,9 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
         || value.agent.thinkingLevel === "high"
         || value.agent.thinkingLevel === "max"
         ? { thinkingLevel: value.agent.thinkingLevel }
+        : {}),
+      ...(typeof value.agent.projectInstructionsEnabled === "boolean"
+        ? { projectInstructionsEnabled: value.agent.projectInstructionsEnabled }
         : {}),
       // followUpQueueMode 是白名单陷阱的预存同族受害者：web 设置页经 get-effective
       // 读取（AgentInput.tsx:444），白名单缺失使配置恒回落默认 'queue'（#566 review）

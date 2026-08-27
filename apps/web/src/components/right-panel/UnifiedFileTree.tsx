@@ -522,8 +522,10 @@ export function UnifiedFileTree({
     const startGeneration = generationRef.current[entry.ref.source]
     try {
       const targetDirectory = { ...entry.ref, relativePath: moveTarget }
-      const result = await sidecarCall<{ ref: FileRef }>(AGENT_IPC_CHANNELS.MOVE_FILE_REF, { ref: entry.ref, targetDirectory })
+      const result = await sidecarCall<{ ref: FileRef; warning?: string }>(AGENT_IPC_CHANNELS.MOVE_FILE_REF, { ref: entry.ref, targetDirectory })
       if (treeCacheIdentityRef.current !== startIdentity) return
+      // 降级拷贝成功但旧位置清理被占用时，sidecar 保留双份并回传 warning——必须让用户可见（#552）
+      if (result.warning) toast.warning(result.warning)
       const rewritten = rewriteFileRefPrefix(workspaceRef.current, entry.ref, result.ref)
       if (settleMutation({ startGeneration, currentGeneration: generationRef.current[entry.ref.source], ok: true }) === 'patch') {
         const nextCache = patchMovedCache(cacheRef.current, entry, result.ref, targetDirectory)

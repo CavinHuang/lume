@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, spyOn, test } from "bun:test"
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test"
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -105,6 +105,17 @@ const originalLumeConfigDir = process.env.LUME_CONFIG_DIR
 const originalAliceConfigDir = process.env.ALICE_CONFIG_DIR
 const originalOpenAgentSdkHome = process.env.OPEN_AGENT_SDK_HOME
 const originalToolSearch = process.env.ENABLE_TOOL_SEARCH
+
+beforeEach(() => {
+  // 全部 createAgent 用例默认隔离宿主技能/配置目录：fs-loader 运行时读 env，
+  // 未设时回落 ~/.lume/skills、~/.alice/skills——宿主真实技能会经 <available_skills>
+  // runtime 块进入 prompt，任何精确消息形状断言都会以 runtime-context 用例的
+  // 方式翻车。个别需要自定义布局的用例可在本用例内覆写。
+  const testHome = mkdtempSync(join(tmpdir(), "lume-agent-test-home-"))
+  tempDirs.push(testHome)
+  process.env.LUME_CONFIG_DIR = join(testHome, "config")
+  process.env.ALICE_CONFIG_DIR = join(testHome, "alice")
+})
 
 afterEach(() => {
   for (const dir of tempDirs.splice(0)) {
@@ -1202,6 +1213,10 @@ describe("Agent session persistence", () => {
     const tempDir = mkdtempSync(join(tmpdir(), "lume-sdk-runtime-context-"))
     tempDirs.push(tempDir)
     process.env.OPEN_AGENT_SDK_HOME = join(tempDir, "sdk-home")
+    // 隔离宿主技能目录：默认根（~/.lume/skills、~/.alice/skills）会把本机真实
+    // 技能注入 <available_skills> runtime 块，挤掉 slice(-2) 断言窗口
+    process.env.LUME_CONFIG_DIR = join(tempDir, "config")
+    process.env.ALICE_CONFIG_DIR = join(tempDir, "alice")
     const sessionId = `runtime-context-${crypto.randomUUID()}`
     let capturedMessages: CreateMessageParams["messages"] = []
     const provider: LLMProvider = {
@@ -1221,8 +1236,16 @@ describe("Agent session persistence", () => {
       tools: [],
       cwd: tempDir,
       runtimeContext: "current runtime",
+      // 隔离宿主 filesystem skills(~/.alice/skills、~/.lume/skills 等):
+      // registry 为空时 engine 不注入 available_skills 目录消息,保证下方
+      // 消息顺序断言只覆盖 runtime context。
+      skillsDirectories: [join(tempDir, "no-skills")],
     })
     await agent.getInitializationResult()
+    // bundled skills 在 Agent 构造期经 globalRegistry 无条件注册进 skillRegistry
+    // (单跑 -t 过滤时无先行用例的 afterEach 清理):显式清空,使消息序列断言
+    // 与执行顺序解耦。
+    ;(agent as any).skillRegistry.clear()
     ;(agent as any).provider = provider
 
     for await (const _event of agent.query("hello")) {
@@ -1252,8 +1275,10 @@ describe("Agent session persistence", () => {
       tools: [],
       cwd: tempDir,
       runtimeContext: "next runtime",
+      skillsDirectories: [join(tempDir, "no-skills")],
     })
     await resumedAgent.getInitializationResult()
+    ;(resumedAgent as any).skillRegistry.clear()
     ;(resumedAgent as any).provider = provider
     for await (const _event of resumedAgent.query("again")) {
       // drain resumed query
@@ -1591,9 +1616,8 @@ describe("Agent session message uuid realignment (#363)", () => {
   })
 
   test("live push path persists the whitelisted _meta shape (#725 review R9)", async () => {
-    // MetaTool 须留在 eager 池：默认 tst 模式会把它延迟进 ToolSearch，引擎直调即 Unknown tool
-    const previousToolSearchMode = process.env.ENABLE_TOOL_SEARCH
-    process.env.ENABLE_TOOL_SEARCH = "standard"
+    // MetaTool 须留在 eager 池：默认 tst 模式会把它延迟进 ToolSearch，引擎直调即 Unknown tool。
+    // 用显式 toolSearchMode 选项替代 env 操控（#725 review S5 根治项）。
     const metaTool: ToolDefinition = {
       name: "MetaTool",
       description: "emits private _meta",
@@ -1616,6 +1640,7 @@ describe("Agent session message uuid realignment (#363)", () => {
       tools: [metaTool],
       provider: new ToolUseOnceProvider(),
       canUseTool: async () => ({ behavior: "allow" }),
+      toolSearchMode: "standard",
     })
 
     try {
@@ -1637,8 +1662,6 @@ describe("Agent session message uuid realignment (#363)", () => {
       })
     } finally {
       await agent.close()
-      if (previousToolSearchMode === undefined) delete process.env.ENABLE_TOOL_SEARCH
-      else process.env.ENABLE_TOOL_SEARCH = previousToolSearchMode
     }
   })
 

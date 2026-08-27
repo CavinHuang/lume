@@ -1,7 +1,8 @@
 import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
 import { delimiter, dirname, isAbsolute, join, relative, resolve } from 'node:path'
 import { randomUUID } from 'node:crypto'
-import { spawn, type ChildProcess, type SpawnOptions } from 'node:child_process'
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from 'node:child_process'
 import {
   createConfigFromPolicy,
   getPlatformSupport,
@@ -10,6 +11,14 @@ import {
   type SandboxPolicy,
 } from '@microsoft/mxc-sdk'
 import type { SandboxSettings } from '../types.js'
+
+/**
+ * SandboxPolicy schema version。SDK(mxc-sdk)在 createConfigFromPolicy 入口
+ * 校验该值必须落在其契约窗口内(0.8.0 为 [0.6.0-alpha, 0.9.0-alpha],私有常量),
+ * 越窗运行时抛错;process-sandbox.test.ts 有契约钉,升级 SDK 窗口漂移时单测
+ * 显式失败提醒同步本值。
+ */
+export const SANDBOX_POLICY_VERSION = '0.7.0-alpha'
 
 export interface ProcessSandboxSupport {
   available: boolean
@@ -40,6 +49,8 @@ export function terminateProcessTree(
       stdio: 'ignore',
       windowsHide: true,
     })
+    // Without a listener a spawn error surfaces as an uncaughtException in the sidecar (see #548).
+    taskkill.once('error', () => {})
     taskkill.unref()
     return
   }
@@ -72,6 +83,30 @@ export interface ProcessSandboxProbeResult extends ProcessSandboxSupport {
 
 export function getProcessSandboxSupport(): ProcessSandboxSupport {
   return mapPlatformSupport(getPlatformSupport())
+}
+
+// macOS 26+ 收紧了 sandbox-exec：deny file-write* 下 allow subpath 的写入直接
+// Operation not permitted，而 mxc-sdk 仅探测二进制存在即声称 seatbelt 可用——
+// 若信其声明，spawnWithProcessSandbox 会把每个命令送进注定失败的沙箱（比不可用
+// 更糟：不是显式降级而是静默假隔离）。这里实测一次最小写探针并缓存结果；
+// 非 darwin 或未声称 seatbelt 时零开销。
+let darwinSeatbeltProbe: boolean | undefined
+
+function isDarwinSeatbeltUsable(): boolean {
+  if (darwinSeatbeltProbe !== undefined) return darwinSeatbeltProbe
+  try {
+    const probeDir = mkdtempSync(join(tmpdir(), 'lume-seatbelt-probe-'))
+    const profile = `(version 1)(allow default)(deny file-write*)(allow file-write* (subpath "${probeDir}"))`
+    const result = spawnSync('/usr/bin/sandbox-exec', ['-p', profile, '/usr/bin/touch', join(probeDir, 'probe')], {
+      encoding: 'utf8',
+      timeout: 10_000,
+    })
+    rmSync(probeDir, { recursive: true, force: true })
+    darwinSeatbeltProbe = result.status === 0
+  } catch {
+    darwinSeatbeltProbe = false
+  }
+  return darwinSeatbeltProbe
 }
 
 export function spawnWithProcessSandbox(
@@ -128,7 +163,7 @@ export function spawnWithProcessSandbox(
     throw new Error(`OS process sandbox refused overlapping allowed and denied roots: ${conflictingPath}`)
   }
   const policy: SandboxPolicy = {
-    version: '0.7.0-alpha',
+    version: SANDBOX_POLICY_VERSION,
     filesystem: {
       readonlyPaths,
       readwritePaths,
@@ -362,12 +397,24 @@ export function buildSandboxEnvironment(
 }
 
 function mapPlatformSupport(support: PlatformSupport): ProcessSandboxSupport {
+  const baseAvailable = support.isSupported && (
+    process.platform !== 'win32'
+    || support.availableMethods.includes('processcontainer')
+  )
+  // 仅 darwin 且基础可用时才写探针：mxc 已报不支持的平台上再测无意义
+  const seatbeltUsable = baseAvailable && process.platform === 'darwin'
+    ? isDarwinSeatbeltUsable()
+    : true
+  const available = baseAvailable && seatbeltUsable
   return {
-    available: support.isSupported && (
-      process.platform !== 'win32'
-      || support.availableMethods.includes('processcontainer')
-    ),
-    reason: support.reason || (support.isSupported ? '' : 'MXC reports this platform as unsupported'),
+    available,
+    reason: !available
+      ? (!seatbeltUsable
+        // 探针失败是最具体的失败原因，优先于 mxc 泛化 reason
+        ? 'sandbox-exec write probe failed: this macOS version restricts seatbelt profiles'
+        : (support.reason
+          || (support.isSupported ? '' : 'MXC reports this platform as unsupported')))
+      : '',
     ...(support.isolationTier ? { isolationTier: support.isolationTier } : {}),
     warnings: support.isolationWarnings ?? [],
   }

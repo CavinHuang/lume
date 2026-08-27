@@ -3,11 +3,12 @@ import type {
   LumeConfigPermissionMode,
   LumeConfigPermissionRule,
   LumeConfigPermissionRuleAction,
-  LumeConfigPermissionRuleScope,
   LumeConfigPermissionsSection,
   LumeEffectiveConfig,
 } from '@lume/shared'
 
+// #519：LumeConfigPermissionRule.scope 死字段已删除（判定逻辑从不读取作用域），
+// 规则草稿同步摘除；下方 Scope Option 相关导出服务「保存到哪个工作区配置」选择器，与本字段无关。
 export const GLOBAL_PERMISSION_SCOPE_VALUE = '__global__'
 
 export interface PermissionScopeOption {
@@ -22,7 +23,6 @@ export interface PermissionRuleDraft {
   tool: string
   commandPattern: string
   pathPattern: string
-  scope?: LumeConfigPermissionRuleScope
 }
 
 export interface PermissionSettingsDraft {
@@ -57,7 +57,6 @@ export function createPermissionRuleDraft(
     tool: '',
     commandPattern: '',
     pathPattern: '',
-    scope: undefined,
     ...patch,
   }
 }
@@ -69,7 +68,6 @@ function toPermissionRuleDraft(rule: LumeConfigPermissionRule): PermissionRuleDr
     tool: rule.tool,
     commandPattern: rule.commandPattern ?? '',
     pathPattern: rule.pathPattern ?? '',
-    scope: rule.scope,
   })
 }
 
@@ -100,7 +98,6 @@ export function normalizePermissionRuleDrafts(
     if (id) nextRule.id = id
     if (commandPattern) nextRule.commandPattern = commandPattern
     if (pathPattern) nextRule.pathPattern = pathPattern
-    if (rule.scope) nextRule.scope = rule.scope
 
     normalized.push(nextRule)
   }

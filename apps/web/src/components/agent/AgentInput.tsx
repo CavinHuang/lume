@@ -171,7 +171,13 @@ export function AgentInput({
   const [agentBrowserActivity, setAgentBrowserActivity] = useState<{ url?: string } | null>(null)
   const agentBrowserIdleTimerRef = useRef<number | null>(null)
   const autoSelectedPlanModeRef = useRef(false)
-  const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('off')
+  // #670 行为告知:thinkingLevel 会随消息发送。未配置(config 无值)且用户未在
+  // 输入框显式选择过时,不携带该字段——此前本地默认 'off' 硬塞进请求,把 sidecar
+  // 「未配置按 medium 执行」的默认整个顶掉,输入框显示「关闭」实为 UI 自作主张。
+  // 显示默认 'medium' 与 sidecar 未配置默认一致;显式选择后仍随请求发送。
+  const [thinkingLevel, setThinkingLevel] = useState<LumeConfigThinkingLevel>('medium')
+  const thinkingLevelTouchedRef = useRef(false)
+  const configThinkingLevelRef = useRef<LumeConfigThinkingLevel | undefined>(undefined)
   const [followUpQueueMode, setFollowUpQueueMode] = useState<AgentFollowUpMode>('queue')
   const [permissionMode, setPermissionMode] = useState<PermissionModeValue>('default')
   const [channels, setChannels] = useState<Channel[]>([])
@@ -461,6 +467,9 @@ export function AgentInput({
       autoSelectedPlanModeRef.current = next.autoSelectedPlan
       return next.permissionMode
     })
+    // 显式重置而非仅 truthy 分支赋值:config 被其他面板清空(schema 允许 null)时,
+    // ref 不复位会让后续发送继续携带旧档(#715 review M4)
+    configThinkingLevelRef.current = config.agent?.thinkingLevel
     if (config.agent?.thinkingLevel) {
       setThinkingLevel(config.agent.thinkingLevel)
     }
@@ -1088,13 +1097,17 @@ export function AgentInput({
         setLocalDesktopContextTarget(state.target)
       }
     }
+    // #670:identity 必须与实际 payload 同口径——payload 条件省略 thinkingLevel 时
+    // 指纹也须省略,否则同 clientSubmissionId 在途期间用户动过选择器(或显示态
+    // 与发送态不一致)会因服务端 hash 不匹配抛"已用于不同提交内容"
+    const sendThinkingLevelForIdentity = thinkingLevelTouchedRef.current || configThinkingLevelRef.current !== undefined
     const submissionIdentity = JSON.stringify({
       userMessage: text,
       messageParts,
       attachments: effectivePendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
       commentAttachments: effectiveCommentAttachments,
       browserAttachments: effectiveBrowserAttachments,
-      thinkingLevel,
+      ...(sendThinkingLevelForIdentity ? { thinkingLevel } : {}),
       permissionMode,
       workspaceId: workspaceIdRef.current,
       messageMetadata: sendMessageMetadata,
@@ -1173,6 +1186,9 @@ export function AgentInput({
     }
     const createdAt = new Date().toISOString()
     const sentJson = editor.getJSON()
+    // #670:仅当用户显式配置过(config 有值或本会话动过选择器)才随请求携带
+    // thinkingLevel;否则让 sidecar 走 config 缺省语义(未配置按 medium 执行)
+    const sendThinkingLevel = thinkingLevelTouchedRef.current || configThinkingLevelRef.current !== undefined
     try {
       const result = await agentSend(directAttachment
         ? { ...buildDirectBrowserAnnotationPayload({ threadId, annotation: directAttachment, ...(messageAttachments[0] ? { screenshot: messageAttachments[0] } : {}) }), clientSubmissionId }
@@ -1181,7 +1197,7 @@ export function AgentInput({
             userMessage: text,
             clientSubmissionId,
             ...(hasStructuredParts ? { messageParts } : {}),
-            thinkingLevel,
+            ...(sendThinkingLevel ? { thinkingLevel } : {}),
             followUpQueueMode,
             permissionMode,
             ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
@@ -1489,8 +1505,12 @@ export function AgentInput({
   }, [threadId, setMessageQueues, setQueueInterruptedStates])
 
   const handleThinkingLevelChange = (value: LumeConfigThinkingLevel) => {
+    thinkingLevelTouchedRef.current = true
+    configThinkingLevelRef.current = value
     setThinkingLevel(value)
-    updateAgentThinkingLevel(value).catch((error) => {
+    // 与显示值同源:config 读的是带 overlay 的有效配置,写入也须落同一作用域,
+    // 否则工作区有覆盖时 CHANGED 回流会把显示弹回 workspace 值(#715 review M6)
+    updateAgentThinkingLevel(value, configWorkspaceSlug).catch((error) => {
       console.error('[AgentInput] 保存思考等级失败:', error)
       toast.error('保存思考等级失败')
     })

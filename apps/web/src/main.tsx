@@ -2,6 +2,7 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { GENERAL_SETTINGS_DEFAULTS } from '@lume/shared'
 import { App } from './App'
+import { installConsoleBridge } from './lib/console-bridge'
 import { getGeneralSettings } from './lib/desktop-api'
 import { installGlobalErrorToast } from './lib/global-error-toast'
 import {
@@ -16,7 +17,8 @@ import './index.css'
 import { PierreDiffProvider } from './components/diff/PierreDiffProvider'
 import { BrowserWebviewPoolProvider } from './components/browser/BrowserWebviewPool'
 
-// Release 构建无 DevTools：尽早注册全局未处理拒绝监听，让被静默吞掉的 sidecar/异步错误以 toast 可见。
+// Release 构建无 DevTools：先把 console.error/warn 桥接进统一日志，再注册全局未处理拒绝监听。
+installConsoleBridge()
 installGlobalErrorToast()
 
 async function bootstrap() {

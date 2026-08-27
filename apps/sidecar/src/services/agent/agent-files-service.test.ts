@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, renameSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
@@ -20,6 +20,7 @@ import {
   moveAuthorizedFileRef,
   moveAgentFile,
   moveWorkspaceFile,
+  movePathWithFallback,
   promoteFileRefToProject,
   renameAgentFile,
   renameWorkspaceFile,
@@ -130,7 +131,8 @@ describe("agent-files-service file ops", () => {
 
     const resolved = resolveAuthorizedFileRef({ source: "project", scopeId: workspace.slug, relativePath: "./.visible.md" });
     expect(resolved.relativePath).toBe(".visible.md");
-    expect(resolved.absolutePath).toBe(join(projectPath, ".visible.md"));
+    // resolver 返回 canonical（realpath）路径（macOS tmpdir /var→/private/var）
+    expect(resolved.absolutePath).toBe(realpathSync(join(projectPath, ".visible.md")));
 
     const listed = listProjectDirectory(workspace.slug);
     expect(listed.find((entry) => entry.name === ".visible.md")).toMatchObject({
@@ -216,7 +218,8 @@ describe("agent-files-service file ops", () => {
     });
 
     expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
-    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(join(workdir.filesRoot, "brief.md"));
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(realpathSync(join(workdir.filesRoot, "brief.md")));
   });
 
   test("browser uploads resolve only current thread project and session files", () => {
@@ -236,7 +239,11 @@ describe("agent-files-service file ops", () => {
       relativePath: "files/session.txt",
     })).toString("base64url")}`;
 
-    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([projectFile, sessionFile]);
+    // canonical（realpath）回显口径
+    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([
+      realpathSync(projectFile),
+      realpathSync(sessionFile),
+    ]);
     const outside = join(configDir, "outside-upload.txt");
     writeFileSync(outside, "outside", "utf8");
     expect(() => resolveAuthorizedBrowserUploadPaths(thread.id, [outside])).toThrow("不属于当前任务");
@@ -301,9 +308,11 @@ describe("agent-files-service file ops", () => {
     });
     const second = watchAuthorizedFileRef(ref, () => undefined);
     writeFileSync(join(projectPath, "watch.txt"), "after", "utf-8");
+    // 文件监听事件在 CI 高负载下可能晚于 3s 到达(曾实测 flake);放宽到与
+    // 邻近 watcher 用例一致的 15s 超时,失败仍会以 timeout 断言暴露
     expect(await Promise.race([
       changed.then(() => "changed" as const),
-      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 3_000)),
+      new Promise<"timeout">((resolve) => setTimeout(() => resolve("timeout"), 15_000)),
     ])).toBe("changed");
     expect(unwatchAuthorizedFileRef(first.watchId)).toEqual({ ok: true });
     expect(unwatchAuthorizedFileRef(second.watchId)).toEqual({ ok: true });
@@ -1083,5 +1092,85 @@ describe("promoteFileRefToProject", () => {
       { source: "legacy", scopeId: workspace.slug, relativePath: "legacy.txt" },
       workspace.slug
     )).toThrow("项目尚未绑定本地目录");
+  });
+});
+
+describe("movePathWithFallback Windows 占用重试与降级（#552）", () => {
+  let tempDir = "";
+
+  function createTempMoveDir(): void {
+    tempDir = mkdtempSync(join(tmpdir(), "lume-move-fallback-"));
+  }
+
+  function epermError(): Error {
+    return Object.assign(new Error("EBUSY: resource busy"), { code: "EPERM" });
+  }
+
+  test("EPERM 短退避重试成功则不降级", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "b.txt");
+    writeFileSync(src, "data", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, (s, t) => {
+      calls += 1;
+      if (calls === 1) throw epermError();
+      renameSync(s, t);
+    });
+
+    expect(calls).toBe(2);
+    expect(existsSync(dst)).toBe(true);
+    expect(existsSync(src)).toBe(false);
+  });
+
+  test("EPERM 持续占用走 copy+delete 降级且内容完整", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "nested", "b.txt");
+    mkdirSync(join(tempDir, "nested"), { recursive: true });
+    writeFileSync(src, "payload-content", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw epermError();
+    });
+
+    expect(calls).toBe(3); // 初次 + 2 次退避重试
+    expect(readFileSync(dst, "utf-8")).toBe("payload-content");
+    expect(existsSync(src)).toBe(false);
+  }, 10_000);
+
+  test("EXDEV 直接降级不重试", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "a.txt");
+    const dst = join(tempDir, "b.txt");
+    writeFileSync(src, "cross-device", "utf-8");
+
+    let calls = 0;
+    movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw Object.assign(new Error("EXDEV"), { code: "EXDEV" });
+    });
+
+    expect(calls).toBe(1);
+    expect(readFileSync(dst, "utf-8")).toBe("cross-device");
+    expect(existsSync(src)).toBe(false);
+  });
+
+  test("非占用错误码立即抛出不重试不降级", () => {
+    createTempMoveDir();
+    const src = join(tempDir, "missing.txt");
+    const dst = join(tempDir, "b.txt");
+
+    let calls = 0;
+    expect(() => movePathWithFallback(src, dst, () => {
+      calls += 1;
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    })).toThrow();
+
+    expect(calls).toBe(1);
+    expect(existsSync(dst)).toBe(false);
   });
 });
