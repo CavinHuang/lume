@@ -173,8 +173,16 @@ function writeStoredData(sessionDir: string, data: RuntimeCoreStoredData): void 
   rewriteTranscriptJsonl(sessionDir, data);
 }
 
+/**
+ * #527 三审①收官：transcript.jsonl 升级为 sessionMessages 状态源，
+ * transcript.json 只保留元数据投影——每条消息追加的磁盘成本降至常量级。
+ * 消息与其规范化视图在读侧由 jsonl（或旧格式 json 内嵌数组）派生。
+ */
 function writeTranscriptJson(sessionDir: string, data: RuntimeCoreStoredData): void {
-  writeTextAtomic(getTranscriptJsonPath(sessionDir), JSON.stringify(data, null, 2));
+  writeTextAtomic(
+    getTranscriptJsonPath(sessionDir),
+    JSON.stringify({ metadata: data.metadata })
+  );
 }
 
 function rewriteTranscriptJsonl(sessionDir: string, data: RuntimeCoreStoredData): void {
@@ -354,7 +362,12 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     return same(current.json, this.snapshot.json) && same(current.jsonl, this.snapshot.jsonl);
   }
 
-  /** 冷读后建立快照与 jsonl 尾部计数（唯一一次整读 jsonl） */
+  /**
+   * #527 三审①收官：jsonl 为 sessionMessages 状态源。冷读时对 jsonl 做严格
+   * 解析取「完好前缀」，与旧格式 json 内嵌数组按长度裁决（平局取 jsonl）；
+   * 撕裂尾行或落在旧格式一侧时置 needsJsonlRebuild，由下一次写入重建 jsonl
+   * 完成自愈升级。
+   */
   private loadData(): RuntimeCoreStoredData {
     const current = {
       json: this.statOrUndefined(getTranscriptJsonPath(this.sessionDir)),
@@ -364,10 +377,32 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
       this.snapshot = current;
       const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
       const rawJsonl = current.jsonl ? readFileSync(getTranscriptJsonlPath(this.sessionDir), "utf-8") : "";
+      const goodLines: RuntimeCoreStoredSessionMessage[] = [];
+      let hasCorruptTail = false;
+      for (const line of rawJsonl.split("\n")) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          goodLines.push(JSON.parse(trimmed) as RuntimeCoreStoredSessionMessage);
+        } catch {
+          hasCorruptTail = true;
+          break;
+        }
+      }
+      if (goodLines.length >= data.sessionMessages.length && goodLines.length > 0) {
+        data.sessionMessages = goodLines;
+        data.messages = extractNormalizedMessages(goodLines);
+        data.metadata.messageCount = data.messages.length;
+      }
+      // 落在 json 一侧（旧格式更长）或存在撕裂尾行时，磁盘 jsonl 与权威序列
+      // 不一致——下次写入先全量重建
+      this.needsJsonlRebuild =
+        hasCorruptTail ||
+        (goodLines.length !== data.sessionMessages.length && data.sessionMessages.length > 0);
       this.jsonlTail = current.jsonl
         ? {
             bytes: Buffer.byteLength(rawJsonl, "utf-8"),
-            lines: rawJsonl.split("\n").filter((line) => line.trim().length > 0).length,
+            lines: goodLines.length,
             endsWithNewline: rawJsonl.endsWith("\n")
           }
         : { bytes: 0, lines: 0, endsWithNewline: false };
@@ -376,6 +411,8 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     }
     return this.cachedData!;
   }
+
+  private needsJsonlRebuild = false;
 
   getSessionFile(): string | undefined {
     const path = getTranscriptJsonlPath(this.sessionDir);
@@ -412,8 +449,8 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
     const data = this.loadData();
     data.metadata.model = `${provider}/${modelId}`;
     data.metadata.updatedAt = new Date().toISOString();
-    // 只改元数据，jsonl 内容不变，跳过其重写；序列化去 pretty（#527 三审①）
-    writeTextAtomic(getTranscriptJsonPath(this.sessionDir), JSON.stringify(data));
+    // 只改元数据，jsonl 内容不变，跳过其重写；slim 投影仅元数据
+    writeTranscriptJson(this.sessionDir, data);
     this.refreshSnapshot();
   }
 
@@ -422,7 +459,10 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
   }
 
   appendMessages(messages: RuntimeCoreAppendMessageInput[]): string[] {
+    // #527 三审①收官：jsonl 为状态源——撕裂尾行/旧格式一侧不一致时先全量重建
+    const forceRebuild = this.needsJsonlRebuild;
     const fastAppendEligible =
+      !forceRebuild &&
       !!this.jsonlTail && this.snapshotsMatch({
         json: this.statOrUndefined(getTranscriptJsonPath(this.sessionDir)),
         jsonl: this.statOrUndefined(getTranscriptJsonlPath(this.sessionDir))
@@ -435,8 +475,8 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
       applyStoredMessage(data, message, uuid);
     }
     finalizeStoredData(data);
-    // #527 三审①：json 状态源保持既有契约不变；序列化去 pretty 减半字节
-    writeTextAtomic(getTranscriptJsonPath(this.sessionDir), JSON.stringify(data));
+    // slim 元数据投影：追加成本降至常量级（消息权威在 jsonl）
+    writeTranscriptJson(this.sessionDir, data);
 
     if (messages.length === 1) {
       const appended = data.sessionMessages[data.sessionMessages.length - 1]!;
@@ -457,13 +497,16 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
           appendedViaFastPath = false;
         }
       }
-      if (!appendedViaFastPath) {
-        // 旧守卫路径：磁盘真实行数不符时退回全量重写（语义不变）
-        if (!tryAppendTranscriptJsonlLine(this.sessionDir, appended, data.sessionMessages.length - 1)) {
+      if (!appendedViaFastPath || forceRebuild) {
+        // 守卫路径：撕裂尾行/旧格式升级态直接重建；否则按磁盘真实行数
+        // 判定是否退回全量重写（语义与旧实现一致）
+        if (forceRebuild ||
+          !tryAppendTranscriptJsonlLine(this.sessionDir, appended, data.sessionMessages.length - 1)) {
           rewriteTranscriptJsonl(this.sessionDir, data);
         }
         this.remeasureJsonl();
       }
+      this.needsJsonlRebuild = false;
     } else {
       writeStoredData(this.sessionDir, data);
       const jsonlPayload = data.sessionMessages.map((message) => JSON.stringify(message)).join("\n");
@@ -472,13 +515,14 @@ class FileBackedRuntimeCoreSessionManager implements RuntimeCoreSessionManager {
         lines: data.sessionMessages.length,
         endsWithNewline: false
       };
+      this.needsJsonlRebuild = false;
     }
     this.refreshSnapshot();
     return uuids;
   }
 
   buildSessionContext(): RuntimeCoreSessionContext {
-    const data = readStoredData(this.sessionDir, this.sessionId, this.cwd);
+    const data = this.loadData();
     return {
       messages: convertSessionMessagesToContext(data)
     };
