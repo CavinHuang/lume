@@ -665,3 +665,23 @@ export function listAutomationRuns(input: AutomationListRunsInput = {}): Automat
   const filtered = input.jobId ? runs.filter((run) => run.jobId === input.jobId) : runs;
   return filtered.sort((a, b) => b.startedAt - a.startedAt).slice(0, limit);
 }
+
+export function listLatestAutomationRunsByJob(jobIds: Iterable<string>): Map<string, AutomationRun> {
+  const wanted = new Set(jobIds);
+  const latest = new Map<string, AutomationRun>();
+  if (wanted.size === 0) return latest;
+  const remember = (run: AutomationRun) => {
+    if (!wanted.has(run.jobId)) return;
+    const current = latest.get(run.jobId);
+    if (!current || run.startedAt > current.startedAt) latest.set(run.jobId, run);
+  };
+  for (const run of getLostAutomationRuns()) remember(run);
+  const path = getAutomationRunsPath();
+  if (existsSync(path)) {
+    for (const line of readFileSync(path, "utf-8").split("\n")) {
+      const run = parseRunLine(line);
+      if (run) remember(run);
+    }
+  }
+  return latest;
+}

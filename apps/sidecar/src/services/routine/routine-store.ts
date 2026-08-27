@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, appendFileSync } from "node:fs"
-import type { DailyRoutine, RoutineEntryStatus, RoutineStatus, AutomationRun, AgentMessage, SDKMessage } from "@lume/shared"
-import { getRoutineSchedulePath, getRoutineRunsPath, getAutomationRunsPath, getAgentThreadMessagesPath } from "../infra/config-paths"
+import type { DailyRoutine, RoutineEntryStatus, RoutineStatus, AgentMessage, SDKMessage } from "@lume/shared"
+import { getRoutineSchedulePath, getRoutineRunsPath, getAgentThreadMessagesPath } from "../infra/config-paths"
 import { getAgentThreadMessages, getAgentThreadSDKMessages } from "../agent/agent-thread-manager"
 import { createLogger } from "../infra/logger"
 
@@ -57,28 +57,6 @@ export function updateRoutineStatus(date: string, status: RoutineStatus): DailyR
   routine.status = status
   writeRoutine(routine)
   return routine
-}
-
-function parseRunLine(line: string): AutomationRun | null {
-  if (!line.trim()) return null
-  try {
-    return JSON.parse(line) as AutomationRun
-  } catch {
-    return null
-  }
-}
-
-export function listAutomationRunsForJob(jobId: string, limit = 5): AutomationRun[] {
-  const path = getAutomationRunsPath()
-  if (!existsSync(path)) return []
-  const lines = readFileSync(path, "utf-8").split("\n")
-  const runs: AutomationRun[] = []
-  for (const line of lines) {
-    const run = parseRunLine(line)
-    if (!run || run.jobId !== jobId) continue
-    runs.push(run)
-  }
-  return runs.sort((a, b) => b.startedAt - a.startedAt).slice(0, limit)
 }
 
 export function getLatestAssistantResponse(threadId: string): string | undefined {
