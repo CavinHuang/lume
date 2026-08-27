@@ -577,7 +577,7 @@ test("main window uses frameless title bar with platform-specific style", () => 
 
 test("main process registers a window-control IPC handler", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
-  assert.match(mainSource, /ipcMain\.handle\('lume:window-control'/);
+  assert.match(mainSource, /handleLogged\('lume:window-control'/);
 });
 
 test("main process pushes window-state events on maximize and unmaximize", () => {

@@ -110,6 +110,7 @@ export function writeWebLogEvent(
     ...(input.data ? { data: asRecord(normalizeLogValue(input.data)) } : {}),
   }
   const eventBytes = byteLength(event)
+  if (eventBytes > MAX_QUEUE_BYTES) return
   while (
     queue.length > 0 &&
     (queue.length >= MAX_QUEUE_EVENTS || queueBytes + eventBytes > MAX_QUEUE_BYTES)
@@ -121,7 +122,6 @@ export function writeWebLogEvent(
   }
   if (queue.length >= MAX_QUEUE_EVENTS || queueBytes + eventBytes > MAX_QUEUE_BYTES) {
     // 单事件即超字节门：入队只会永久占坑，直接弃。
-    if (eventBytes > MAX_QUEUE_BYTES) return
     if (input.level !== 'warn' && input.level !== 'error' && input.level !== 'fatal') return
     const dropped = queue.shift()
     if (dropped) queueBytes -= byteLength(dropped)

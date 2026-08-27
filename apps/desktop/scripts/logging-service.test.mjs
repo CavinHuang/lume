@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdir, mkdtemp, readFile, rm } from 'node:fs/promises'
+import { mkdir, mkdtemp, readFile, rm, utimes } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { LoggingService, normalizeLogValue } from '../src/logging/logging-service.ts'
@@ -350,8 +350,12 @@ test('exportAll produces sectioned text export in reverse-chronological order', 
   const service = new LoggingService({ configDir, terminal: { write: () => true } })
   try {
     await service.listFiles()
-    await Bun.write(join(configDir, 'logs', 'older.log'), 'alpha-line')
-    await Bun.write(join(configDir, 'logs', 'newer.log'), 'beta-line')
+    const olderPath = join(configDir, 'logs', 'older.log')
+    const newerPath = join(configDir, 'logs', 'newer.log')
+    await Bun.write(olderPath, 'alpha-line')
+    await Bun.write(newerPath, 'beta-line')
+    await utimes(olderPath, new Date('2026-01-01T00:00:00.000Z'), new Date('2026-01-01T00:00:00.000Z'))
+    await utimes(newerPath, new Date('2026-01-02T00:00:00.000Z'), new Date('2026-01-02T00:00:00.000Z'))
     const result = await service.exportAll()
     assert.ok(result.sizeBytes > 0)
     assert.match(result.fileName, /^lume-logs-.*\.txt$/)

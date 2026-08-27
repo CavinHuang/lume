@@ -69,6 +69,14 @@ describe('renderer log queue gates (#754)', () => {
     expect(logger.readRendererQueueForTest()).toHaveLength(0)
   })
 
+  test('single oversized event does not evict queued diagnostics', () => {
+    write('trace', 1, 'keep-me')
+    write('fatal', 600, 'too-large')
+    const queue = logger.readRendererQueueForTest()
+    expect(queue).toHaveLength(1)
+    expect(queue[0]?.message).toBe('keep-me')
+  })
+
   test('flush failure requeues batch instead of dropping it', async () => {
     invokeMock.mockImplementation(async () => {
       throw new Error('ipc down')

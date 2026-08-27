@@ -125,6 +125,7 @@ export function LogSettings() {
 
   React.useEffect(() => {
     if (!liveFollowEligible) return
+    let disposed = false
     let unsubscribe: (() => Promise<void>) | undefined
     void subscribeLiveLogs(() => {
       if (livePausedRef.current || !liveFollowRef.current || liveRefreshTimer.current) return
@@ -132,9 +133,19 @@ export function LogSettings() {
         liveRefreshTimer.current = null
         setContentRefreshKey((key) => key + 1)
       }, 250)
-    }).then((off) => { unsubscribe = off }).catch(() => {})
+    }).then((off) => {
+      if (disposed) {
+        void off()
+        return
+      }
+      unsubscribe = off
+    }).catch(() => {})
     return () => {
-      if (liveRefreshTimer.current) clearTimeout(liveRefreshTimer.current)
+      disposed = true
+      if (liveRefreshTimer.current) {
+        clearTimeout(liveRefreshTimer.current)
+        liveRefreshTimer.current = null
+      }
       void unsubscribe?.()
     }
   }, [liveFollowEligible])
@@ -303,7 +314,14 @@ export function LogSettings() {
             <RefreshCw size={14} className={cn(loadingFiles && 'animate-spin')} />
             刷新
           </Button>
-          <Button type="button" variant="ghost" size="sm" onClick={() => setLivePaused((value) => !value)}>
+          <Button
+            type="button"
+            variant="ghost"
+            size="sm"
+            onClick={() => setLivePaused((value) => !value)}
+            disabled={!liveFollowEligible}
+            title={!liveFollowEligible ? '选择单个日志文件后启用实时跟随' : undefined}
+          >
             {livePaused ? <Radio size={14} /> : <Pause size={14} />}
             {livePaused ? '继续实时跟随' : '暂停实时跟随'}
           </Button>

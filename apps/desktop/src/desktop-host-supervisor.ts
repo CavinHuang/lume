@@ -73,7 +73,7 @@ export function createDesktopHostSupervisor({
   logEvent,
   writeTokenFile = (path, token) => writeFileSync(path, token, { encoding: 'utf8', mode: 0o600 }),
   removeTokenFile = (path) => rmSync(path, { force: true }),
-  touchFile = (path) => writeFileSync(path, ''),
+  touchFile = (path) => writeFileSync(path, '', { encoding: 'utf8', mode: 0o600 }),
   schedule = setTimeout,
   cancelSchedule = clearTimeout,
   now = Date.now,
@@ -243,6 +243,10 @@ export function createDesktopHostSupervisor({
       // #751: tail 跟随者必须随 stop 回收，否则旧 -F 与下次 start 的新 follower 双跟重复摄取。
       for (const follower of hostLogFollowers) follower.kill?.()
       hostLogFollowers = []
+      if (hostLogPaths) {
+        removeTokenFile(hostLogPaths.stdout)
+        removeTokenFile(hostLogPaths.stderr)
+      }
       hostLogPaths = null
       child?.kill?.()
       child = null

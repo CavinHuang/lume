@@ -463,7 +463,8 @@ export class LoggingService {
           out.write(chunk, (error) => (error ? reject(error) : resolve()))
         })
       try {
-        for (const [index, file] of [...snapshot.files].reverse().entries()) {
+        // listFiles 已按修改时间倒序返回，导出保持最新日志分节在前。
+        for (const [index, file] of snapshot.files.entries()) {
           await writeChunk(`===== ${file.name} =====\n`)
           const source = createReadStream(join(this.logsDir, file.name), 'utf8')
           for await (const chunk of source) {

@@ -125,6 +125,7 @@ test('macOS start redirects host logs to files and follows them via tail (#751)'
   const child = new EventEmitter()
   child.kill = () => true
   const touched = []
+  const removed = []
   const logLines = []
   const loggedEvents = []
   const supervisor = createDesktopHostSupervisor({
@@ -144,6 +145,7 @@ test('macOS start redirects host logs to files and follows them via tail (#751)'
       return proc
     },
     writeTokenFile: () => {},
+    removeTokenFile: (path) => { removed.push(path) },
     touchFile: (path) => { touched.push(path) },
     id: () => 'mac-log-id',
     token: () => 'mac-token',
@@ -183,6 +185,11 @@ test('macOS start redirects host logs to files and follows them via tail (#751)'
   // stop() 必须回收 tail 进程（否则重启后旧 -F 与新 tail 双跟重复摄取）。
   supervisor.stop()
   assert.ok((tails.killed ?? 0) >= 2, `stop should kill both tails, got ${tails.killed}`)
+  assert.deepEqual(removed.sort(), [
+    '/tmp/lume-desktop-mac-log-id.sock.token',
+    '/tmp/lume-desktop-mac-log-id.sock.token.stderr.log',
+    '/tmp/lume-desktop-mac-log-id.sock.token.stdout.log',
+  ])
 })
 
 test('restarts a crashed host with backoff on the same endpoint', async () => {
