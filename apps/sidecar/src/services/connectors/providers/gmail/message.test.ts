@@ -3,6 +3,7 @@ import {
   decodeMimeWords,
   encodeMimeMessage,
   normalizeGmailMessage,
+  resolveReplyHeaders,
   summarizeGmailMessage,
   type GmailMessageResource,
 } from "./message";
@@ -89,6 +90,51 @@ describe("normalizeGmailMessage payload size guard", () => {
 
     const small = normalizeGmailMessage({ ...baseResource, raw: "small" });
     expect(small.raw).toBe("small");
+  });
+});
+
+describe("resolveReplyHeaders thread chain", () => {
+  it("accumulates References per RFC 5322 and pins In-Reply-To to parent Message-ID", () => {
+    const headers = resolveReplyHeaders({
+      id: "gmsg1",
+      threadId: "t1",
+      payload: {
+        headers: [
+          { name: "References", value: "<a@x> <b@x>" },
+          { name: "Message-ID", value: "<c@x>" },
+        ],
+      },
+    });
+    expect(headers.references).toBe("<a@x> <b@x> <c@x>");
+    expect(headers.inReplyTo).toBe("<c@x>");
+  });
+
+  it("omits bare Gmail id fallback when Message-ID missing (grouping via send threadId)", () => {
+    const headers = resolveReplyHeaders({
+      id: "gmsg2",
+      threadId: "t2",
+      payload: { headers: [{ name: "References", value: "<a@x>" }] },
+    });
+    // 父有 References 无 Message-ID:references 保留父链,inReplyTo 为空(不发非法裸 id 头)
+    expect(headers.references).toBe("<a@x>");
+    expect(headers.inReplyTo).toBe("");
+  });
+
+  it("first-level reply: parent with only Message-ID seeds both headers", () => {
+    const headers = resolveReplyHeaders({
+      id: "gmsg3",
+      threadId: "t3",
+      payload: { headers: [{ name: "Message-ID", value: "<c@x>" }] },
+    });
+    // 最常见真实形态:首层回复 references 与 inReplyTo 同为父 Message-ID
+    expect(headers.references).toBe("<c@x>");
+    expect(headers.inReplyTo).toBe("<c@x>");
+  });
+
+  it("API-created draft without any ids yields empty headers", () => {
+    const headers = resolveReplyHeaders({ id: "gmsg4", threadId: "t4", payload: { headers: [] } });
+    expect(headers.references).toBe("");
+    expect(headers.inReplyTo).toBe("");
   });
 });
 

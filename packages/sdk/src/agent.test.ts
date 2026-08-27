@@ -1236,8 +1236,16 @@ describe("Agent session persistence", () => {
       tools: [],
       cwd: tempDir,
       runtimeContext: "current runtime",
+      // 隔离宿主 filesystem skills(~/.alice/skills、~/.lume/skills 等):
+      // registry 为空时 engine 不注入 available_skills 目录消息,保证下方
+      // 消息顺序断言只覆盖 runtime context。
+      skillsDirectories: [join(tempDir, "no-skills")],
     })
     await agent.getInitializationResult()
+    // bundled skills 在 Agent 构造期经 globalRegistry 无条件注册进 skillRegistry
+    // (单跑 -t 过滤时无先行用例的 afterEach 清理):显式清空,使消息序列断言
+    // 与执行顺序解耦。
+    ;(agent as any).skillRegistry.clear()
     ;(agent as any).provider = provider
 
     for await (const _event of agent.query("hello")) {
@@ -1267,8 +1275,10 @@ describe("Agent session persistence", () => {
       tools: [],
       cwd: tempDir,
       runtimeContext: "next runtime",
+      skillsDirectories: [join(tempDir, "no-skills")],
     })
     await resumedAgent.getInitializationResult()
+    ;(resumedAgent as any).skillRegistry.clear()
     ;(resumedAgent as any).provider = provider
     for await (const _event of resumedAgent.query("again")) {
       // drain resumed query

@@ -12,6 +12,10 @@ describe("connector tool read-only mapping", () => {
       for (const name of config.readOnlyActions) {
         expect(catalog.has(name)).toBe(true);
       }
+      // enabledActions 手滑同样让工具静默消失(filter 零命中无告警)
+      for (const name of config.enabledActions ?? []) {
+        expect(catalog.has(name)).toBe(true);
+      }
     }
   });
 
