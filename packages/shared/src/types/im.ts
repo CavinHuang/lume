@@ -151,6 +151,9 @@ export const IM_IPC_CHANNELS = {
   MIRROR_GET_SETTINGS: "im-mirror:get-settings",
   MIRROR_SET_OWNER: "im-mirror:set-owner",
   MIRROR_LIST: "im-mirror:list",
+  MIRROR_ATTACH_CANDIDATES: "im-mirror:attach-candidates",
+  MIRROR_ATTACH: "im-mirror:attach",
+  MIRROR_DETACH: "im-mirror:detach",
   /** 保活通知（sidecar→desktop main 单向推送，NOTIFY_ONLY 显式登记） */
   MIRROR_STREAM_ACTIVE: "im-mirror:stream-active"
 } as const;
@@ -267,4 +270,11 @@ export interface ImMirrorSettingsPublic {
 export interface ImMirrorStreamActivity {
   threadId: string;
   active: boolean;
+}
+
+/** attach 附着候选：机器人已在的群（来自该账号的 group binding） */
+export interface ImMirrorAttachCandidate {
+  peerId: string;
+  peerName?: string;
+  threadId: string;
 }

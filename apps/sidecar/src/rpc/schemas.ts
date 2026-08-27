@@ -632,6 +632,20 @@ export const imMirrorSetOwnerInputSchema = z.object({
 // GET_SETTINGS / LIST 均无入参
 export const imMirrorEmptyInputSchema = z.object({}).strict().optional();
 
+export const imMirrorAttachCandidatesInputSchema = z.object({
+  accountId: idSchema,
+});
+
+export const imMirrorAttachInputSchema = z.object({
+  accountId: idSchema,
+  chatId: z.string().trim().min(1),
+  threadId: idSchema,
+});
+
+export const imMirrorDetachInputSchema = z.object({
+  threadId: idSchema,
+});
+
 const readingSourceKindSchema = z.enum([
   "weread",
   "manual",

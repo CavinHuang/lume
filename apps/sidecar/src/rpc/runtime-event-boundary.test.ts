@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const repoRoot = process.cwd();
+// 以本文件位置锚定仓库根（apps/sidecar/src/rpc → 上四级），与测试进程 cwd 无关——
+// bunfig preload 要求从 apps/sidecar 起跑，process.cwd() 拼根相对路径必然断裂。
+const repoRoot = join(import.meta.dir, "..", "..", "..", "..");
 
 function source(path: string): string {
   return readFileSync(join(repoRoot, path), "utf8");

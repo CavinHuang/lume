@@ -1,5 +1,6 @@
 import { IM_IPC_CHANNELS, IM_MIRROR_TIERS } from "@lume/shared";
 import type { ImAccountCreateInput, ImAccountUpdateInput, ImMirrorSettingsPublic, ImWeixinLoginStartInput } from "@lume/shared";
+import { getImProvider } from "../services/im/provider-registry";
 import {
   createImAccount,
   deleteImAccount,
@@ -7,12 +8,18 @@ import {
   listImAccounts,
   updateImAccount
 } from "../services/im/im-config-manager";
-import { deleteImThreadBindingsForAccount } from "../services/im/im-thread-binding-store";
+import {
+  deleteImThreadBindingsForAccount,
+  getImThreadBindingByThreadId,
+  listImThreadBindings
+} from "../services/im/im-thread-binding-store";
 import {
   getImMirrorSettings,
   listImMirrorEntries,
+  removeImMirrorEntriesByThreadId,
   removeImMirrorEntriesForAccount,
-  setMirrorOwnerAccountId
+  setMirrorOwnerAccountId,
+  upsertImMirrorEntry
 } from "../services/im/im-mirror-store";
 import { getAgentThreadMeta } from "../services/agent/agent-thread-manager";
 import { imRuntimeManager, type ImRuntimeManager } from "../services/im/im-runtime-manager";
@@ -31,6 +38,9 @@ import {
   imAccountCreateInputSchema,
   imAccountIdInputSchema,
   imAccountUpdateInputSchema,
+  imMirrorAttachCandidatesInputSchema,
+  imMirrorAttachInputSchema,
+  imMirrorDetachInputSchema,
   imMirrorEmptyInputSchema,
   imMirrorSetOwnerInputSchema,
   imWeixinLoginPollInputSchema,
@@ -132,6 +142,75 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
         titles[entry.threadId] = getAgentThreadMeta(entry.threadId)?.title ?? "";
       }
       return { entries, titles };
+    },
+    // ─── #544 attach 附着档：机器人已在的群 × 桌面线程 显式配对 ───
+    [IM_IPC_CHANNELS.MIRROR_ATTACH_CANDIDATES]: async (params) => {
+      const { accountId } = validateInput(
+        imMirrorAttachCandidatesInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_ATTACH_CANDIDATES
+      ) as { accountId: string };
+      const entries = listImMirrorEntries();
+      const candidates = listImThreadBindings()
+        .filter(
+          (binding) =>
+            binding.accountId === accountId &&
+            binding.peerKind === "group" &&
+            !entries.some((entry) => entry.accountId === accountId && entry.chatId === binding.peerId)
+        )
+        .map((binding) => ({
+          peerId: binding.peerId,
+          peerName: binding.peerName,
+          threadId: binding.threadId
+        }));
+      return { ok: true, candidates };
+    },
+    [IM_IPC_CHANNELS.MIRROR_ATTACH]: async (params) => {
+      const { accountId, chatId, threadId } = validateInput(
+        imMirrorAttachInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_ATTACH
+      ) as { accountId: string; chatId: string; threadId: string };
+      const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
+      const account = getImAccount(accountId);
+      if (!account) return fail("IM 账号不存在");
+      if (!account.enabled) return fail("该账号未启用");
+      let definition;
+      try {
+        definition = getImProvider(account.provider);
+      } catch (error) {
+        return fail(`渠道未注册：${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (!definition.mirror) return fail("该渠道暂不支持镜像");
+      // 群必须真实存在互动痕迹（该账号的 group binding），防乱配对
+      const groupBinding = listImThreadBindings().find(
+        (binding) =>
+          binding.accountId === accountId && binding.peerKind === "group" && binding.peerId === chatId
+      );
+      if (!groupBinding) return fail("该群尚未与机器人互动——先把机器人拉入群并发送一条消息");
+      // 自环守卫①：附着目标必须是桌面线程（无任何 IM 绑定）
+      if (getImThreadBindingByThreadId(threadId)) return fail("该线程已是 IM 来源会话，不能附着");
+      const meta = getAgentThreadMeta(threadId);
+      if (!meta) return fail("桌面线程不存在");
+      if (meta.status === "archived" || meta.status === "trashed") {
+        return fail("桌面线程已归档或回收站，不能附着");
+      }
+      const entry = upsertImMirrorEntry({
+        threadId,
+        accountId,
+        chatId,
+        carrier: definition.mirror.carrier
+      });
+      return { ok: true, entry };
+    },
+    [IM_IPC_CHANNELS.MIRROR_DETACH]: async (params) => {
+      const { threadId } = validateInput(
+        imMirrorDetachInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_DETACH
+      ) as { threadId: string };
+      removeImMirrorEntriesByThreadId(threadId);
+      return { ok: true };
     },
     [IM_IPC_CHANNELS.START_ACCOUNT]: async (params) => {
       const payload = validateInput(

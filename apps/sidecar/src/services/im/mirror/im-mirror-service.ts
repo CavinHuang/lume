@@ -43,15 +43,16 @@ function sanitizeGroupName(title: string): string {
 }
 
 export function isMirrorCandidate(threadId: string): boolean {
-  const owner = getImMirrorSettings().enabledMirrorAccountId;
-  if (!owner) return false;
   // 守卫一：DM 绑定存在即 IM 来源线程（绑定表未被镜像污染，判定可靠）
   if (getImThreadBindingByThreadId(threadId)) return false;
   const meta = getAgentThreadMeta(threadId);
   if (!meta) return false;
   // status 缺省视为活跃（与路由器陈旧守卫口径一致）
   if (meta.status === "archived" || meta.status === "trashed") return false;
-  return true;
+  // 映射权威：已有映射（attach 附着档）直接候选，不受全局开关影响；
+  // 否则需全局承担者（飞书自动建群路径）
+  if (getImMirrorEntryByThreadId(threadId)) return true;
+  return Boolean(getImMirrorSettings().enabledMirrorAccountId);
 }
 
 /** 群内出站文本（兜底正文/文本档载体统一出口），provider 内部自带分段与错误日志 */
@@ -65,22 +66,15 @@ async function postToMirror(account: ImRuntimeAccount, chatId: string, text: str
 }
 
 /**
- * 惰性确保镜像群存在：已有映射直用；否则用「最近 DM 互动发送者」为目标用户建群。
- * 任一步失败静默降级并写账号级错误文案（设置页红字槽展示），下次运行天然重试。
+ * 自动建群路径：用「最近 DM 互动发送者」为目标用户建群（仅全局承担者账号）。
+ * 失败静默降级并写账号级错误文案（设置页红字槽展示），下次运行天然重试。
+ * 仅在无映射时调用——attach 附着档的映射由 RPC 显式写入，不走此处。
  */
-async function ensureMirrorChat(
+async function ensureCreateMirrorChat(
   threadId: string,
   owner: string,
   fallbackTitle: string
 ): Promise<ImMirrorEntryPublic | null> {
-  let entry = getImMirrorEntryByThreadId(threadId);
-  if (entry && entry.accountId !== owner) {
-    // 承担者变更后的旧归属映射：清掉重建，避免跨账号投递串台
-    removeImMirrorEntriesByThreadId(threadId);
-    entry = null;
-  }
-  if (entry) return entry;
-
   const fail = (message: string): null => {
     noteMirrorConfigError(owner, message);
     return null;
@@ -128,23 +122,45 @@ async function ensureMirrorChat(
 }
 
 async function startMirrorCarry(threadId: string): Promise<ImRunCardSession | null> {
-  const owner = getImMirrorSettings().enabledMirrorAccountId;
-  if (!owner) return null;
-  const title = getAgentThreadMeta(threadId)?.title ?? "";
-  const entry = await ensureMirrorChat(threadId, owner, title);
-  if (!entry) return null;
+  // 映射权威：attach 附着档的映射是显式用户意图，账号/渠道/载体均以映射为准；
+  // 无映射时才回退到全局承担者的自动建群路径（飞书）。
+  let entry = getImMirrorEntryByThreadId(threadId);
+  if (!entry) {
+    const owner = getImMirrorSettings().enabledMirrorAccountId;
+    if (!owner) return null;
+    const title = getAgentThreadMeta(threadId)?.title ?? "";
+    entry = await ensureCreateMirrorChat(threadId, owner, title);
+    if (!entry) return null;
+  }
 
   let account: ImRuntimeAccount;
   try {
-    account = getImRuntimeAccount(owner);
+    account = getImRuntimeAccount(entry.accountId);
   } catch (error) {
-    noteMirrorConfigError(owner, describeImMirrorFailure(error instanceof Error ? error.message : String(error)));
+    noteMirrorConfigError(
+      entry.accountId,
+      describeImMirrorFailure(error instanceof Error ? error.message : String(error))
+    );
     return null;
   }
 
-  const definition = getImProvider(account.provider);
+  let definition;
+  try {
+    definition = getImProvider(account.provider);
+  } catch (error) {
+    noteMirrorConfigError(
+      entry.accountId,
+      `渠道未注册：${error instanceof Error ? error.message : String(error)}`
+    );
+    return null;
+  }
   const capabilities = definition.mirror;
-  if (capabilities?.carrier === "card") {
+  if (!capabilities) {
+    noteMirrorConfigError(entry.accountId, "当前渠道暂不支持镜像");
+    return null;
+  }
+
+  if (capabilities.carrier === "card") {
     return buildImRunCardSession({
       threadId,
       appId: account.accountKey ?? "",
@@ -157,7 +173,7 @@ async function startMirrorCarry(threadId: string): Promise<ImRunCardSession | nu
     });
   }
   return createMirrorTranscriptCarrier({
-    threadTitle: title,
+    threadTitle: getAgentThreadMeta(threadId)?.title ?? "",
     send: (text) => postToMirror(account, entry!.chatId, text)
   });
 }

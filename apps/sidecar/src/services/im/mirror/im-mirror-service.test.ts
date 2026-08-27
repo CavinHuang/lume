@@ -306,7 +306,7 @@ describe("im-mirror-service wrapAgentEmitterForMirror", () => {
     unsubscribe();
   });
 
-  test("attach 档（carrier:text）：无 createGroup 绝不建群，走文本档两段式", async () => {
+  test("attach 档（carrier:text）：映射权威——全局开关 off 仍镜像，且绝不建群", async () => {
     writeThreadFixture("thr_attach", "附着任务");
     const account = createImAccount({
       provider: "weixin",
@@ -314,7 +314,8 @@ describe("im-mirror-service wrapAgentEmitterForMirror", () => {
       token: "tok",
       enabled: true
     });
-    setMirrorOwnerAccountId(account.id);
+    // 刻意不设全局承担者：attach 映射是显式用户意图，独立于全局开关
+    setMirrorOwnerAccountId(null);
     const sentTexts: Array<{ peerId: string; text: string }> = [];
     registerImProvider({
       provider: "weixin",
@@ -346,6 +347,8 @@ describe("im-mirror-service wrapAgentEmitterForMirror", () => {
     expect(sentTexts.every((item) => item.peerId === "room_existing")).toBe(true);
     expect(activity).toEqual([true, false]);
     expect(passthroughCount.complete).toBe(1);
+    // 全程未设承担者：映射权威语义的直接证据
+    expect(getImMirrorSettings().enabledMirrorAccountId).toBeNull();
     unsubscribe();
   });
 
