@@ -60,6 +60,27 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
     }
   });
 
+  test("wrap anchor layer: benign lookalikes miss, shell env references hit (无 natives 也钉)", () => {
+    // natives 缺席环境（本机 bun 直跑）下的正则层绊线：下方 benign lookalikes
+    // 端到端断言带 skipIf 门控，仅靠它会让收窄语义在本机零覆盖。锚层直接断言。
+    const wrapAnchor = new RegExp(CMD_WRAP_ANCHOR, "i");
+    for (const command of [
+      "npm-cmd.exe /c del /q cache",
+      "vendor-cmd /c stop-computer-check.ps1",
+      "C:\\tools\\mycmd.exe --list"
+    ]) {
+      expect(wrapAnchor.test(command)).toBe(false);
+    }
+    // shell 二进制环境引用（解析期展开为 cmd.exe 路径，字面不以 cmd 收尾）必须入锚
+    for (const command of [
+      "%COMSPEC% /c rd /s /q build",
+      "$env:comspec /c del /q cache.txt",
+      "${env:comspec} /k echo x"
+    ]) {
+      expect(wrapAnchor.test(command)).toBe(true);
+    }
+  });
+
   test.skipIf(!isNativeAvailable())("benign lookalikes stay untouched in both layers", () => {
     // #713 review 收窄口径的负例锚：「以 cmd 字样结尾」曾是包裹锚命中条件，把
     // vendor-cmd.exe 一类合法第三方 CLI 从 allow 翻成 hard-deny；路径段确证后
