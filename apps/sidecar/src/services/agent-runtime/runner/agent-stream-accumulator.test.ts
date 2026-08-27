@@ -17,7 +17,7 @@ describe("agent-stream-accumulator", () => {
       }
     } as unknown as SDKMessage);
 
-    expect(state.messages).toHaveLength(1);
+    expect(hasRenderableAssistantOutput(state)).toBeTrue();
   });
 
   test("usage-only result 不应被视为可渲染输出", () => {

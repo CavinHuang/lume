@@ -17,10 +17,16 @@ interface LockPayload {
   createdAt: number;
 }
 
-function sleepSync(ms: number): void {
+// 模块级 SharedArrayBuffer 单例 + 分帧；供各 sync 锁实现复用（#526 补充发现4）
+export function sleepSync(ms: number): void {
   const end = Date.now() + ms;
   while (Date.now() < end) {
-    Atomics.wait(waitSignal, 0, 0, Math.min(50, end - Date.now()));
+    try {
+      Atomics.wait(waitSignal, 0, 0, Math.min(50, end - Date.now()));
+    } catch {
+      // 运行时不允许主线程阻塞时退化为不等待
+      return;
+    }
   }
 }
 
@@ -40,7 +46,9 @@ function readLockPayload(lockPath: string): LockPayload | null {
   return null;
 }
 
-function isProcessAlive(pid: number | undefined): boolean | undefined {
+// 判定仅基于 pid 存活（process.kill 0 信号），未校验进程身份——Windows 上 PID 复用快，
+// 存在把复用者误判为原持有者的低概率窗口（#526 P3，已知局限）
+export function isProcessAlive(pid: number | undefined): boolean | undefined {
   if (typeof pid !== "number" || !Number.isFinite(pid) || pid <= 0) return undefined;
   try {
     process.kill(pid, 0);
@@ -55,14 +63,17 @@ function isStale(lockPath: string, staleMs: number): { stale: boolean; payload: 
   try {
     const stat = statSync(lockPath);
     const payload = readLockPayload(lockPath);
+    // 0 字节 = 持有者死于 wx 创建与首次原子写之间的极窄窗口，无幸存者语义可立即接管；
+    // 非空烂数据保守走 mtime 通道（writeFileSync 单次写，撕裂基本不存在）（#526 P1）
+    if (payload === null) return { stale: stat.size === 0, payload: null };
     // mtime 过期不能单独判死：合法长持锁（如 workdir 迁移秒级 cpSync）会被
     // 另一进程偷走造成双持锁；必须以持有者 pid 存活为准（#526）
     if (Date.now() - stat.mtimeMs > staleMs) {
-      const alive = isProcessAlive(payload?.pid);
+      const alive = isProcessAlive(payload.pid);
       if (alive === true) return { stale: false, payload };
       return { stale: true, payload };
     }
-    if (payload && isProcessAlive(payload.pid) === false) return { stale: true, payload };
+    if (isProcessAlive(payload.pid) === false) return { stale: true, payload };
     return { stale: false, payload };
   } catch {
     return { stale: true, payload: null };
@@ -98,6 +109,9 @@ function acquireLock(lockPath: string, timeoutMs: number, staleMs: number): Lock
       } finally {
         closeSync(fd);
       }
+      // 创建与写入间隙锁可能被竞争方按 stale 清走——写后回读校验身份，
+      // 防止带着指向孤儿文件的 fd 假持锁（#526 P1 配套）
+      if (readLockPayload(lockPath)?.token !== payload.token) continue;
       return payload;
     } catch {
       if (existsSync(lockPath)) {
@@ -144,13 +158,10 @@ export function withIndexMutationLock<T>(
   fn: () => T,
   options: { timeoutMs?: number; staleMs?: number } = {}
 ): T {
-  const timeoutMs = options.timeoutMs ?? DEFAULT_TIMEOUT_MS;
-  const startedAt = Date.now();
-  while (localLocks.has(lockPath)) {
-    if (Date.now() - startedAt > timeoutMs) {
-      throw new Error(`获取进程内索引锁超时: ${lockPath}`);
-    }
-    sleepSync(5);
+  // 全部调用方回调均同步执行、无 yield 点，同线程能撞上 in-flight 锁只有嵌套重入
+  // 一种可能——那是调用方缺陷，立刻炸出而非忙等冻结主线程（#526）
+  if (localLocks.has(lockPath)) {
+    throw new Error(`索引锁同步重入（同线程嵌套获取同一路径锁）: ${lockPath}`);
   }
   localLocks.add(lockPath);
 

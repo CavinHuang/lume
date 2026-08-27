@@ -1,5 +1,6 @@
 import { createFileBackedRunContinuationStore } from "../runtime-core/run-continuation-store";
-import { classifyToolKind, hashToolInput } from "./approval-service";
+import { classifyToolKind } from "./approval-service";
+import { stableHashPayload } from "../../infra/payload-hash";
 
 export interface AbortContinuationInput {
   sessionDir: string;
@@ -28,7 +29,7 @@ export async function persistAbortContinuation(input: AbortContinuationInput): P
         id: pending.id,
         name: pending.name,
         input: pending.input,
-        inputHash: hashToolInput(pending.input),
+        inputHash: stableHashPayload(pending.input),
         kind
       }
     },

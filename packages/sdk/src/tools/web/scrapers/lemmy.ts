@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -153,7 +152,7 @@ export const handleLemmy: SpecialHandler = async (
 		if (!match) return null;
 
 		const kind = match[1];
-		const id = Number.parseInt(match[2], 10);
+		const id = Number.parseInt(match[2] ?? "", 10);
 		if (!Number.isFinite(id)) return null;
 
 		const baseUrl = parsed.origin;

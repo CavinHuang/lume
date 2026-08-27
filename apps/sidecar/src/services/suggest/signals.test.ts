@@ -4,7 +4,6 @@ import {
   CORRECTION_PATTERNS,
   extractSignals,
   FOLLOWUP_PATTERNS,
-  hasStrongSignal,
   isMeaningfulRule,
   NEGATIVE_PATTERNS,
   normalizeRule,
@@ -46,11 +45,6 @@ describe("brief 契约: signals 核心行为", () => {
       { role: "user", content: "帮我跑一下测试" },
     ]);
     expect(s.some((x) => x.kind === "repeat")).toBe(true);
-  });
-
-  test("hasStrongSignal 快速路径", () => {
-    expect(hasStrongSignal("明天提醒我提交")).toBe(true);
-    expect(hasStrongSignal("你好")).toBe(false);
   });
 });
 

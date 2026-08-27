@@ -1,4 +1,5 @@
 import type { BootstrapFileType } from "@lume/shared";
+import { stripFrontMatter } from "../../../system/workspace-template-utils";
 
 export interface SanitizedWorkspaceDoc {
   type: BootstrapFileType;
@@ -79,10 +80,6 @@ const DEFAULT_DOC_MARKERS: Partial<Record<BootstrapFileType, RegExp[]>> = {
     /The more you know, the better you can help/i
   ]
 };
-
-function stripFrontMatter(content: string): string {
-  return content.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "");
-}
 
 function stripTemplateNoise(type: BootstrapFileType, content: string): string {
   const patterns = TEMPLATE_PATTERNS[type] ?? [];

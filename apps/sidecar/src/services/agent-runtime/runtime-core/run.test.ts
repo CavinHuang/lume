@@ -199,7 +199,8 @@ describe("runtime-core run", () => {
       expect(descriptorOf(result, "ToolSearch")).toMatchObject({ name: "ToolSearch", source: "sdk", canonicalName: "toolsearch" });
       expect(descriptorOf(result, "ExecuteTool")).toMatchObject({ name: "ExecuteTool", source: "sdk", canonicalName: "executetool" });
     } finally {
-      await result?.session.dispose();
+      // dispose 独立 try/catch：其失败不得跳过 env 恢复与临时目录清理（对齐 :244 范式）
+      try { await result?.session.dispose(); } catch (error) { console.warn("[run.test] cleanup dispose failed:", error); }
       if (previousToolSearch === undefined) {
         delete process.env.ENABLE_TOOL_SEARCH;
       } else {
@@ -242,7 +243,8 @@ describe("runtime-core run", () => {
       const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
       expect(deferredTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
     } finally {
-      await result?.session.dispose();
+      // dispose 独立 try/catch：其失败不得跳过 env 恢复与临时目录清理
+      try { await result?.session.dispose(); } catch (error) { console.warn("[run.test] cleanup dispose failed:", error); }
       if (previousToolSearch === undefined) delete process.env.ENABLE_TOOL_SEARCH;
       else process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
       if (previousBundledDir === undefined) delete process.env.LUME_BUNDLED_PLUGINS_DIR;

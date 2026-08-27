@@ -78,6 +78,42 @@ export function matchPermissionRule(input: {
  */
 export const COMMAND_CONNECTOR_PATTERN = /[;&|<>`]|\$\(/;
 
+/** 「始终允许」宽指纹档位前缀（permission-session 编码，匹配侧共享口径） */
+export const GRANT_PREFIX_SCOPE_MARK = ">";
+export const GRANT_TOOL_SCOPE_MARK = "*";
+
+/**
+ * 已编码授权串集合对候选指纹的匹配：exact 原串、`>` 前缀+词边界（连接符否决）、
+ * `*` 工具档。线程内集合与 workspace 持久集共用同一实现（#775）。
+ */
+export function matchEncodedGrants(
+  grants: Iterable<string>,
+  normalized: string
+): boolean {
+  for (const grant of grants) {
+    if (grant === normalized) return true;
+    // 同工具档：工具名一致即放行
+    if (grant.startsWith(GRANT_TOOL_SCOPE_MARK) && normalized.startsWith(grant.slice(1) + ":")) {
+      return true;
+    }
+    // 同命令前缀档：key 以已授命令开头且止于词边界（不放行 `ls` → `lsblk`）。
+    // 匹配侧必须与建档侧同一否决口径——rest 含连接符/管道/重定向/命令替换时
+    // 不得放行,否则 `npm test` 授档后 `npm test && curl … | sh` 以空白开头照样命中。
+    if (grant.startsWith(GRANT_PREFIX_SCOPE_MARK)) {
+      const grantedKey = grant.slice(GRANT_PREFIX_SCOPE_MARK.length);
+      const rest = normalized.slice(grantedKey.length);
+      if (
+        normalized.startsWith(grantedKey)
+        && (rest === ""
+          || (/^\s/.test(rest) && !COMMAND_CONNECTOR_PATTERN.test(rest)))
+      ) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
 /**
  * #558 review P1:command 档宽指纹的「前缀+词边界」校验可被 shell 连接符后缀
  * 绕过（`git status && curl … | sh` 的 rest 以空白开头照样命中）。与规则表

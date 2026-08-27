@@ -1,6 +1,7 @@
-import { closeSync, cpSync, existsSync, mkdirSync, openSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import YAML from "yaml";
+import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import type { MemoryV2Scope } from "./types";
 
 export const MEMORY_SCHEMA_VERSION = 4;
@@ -28,70 +29,41 @@ export function migrateMemoryScopeRootIfNeeded(root: string, scope: MemoryV2Scop
   const stamp = new Date().toISOString().replace(/[-:.TZ]/g, "").slice(0, 14);
   const parent = dirname(root);
   const name = basename(root);
+  // 全程同步执行，锁的 takeover/release token 复核语义由共享实现统一继承（#526）
   const lockPath = join(parent, `.${name}.migration.lock`);
   const backupPath = join(parent, `${name}.backup-${stamp}`);
   const tempPath = join(parent, `.${name}.migration-${stamp}`);
   const previousPath = join(parent, `.${name}.previous-${stamp}`);
-  let lockAcquired = false;
 
   try {
-    const lockFd = openMigrationLock(lockPath);
-    lockAcquired = true;
-    try {
-      writeFileSync(lockFd, JSON.stringify({ pid: process.pid, startedAt: new Date().toISOString() }), "utf-8");
-    } finally {
-      closeSync(lockFd);
-    }
-    cpSync(root, backupPath, { recursive: true, errorOnExist: true });
-    cpSync(root, tempPath, { recursive: true, errorOnExist: true });
-    const idMap = migrateEntries(tempPath, scope);
-    migratePendingReferences(tempPath, idMap);
-    invalidateIdDerivedViews(tempPath, idMap);
-    rmSync(join(tempPath, "persona.md"), { force: true });
-    validateEntries(tempPath);
-    const marker: MemorySchemaMarker = {
-      version: MEMORY_SCHEMA_VERSION,
-      migratedAt: new Date().toISOString(),
-      backupPath
-    };
-    writeJson(join(tempPath, ".memory-schema.json"), marker);
-    renameSync(root, previousPath);
-    try {
-      renameSync(tempPath, root);
-      rmSync(previousPath, { recursive: true, force: true });
-    } catch (error) {
-      if (existsSync(root)) rmSync(root, { recursive: true, force: true });
-      renameSync(previousPath, root);
-      throw error;
-    }
-    return marker;
+    return withIndexMutationLock(lockPath, () => {
+      cpSync(root, backupPath, { recursive: true, errorOnExist: true });
+      cpSync(root, tempPath, { recursive: true, errorOnExist: true });
+      const idMap = migrateEntries(tempPath, scope);
+      migratePendingReferences(tempPath, idMap);
+      invalidateIdDerivedViews(tempPath, idMap);
+      rmSync(join(tempPath, "persona.md"), { force: true });
+      validateEntries(tempPath);
+      const marker: MemorySchemaMarker = {
+        version: MEMORY_SCHEMA_VERSION,
+        migratedAt: new Date().toISOString(),
+        backupPath
+      };
+      writeJson(join(tempPath, ".memory-schema.json"), marker);
+      renameSync(root, previousPath);
+      try {
+        renameSync(tempPath, root);
+        rmSync(previousPath, { recursive: true, force: true });
+      } catch (error) {
+        if (existsSync(root)) rmSync(root, { recursive: true, force: true });
+        renameSync(previousPath, root);
+        throw error;
+      }
+      return marker;
+    });
   } catch (error) {
     rmSync(tempPath, { recursive: true, force: true });
     throw new Error(`Memory migration failed for ${scope}: ${error instanceof Error ? error.message : String(error)}`);
-  } finally {
-    if (lockAcquired && existsSync(lockPath)) unlinkSync(lockPath);
-  }
-}
-
-function openMigrationLock(path: string): number {
-  try {
-    return openSync(path, "wx");
-  } catch (error) {
-    let owner: { pid?: unknown };
-    try {
-      owner = JSON.parse(readFileSync(path, "utf-8")) as { pid?: unknown };
-    } catch {
-      throw error;
-    }
-    if (typeof owner.pid !== "number") throw error;
-    try {
-      process.kill(owner.pid, 0);
-      throw error;
-    } catch (probeError) {
-      if (probeError === error) throw error;
-      try { unlinkSync(path); } catch { throw error; }
-    }
-    return openSync(path, "wx");
   }
 }
 

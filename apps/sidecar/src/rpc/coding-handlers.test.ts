@@ -23,13 +23,9 @@ mock.module("../services/agent-runtime/runner/attempt", () => ({
   },
   acquireRuntimeActivityPlaceholder: () => undefined,
   releaseRuntimeActivityPlaceholder: () => undefined,
-  resolveRuntimeModelAttemptParams: () => {
-    throw new Error("not used in tests");
-  },
   runAgentRuntime: () => {
     throw new Error("not used in tests");
   },
-  isRuntimeModelFallbackRetryable: () => false,
   stopAgentRuntime: async () => false,
   isAgentRuntimeSessionActive: (threadId: string) => sessionActive,
   stopAllAgentRuntimeSessions: async () => undefined,
@@ -47,9 +43,6 @@ mock.module("../services/agent/agent-workdir-resolver", () => ({
   },
   resolveAgentThreadWorkdir: (threadId: string) => ({ agentCwd: workdirsByThread[threadId] ?? "" }),
   resolveAgentThreadLumeWorkDir: () => {
-    throw new Error("not used in tests");
-  },
-  resolveLegacyWorkspaceDirForMetadata: () => {
     throw new Error("not used in tests");
   },
 }));

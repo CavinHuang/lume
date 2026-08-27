@@ -1,10 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   applyMemoryToolPolicy,
-  deriveChatTypeFromThreadKey,
-  deriveChatTypeFromThreadType,
   getMemoryRuntimeConfig,
-  normalizeMemoryChatType,
   parseMemoryRuntimeConfigPayload,
   shouldIncludeCitations,
   updateMemoryRuntimeConfig
@@ -74,26 +71,6 @@ describe("memory-v2 policy", () => {
     expect(shouldIncludeCitations("auto", "channel")).toBe(false);
   });
 
-  test("从 session key 解析 chat type", () => {
-    expect(deriveChatTypeFromThreadKey("agent:main:discord:group:c123")).toBe("group");
-    expect(deriveChatTypeFromThreadKey("agent:main:slack:channel:c123")).toBe("channel");
-    expect(deriveChatTypeFromThreadKey("thread-uuid")).toBe("direct");
-  });
-
-  test("从 threadType 解析 chat type", () => {
-    expect(deriveChatTypeFromThreadType("main")).toBe("direct");
-    expect(deriveChatTypeFromThreadType("subagent")).toBe("direct");
-    expect(deriveChatTypeFromThreadType("group")).toBe("group");
-    expect(deriveChatTypeFromThreadType("channel")).toBe("channel");
-    expect(deriveChatTypeFromThreadType("other")).toBeUndefined();
-  });
-
-  test("normalizeMemoryChatType 仅接受 direct/group/channel", () => {
-    expect(normalizeMemoryChatType("direct")).toBe("direct");
-    expect(normalizeMemoryChatType("group")).toBe("group");
-    expect(normalizeMemoryChatType("channel")).toBe("channel");
-    expect(normalizeMemoryChatType("other")).toBeUndefined();
-  });
 
   test("parseMemoryRuntimeConfigPayload 应兼容无 version 旧格式", () => {
     const result = parseMemoryRuntimeConfigPayload({

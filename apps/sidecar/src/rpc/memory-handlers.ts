@@ -13,11 +13,7 @@ import {
   type MemoryStartOrganizeJobResult,
   type MemoryUpdateEntryInput
 } from "@lume/shared";
-import {
-  readMemoryTool,
-  rememberMemoryTool,
-  searchMemoryTool
-} from "../services/memory-v2/tools";
+import { readMemoryTool, rememberMemoryTool } from "../services/memory-v2/tools";
 import {
   getMemoryV2DiagnosticsSnapshot,
   getMemoryV2SettingsSnapshot
@@ -51,7 +47,6 @@ import {
   memoryReadToolInputSchema,
   memoryRememberToolInputSchema,
   memoryResolvePendingInputSchema,
-  memorySearchInputSchema,
   memoryUpdateEntryInputSchema,
   memoryUndoMutationInputSchema,
   workspaceSlugInputSchema,
@@ -62,11 +57,6 @@ import { validateInput } from "./validation";
 
 export function createMemoryHandlers(): Record<string, RpcHandler> {
   return {
-    [MEMORY_IPC_CHANNELS.SEARCH]: async (params) => {
-      return searchMemoryTool(
-        validateInput(memorySearchInputSchema, params, MEMORY_IPC_CHANNELS.SEARCH)
-      );
-    },
     [MEMORY_IPC_CHANNELS.READ]: async (params) => {
       return readMemoryTool(
         validateInput(memoryReadToolInputSchema, params, MEMORY_IPC_CHANNELS.READ)

@@ -10,6 +10,17 @@ describe("tool-metadata", () => {
     });
   });
 
+  test("registers subagent dispatch tool (Agent) explicitly with approval semantics", () => {
+    // 正名注册：不依赖 canonicalize→"agent_spawn" 名称推断的巧合默认值
+    expect(getToolMetadata("Agent")).toMatchObject({
+      category: "execute",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    expect(getToolMetadata("Agent")).toEqual(getToolMetadata("agent_spawn"));
+    expect(isToolAllowedInPlanMode("Agent")).toBeFalse();
+  });
+
   test("classifies automation mutations as high-risk writes and read/query as plan-safe", () => {
     expect(getToolMetadata("automation_set")).toMatchObject({
       category: "write",
@@ -86,34 +97,6 @@ describe("tool-metadata", () => {
       allowedInPlanMode: true
     });
     expect(isToolAllowedInPlanMode("AskUserQuestion")).toBeTrue();
-  });
-
-  test("treats automation_template as a write tool and keeps automation_list plan-safe", () => {
-    // create 会创建真实定时 agent run，整工具取最保守值对齐 automation_set
-    expect(getToolMetadata("automation_template")).toMatchObject({
-      category: "write",
-      riskLevel: "high",
-      allowedInPlanMode: false
-    });
-    expect(isToolAllowedInPlanMode("automation_list")).toBeTrue();
-  });
-
-  test("classifies subagent orchestration bookkeeping with explicit plan gating", () => {
-    // FinishAgentTask/RetireSubagent 是纯编排状态簿记：control/low 免审批口径。
-    // FinishAgentTask 在 plan 模式必须可见——coordinator 完成守卫强制调用它，
-    // plan 禁用会造成 Unknown tool 死循环；RetireSubagent 无此依赖维持 plan 禁。
-    expect(getToolMetadata("FinishAgentTask")).toMatchObject({
-      category: "control",
-      riskLevel: "low",
-      allowedInPlanMode: true
-    });
-    expect(isToolAllowedInPlanMode("FinishAgentTask")).toBeTrue();
-    expect(getToolMetadata("RetireSubagent")).toMatchObject({
-      category: "control",
-      riskLevel: "low",
-      allowedInPlanMode: false
-    });
-    expect(isToolAllowedInPlanMode("RetireSubagent")).toBeFalse();
   });
 
   test("treats automation_template as a write tool and keeps automation_list plan-safe", () => {

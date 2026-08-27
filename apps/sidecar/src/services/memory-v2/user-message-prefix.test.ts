@@ -468,7 +468,7 @@ describe("memory-v2 user message prefix", () => {
   });
 
   test("persona present → renders <persona_profile> after <user_profile> with summary/prefs/rules", () => {
-    writePersona("global", undefined,
+    writePersona(
       "# 用户画像\n" +
       "## 一句话定位\n独立开发者\n" +
       "## 长期偏好\n- 用 TypeScript\n- 简洁代码\n- 测试先行\n" +
@@ -480,7 +480,7 @@ describe("memory-v2 user message prefix", () => {
       ...recallItem,
       id: "mem_profile",
       statement: "用户希望被称呼为 Alice"
-    }], { workspaceSlug: "demo" });
+    }]);
 
     const section = prefix.match(/<persona_profile>[\s\S]*?<\/persona_profile>/)?.[0] ?? "";
     expect(section).toContain("独立开发者");
@@ -499,23 +499,23 @@ describe("memory-v2 user message prefix", () => {
   });
 
   test("persona absent → <persona_profile> section omitted (no empty tags)", () => {
-    const prefix = buildMemoryUserMessagePrefix([recallItem], { workspaceSlug: "demo" });
+    const prefix = buildMemoryUserMessagePrefix([recallItem]);
     expect(prefix).not.toContain("  <persona_profile>");
     expect(prefix).not.toContain("</persona_profile>");
   });
 
   test("persona with only empty fields → section omitted", () => {
-    writePersona("workspace", "demo", "# 用户画像\n（无内容）");
-    const prefix = buildMemoryUserMessagePrefix([recallItem], { workspaceSlug: "demo" });
+    writePersona("# 用户画像\n（无内容）");
+    const prefix = buildMemoryUserMessagePrefix([recallItem]);
     expect(prefix).not.toContain("  <persona_profile>");
     expect(prefix).not.toContain("</persona_profile>");
   });
 
   test("persona section renders even when no memory items exist", () => {
-    writePersona("global", undefined,
+    writePersona(
       "# 用户画像\n## 一句话定位\n仅 persona 存在\n## 长期偏好\n- 偏好简洁");
 
-    const prefix = buildMemoryUserMessagePrefix([], {});
+    const prefix = buildMemoryUserMessagePrefix([]);
     expect(prefix).toContain("  <persona_profile>");
     expect(prefix).toContain("仅 persona 存在");
     expect(prefix).toContain("- 偏好简洁");
@@ -524,10 +524,10 @@ describe("memory-v2 user message prefix", () => {
   test("persona preferences truncated to 5 and interactionRules to 3", () => {
     const prefs = Array.from({ length: 7 }, (_, i) => `- 偏好${i}`).join("\n");
     const rules = Array.from({ length: 5 }, (_, i) => `- 规则${i}`).join("\n");
-    writePersona("global", undefined,
+    writePersona(
       `# 用户画像\n## 一句话定位\n开发者\n## 长期偏好\n${prefs}\n## 交互协议\n${rules}`);
 
-    const prefix = buildMemoryUserMessagePrefix([recallItem], { workspaceSlug: "demo" });
+    const prefix = buildMemoryUserMessagePrefix([recallItem]);
     const section = prefix.match(/<persona_profile>[\s\S]*?<\/persona_profile>/)?.[0] ?? "";
     expect(section).toContain("偏好0");
     expect(section).toContain("偏好4");

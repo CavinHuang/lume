@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, loadPage } from "./types.js";
@@ -72,13 +71,13 @@ function extractCik(url: URL): string | null {
 	// Pattern: /cik/XXXXXXXXXX or /cik/XXXXXXXXXX/...
 	const cikPathMatch = pathname.match(/\/cik\/(\d+)/i);
 	if (cikPathMatch) {
-		return normalizeCik(cikPathMatch[1]);
+		return normalizeCik(cikPathMatch[1] ?? "");
 	}
 
 	// Pattern: /submissions/CIK*.json
 	const submissionsMatch = pathname.match(/\/submissions\/CIK(\d+)\.json/i);
 	if (submissionsMatch) {
-		return normalizeCik(submissionsMatch[1]);
+		return normalizeCik(submissionsMatch[1] ?? "");
 	}
 
 	// Pattern: /cgi-bin/browse-edgar with company search (no CIK yet)
@@ -90,7 +89,7 @@ function extractCik(url: URL): string | null {
 	// Pattern: Filing URLs like /Archives/edgar/data/XXXXXXXXXX/...
 	const archivesMatch = pathname.match(/\/Archives\/edgar\/data\/(\d+)/);
 	if (archivesMatch) {
-		return normalizeCik(archivesMatch[1]);
+		return normalizeCik(archivesMatch[1] ?? "");
 	}
 
 	return null;
@@ -129,15 +128,23 @@ function getRecentFilings(company: SecCompany, formTypes: string[], limit = 10):
 	const filings: SecFiling[] = [];
 
 	for (let i = 0; i < recent.form.length && filings.length < limit; i++) {
-		if (formTypes.length === 0 || formTypes.includes(recent.form[i])) {
+		const accessionNumber = recent.accessionNumber[i];
+		const filingDate = recent.filingDate[i];
+		const reportDate = recent.reportDate[i];
+		const acceptanceDateTime = recent.acceptanceDateTime[i];
+		const form = recent.form[i];
+		const primaryDocument = recent.primaryDocument[i];
+		const primaryDocDescription = recent.primaryDocDescription[i];
+		if (!accessionNumber || !filingDate || !form) continue;
+		if (formTypes.length === 0 || formTypes.includes(form)) {
 			filings.push({
-				accessionNumber: recent.accessionNumber[i],
-				filingDate: recent.filingDate[i],
-				reportDate: recent.reportDate[i],
-				acceptanceDateTime: recent.acceptanceDateTime[i],
-				form: recent.form[i],
-				primaryDocument: recent.primaryDocument[i],
-				primaryDocDescription: recent.primaryDocDescription[i],
+				accessionNumber,
+				filingDate,
+				reportDate: reportDate ?? "",
+				acceptanceDateTime: acceptanceDateTime ?? "",
+				form,
+				primaryDocument: primaryDocument ?? "",
+				primaryDocDescription: primaryDocDescription ?? "",
 			});
 		}
 	}

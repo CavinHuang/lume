@@ -4,9 +4,7 @@ import type { LumeWorkflowHookEffect } from "./hook-effects";
 import type { LumeWorkflowHookHandlerContext } from "./hook-services";
 
 export type LumeWorkflowHookEventName =
-  | "run.beforeStart"
   | "run.afterComplete"
-  | "run.afterFailure"
   | "context.beforeAssemble"
   | "context.afterAssemble"
   | "permission.beforeDecision";
@@ -50,11 +48,6 @@ export interface LumeWorkflowHookBaseEvent {
   modelRef?: string;
 }
 
-export interface LumeWorkflowRunBeforeStartEvent extends LumeWorkflowHookBaseEvent {
-  event: "run.beforeStart";
-  userMessage: string;
-}
-
 export interface LumeWorkflowRunAfterCompleteEvent extends LumeWorkflowHookBaseEvent {
   event: "run.afterComplete";
   userMessage: string;
@@ -72,12 +65,6 @@ export interface LumeWorkflowRunAfterCompleteEvent extends LumeWorkflowHookBaseE
   memoryContextUsedItems: MemoryV2RecallItem[];
   modelVisibleMessage?: string;
   runItems?: LumeRunItem[];
-}
-
-export interface LumeWorkflowRunAfterFailureEvent extends LumeWorkflowHookBaseEvent {
-  event: "run.afterFailure";
-  userMessage: string;
-  errorMessage: string;
 }
 
 export interface LumeWorkflowContextBeforeAssembleEvent extends LumeWorkflowHookBaseEvent {
@@ -105,9 +92,7 @@ export interface LumeWorkflowPermissionBeforeDecisionEvent extends LumeWorkflowH
 }
 
 export type LumeWorkflowHookEvent =
-  | LumeWorkflowRunBeforeStartEvent
   | LumeWorkflowRunAfterCompleteEvent
-  | LumeWorkflowRunAfterFailureEvent
   | LumeWorkflowContextBeforeAssembleEvent
   | LumeWorkflowContextAfterAssembleEvent
   | LumeWorkflowPermissionBeforeDecisionEvent;

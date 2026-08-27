@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatNumber, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -244,7 +243,7 @@ export const handleMastodon: SpecialHandler = async (
 		if (profileMatch) {
 			// Fetch account by username lookup
 			const [, username] = profileMatch;
-			const lookupUrl = `https://${instance}/api/v1/accounts/lookup?acct=${encodeURIComponent(username)}`;
+			const lookupUrl = `https://${instance}/api/v1/accounts/lookup?acct=${encodeURIComponent(username ?? "")}`;
 
 			const result = await loadPage(lookupUrl, {
 				timeout,

@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -48,7 +47,7 @@ function getSiteParam(hostname: string): string | null {
 	// Handle *.stackexchange.com subdomains (e.g., unix.stackexchange.com → unix)
 	const seMatch = host.match(/^([a-z0-9-]+)\.stackexchange\.com$/);
 	if (seMatch) {
-		return seMatch[1];
+		return seMatch[1] ?? null;
 	}
 
 	return null;
@@ -85,6 +84,7 @@ export const handleStackOverflow: SpecialHandler = async (
 		if (!qData?.items?.length) return null;
 
 		const question = qData.items[0];
+		if (!question) return null;
 
 		let md = `# ${question.title}\n\n`;
 		md += `**Score:** ${question.score} · **Answers:** ${question.answer_count}`;

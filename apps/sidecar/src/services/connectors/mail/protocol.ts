@@ -12,7 +12,7 @@ import { createLogger } from "../../infra/logger";
 import { resolveGuardedEgressTarget } from "../core/guarded-fetch";
 import { isIpAddress } from "../core/request";
 import { mailConnectionTimeoutMs, mailImapPort, mailSmtpPort } from "./config";
-import { MailProtocolError } from "./errors";
+import { MailProtocolError, type MailProtocolErrorKind } from "./errors";
 
 const logger = createLogger("connectors.mail.protocol");
 
@@ -730,14 +730,22 @@ const imapPoolMetrics: ImapPoolMetrics = {
  */
 export interface ImapPoolMetricsSnapshot extends Readonly<ImapPoolMetrics> {
   idle_connections: number;
+  /** error_destroy 的 kind 细分(#784②/#790):watchdog 与 mapLibraryError kind 同表,事件数口径。 */
+  error_destroy_kinds: Record<string, number>;
 }
+
+const imapErrorDestroyKinds = new Map<string, number>();
 
 export function imapPoolMetricsSnapshot(): ImapPoolMetricsSnapshot {
   let idle = 0;
   for (const gate of imapAccountGates.values()) {
     idle += gate.idle.length;
   }
-  return { ...imapPoolMetrics, idle_connections: idle };
+  return {
+    ...imapPoolMetrics,
+    idle_connections: idle,
+    error_destroy_kinds: Object.fromEntries(imapErrorDestroyKinds),
+  };
 }
 
 const poolLogger = createLogger("connectors.mail.protocol");
@@ -749,6 +757,11 @@ const poolLogger = createLogger("connectors.mail.protocol");
  */
 function bumpPoolMetric(metric: keyof ImapPoolMetrics, kind?: string): void {
   imapPoolMetrics[metric] += 1;
+  if (metric === "error_destroy" && kind) {
+    // #784②/#790:本地判定错 vs 网络错占比的论证数据。此前只进 debug 日志,
+    // fileLevel=info 下生产拿不到——改为进程级累计随快照出口。
+    imapErrorDestroyKinds.set(kind, (imapErrorDestroyKinds.get(kind) ?? 0) + 1);
+  }
   poolLogger.debug("imap pool metric", { metric, total: imapPoolMetrics[metric], ...(kind ? { kind } : {}) });
 }
 
@@ -876,6 +889,18 @@ function sweepStaleIdleConnections(now: () => number) {
   }
 }
 
+/**
+ * 业务语义错:错误源自操作对象不存在或服务器端邮箱状态变化(folder/uid/trash/
+ * UIDVALIDITY),而非连接本身——销毁会误杀健康会话(#784① P1)。其余 kind
+ * (auth/timeout/network/provider)意味着传输层可疑,照旧一律销毁。
+ */
+const BUSINESS_ERROR_KINDS: ReadonlySet<MailProtocolErrorKind> = new Set([
+  "folder_not_found",
+  "uid_not_found",
+  "trash_missing",
+  "uid_validity_changed",
+]);
+
 async function withImapClient<T>(
   config: MailProtocolConfig,
   deps: MailProtocolDependencies,
@@ -889,21 +914,27 @@ async function withImapClient<T>(
     async () => {
       const gate = imapAccountGates.get(credential.email.toLowerCase())!;
       const conn = await acquirePooledClient(config, deps, credential, gate, options);
-      try {
-        const result = await callback(conn.client);
-        // 成功才复用:错误一律销毁,坏连接绝不回流池中;
-        // callback 期间被看门狗杀死的连接(dead 置位)同样不入池
+      // 归还出口(成功与业务错共用):被看门狗杀死的连接(dead 置位)绝不回流
+      const release = () => {
         if (conn.dead) {
           destroyPooledClient(conn.client);
         } else {
           conn.idledAt = (deps.now ?? Date.now)();
           gate.idle.push(conn);
         }
+      };
+      try {
+        const result = await callback(conn.client);
+        release();
         return result;
       } catch (error) {
         const mapped = mapLibraryError(error, config);
-        bumpPoolMetric("error_destroy", mapped.kind);
-        destroyPooledClient(conn.client);
+        if (BUSINESS_ERROR_KINDS.has(mapped.kind)) {
+          release();
+        } else {
+          bumpPoolMetric("error_destroy", mapped.kind);
+          destroyPooledClient(conn.client);
+        }
         throw mapped;
       }
     },

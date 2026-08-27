@@ -1,13 +1,5 @@
-/** Upload media type constants matching OpenClaw proto UploadMediaType. */
-export const WeixinUploadMediaType = {
-  IMAGE: 1,
-  VIDEO: 2,
-  FILE: 3,
-  VOICE: 4,
-} as const;
-
-export type WeixinUploadMediaTypeValue =
-  (typeof WeixinUploadMediaType)[keyof typeof WeixinUploadMediaType];
+/** Upload media type values matching OpenClaw proto UploadMediaType. */
+export type WeixinUploadMediaTypeValue = 1 | 2 | 3 | 4;
 
 /** Result of a successful CDN upload, used to fill media item fields in sendmessage. */
 export interface WeixinUploadedMedia {

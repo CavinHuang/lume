@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, loadPage } from "./types.js";
@@ -15,7 +14,7 @@ export const handleHex: SpecialHandler = async (url, timeout, signal) => {
 		const match = parsed.pathname.match(/^\/packages\/([^/]+)/);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 
 		// Fetch from Hex.pm API

@@ -3,7 +3,6 @@ import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
 import { subagentLogFields } from "./subagent-run-registry";
 import type { SubagentRun } from "./subagent-run-types";
-import { releaseSubagentThreadBinding } from "./subagent-thread-binding";
 
 // ─── Announce service ───
 
@@ -23,25 +22,6 @@ export interface SubagentAnnounceResult {
 function truncateText(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, maxChars)}\n...(truncated)...`;
-}
-
-function formatStatusLabel(status: SubagentRun["status"]): string {
-  switch (status) {
-    case "completed":
-      return "completed";
-    case "errored":
-      return "errored";
-    case "aborted":
-      return "aborted";
-    case "timed_out":
-      return "timed_out";
-    case "canceled":
-      return "canceled";
-    case "running":
-      return "running";
-    default:
-      return "accepted";
-  }
 }
 
 function buildAnnounceEvent(run: SubagentRun, threadId: string): AgentSubagentCompletionEvent {
@@ -105,12 +85,6 @@ export async function announceSubagentCompletion(params: {
           // ignore listener failures to keep announce delivery stable
         }
       }
-      releaseSubagentThreadBinding({
-        runId: run.runId,
-        childThreadId: run.childThreadId,
-        deliveryThreadId: targetSessionId,
-        threadBound: run.threadBound
-      });
       return {
         delivered: true,
         attempts: attempt,

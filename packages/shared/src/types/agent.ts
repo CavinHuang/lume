@@ -1191,6 +1191,8 @@ export interface AgentToolPermissionRequest {
   runId?: string
   /** 原始触发线程（用于子任务代理路由） */
   originThreadId?: string
+  /** 授权所属工作区：allow_always 时据此写入 workspace 级持久授权（#775）。 */
+  workspaceSlug?: string
   /** 子任务 runId（用于 Team 面板定位） */
   subagentRunId?: string
   /** 子任务显示名（优先用于 UI 展示） */
@@ -1228,6 +1230,20 @@ export interface AgentPluginSensitiveRequest {
 
 /** 「始终允许」的真实作用域档位（#558）：缺省 exact 保持逐字节比对 */
 export type AgentToolPermissionAllowScope = 'exact' | 'command' | 'tool'
+
+/** workspace 级持久授权记录（#775）：查看/撤销面板与 sidecar 存储共用此形状 */
+export interface AgentToolPermissionGrantRecord {
+  id: string
+  workspaceSlug: string
+  scope: AgentToolPermissionAllowScope
+  toolName: string
+  /**
+   * 已编码匹配串：exact 原串、command `>` 前缀档、tool `*` 工具档。
+   * [0] 恒为基础指纹，供展示摘要。
+   */
+  fingerprints: string[]
+  createdAt: string
+}
 
 export interface AgentToolPermissionResponseInput {
   threadId: string
@@ -1633,25 +1649,6 @@ export interface ExternalDirEntryItem {
   modifiedAt?: string
 }
 
-/** Agent 复制文件夹到 thread 的输入 */
-export interface AgentCopyFolderInput {
-  sourcePath: string
-  workspaceSlug: string
-  threadId: string
-}
-
-/** 工作区复制外部文件夹输入 */
-export interface WorkspaceCopyFolderInput {
-  sourcePath: string
-  workspaceSlug: string
-}
-
-/** 工作区复制外部文件夹结果 */
-export interface WorkspaceCopyFolderResult {
-  ok: true
-  files: AgentSavedFile[]
-}
-
 export interface PromoteFileToWorkspaceInput {
   workspaceSlug: string
   threadId: string
@@ -1664,33 +1661,9 @@ export interface PromoteFileToWorkspaceResult {
   path: string
 }
 
-export interface WorkspaceFilePathInput {
-  workspaceSlug: string
-  path: string
-}
-
-export interface WorkspaceRenameFileInput extends WorkspaceFilePathInput {
-  newName: string
-}
-
-export interface WorkspaceMoveFileInput extends WorkspaceFilePathInput {
-  targetDir: string
-}
-
 export interface WorkspaceSaveFilesInput {
   workspaceSlug: string
   files: Array<{ filename: string; data?: string; sourcePath?: string }>
-}
-
-export interface AttachWorkspaceResourceToThreadInput {
-  workspaceSlug: string
-  threadId: string
-  sourcePath: string
-}
-
-export interface AttachWorkspaceResourceToThreadResult {
-  ok: true
-  path: string
 }
 
 // ===== IPC 通道常量 =====
@@ -1740,8 +1713,6 @@ export const AGENT_IPC_CHANNELS = {
   UPDATE_THREAD_MODEL_SELECTION: 'agent:update-thread-model-selection',
   /** 置顶/取消置顶线程 */
   TOGGLE_PIN_THREAD: 'agent:toggle-pin-thread',
-  /** 移动线程到目标工作区 */
-  MOVE_THREAD: 'agent:move-thread',
   /** 删除线程 */
   DELETE_THREAD: 'agent:delete-thread',
   /** 归档线程（软删除，从侧边栏隐藏） */
@@ -1760,8 +1731,6 @@ export const AGENT_IPC_CHANNELS = {
   LIST_TRASHED_THREADS: 'agent:list-trashed-threads',
   /** 清空回收站（永久删除全部已 trash 线程） */
   EMPTY_TRASH: 'agent:empty-trash',
-  /** 从指定消息开始截断线程（包含该消息） */
-  TRUNCATE_THREAD_MESSAGES_FROM: 'agent:truncate-thread-messages-from',
   // 工作区管理
   /** 获取工作区列表 */
   LIST_WORKSPACES: 'agent:list-workspaces',
@@ -1789,8 +1758,6 @@ export const AGENT_IPC_CHANNELS = {
   // 消息发送
   /** 发送线程消息（触发 Agent 流式响应） */
   SEND_THREAD_MESSAGE: 'agent:send-thread-message',
-  /** 追加线程消息（忙碌时进入队列，空闲时立即发送） */
-  APPEND_THREAD_MESSAGE: 'agent:append-thread-message',
   /** 获取当前线程消息队列 */
   LIST_MESSAGE_QUEUE: 'agent:list-message-queue',
   /** 查询幂等提交 receipt */
@@ -1834,8 +1801,6 @@ export const AGENT_IPC_CHANNELS = {
   GET_PROXY_SETTINGS: 'agent:get-proxy-settings',
   /** 保存 Agent 网络代理配置 */
   SAVE_PROXY_SETTINGS: 'agent:save-proxy-settings',
-  /** 获取工作区 Skill 列表 */
-  GET_SKILLS: 'agent:get-skills',
   /** 获取可在设置页编辑的 Skill 列表 */
   LIST_EDITABLE_SKILLS: 'agent:list-editable-skills',
   /** 获取当前运行时真正可显式调用的 Skill/插件目录 */
@@ -1862,12 +1827,8 @@ export const AGENT_IPC_CHANNELS = {
   ANALYZE_SKILL_IMPROVEMENT: 'agent:analyze-skill-improvement',
   /** 应用工作区 Skill 的改进建议 */
   APPLY_SKILL_IMPROVEMENT: 'agent:apply-skill-improvement',
-  /** 列出已安装的插件 */
-  LIST_PLUGINS: 'agent:list-plugins',
   /** Re-scan plugin directories and refresh capability list (sidecar → emits CAPABILITIES_CHANGED). */
   RELOAD_PLUGINS: 'agent:reload-plugins',
-  /** 查询插件审计日志（Phase 4B） */
-  GET_PLUGIN_AUDIT_LOG: 'agent:get-plugin-audit-log',
   /** 获取统一插件/技能市场目录 */
   GET_MARKET_CATALOG: 'agent:get-market-catalog',
   /** 获取统一市场详情 */
@@ -1906,18 +1867,18 @@ export const AGENT_IPC_CHANNELS = {
   ASK_USER_QUESTION: 'agent:ask-user-question',
   /** AskUserQuestion 回答提交（web -> sidecar） */
   SUBMIT_ASK_USER_QUESTION: 'agent:submit-ask-user-question',
-  /** 浏览器安全凭证请求（sidecar -> web） */
-  BROWSER_AUTH_REQUEST: 'agent:browser-auth-request',
   /** 高风险桌面动作确认（sidecar -> web） */
   DESKTOP_ACTION_REQUEST: 'agent:desktop-action-request',
-  /** 浏览器安全凭证提交（web -> sidecar） */
-  SUBMIT_BROWSER_AUTH: 'agent:submit-browser-auth',
   /** 高风险桌面动作确认结果（web -> sidecar） */
   SUBMIT_DESKTOP_ACTION: 'agent:submit-desktop-action',
   /** 工具权限确认请求（sidecar -> web） */
   TOOL_PERMISSION_REQUEST: 'agent:tool-permission-request',
   /** 工具权限确认结果（web -> sidecar） */
   SUBMIT_TOOL_PERMISSION: 'agent:submit-tool-permission',
+  /** 列出 workspace 级持久工具授权（#775 查看/撤销入口） */
+  LIST_TOOL_PERMISSION_GRANTS: 'agent:list-tool-permission-grants',
+  /** 撤销持久工具授权：按 id 或按工作区清空（#775） */
+  REVOKE_TOOL_PERMISSION_GRANT: 'agent:revoke-tool-permission-grant',
   /** 获取当前待处理的交互请求（用于冷启动恢复） */
   GET_PENDING_INTERACTIVE: 'agent:get-pending-interactive',
   /** runtime status 变化通知（sidecar -> web） */
@@ -1937,12 +1898,6 @@ export const AGENT_IPC_CHANNELS = {
   // 附件
   /** 保存文件到 Agent thread 工作目录 */
   SAVE_FILES_TO_THREAD: 'agent:save-files-to-thread',
-  /** 打开文件夹选择对话框 */
-  OPEN_FOLDER_DIALOG: 'agent:open-folder-dialog',
-  /** 复制文件夹到 thread 工作目录 */
-  COPY_FOLDER_TO_THREAD: 'agent:copy-folder-to-thread',
-  /** 复制文件夹到工作区共享目录 */
-  COPY_FOLDER_TO_WORKSPACE: 'agent:copy-folder-to-workspace',
 
   // 文件系统操作
   /** 获取 thread 工作路径 */
@@ -1951,44 +1906,18 @@ export const AGENT_IPC_CHANNELS = {
   GET_PROJECT_INSTRUCTIONS_INFO: 'agent:get-project-instructions-info',
   /** 列出目录内容 */
   LIST_DIRECTORY: 'agent:list-directory',
-  /** 删除文件/空目录 */
-  DELETE_FILE: 'agent:delete-file',
   /** 用系统默认应用打开文件 */
   OPEN_FILE: 'agent:open-file',
-  /** 在系统文件管理器中显示文件 */
-  SHOW_IN_FOLDER: 'agent:show-in-folder',
-  /** 在新窗口中预览文件 */
-  PREVIEW_FILE: 'agent:preview-file',
-  /** 读取 thread 文件内容用于内嵌预览 */
-  READ_FILE: 'agent:read-file',
-  /** 读取 thread 文件二进制数据用于图片预览 */
-  READ_THREAD_FILE_DATA: 'agent:read-thread-file-data',
-  /** 重命名文件/目录 */
-  RENAME_FILE: 'agent:rename-file',
-  /** 移动文件/目录到目标目录 */
-  MOVE_FILE: 'agent:move-file',
   /** 将当前任务文件提升到工作区共享文件层 */
   PROMOTE_FILE_TO_WORKSPACE: 'agent:promote-file-to-workspace',
   /** 获取工作区共享文件目录路径 */
   GET_WORKSPACE_RESOURCES_PATH: 'agent:get-workspace-resources-path',
   /** 列出工作区共享目录内容 */
   LIST_WORKSPACE_DIRECTORY: 'agent:list-workspace-directory',
-  /** 删除工作区共享文件/目录 */
-  DELETE_WORKSPACE_FILE: 'agent:delete-workspace-file',
   /** 用系统默认应用打开工作区共享文件 */
   OPEN_WORKSPACE_FILE: 'agent:open-workspace-file',
-  /** 在系统文件管理器中显示工作区共享文件 */
-  SHOW_WORKSPACE_IN_FOLDER: 'agent:show-workspace-in-folder',
-  /** 预览工作区共享文件 */
-  PREVIEW_WORKSPACE_FILE: 'agent:preview-workspace-file',
-  /** 读取工作区共享文件内容用于内嵌预览 */
-  READ_WORKSPACE_FILE: 'agent:read-workspace-file',
-  /** 读取旧版工作区共享文件二进制数据 */
-  READ_WORKSPACE_FILE_DATA: 'agent:read-workspace-file-data',
   /** 只读列出项目绑定目录内容 */
   LIST_PROJECT_DIRECTORY: 'agent:list-project-directory',
-  /** 只读读取项目绑定目录文件内容 */
-  READ_PROJECT_FILE: 'agent:read-project-file',
   /** 获取当前 Coding 工作区变更集合 */
   GET_CODING_CHANGE_SET: 'agent:get-coding-change-set',
   /** 获取 Review 可用的分支与最近提交来源 */
@@ -2013,10 +1942,6 @@ export const AGENT_IPC_CHANNELS = {
   REVERT_CODING_RUN: 'agent:revert-coding-run',
   /** 按快照还原单个 Coding 文件到 Run 前内容 */
   REVERT_CODING_FILE: 'agent:revert-coding-file',
-  /** 只读读取项目绑定目录二进制文件 */
-  READ_PROJECT_FILE_DATA: 'agent:read-project-file-data',
-  /** 将旧版资源只读导出到项目根目录，不覆盖同名内容 */
-  EXPORT_LEGACY_RESOURCE_TO_PROJECT: 'agent:export-legacy-resource-to-project',
   /** 将 session/memory/legacy 条目复制晋升到项目根（源保留，同名报错） */
   PROMOTE_FILE_REF_TO_PROJECT: 'agent:promote-file-ref-to-project',
   /** 列出作用域已引用附加的外部目录 */
@@ -2027,14 +1952,8 @@ export const AGENT_IPC_CHANNELS = {
   REMOVE_EXTERNAL_DIR: 'agent:remove-external-dir',
   /** 只读列出外部目录单层内容（拒绝符号链接） */
   LIST_EXTERNAL_DIR_ENTRIES: 'agent:list-external-dir-entries',
-  /** 用系统默认应用打开项目绑定目录文件 */
-  OPEN_PROJECT_FILE: 'agent:open-project-file',
   /** 在系统文件管理器中显示项目绑定目录文件 */
   SHOW_PROJECT_IN_FOLDER: 'agent:show-project-in-folder',
-  /** 重命名工作区共享文件/目录 */
-  RENAME_WORKSPACE_FILE: 'agent:rename-workspace-file',
-  /** 移动工作区共享文件/目录 */
-  MOVE_WORKSPACE_FILE: 'agent:move-workspace-file',
   /** 保存文件到工作区共享目录 */
   SAVE_FILES_TO_WORKSPACE: 'agent:save-files-to-workspace',
   /** 列出工作区根目录内容 */
@@ -2051,10 +1970,6 @@ export const AGENT_IPC_CHANNELS = {
   MOVE_WORKSPACE_ROOT_FILE: 'agent:move-workspace-root-file',
   /** 保存文件到工作区根目录 */
   SAVE_FILES_TO_WORKSPACE_ROOT: 'agent:save-files-to-workspace-root',
-  /** 将工作区共享文件或目录附加到当前线程 */
-  ATTACH_WORKSPACE_RESOURCE_TO_THREAD: 'agent:attach-workspace-resource-to-thread',
-  /** 搜索工作区文件（用于 @ 引用） */
-  SEARCH_WORKSPACE_FILES: 'agent:search-workspace-files',
   /** New right-panel FileRef-only operations. */
   LIST_FILE_REF_DIRECTORY: 'agent:list-file-ref-directory',
   STAT_FILE_REF: 'agent:stat-file-ref',
@@ -2072,7 +1987,6 @@ export const AGENT_IPC_CHANNELS = {
   CONVERT_LEGACY_FILE_REF: 'agent:convert-legacy-file-ref',
   /** Mandatory-guard message reference operations. Never accept a plain FileRef. */
   VALIDATE_GUARDED_FILE_REF: 'agent:validate-guarded-file-ref',
-  LIST_GUARDED_FILE_REF_DIRECTORY: 'agent:list-guarded-file-ref-directory',
   STAT_GUARDED_FILE_REF: 'agent:stat-guarded-file-ref',
   READ_GUARDED_FILE_REF: 'agent:read-guarded-file-ref',
   RESOLVE_GUARDED_FILE_REF: 'agent:resolve-guarded-file-ref',
@@ -2094,12 +2008,6 @@ export const AGENT_IPC_CHANNELS = {
   // 工作区路径
   /** 获取工作区根路径 */
   GET_WORKSPACE_ROOT_PATH: 'agent:get-workspace-root-path',
-
-  // 日志
-  /** 写入日志（前端 -> sidecar） */
-  WRITE_LOG: 'agent:write-log',
-  /** 日志目录仅供兼容旧调用；桌面 renderer 不返回真实本地路径 */
-  GET_LOGS_DIR: 'agent:get-logs-dir',
 
   // 分叉
   /** 从指定消息处分叉线程 */

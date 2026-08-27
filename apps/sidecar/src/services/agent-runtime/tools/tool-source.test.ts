@@ -72,6 +72,20 @@ describe("createToolDescriptorsFromDefinitions", () => {
     });
   });
 
+  test("keeps subagent dispatch tool (Agent) approval-required by default", () => {
+    expect(createToolDescriptorsFromDefinitions([makeTool("Agent")], "sdk")).toEqual([
+      expect.objectContaining({
+        name: "Agent",
+        metadata: expect.objectContaining({
+          category: "execute",
+          riskLevel: "medium",
+          allowedInPlanMode: false,
+          requiresApprovalByDefault: true
+        })
+      })
+    ]);
+  });
+
   test("infers Lume memory and automation tools as product-owned sources", () => {
     const registry = new ToolRegistry();
     registry.registerMany(createToolDescriptorsFromDefinitions([
@@ -96,13 +110,13 @@ describe("createToolDescriptorsFromDefinitions", () => {
   });
 
   test("definition-level isReadOnly wins over category inference (both shapes)", () => {
-    // FinishAgentTask 形状：control/low 注册 + 定义体显式 isReadOnly:false——
+    // AskUserQuestion/TodoWrite 形状：control/low 注册 + 定义体显式 isReadOnly:false——
     // 推断类别（control）不得把定义体的 false 覆盖回 true。
     // defineTool 会把布尔规范化为函数形态，两种声明形态都必须被识别。
     // 声明 true 的反向用例见下一个 test。
     const descriptors = createToolDescriptorsFromDefinitions([
-      { ...makeTool("FinishAgentTask"), isReadOnly: false } as unknown as ToolDefinition,
-      { ...makeTool("RetireSubagent"), isReadOnly: () => false } as unknown as ToolDefinition,
+      { ...makeTool("AskUserQuestion"), isReadOnly: false } as unknown as ToolDefinition,
+      { ...makeTool("TodoWrite"), isReadOnly: () => false } as unknown as ToolDefinition,
     ], "sdk");
 
     expect(descriptors.map((descriptor) => descriptor.metadata)).toEqual([
@@ -112,12 +126,12 @@ describe("createToolDescriptorsFromDefinitions", () => {
   });
 
   test("a truthy declared isReadOnly also survives control-category inference", () => {
-    const tool = { ...makeTool("FinishAgentTask"), isReadOnly: () => true } as unknown as ToolDefinition;
+    const tool = { ...makeTool("AskUserQuestion"), isReadOnly: () => true } as unknown as ToolDefinition;
 
     const registry = new ToolRegistry();
     registry.registerMany(createToolDescriptorsFromDefinitions([tool], "sdk"));
 
-    expect(registry.get("FinishAgentTask")?.metadata.isReadOnly).toBe(true);
+    expect(registry.get("AskUserQuestion")?.metadata.isReadOnly).toBe(true);
   });
 
   test("preserves explicit plugin plan-safe metadata", () => {

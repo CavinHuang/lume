@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { getRuntimeFetch } from "./compat.js";
 import * as fs from "node:fs/promises";
 import * as path from "node:path";
@@ -75,8 +74,8 @@ function parseDocsRsUrl(url: string): DocsRsTarget | null {
 	// Minimum: /{crate}/{version}/{crate}
 	if (segments.length < 3) return null;
 
-	const crateName = segments[0];
-	const version = segments[1]; // "latest", "1.0.228", etc.
+	const crateName = segments[0] ?? "";
+	const version = segments[1] ?? ""; // "latest", "1.0.228", etc.
 
 	// The rest is the module path, possibly ending with an item page
 	const rest = segments.slice(2);
@@ -89,8 +88,8 @@ function parseDocsRsUrl(url: string): DocsRsTarget | null {
 		/^(struct|trait|fn|enum|macro|type|constant|static|attr|derive|union|primitive)\.(.+)\.html$/,
 	);
 	if (itemMatch) {
-		itemKind = itemMatch[1];
-		itemName = itemMatch[2];
+		itemKind = itemMatch[1] ?? null;
+		itemName = itemMatch[2] ?? null;
 		rest.pop();
 	} else if (last === "index.html") {
 		rest.pop();
@@ -663,7 +662,7 @@ function renderModule(
 }
 
 function firstLine(s: string): string {
-	const line = s.split("\n")[0].trim();
+	const line = s.split("\n")[0]?.trim() ?? "";
 	return line.length > 200 ? `${line.slice(0, 197)}...` : line;
 }
 

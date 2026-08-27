@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { LocalizedText, RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, getLocalizedText, loadPage } from "./types.js";
@@ -74,7 +73,7 @@ export const handleFdroid: SpecialHandler = async (
 		const match = parsed.pathname.match(/^\/(?:en\/)?packages\/([^/]+)/);
 		if (!match) return null;
 
-		const packageName = decodeURIComponent(match[1]);
+		const packageName = decodeURIComponent(match[1] ?? "");
 		const fetchedAt = new Date().toISOString();
 		const apiUrl = `https://f-droid.org/api/v1/packages/${encodeURIComponent(packageName)}`;
 

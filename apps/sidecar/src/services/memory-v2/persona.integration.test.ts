@@ -79,10 +79,10 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
     // fake provider：模拟 LLM 返回 5 段 Markdown
     const fakeProvider = async () => FIVE_SECTION_MD;
 
-    await ensurePersona({ scope: "global", providerFactory: fakeProvider });
+    await ensurePersona({ providerFactory: fakeProvider });
 
     // readPersonaRaw 读回（round-trip 经原子写入）
-    const md = readPersonaRaw("global");
+    const md = readPersonaRaw();
     expect(md).not.toBeNull();
     expect(md).toContain("# 关于我");
 
@@ -113,9 +113,9 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
     };
 
     // ensurePersona fail-open：捕获 LLM 错误，走 buildPersonaFromRules 兜底
-    await ensurePersona({ scope: "global", providerFactory: throwingProvider });
+    await ensurePersona({ providerFactory: throwingProvider });
 
-    const md = readPersonaRaw("global");
+    const md = readPersonaRaw();
     expect(md).not.toBeNull();
     expect(md).toContain("# 关于我");
     expect(md).toContain("Alice"); // preferred_name claim → name
@@ -144,8 +144,8 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
     // 用 ensurePersona 自身写入既有 persona（避免直接耦合 writePersona）—— 这里直接走
     // ensurePersona 第一次生成，再验证第二次增量时 existing 被注入 prompt。
     const firstProvider = async () => existing;
-    await ensurePersona({ scope: "global", providerFactory: firstProvider });
-    expect(readPersonaRaw("global")).toContain("旧关于我内容");
+    await ensurePersona({ providerFactory: firstProvider });
+    expect(readPersonaRaw()).toContain("旧关于我内容");
 
     // 第二次：provider 捕获 prompt，验证 existing 内容在其中
     let capturedPrompt = "";
@@ -153,18 +153,18 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
       capturedPrompt = prompt;
       return FIVE_SECTION_MD;
     };
-    await ensurePersona({ scope: "global", providerFactory: secondProvider });
+    await ensurePersona({ providerFactory: secondProvider });
 
     expect(capturedPrompt).toContain("旧关于我内容");
     expect(capturedPrompt).toContain("已有关于我信息");
     // 读回的 persona 已更新为新输出
-    expect(readPersonaRaw("global")).toContain("独立 TS 开发者");
+    expect(readPersonaRaw()).toContain("独立 TS 开发者");
   });
 
   test("correction 回流：correction entry 落盘后 ensurePersona 重生成 persona", async () => {
     // 模拟 service.ts handleSuggestionFeedback(accepted memory_correction) 的下游：
     // smartAddMemoryV2Candidate 写入 correction-tagged entry（用 writeEntry 直接模拟），
-    // 随后 fire-and-forget 触发 ensurePersona({ workspaceSlug })。
+    // 随后 fire-and-forget 触发 ensurePersona。
     // 此处验证：correction entry 经真实 listEntries 被 ensurePersona 读到 → 进入 persona。
     seedGlobalEntry({
       statement: "以后代码注释统一用中文",
@@ -183,13 +183,13 @@ describe("persona 端到端集成（real pipeline + mocked LLM）", () => {
       ].join("\n");
     };
 
-    await ensurePersona({ scope: "global", providerFactory: fakeProvider });
+    await ensurePersona({ providerFactory: fakeProvider });
 
     // listEntries 读到了 correction entry，并格式化进 prompt
     expect(capturedPrompt).toContain("代码注释统一用中文");
     expect(capturedPrompt).toContain("[preference]");
     // persona.md 落盘后含 correction 内容（交互协议段）
-    const md = readPersonaRaw("global");
+    const md = readPersonaRaw();
     expect(md).not.toBeNull();
     expect(md).toContain("代码注释统一用中文");
     const parsed = parsePersonaProfile(md as string);

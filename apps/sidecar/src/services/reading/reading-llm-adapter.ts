@@ -7,6 +7,7 @@ import {
 } from "@lume/agent-sdk";
 import type { ReadingModelUsage, ReadingNoteDepth, ReadingSettings } from "@lume/shared";
 import { decryptApiKey, resolveChannelModelBinding } from "../channel/channel-manager";
+import { resolveProviderApiType } from "../model-runtime/provider-api-type";
 import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getReadingSettings } from "./reading-store";
@@ -77,7 +78,7 @@ export function createReadingNoteGeneratorLlm(
 
   const provider = input.createProvider
     ? input.createProvider({
-      apiType: resolveReadingApiType(binding),
+      apiType: resolveProviderApiType({ family: binding.family, provider: binding.channel.provider }),
       apiKey: (input.decryptApiKey ?? decryptApiKey)(binding.channel.id),
       baseURL: binding.channel.baseUrl
     })
@@ -245,14 +246,6 @@ function normalizeUsage(
     ...(completionTokens ? { completionTokens } : {}),
     ...(totalTokens > 0 ? { totalTokens } : {})
   };
-}
-
-function resolveReadingApiType(binding: ReadingModelBinding): ApiType {
-  if (binding.family === "anthropic") return "anthropic-messages";
-  const normalized = binding.channel.provider.trim().toLowerCase();
-  if (normalized === "anthropic" || normalized === "anthropic-compatible") return "anthropic-messages";
-  if (normalized === "deepseek") return "deepseek-chat-completions";
-  return "openai-completions";
 }
 
 function normalizePositiveInteger(value: number | undefined): number | undefined {

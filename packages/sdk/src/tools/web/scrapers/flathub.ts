@@ -1,4 +1,3 @@
-// @ts-nocheck
 import { tryParseJson } from "./compat.js";
 import type { RenderResult, SpecialHandler } from "./types.js";
 import { buildResult, formatIsoDate, formatNumber, htmlToBasicMarkdown, loadPage } from "./types.js";
@@ -39,10 +38,10 @@ interface FlathubAppStream {
 
 function extractAppId(pathname: string): string | null {
 	const detailsMatch = pathname.match(/^\/apps\/details\/([^/]+)\/?$/);
-	if (detailsMatch) return decodeURIComponent(detailsMatch[1]);
+	if (detailsMatch) return decodeURIComponent(detailsMatch[1] ?? "");
 
 	const appMatch = pathname.match(/^\/apps\/([^/]+)\/?$/);
-	if (appMatch) return decodeURIComponent(appMatch[1]);
+	if (appMatch) return decodeURIComponent(appMatch[1] ?? "");
 
 	return null;
 }
@@ -128,7 +127,7 @@ function bestScreenshotUrl(sizes?: FlathubScreenshotSize[]): string | null {
 		}
 	}
 
-	return best.src ?? sizes[0].src ?? null;
+	return best?.src ?? sizes[0]?.src ?? null;
 }
 
 export const handleFlathub: SpecialHandler = async (

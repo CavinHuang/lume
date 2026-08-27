@@ -1,4 +1,3 @@
-import { Type } from "@sinclair/typebox";
 import type { ToolDefinition } from "@lume/agent-sdk";
 import type { AutomationSchedule, AutomationJob } from "@lume/shared";
 import {
@@ -79,43 +78,6 @@ const PRESET_CRON_MAP: Record<string, string> = {
   weekly: "0 9 * * 1",
   monthly: "0 9 1 * *"
 };
-
-const ReadSchema = Type.Object({
-  workspaceId: Type.Optional(Type.String()),
-  id: Type.Optional(Type.String())
-});
-
-const SetSchema = Type.Object({
-  action: Type.Union([
-    Type.Literal("create"),
-    Type.Literal("update"),
-    Type.Literal("delete"),
-    Type.Literal("enable"),
-    Type.Literal("disable"),
-    Type.Literal("run_now")
-  ]),
-  id: Type.Optional(Type.String()),
-  name: Type.Optional(Type.String()),
-  prompt: Type.Optional(Type.String()),
-  enabled: Type.Optional(Type.Boolean()),
-  workspaceId: Type.Optional(Type.String()),
-  sessionId: Type.Optional(Type.String()),
-  schedule: Type.Optional(
-    Type.Object({
-      type: Type.Union([Type.Literal("cron"), Type.Literal("once"), Type.Literal("interval"), Type.Literal("manual")]),
-      cronExpr: Type.Optional(Type.String()),
-      runAt: Type.Optional(Type.Number()),
-      intervalMs: Type.Optional(Type.Number()),
-      timezone: Type.Optional(Type.String())
-    })
-  )
-});
-
-const QuerySchema = Type.Object({
-  workspaceId: Type.Optional(Type.String()),
-  jobId: Type.Optional(Type.String()),
-  limit: Type.Optional(Type.Number())
-});
 
 export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefinition[] {
   return [
@@ -215,7 +177,7 @@ export function createSdkCronTools(input: CreateAutomationToolsInput): ToolDefin
             ok: true,
             action,
             accepted: true,
-            message: "任务已触发（异步执行），请使用 cron_query 查询结果。"
+            message: "任务已触发（异步执行），请使用 automation_query 查询结果。"
           };
         }
         if (action === "update") {

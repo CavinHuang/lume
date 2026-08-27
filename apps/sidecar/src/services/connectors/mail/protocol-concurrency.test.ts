@@ -17,10 +17,16 @@ import {
 interface TrackingFactoryOptions {
   /** 让 connect() 失败指定次数后恢复,覆盖「建连失败走 close 兜底」的名额归还分支。 */
   failConnectTimes?: number;
-  /** status() 挂起到该 promise 决算,用于手动控制名额持有窗口。 */
-  holdStatus?: Promise<void>;
+  /** status() 挂起到该 promise 决算,用于手动控制名额持有窗口;数组形态按
+   * client 创建序逐一绑定,用于精确控制并发两条连接的完成顺序。 */
+  holdStatus?: Promise<void> | Array<Promise<void>>;
+  /** fetchOne(uid=1) 挂起到该 promise 决算:控制 withMailbox 类动作(markSeen)
+   * 的完成时刻,从而固定「非选中在前、SELECTED 在后」的池内候选序。 */
+  holdFetchOne?: Promise<void>;
   /** 让 close() 自身抛错,覆盖「清理兜底吞错不顶替业务结果」分支。 */
   throwOnClose?: boolean;
+  /** 让 messageFlagsAdd 抛网络错(ECONNRESET),覆盖传输层错误销毁连接的分支。 */
+  failFlagsNetwork?: boolean;
 }
 
 function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
@@ -112,14 +118,26 @@ function makeTrackingFactory(options: TrackingFactoryOptions = {}) {
           },
           search: async () => [1],
           fetchAll: async () => [],
-          fetchOne: async () => false,
-          messageFlagsAdd: async () => true,
+          // 仅 uid=1 存在:uid=999 走 uid_not_found 业务错,uid=1 可进到动作阶段
+          fetchOne: async (targetUid: number) => {
+            if (options.holdFetchOne && targetUid === 1) {
+              await options.holdFetchOne;
+            }
+            return targetUid === 1;
+          },
           messageFlagsRemove: async () => true,
+          messageFlagsAdd: async () => {
+            if (options.failFlagsNetwork) {
+              throw Object.assign(new Error("socket hang up"), { code: "ECONNRESET" });
+            }
+            return true;
+          },
           messageMove: async () => ({ path: "target" }),
           messageDelete: async () => true,
           status: async () => {
-            if (options.holdStatus) {
-              await options.holdStatus;
+            const hold = Array.isArray(options.holdStatus) ? options.holdStatus.shift() : options.holdStatus;
+            if (hold) {
+              await hold;
             }
             return { messages: 1 };
           },
@@ -505,7 +523,7 @@ describe("per-account IMAP connection pool (#698)", () => {
   });
 
   it("drops the whole gate entry once every connection is destroyed", async () => {
-    const fake = makeTrackingFactory();
+    const fake = makeTrackingFactory({ failFlagsNetwork: true });
     const protocol = createMailProtocol(config, fake.deps);
     const account = credential();
 
@@ -513,9 +531,10 @@ describe("per-account IMAP connection pool (#698)", () => {
     await protocol.getFolderStatus(account, "INBOX");
     expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1 });
 
-    // 下一个动作借走该 idle 并失败销毁:(active, waiting, idle) 全零 → 条目删除
-    await expect(protocol.deleteMessage(account, "INBOX", 999)).rejects.toMatchObject({
-      kind: "uid_not_found",
+    // 下一个动作借走该 idle 并因传输层错误销毁:(active, waiting, idle) 全零 → 条目删除
+    // (业务错如 uid_not_found 已改为健康回流,#784① P1;传输层错误才是销毁路径)
+    await expect(protocol.markSeen(account, "INBOX", 1)).rejects.toMatchObject({
+      kind: "network",
     });
     expect(imapAccountGateStateForTest(account.email)).toBeUndefined();
   });
@@ -572,24 +591,135 @@ describe("per-account IMAP connection pool (#698)", () => {
     fake.clients.at(-1)!.__emitError();
     await protocol.getFolderStatus(account, "INBOX");
 
-    // 动作失败(uid_not_found)→ 借出照常计 hit,callback 失败记 error_destroy,
-    // 坏连接不入池(此时池已空)
+    // 动作失败(uid_not_found)→ 业务语义错不杀健康连接(#784① P1):借出计 hit,
+    // 连接健康回流池中,后续同账号借出继续命中(无新建、无 error_destroy)
     await expect(protocol.markSeen(account, "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
 
-    // 池空新建后换 host 借出:旧连接不复用 → miss_host + 新建
+    // 同账号下一次借出直接命中回流连接(markSeen 的选中态不碍非 requireUnselected 借出)
     await protocol.listFolders(account);
+
+    // 换 host 借出:旧连接不复用 → miss_host + 新建
     await protocol.getFolderStatus({ ...account, imapHost: "imap.example.com" }, "INBOX");
 
     const after = imapPoolMetricsSnapshot();
-    // 新建点:TTL 过期 / requireUnselected / miss_dead / markSeen 失败后 / host 变更
-    expect(after.created - before.created).toBe(5);
-    expect(after.pool_hit - before.pool_hit).toBe(3);
+    // 新建点:TTL 过期 / requireUnselected / miss_dead / host 变更
+    expect(after.created - before.created).toBe(4);
+    // 复用点:前段 getFolderStatus/searchSummaries ×2 + markSeen + 回流后 listFolders
+    expect(after.pool_hit - before.pool_hit).toBe(4);
     expect(after.miss_ttl - before.miss_ttl).toBe(1);
     expect(after.miss_dead - before.miss_dead).toBe(1);
     expect(after.miss_unselected - before.miss_unselected).toBe(1);
     expect(after.miss_host - before.miss_host).toBe(1);
-    expect(after.error_destroy - before.error_destroy).toBe(2);
-    // 失败动作不回流 + host 变更新建照常入池
+    expect(after.error_destroy - before.error_destroy).toBe(1);
+    // host 变更新建照常入池
     expect(after.idle_connections).toBe(1);
+  });
+
+  it("entry sweep evicts stale idle connections of silent accounts (#784① P1)", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    const dormant = credential();
+    const active = credential();
+
+    // 沉寂账号落一条 idle;此后它自己不再有任何借出可触达该条目
+    await protocol.getFolderStatus(dormant, "INBOX");
+    expect(imapAccountGateStateForTest(dormant.email)).toMatchObject({ idle: 1 });
+
+    fake.advanceClock(imapIdleReuseTtlMs + 1);
+    // 借出侧 TTL 判定够不着:无人进闸门时条目原样滞留(明文授权码进程级滞留)
+    expect(imapAccountGateStateForTest(dormant.email)).toMatchObject({ idle: 1 });
+
+    // 另一账号的一次动作触发入口全表搭车清扫
+    const before = imapPoolMetricsSnapshot();
+    await protocol.getFolderStatus(active, "INBOX");
+
+    // 过期条目被清扫销毁、gate 条目随之删除;摘除 sweepStaleIdleConnections 调用时本用例红
+    expect(imapAccountGateStateForTest(dormant.email)).toBeUndefined();
+    const after = imapPoolMetricsSnapshot();
+    expect(after.miss_ttl - before.miss_ttl).toBe(1);
+  });
+
+  it("lease scan keeps evicting candidates until the compatible one (#784① P1)", async () => {
+    // 死连接作为压栈候选不可行:入口搭车清扫会在借出前先销毁 dead 条目,借出扫描
+    // 只见单候选。两候选必须都被 sweep 视为健康(TTL 内、存活),不兼容性只能来自
+    // getFolderStatus 的 requireUnselected 要求;用 status/fetchOne 双挂点固定
+    // 完成序 ⇒ 入池序 [非选中在前, SELECTED 在后]。
+    let releasePlain!: () => void;
+    let releaseMarked!: () => void;
+    const fake = makeTrackingFactory({
+      holdStatus: [
+        new Promise<void>((resolve) => {
+          releasePlain = resolve;
+        }),
+      ],
+      holdFetchOne: new Promise<void>((resolve) => {
+        releaseMarked = resolve;
+      }),
+    });
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    // client1:getFolderStatus 挂在 status(全程非选中);client2:markSeen 挂在
+    // fetchOne(SELECT 已生效,动作未完成不得入池)
+    const plain = protocol.getFolderStatus(account, "INBOX");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    const marked = protocol.markSeen(account, "INBOX", 1);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ active: 2 });
+
+    releasePlain();
+    await plain;
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1, active: 1 });
+    releaseMarked();
+    await marked;
+
+    // markSeen 已把第二条连接置为 SELECTED 且后入池(栈顶):
+    // getFolderStatus(requireUnselected) 必须先淘汰它、再命中存活的非选中条目,
+    // 而不是放弃扫描改走新建
+    const before = imapPoolMetricsSnapshot();
+    await protocol.getFolderStatus(account, "INBOX");
+
+    expect(fake.created).toBe(2);
+    const after = imapPoolMetricsSnapshot();
+    expect(after.pool_hit - before.pool_hit).toBe(1);
+    expect(after.miss_unselected - before.miss_unselected).toBe(1);
+    // 单候选 pop 后放弃改走新建的变异 here 红(created 会变 3)
+    expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1 });
+  });
+
+  it("aggregates error_destroy kinds into the snapshot (#784②/#790)", async () => {
+    const fake = makeTrackingFactory({ failFlagsNetwork: true });
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    // 模块级单例:先推时钟冲掉他例残留条目再取基线
+    fake.advanceClock(imapIdleReuseTtlMs * 10);
+    await protocol.listFolders(account);
+    const before = imapPoolMetricsSnapshot();
+
+    // 业务语义错健康回流(#806 口径):既不进 error_destroy 也不进 kind 细分表
+    await expect(protocol.markSeen(account, "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
+
+    // 看门狗 emit error 杀死空闲连接:kind=watchdog 记在监听侧
+    fake.clients.at(-1)!.__emitError();
+    await protocol.getFolderStatus(account, "INBOX");
+
+    // 动作期传输层错误:kind=network,mapLibraryError 映射码进同一张细分表
+    await expect(protocol.markSeen(account, "INBOX", 1)).rejects.toMatchObject({ kind: "network" });
+
+    const after = imapPoolMetricsSnapshot();
+    expect(after.error_destroy - before.error_destroy).toBe(2);
+    const delta = (kind: string) =>
+      (after.error_destroy_kinds[kind] ?? 0) - (before.error_destroy_kinds[kind] ?? 0);
+    expect(delta("watchdog")).toBe(1);
+    expect(delta("network")).toBe(1);
+    expect(delta("provider")).toBe(0);
+    expect(delta("auth")).toBe(0);
+    // 守恒:error_destroy 每次都带 kind,总量增量恒等于细分增量之和
+    const sumDelta = Object.keys(after.error_destroy_kinds).reduce(
+      (sum, kind) => sum + ((after.error_destroy_kinds[kind] ?? 0) - (before.error_destroy_kinds[kind] ?? 0)),
+      0,
+    );
+    expect(sumDelta).toBe(after.error_destroy - before.error_destroy);
   });
 });

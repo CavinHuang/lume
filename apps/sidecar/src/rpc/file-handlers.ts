@@ -1,60 +1,38 @@
 import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import {
-  attachWorkspaceResourceToThread,
-  copyFolderToSession,
   convertLegacyFileRef,
-  deleteAgentFile,
-  deleteAuthorizedFileRef,
-  deleteWorkspaceFile,
   deleteWorkspaceRootFile,
-  exportLegacyResourceToProject,
   getAgentThreadPath,
   listAgentDirectory,
   listAuthorizedFileRefDirectory,
-  listGuardedFileRefDirectory,
   listProjectDirectory,
   listWorkspaceDirectory,
   listWorkspaceRootDirectory,
-  moveAgentFile,
   moveAuthorizedFileRef,
-  moveWorkspaceFile,
-  moveWorkspaceRootFile,
   openAgentPath,
-  openProjectPath,
   openWorkspacePath,
   openWorkspaceRootPath,
-  previewAgentPath,
-  readAgentFileData,
-  readAgentPath,
+  readWorkspaceRootPath,
+  renameWorkspaceRootFile,
+  moveWorkspaceRootFile,
+  resolveGuardedFileRef,
+  deleteAuthorizedFileRef,
   readAuthorizedFileRef,
   writeAuthorizedFileRef,
   watchAuthorizedFileRef,
   unwatchAuthorizedFileRef,
   readGuardedFileRef,
   statAuthorizedFileRef,
-  readProjectFileData,
-  readProjectPath,
-  previewWorkspacePath,
   promoteFileRefToProject,
-  readWorkspacePath,
-  readWorkspaceFileData,
-  readWorkspaceRootPath,
-  renameAgentFile,
   renameAuthorizedFileRef,
   resolveAuthorizedFileRef,
-  resolveGuardedFileRef,
   statGuardedFileRef,
   validateGuardedFileRef,
-  renameWorkspaceFile,
-  renameWorkspaceRootFile,
   saveFilesToAgentThreadStreamed,
   saveFilesToWorkspace,
   saveFilesToWorkspaceRoot,
-  searchAgentWorkspaceFiles,
   searchAuthorizedFiles,
-  showAgentPathInFolder,
   showProjectPathInFolder,
-  showWorkspacePathInFolder,
 } from "../services/agent/agent-files-service";
 import {
   listExternalDirEntries,
@@ -69,8 +47,6 @@ import { loadProjectInstructions } from "../services/agent/prompt/context/projec
 import { getEffectiveLumeConfig } from "../services/system/lume-config-service";
 import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import {
-  attachWorkspaceResourceToThreadInputSchema,
-  copyFolderToThreadInputSchema,
   externalDirAddInputSchema,
   externalDirEntriesInputSchema,
   externalDirRemoveInputSchema,
@@ -84,16 +60,12 @@ import {
   fileSelectionEditInputSchema,
   guardedFileRefInputSchema,
   legacyFileRefConversionInputSchema,
-  legacyResourceExportInputSchema,
   listDirectoryInputSchema,
-  moveFileInputSchema,
   pathFileInputSchema,
   promoteFileRefInputSchema,
   promoteFileToWorkspaceInputSchema,
-  renameFileInputSchema,
   saveFilesToThreadInputSchema,
   saveFilesToWorkspaceInputSchema,
-  searchWorkspaceFilesInputSchema,
   threadPathInputSchema,
   workspaceMoveFileInputSchema,
   workspacePathInputSchema,
@@ -179,18 +151,6 @@ export function createFileHandlers(
       );
       return listProjectDirectory(input.workspaceSlug, input.path);
     },
-    [AGENT_IPC_CHANNELS.EXPORT_LEGACY_RESOURCE_TO_PROJECT]: async (params) => {
-      const input = validateInput(
-        legacyResourceExportInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.EXPORT_LEGACY_RESOURCE_TO_PROJECT,
-      );
-      return exportLegacyResourceToProject(
-        input.workspaceSlug,
-        input.path,
-        input.conflict,
-      );
-    },
     [AGENT_IPC_CHANNELS.LIST_WORKSPACE_ROOT_DIRECTORY]: async (params) => {
       const input = validateInput(
         workspacePathInputSchema,
@@ -198,26 +158,6 @@ export function createFileHandlers(
         AGENT_IPC_CHANNELS.LIST_WORKSPACE_ROOT_DIRECTORY,
       );
       return listWorkspaceRootDirectory(input.workspaceSlug, input.path);
-    },
-    [AGENT_IPC_CHANNELS.DELETE_FILE]: async (params) => {
-      const input = validateInput(
-        pathFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.DELETE_FILE,
-      );
-      return deleteAgentFile(
-        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
-        input.threadId,
-        input.path,
-      );
-    },
-    [AGENT_IPC_CHANNELS.DELETE_WORKSPACE_FILE]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.DELETE_WORKSPACE_FILE,
-      );
-      return deleteWorkspaceFile(input.workspaceSlug, input.path);
     },
     [AGENT_IPC_CHANNELS.DELETE_WORKSPACE_ROOT_FILE]: async (params) => {
       const input = validateInput(
@@ -247,14 +187,6 @@ export function createFileHandlers(
       );
       return openWorkspacePath(input.workspaceSlug, input.path);
     },
-    [AGENT_IPC_CHANNELS.OPEN_PROJECT_FILE]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.OPEN_PROJECT_FILE,
-      );
-      return openProjectPath(input.workspaceSlug, input.path);
-    },
     [AGENT_IPC_CHANNELS.OPEN_WORKSPACE_ROOT_FILE]: async (params) => {
       const input = validateInput(
         workspaceRequiredPathInputSchema,
@@ -262,26 +194,6 @@ export function createFileHandlers(
         AGENT_IPC_CHANNELS.OPEN_WORKSPACE_ROOT_FILE,
       );
       return openWorkspaceRootPath(input.workspaceSlug, input.path);
-    },
-    [AGENT_IPC_CHANNELS.SHOW_IN_FOLDER]: async (params) => {
-      const input = validateInput(
-        pathFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.SHOW_IN_FOLDER,
-      );
-      return showAgentPathInFolder(
-        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
-        input.threadId,
-        input.path,
-      );
-    },
-    [AGENT_IPC_CHANNELS.SHOW_WORKSPACE_IN_FOLDER]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.SHOW_WORKSPACE_IN_FOLDER,
-      );
-      return showWorkspacePathInFolder(input.workspaceSlug, input.path);
     },
     [AGENT_IPC_CHANNELS.SHOW_PROJECT_IN_FOLDER]: async (params) => {
       const input = validateInput(
@@ -291,82 +203,6 @@ export function createFileHandlers(
       );
       return showProjectPathInFolder(input.workspaceSlug, input.path);
     },
-    [AGENT_IPC_CHANNELS.PREVIEW_FILE]: async (params) => {
-      const input = validateInput(
-        pathFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.PREVIEW_FILE,
-      );
-      return previewAgentPath(
-        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
-        input.threadId,
-        input.path,
-      );
-    },
-    [AGENT_IPC_CHANNELS.READ_FILE]: async (params) => {
-      const input = validateInput(
-        pathFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.READ_FILE,
-      );
-      return readAgentPath(
-        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
-        input.threadId,
-        input.path,
-      );
-    },
-    [AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA]: async (params) => {
-      const input = validateInput(
-        pathFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.READ_THREAD_FILE_DATA,
-      );
-      return readAgentFileData(
-        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
-        input.threadId,
-        input.path,
-      );
-    },
-    [AGENT_IPC_CHANNELS.PREVIEW_WORKSPACE_FILE]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.PREVIEW_WORKSPACE_FILE,
-      );
-      return previewWorkspacePath(input.workspaceSlug, input.path);
-    },
-    [AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE,
-      );
-      return readWorkspacePath(input.workspaceSlug, input.path);
-    },
-    [AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE_DATA]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.READ_WORKSPACE_FILE_DATA,
-      );
-      return readWorkspaceFileData(input.workspaceSlug, input.path);
-    },
-    [AGENT_IPC_CHANNELS.READ_PROJECT_FILE]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.READ_PROJECT_FILE,
-      );
-      return readProjectPath(input.workspaceSlug, input.path);
-    },
-    [AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA]: async (params) => {
-      const input = validateInput(
-        workspaceRequiredPathInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.READ_PROJECT_FILE_DATA,
-      );
-      return readProjectFileData(input.workspaceSlug, input.path);
-    },
     [AGENT_IPC_CHANNELS.READ_WORKSPACE_ROOT_FILE]: async (params) => {
       const input = validateInput(
         workspaceRequiredPathInputSchema,
@@ -374,31 +210,6 @@ export function createFileHandlers(
         AGENT_IPC_CHANNELS.READ_WORKSPACE_ROOT_FILE,
       );
       return readWorkspaceRootPath(input.workspaceSlug, input.path);
-    },
-    [AGENT_IPC_CHANNELS.RENAME_FILE]: async (params) => {
-      const input = validateInput(
-        renameFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.RENAME_FILE,
-      );
-      return renameAgentFile(
-        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
-        input.threadId,
-        input.path,
-        input.newName,
-      );
-    },
-    [AGENT_IPC_CHANNELS.RENAME_WORKSPACE_FILE]: async (params) => {
-      const input = validateInput(
-        workspaceRenameFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.RENAME_WORKSPACE_FILE,
-      );
-      return renameWorkspaceFile(
-        input.workspaceSlug,
-        input.path,
-        input.newName,
-      );
     },
     [AGENT_IPC_CHANNELS.RENAME_WORKSPACE_ROOT_FILE]: async (params) => {
       const input = validateInput(
@@ -410,31 +221,6 @@ export function createFileHandlers(
         input.workspaceSlug,
         input.path,
         input.newName,
-      );
-    },
-    [AGENT_IPC_CHANNELS.MOVE_FILE]: async (params) => {
-      const input = validateInput(
-        moveFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.MOVE_FILE,
-      );
-      return moveAgentFile(
-        resolveRequiredWorkspaceSlug(input.threadId, input.workspaceSlug),
-        input.threadId,
-        input.path,
-        input.targetDir,
-      );
-    },
-    [AGENT_IPC_CHANNELS.MOVE_WORKSPACE_FILE]: async (params) => {
-      const input = validateInput(
-        workspaceMoveFileInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.MOVE_WORKSPACE_FILE,
-      );
-      return moveWorkspaceFile(
-        input.workspaceSlug,
-        input.path,
-        input.targetDir,
       );
     },
     [AGENT_IPC_CHANNELS.MOVE_WORKSPACE_ROOT_FILE]: async (params) => {
@@ -457,24 +243,6 @@ export function createFileHandlers(
           AGENT_IPC_CHANNELS.PROMOTE_FILE_TO_WORKSPACE,
         ),
       ),
-    [AGENT_IPC_CHANNELS.SEARCH_WORKSPACE_FILES]: async (params) => {
-      const input = validateInput(
-        searchWorkspaceFilesInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.SEARCH_WORKSPACE_FILES,
-      );
-      const workspaceSlug = resolveRequiredWorkspaceSlug(
-        input.threadId,
-        input.workspaceSlug,
-      );
-      return searchAgentWorkspaceFiles(
-        workspaceSlug,
-        input.threadId,
-        input.query,
-        input.limit ?? 20,
-        input.rootPath,
-      );
-    },
     [AGENT_IPC_CHANNELS.LIST_FILE_REF_DIRECTORY]: async (params) => {
       const input = validateInput(
         fileRefInputSchema,
@@ -648,14 +416,6 @@ export function createFileHandlers(
       );
       return validateGuardedFileRef(input.guardedRef);
     },
-    [AGENT_IPC_CHANNELS.LIST_GUARDED_FILE_REF_DIRECTORY]: async (params) => {
-      const input = validateInput(
-        guardedFileRefInputSchema,
-        params,
-        AGENT_IPC_CHANNELS.LIST_GUARDED_FILE_REF_DIRECTORY,
-      );
-      return listGuardedFileRefDirectory(input.guardedRef);
-    },
     [AGENT_IPC_CHANNELS.STAT_GUARDED_FILE_REF]: async (params) => {
       const input = validateInput(
         guardedFileRefInputSchema,
@@ -712,31 +472,6 @@ export function createFileHandlers(
       }
       return saved;
     },
-    [AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD]: async (params) =>
-      copyFolderToSession(
-        (() => {
-          const input = validateInput(
-            copyFolderToThreadInputSchema,
-            params,
-            AGENT_IPC_CHANNELS.COPY_FOLDER_TO_THREAD,
-          );
-          return {
-            ...input,
-            workspaceSlug: resolveRequiredWorkspaceSlug(
-              input.threadId,
-              input.workspaceSlug,
-            ),
-          };
-        })(),
-      ),
-    [AGENT_IPC_CHANNELS.ATTACH_WORKSPACE_RESOURCE_TO_THREAD]: async (params) =>
-      attachWorkspaceResourceToThread(
-        validateInput(
-          attachWorkspaceResourceToThreadInputSchema,
-          params,
-          AGENT_IPC_CHANNELS.ATTACH_WORKSPACE_RESOURCE_TO_THREAD,
-        ),
-      ),
     [AGENT_IPC_CHANNELS.SAVE_FILES_TO_WORKSPACE]: async (params) =>
       saveFilesToWorkspace(
         validateInput(
