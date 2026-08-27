@@ -9,6 +9,20 @@
 /** 兜底指引：无法识别的错误统一给出下一步 */
 const FALLBACK_GUIDANCE = "执行失败，请稍后重试；若持续失败请到设置 → 诊断日志查看详情。";
 
+/**
+ * 工具权限中断哨兵（single-source）：sidecar 以这两前缀收口 deny/超时消息
+ * （can-use-tool.ts），web 端横幅摘除与超时投影据此文本判定；humanize 层对
+ * 含哨兵的消息保持原文透传——文本本身是跨包契约，改动须三端同步（#559 收尾）。
+ * 存量 run items 无法补结构化 code，故文本匹配是新旧数据通吃的判定面。
+ */
+export const TOOL_PERMISSION_TIMEOUT_PREFIX = "工具权限确认超时";
+export const USER_DENIED_TOOL_PREFIX = "用户拒绝执行工具";
+
+/** 工具被「确认超时」或「用户拒绝」收口的中断类消息 */
+export function isToolPermissionInterruptionMessage(message: string): boolean {
+  return message.includes(TOOL_PERMISSION_TIMEOUT_PREFIX) || message.includes(USER_DENIED_TOOL_PREFIX);
+}
+
 interface ErrorCopyRule {
   match: (raw: string) => boolean;
   /** 收到原始消息，返回改写后的用户文案 */

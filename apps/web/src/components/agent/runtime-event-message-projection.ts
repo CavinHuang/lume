@@ -1,4 +1,4 @@
-import type { FileReferenceBinding, FileReferenceProtocolVersion, LumeRuntimeEvent, RuntimeCodingReport } from '@lume/shared'
+import { TOOL_PERMISSION_TIMEOUT_PREFIX, type FileReferenceBinding, type FileReferenceProtocolVersion, type LumeRuntimeEvent, type RuntimeCodingReport } from '@lume/shared'
 import { isDelegationToolName } from './subagent-run-projection'
 import type {
   RuntimeAssistantBlock,
@@ -482,7 +482,8 @@ export function applyRuntimeEvent(state: ProjectionState, event: LumeRuntimeEven
 }
 
 function isToolPermissionTimeoutMessage(message: string): boolean {
-  return message.includes('工具权限确认超时')
+  // 仅超时形态(不含用户拒绝)——横幅摘除用的组合判定见 shared isToolPermissionInterruptionMessage
+  return message.includes(TOOL_PERMISSION_TIMEOUT_PREFIX)
 }
 
 function computeDurationMs(startedAt: string | undefined, endedAt: string): number | undefined {
