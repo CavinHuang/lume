@@ -768,6 +768,9 @@ function createSnapshot(input: { connected: boolean }): ReadingLibrarySnapshot {
         author: 'Mary Shelley',
         track: 'lume',
         status: 'reading',
+        // 故意的历史值：kind 已收窄出联合类型(#529)，normalizeReadingSourceRef
+        // 会兜底为 'manual'——本夹具正是要测这段存量数据兼容，勿「修正」。
+        // 依赖 apps/web tsconfig 排除测试目录才不参与 typecheck。
         source: { kind: 'gutenberg' },
         tags: [],
         addedAt: 1,
