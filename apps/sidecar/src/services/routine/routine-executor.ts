@@ -159,15 +159,22 @@ export function syncRoutineStatus(): void {
   if (!routine) return
 
   const jobs = listAutomationJobs()
+  const jobsById = new Map(jobs.map((job) => [job.id, job]))
   const latestRuns = listLatestAutomationRunsByJob(
-    routine.entries.flatMap((entry) => entry.automationJobId ? [entry.automationJobId] : [])
+    routine.entries.flatMap((entry) => {
+      if (!entry.automationJobId) return []
+      const job = jobsById.get(entry.automationJobId)
+      const needsRun = (entry.status === "completed" && (!entry.result || entry.result.summary?.startsWith("任务执行完成，线程:")))
+        || (entry.status !== "completed" && job?.enabled === false && Boolean(job.lastRunAt))
+      return needsRun ? [entry.automationJobId] : []
+    })
   )
   let changed = 0
 
   for (const entry of routine.entries) {
     if (!entry.automationJobId) continue
 
-    const job = jobs.find((j) => j.id === entry.automationJobId)
+    const job = jobsById.get(entry.automationJobId)
     if (!job) continue
 
     // Backfill result for completed entries that are missing it

@@ -2001,9 +2001,11 @@ export class PluginMarketService {
     "installedVersion" | "rollbackVersion" | "installedPermissionsHash"
   > {
     try {
-      const record = state?.plugins[pluginId] ?? (JSON.parse(readFileSync(this.config.statePath, "utf-8")) as {
-        plugins?: Record<string, PluginInstallRecord>;
-      }).plugins?.[pluginId];
+      const record = state
+        ? state.plugins[pluginId]
+        : (JSON.parse(readFileSync(this.config.statePath, "utf-8")) as {
+            plugins?: Record<string, PluginInstallRecord>;
+          }).plugins?.[pluginId];
       const active = record?.activeVersion;
       if (!active) return {};
       const versions = Object.values(record.versions ?? {}).sort(
