@@ -26,7 +26,6 @@ import { PERSONA_IPC_CHANNELS } from "./persona"
 import { PLANNING_TODO_IPC_CHANNELS } from "./planning-todo"
 import { READING_IPC_CHANNELS, WEREAD_IPC_CHANNELS } from "./reading"
 import { ROUTINE_IPC_CHANNELS } from "./routine"
-import { IPC_CHANNELS as RUNTIME_IPC_CHANNELS } from "./runtime"
 import { SUGGESTION_IPC_CHANNELS } from "./suggestion"
 
 /** 通知类 key：不可作为 renderer RPC method 暴露 */
@@ -72,7 +71,6 @@ const PUBLIC_CHANNEL_SOURCES = [
   PLANNING_TODO_IPC_CHANNELS,
   READING_IPC_CHANNELS,
   ROUTINE_IPC_CHANNELS,
-  RUNTIME_IPC_CHANNELS,
   SUGGESTION_IPC_CHANNELS,
   WEREAD_IPC_CHANNELS,
 ]

@@ -201,10 +201,6 @@ export const GENERAL_SETTINGS_DEFAULTS: GeneralSettings = {
 export const GENERAL_SETTINGS_IPC_CHANNELS = {
   GET: "general-settings:get",
   UPDATE: "general-settings:update",
-  OPEN_LOGS_DIR: "general-settings:open-logs-dir",
   CLEAR_CACHE: "general-settings:clear-cache",
-  LIST_LOG_FILES: "general-settings:list-log-files",
-  READ_LOG_FILE: "general-settings:read-log-file",
-  EXPORT_LOGS: "general-settings:export-logs",
   TEST_SEARCH_BACKEND: "general-settings:test-search-backend"
 } as const
