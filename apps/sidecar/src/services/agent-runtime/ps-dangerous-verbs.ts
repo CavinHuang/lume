@@ -16,11 +16,26 @@ export const PS_ANCHOR = String.raw`(?:^|[;&|({=\r\n])\s*`;
 /*
  * cmd.exe /c|/k 包裹前缀：内层命令按同一词表识别。可执行名段接受裸名（cmd）、
  * 引号包裹（"cmd"）与路径式 token（C:\Windows\System32\cmd.exe、.\cmd.exe——#648：
- * 此前只认裸名导致路径式三层静默放行）；/c|/k 前的任意开关与重复（cmd /s /c、
- * 合并旗标、无空格 cmd/c），外层 + 使多层嵌套包裹（cmd /c cmd /c …）整体可匹配。
- * 首段仍须经 PS_ANCHOR 定位到真实命令边界。
+ * 此前只认裸名导致路径式三层静默放行）。#713 review 收窄口径：cmd 字样必须是
+ * 独立路径段（前缀以 [\\/] 结尾或无前缀），良性 lookalike（npm-cmd.exe、mycmd）
+ * 不得因「token 以 cmd 结尾」误入锚面——该放宽曾把 vendor-cmd.exe /c del ~ 一类
+ * 合法第三方 CLI 从 allow 翻成 hard-deny（无审批出口）。尾点容忍（cmd.exe.）：
+ * Win32 CreateFile 归一化剥尾部点后解析出真实 cmd.exe，字面不匹配即旁路。
+ * /c|/k 前的任意开关与重复（cmd /s /c、合并旗标、无空格 cmd/c），外层 + 使多层
+ * 嵌套包裹（cmd /c cmd /c …）整体可匹配。首段仍须经 PS_ANCHOR 定位到真实命令边界。
  */
-export const CMD_WRAP_ANCHOR = String.raw`${PS_ANCHOR}(?:(?:"[^"\r\n]*cmd(?:\.exe)?"|'[^'\r\n]*cmd(?:\.exe)?'|[^\s;&|("'\r\n]*cmd(?:\.exe)?)\s*(?:\/[^\s"]+\s+)*\/[ck]\s*["']?\s*)+`;
+export const CMD_WRAP_ANCHOR = String.raw`${PS_ANCHOR}(?:(?:"(?:[^"\r\n]*[\\/])?cmd(?:\.exe)?\.?"|'(?:[^'\r\n]*[\\/])?cmd(?:\.exe)?\.?'|(?:[^\s;&|("'\r\n]*[\\/])?cmd(?:\.exe)?\.?)\s*(?:\/[^\s"]+\s+)*\/[ck]\s*["']?\s*)+`;
+
+/*
+ * Start-Process 参数列表间接拉起 shell（#713 review P1）：Start-Process 把 cmd/
+ * pwsh 当目标程序再经 -ArgumentList 投喂内层命令时，可执行名位与 /c 位分离，
+ * CMD_WRAP_ANCHOR 两头失配（Start-Process cmd -ArgumentList "/c","rd /s /q dist"
+ * 曾三层静默放行）。目标是 shell 本身即高信号，不再解析 ArgumentList 是否真带
+ * /c（fail-closed：合法向 shell 启动器弹一次卡，方向可接受）。同段物理行内出
+ * 现独立 cmd 族 token 即命中；尾部界要求 token 后接空白/逗号等，防 toolkit /
+ * powershellinfo 之类名字碎片误命中。
+ */
+export const PS_START_PROCESS_SHELL_SPAWN = String.raw`${PS_ANCHOR}start-process\b[^\r\n;&|]*["']?(?:[^\s;&|"']*[\\/])?(?:cmd|powershell|pwsh)(?:\.exe)?\.?["']?(?:[\s,]|\||\)|$)`;
 
 /**
  * 显式 powershell/pwsh 可执行前缀：-Command 类参数位的载荷按词表识别（镜像 SDK
@@ -118,9 +133,15 @@ export const PS_DANGEROUS_PROBES: string[] = [
   "cmd /c cmd /c rd /s /q build",
   "cmd /s /c del \\",
   '"cmd" /c ri ~',
-  // #648 路径式可执行名（曾绕过全部三层）
+  // #648 路径式可执行名（曾绕过全部三层）；尾点归一化形态（Win32 CreateFile
+  // 剥尾点后解析出真实 cmd.exe，字面匹配曾全盲）
   "C:\\Windows\\System32\\cmd.exe /c rd /s /q build",
   ".\\cmd.exe /c del /q cache.txt",
+  "C:\\Windows\\System32\\cmd.exe. /c rd /s /q build",
+  // #713 review：Start-Process 参数列表间接拉起 shell（可执行名位与 /c 位分离，
+  // 包裹锚两头失配，曾三层静默放行）
+  'Start-Process cmd -ArgumentList "/c","rd /s /q dist"',
+  "Start-Process pwsh -ArgumentList -NoProfile,-Command,Remove-Item",
   "Get-Date\ndel \\",
   "Get-Date\r\nRemove-Item ~",
   "Stop-Process -Name node",

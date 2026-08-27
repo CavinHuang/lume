@@ -61,7 +61,17 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
   });
 
   test.skipIf(!isNativeAvailable())("benign lookalikes stay untouched in both layers", () => {
-    for (const command of ["cmd /c dir build", "cmd /c cmd /c dir build", "Get-ChildItem | Format-Table"]) {
+    // #713 review 收窄口径的负例锚：「以 cmd 字样结尾」曾是包裹锚命中条件，把
+    // vendor-cmd.exe 一类合法第三方 CLI 从 allow 翻成 hard-deny；路径段确证后
+    // 这些 lookalike 必须保持两层全放行
+    for (const command of [
+      "cmd /c dir build",
+      "cmd /c cmd /c dir build",
+      "Get-ChildItem | Format-Table",
+      "npm-cmd.exe /c del /q cache",
+      "vendor-cmd /c stop-computer-check.ps1",
+      "C:\\tools\\mycmd.exe --list"
+    ]) {
       expect(evaluateRuntimeToolSafety("Bash", { command }, POWERSHELL_SHELL).behavior).toBe("allow");
       expect(classifyHeuristic({ toolName: "bash", command, shellKind: "powershell" }).riskLevel).toBe("low");
     }
