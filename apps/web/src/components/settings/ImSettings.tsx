@@ -14,16 +14,19 @@ import {
   Square,
   Trash2,
 } from 'lucide-react'
-import { IM_PROVIDER_LABELS, type CliAuthPollResult, type ImAccount, type ImProvider } from '@lume/shared'
+import { IM_PROVIDER_LABELS, type CliAuthPollResult, type ImAccount, type ImMirrorEntryPublic, type ImMirrorSettingsPublic, type ImProvider } from '@lume/shared'
 import { agentWorkspacesAtom, currentWorkspaceIdAtom } from '@/atoms'
 import {
   cancelCliAuth,
   createImAccount,
   deleteImAccount,
+  getImMirrorSettings,
   listImAccounts,
+  listImMirrors,
   openExternal,
   pollCliAuth,
   pollWeixinLogin,
+  setImMirrorOwner,
   startCliAuth,
   startImAccount,
   startWeixinLogin,
@@ -55,6 +58,8 @@ import {
   formatWeixinLoginStatus,
   IM_PROVIDER_CREDENTIAL_FIELDS,
   normalizeImAccountDraft,
+  formatImMirrorRowHint,
+  resolveImMirrorSwitchState,
   shouldKeepPollingWeixinLogin,
   type ImAccountDraft,
   type ImStatusTone,
@@ -110,6 +115,8 @@ export function ImSettings() {
 
   const [collapsed, setCollapsed] = React.useState(false)
   const [accounts, setAccounts] = React.useState<ImAccount[]>([])
+  const [mirrorSettings, setMirrorSettings] = React.useState<ImMirrorSettingsPublic | null>(null)
+  const [mirrorEntries, setMirrorEntries] = React.useState<ImMirrorEntryPublic[]>([])
   const [draft, setDraft] = React.useState<ImAccountDraft>(() => createImAccountDraft(defaultWorkspaceId))
   const [loading, setLoading] = React.useState(true)
   const [busyId, setBusyId] = React.useState<string | null>(null)
@@ -129,7 +136,14 @@ export function ImSettings() {
   const refresh = React.useCallback(async () => {
     setLoading(true)
     try {
-      setAccounts(await listImAccounts())
+      const [accountList, settings, mirrorList] = await Promise.all([
+        listImAccounts(),
+        getImMirrorSettings(),
+        listImMirrors(),
+      ])
+      setAccounts(accountList)
+      setMirrorSettings(settings)
+      setMirrorEntries(mirrorList.entries)
     } catch (error) {
       console.error('[IM 设置] 加载失败:', error)
       toast.error('加载 IM 账号失败')
@@ -164,6 +178,30 @@ export function ImSettings() {
   const workspaceNameForAccount = (account: ImAccount): string | undefined => {
     return account.workspaceId ? workspaceNames.get(account.workspaceId) ?? account.workspaceId : undefined
   }
+
+  // ─── #544 会话镜像 ───
+  const mirrorOwner = mirrorSettings?.enabledMirrorAccountId
+    ? accounts.find((account) => account.id === mirrorSettings.enabledMirrorAccountId) ?? null
+    : null
+  const mirroredCount = mirrorOwner
+    ? mirrorEntries.filter((entry) => entry.accountId === mirrorOwner.id).length
+    : 0
+
+  const handleToggleMirror = React.useCallback(async (account: ImAccount, next: boolean) => {
+    setBusyId(account.id)
+    try {
+      const result = await setImMirrorOwner(next ? account.id : null)
+      setMirrorSettings(result.settings)
+      if (!result.ok) {
+        toast.error(result.error ?? '开启会话镜像失败')
+      }
+    } catch (error) {
+      console.error('[IM 设置] 镜像开关失败:', error)
+      toast.error('镜像设置失败')
+    } finally {
+      setBusyId(null)
+    }
+  }, [])
 
   const handleWorkspaceChange = (value: string | null) => {
     updateDraft({ workspaceId: value === NO_WORKSPACE_VALUE ? '' : value ?? '' })
@@ -446,8 +484,28 @@ export function ImSettings() {
               onStart={handleStart}
               onStop={handleStop}
               onDelete={handleDelete}
+              mirrorEnabled={mirrorSettings?.enabledMirrorAccountId === account.id}
+              mirrorState={resolveImMirrorSwitchState({
+                account,
+                settings: mirrorSettings,
+                ownerLabel: mirrorOwner?.label
+              })}
+              mirrorHint={formatImMirrorRowHint({
+                account,
+                settings: mirrorSettings,
+                mirroredCount
+              })}
+              onToggleMirror={handleToggleMirror}
             />
           ))}
+          {!loading && accounts.length > 0 && mirrorOwner && (
+            <div className="lume-subpanel px-3 py-2 text-[12px] text-[var(--text-3)]">
+              会话镜像已开启：桌面线程将同步到 {IM_PROVIDER_LABELS[mirrorOwner.provider]} 账号「{mirrorOwner.label}」，群内回复可直接续聊原会话
+              {mirrorSettings?.lastError && (
+                <span className="ml-2 text-[var(--danger)]">{mirrorSettings.lastError}</span>
+              )}
+            </div>
+          )}
         </div>
       </div>
       )}
@@ -691,6 +749,10 @@ function AccountRow({
   onStart,
   onStop,
   onDelete,
+  mirrorEnabled,
+  mirrorState,
+  mirrorHint,
+  onToggleMirror,
 }: {
   account: ImAccount
   workspaceName?: string
@@ -700,6 +762,10 @@ function AccountRow({
   onStart: (account: ImAccount) => void
   onStop: (account: ImAccount) => void
   onDelete: (account: ImAccount) => void
+  mirrorEnabled: boolean
+  mirrorState: { disabled: boolean; hint?: string }
+  mirrorHint: { tone: ImStatusTone; text: string } | null
+  onToggleMirror: (account: ImAccount, next: boolean) => void
 }) {
   const badge = formatImStatusBadge(account.status)
   const accountMeta = [account.uin || account.id, workspaceName].filter(Boolean).join(' · ')
@@ -717,8 +783,31 @@ function AccountRow({
             {account.lastError}
           </p>
         )}
+        {mirrorHint && (
+          <p
+            className={cn(
+              'mt-1 line-clamp-2 text-[12px]',
+              mirrorHint.tone === 'danger' ? 'text-[var(--danger)]' : 'text-[var(--text-3)]'
+            )}
+            title={mirrorHint.text}
+          >
+            {mirrorHint.text}
+          </p>
+        )}
       </div>
       <Switch checked={account.enabled} onCheckedChange={(enabled) => onToggleEnabled(account, enabled)} disabled={busy} />
+      <label
+        className="flex items-center gap-1 text-[12px] text-[var(--text-3)]"
+        title={mirrorState.hint ?? (mirrorEnabled ? '关闭会话镜像' : '把桌面线程镜像到该账号的 IM 群')}
+      >
+        镜像
+        <Switch
+          aria-label={`会话镜像-${account.label}`}
+          checked={mirrorEnabled}
+          disabled={busy || mirrorState.disabled}
+          onCheckedChange={(next) => onToggleMirror(account, next)}
+        />
+      </label>
       <div className="flex items-center gap-1">
         <Button variant="ghost" size="icon-sm" onClick={() => void onStart(account)} disabled={busy || account.status === 'running'}>
           {busy ? <Loader2 className="animate-spin" /> : <Play />}

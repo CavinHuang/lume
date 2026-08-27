@@ -4,9 +4,11 @@ import type {
   ImAccount,
   ImAccountCreateInput,
   ImAccountStatus,
+  ImMirrorSettingsPublic,
   ImProvider,
   ImWeixinLoginPollResult,
 } from '@lume/shared'
+import { IM_MIRROR_TIERS } from '@lume/shared'
 
 export type ImStatusTone = 'neutral' | 'success' | 'warning' | 'danger'
 
@@ -133,4 +135,53 @@ export function formatCliAuthPhase(phase?: CliAuthPhase): { label: string; tone:
 
 export function shouldKeepPollingCliAuth(result: CliAuthPollResult): boolean {
   return result.phase === 'authorizing'
+}
+
+// ─── #544 会话镜像 ───
+
+export interface ImMirrorSwitchState {
+  disabled: boolean
+  hint?: string
+}
+
+/** 账号行镜像开关可用性：能力档 / 占用冲突 / 未启用的统一判定（纯函数） */
+export function resolveImMirrorSwitchState(input: {
+  account: ImAccount
+  settings: ImMirrorSettingsPublic | null
+  ownerLabel?: string
+}): ImMirrorSwitchState {
+  // 已承担者可关闭
+  if (input.settings?.enabledMirrorAccountId === input.account.id) {
+    return { disabled: false }
+  }
+  const tier = IM_MIRROR_TIERS[input.account.provider]
+  if (tier.tier === 'unsupported') {
+    return { disabled: true, hint: tier.reason ?? '该渠道暂不支持镜像' }
+  }
+  if (!input.account.enabled) {
+    return { disabled: true, hint: '账号未启用' }
+  }
+  if (input.settings?.enabledMirrorAccountId) {
+    return {
+      disabled: true,
+      hint: input.ownerLabel ? `由 ${input.ownerLabel} 承担镜像` : '已由其他账号承担镜像'
+    }
+  }
+  return { disabled: false }
+}
+
+/** 行内提示文案：承担者错误（权限指引）优先，其次已镜像会话计数；无则不渲染 */
+export function formatImMirrorRowHint(input: {
+  account: ImAccount
+  settings: ImMirrorSettingsPublic | null
+  mirroredCount: number
+}): { tone: ImStatusTone; text: string } | null {
+  const isOwner = input.settings?.enabledMirrorAccountId === input.account.id
+  if (isOwner && input.settings?.lastError) {
+    return { tone: 'danger', text: input.settings.lastError }
+  }
+  if (isOwner && input.mirroredCount > 0) {
+    return { tone: 'neutral', text: `已镜像 ${input.mirroredCount} 个会话` }
+  }
+  return null
 }

@@ -33,7 +33,7 @@ export const deleteImAccount = (id: string) =>
 export const getImMirrorSettings = () =>
   sidecarCall<ImMirrorSettingsPublic>(IM_IPC_CHANNELS.MIRROR_GET_SETTINGS, {})
 
-export const setImMirrorOwner = (accountId: string) =>
+export const setImMirrorOwner = (accountId: string | null) =>
   sidecarCall<{ ok: boolean; error?: string; settings: ImMirrorSettingsPublic }>(
     IM_IPC_CHANNELS.MIRROR_SET_OWNER,
     { accountId },

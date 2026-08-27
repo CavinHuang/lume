@@ -625,7 +625,8 @@ export const cliAuthSessionInputSchema = z.object({
 });
 
 export const imMirrorSetOwnerInputSchema = z.object({
-  accountId: idSchema,
+  // null=关闭镜像（归还 owner 位）
+  accountId: idSchema.nullable(),
 });
 
 // GET_SETTINGS / LIST 均无入参

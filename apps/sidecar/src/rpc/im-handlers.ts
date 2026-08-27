@@ -104,7 +104,11 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
         imMirrorSetOwnerInputSchema,
         params,
         IM_IPC_CHANNELS.MIRROR_SET_OWNER
-      ) as { accountId: string };
+      ) as { accountId: string | null };
+      if (accountId === null) {
+        setMirrorOwnerAccountId(null);
+        return { ok: true, settings: getImMirrorSettings() };
+      }
       const fail = (error: string): { ok: false; error: string; settings: ImMirrorSettingsPublic } => ({
         ok: false,
         error,

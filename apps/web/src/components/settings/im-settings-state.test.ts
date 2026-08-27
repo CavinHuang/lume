@@ -3,11 +3,13 @@ import {
   createImAccountDraft,
   formatCliAuthPhase,
   formatImAccountsEmptyCopy,
+  formatImMirrorRowHint,
   formatSelectedWorkspaceName,
   formatWeixinQrImageSrc,
   formatWeixinLoginStatus,
   formatImStatusBadge,
   normalizeImAccountDraft,
+  resolveImMirrorSwitchState,
   shouldKeepPollingCliAuth,
   shouldKeepPollingWeixinLogin,
 } from './im-settings-state'
@@ -171,5 +173,60 @@ describe('im settings state', () => {
     expect(shouldKeepPollingCliAuth({ phase: 'authorizing' })).toBe(true)
     expect(shouldKeepPollingCliAuth({ phase: 'connected', profile: 'u1' })).toBe(false)
     expect(shouldKeepPollingCliAuth({ phase: 'error', error: '超时' })).toBe(false)
+  })
+})
+
+describe('im-settings-state #544 会话镜像', () => {
+  const feishuAccount = {
+    id: 'acc-f',
+    provider: 'feishu' as const,
+    label: '飞书承担',
+    enabled: true,
+    status: 'running' as const,
+    hasToken: true,
+    baseUrl: '',
+    createdAt: 0,
+    updatedAt: 0
+  }
+  const dingtalkAccount = { ...feishuAccount, id: 'acc-d', provider: 'dingtalk' as const }
+
+  test('镜像开关可用性：unsupported 渠道灰置带原因；未启用灰置；他人占用灰置；空闲可开', () => {
+    expect(resolveImMirrorSwitchState({ account: dingtalkAccount, settings: null })).toMatchObject({
+      disabled: true
+    })
+    expect(
+      resolveImMirrorSwitchState({ account: dingtalkAccount, settings: null }).hint
+    ).toContain('钉钉')
+
+    const disabled = { ...feishuAccount, enabled: false }
+    expect(resolveImMirrorSwitchState({ account: disabled, settings: null }).hint).toContain('未启用')
+
+    const occupied = { enabledMirrorAccountId: 'acc-other' }
+    expect(
+      resolveImMirrorSwitchState({ account: feishuAccount, settings: occupied, ownerLabel: '别家' })
+    ).toMatchObject({ disabled: true, hint: '由 别家 承担镜像' })
+
+    expect(resolveImMirrorSwitchState({ account: feishuAccount, settings: null })).toEqual({
+      disabled: false
+    })
+  })
+
+  test('已承担者可关闭（自身不受占用/unsupported 灰置影响）', () => {
+    const self = { enabledMirrorAccountId: 'acc-d' }
+    expect(resolveImMirrorSwitchState({ account: dingtalkAccount, settings: self })).toEqual({
+      disabled: false
+    })
+  })
+
+  test('行内提示：承担者错误优先（danger），其次镜像计数（neutral），无则不渲染', () => {
+    const owner = { enabledMirrorAccountId: 'acc-f' }
+    expect(
+      formatImMirrorRowHint({ account: feishuAccount, settings: { ...owner, lastError: '缺少 im:chat 权限' }, mirroredCount: 3 })
+    ).toEqual({ tone: 'danger', text: '缺少 im:chat 权限' })
+    expect(
+      formatImMirrorRowHint({ account: feishuAccount, settings: owner, mirroredCount: 3 })
+    ).toEqual({ tone: 'neutral', text: '已镜像 3 个会话' })
+    expect(formatImMirrorRowHint({ account: feishuAccount, settings: owner, mirroredCount: 0 })).toBeNull()
+    expect(formatImMirrorRowHint({ account: feishuAccount, settings: null, mirroredCount: 3 })).toBeNull()
   })
 })
