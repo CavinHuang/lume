@@ -73,6 +73,47 @@ test("external bridge accepts responses above the former 2MB frame limit", async
   await bridge.close();
 });
 
+test("an oversized outbound request does not disconnect the bridge or consume its sequence", async () => {
+  const pipe = endpoint();
+  const bridge = new ExternalChromeTransport({ endpoint: pipe, token, pairingId, generation: pairingGeneration, requestTimeoutMs: 2_000 });
+  await bridge.start();
+  const client = connect(pipe);
+  await new Promise<void>((resolve, reject) => {
+    client.once("connect", resolve);
+    client.once("error", reject);
+  });
+  const challenge = await readJsonLine(client) as any;
+  const nonceHost = "native-host-outbound-limit";
+  const hostBuild = "test-build";
+  const transcript = `2|${pairingId}|${pairingGeneration}|${challenge.params.nonceMain}|${nonceHost}|${hostBuild}`;
+  client.write(`${JSON.stringify({ jsonrpc: "2.0", id: "hello", method: "app.hello", params: {
+    pairingId,
+    generation: pairingGeneration,
+    nonceHost,
+    hostBuild,
+    proofHost: hmac(Buffer.from(token, "base64url"), `host\n${transcript}`),
+    appServerProtocolVersion: 2,
+    nativeHostProtocolVersion: 5,
+  } })}\n`);
+  await readJsonLine(client);
+  const key = Buffer.from(hkdfSync("sha256", Buffer.from(token, "base64url"), Buffer.from(`${challenge.params.nonceMain}\0${nonceHost}`), Buffer.from("lume-browser-bridge-v1"), 32));
+
+  await assert.rejects(
+    bridge.request({ ...request, method: "evaluate:readonly", params: { tabId: "tab-1", script: "x".repeat(2 * 1024 * 1024) } }),
+    /browser bridge message too large/,
+  );
+  assert.equal(bridge.isAvailable(), true);
+
+  const response = bridge.request(request);
+  const outbound = decodeFrame(await readJsonLine(client), key, 1);
+  client.write(`${JSON.stringify(encodeFrame({ jsonrpc: "2.0", id: outbound.id, result: { tabs: [] } }, key, 1))}\n`);
+  assert.deepEqual(await response, { tabs: [] });
+  assert.equal(bridge.isAvailable(), true);
+
+  client.destroy();
+  await bridge.close();
+});
+
 test("external bridge reports disconnected in-flight requests as executed_unknown", async () => {
   const bridge = new ExternalChromeTransport({ endpoint: endpoint(), token, pairingId, generation: pairingGeneration, requestTimeoutMs: 500 });
   await bridge.start();
