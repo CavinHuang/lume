@@ -6,6 +6,7 @@ import {
   getAgentFileContextRootPath,
 } from "../infra/config-paths";
 import { createLogger } from "../infra/logger";
+import { isWithin, validatePathSegment } from "./agent-file-paths";
 
 const log = createLogger("agent-attachment-meta");
 
@@ -39,24 +40,6 @@ class AttachmentMetadataReadError extends Error {
     super(message);
     this.name = "AttachmentMetadataReadError";
   }
-}
-
-function validatePathSegment(value: string, label: string): string {
-  if (!/^[a-zA-Z0-9._-]+$/.test(value) || value === "." || value === "..") {
-    throw new Error(`${label} 非法`);
-  }
-  return value;
-}
-
-function isWithin(basePath: string, targetPath: string): boolean {
-  const base = resolve(basePath);
-  const target = resolve(targetPath);
-  if (process.platform === "win32") {
-    const b = base.toLowerCase();
-    const t = target.toLowerCase();
-    return t === b || t.startsWith(`${b}\\`);
-  }
-  return target === base || target.startsWith(`${base}/`);
 }
 
 function getWorkspaceRootPathUnsafe(workspaceSlug: string): string {

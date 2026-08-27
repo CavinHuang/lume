@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, writeFileSync, renameSync, appendFileSync } from "node:fs"
-import type { DailyRoutine, RoutineEntryStatus, RoutineStatus, AutomationRun, AgentMessage, SDKMessage } from "@lume/shared"
+import type { DailyRoutine, AutomationRun, AgentMessage, SDKMessage } from "@lume/shared"
 import { getRoutineSchedulePath, getRoutineRunsPath, getAutomationRunsPath, getAgentThreadMessagesPath } from "../infra/config-paths"
 import { getAgentThreadMessages, getAgentThreadSDKMessages } from "../agent/agent-thread-manager"
 import { createLogger } from "../infra/logger"
@@ -31,33 +31,6 @@ export function writeRoutine(routine: DailyRoutine): void {
   }
 }
 
-export function updateEntryStatus(
-  date: string,
-  entryId: string,
-  status: RoutineEntryStatus,
-  result?: { summary: string; relatedIds?: string[] }
-): DailyRoutine | null {
-  const routine = readRoutine(date)
-  if (!routine) return null
-  const entry = routine.entries.find((e) => e.id === entryId)
-  if (!entry) return null
-  entry.status = status
-  if (result) {
-    entry.result = result
-  }
-  routine.status = deriveRoutineStatus(routine.entries)
-  log.info("更新条目状态", { date, entryId, activity: entry.activity, status })
-  writeRoutine(routine)
-  return routine
-}
-
-export function updateRoutineStatus(date: string, status: RoutineStatus): DailyRoutine | null {
-  const routine = readRoutine(date)
-  if (!routine) return null
-  routine.status = status
-  writeRoutine(routine)
-  return routine
-}
 
 function parseRunLine(line: string): AutomationRun | null {
   if (!line.trim()) return null
@@ -138,14 +111,4 @@ function extractTextFromSdkMessages(sdkMessages: SDKMessage[] | undefined): stri
 export function appendRoutineRun(record: { entryId: string; activity: string; status: string; completedAt: number }): void {
   const path = getRoutineRunsPath()
   appendFileSync(path, `${JSON.stringify(record)}\n`, "utf-8")
-}
-
-function deriveRoutineStatus(entries: { status: RoutineEntryStatus }[]): RoutineStatus {
-  if (entries.every((e) => e.status === "completed" || e.status === "skipped" || e.status === "failed")) {
-    return "completed"
-  }
-  if (entries.some((e) => e.status === "running")) {
-    return "running"
-  }
-  return "planned"
 }

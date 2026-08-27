@@ -83,7 +83,7 @@ import { useMemoryCenter } from './use-memory-center'
  * - 预览：可展开的 Markdown 文本。
  * - 纠正：写入底层高置信记忆，再重建派生内容。
  * - 重新生成：regeneratePersona + toast + loading。
- * 自包含组件；通过 workspaceSlug 拉取/写入。
+ * persona 仅 global scope；workspaceSlug 仅用于纠正写入底层记忆。
  */
 export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
   const [persona, setPersona] = React.useState<PersonaGetResult | null>(null)
@@ -93,13 +93,8 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
   const [expanded, setExpanded] = React.useState(false)
 
   const refreshPersona = React.useCallback(async () => {
-    if (!workspaceSlug) {
-      setPersona(null)
-      setLoading(false)
-      return
-    }
     try {
-      const result = await getPersona(workspaceSlug)
+      const result = await getPersona()
       setPersona(result)
     } catch (error) {
       console.error('[PersonaCard] getPersona FAILED:', error)
@@ -107,7 +102,7 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
     } finally {
       setLoading(false)
     }
-  }, [workspaceSlug])
+  }, [])
 
   React.useEffect(() => {
     void refreshPersona()
@@ -136,11 +131,10 @@ export function PersonaCard({ workspaceSlug }: { workspaceSlug: string }) {
   }
 
   const handleRegenerate = async () => {
-    if (!workspaceSlug) return
     setBusy('regenerate')
     const toastId = toast.loading('正在重新生成关于我...')
     try {
-      await regeneratePersona(workspaceSlug)
+      await regeneratePersona()
       await refreshPersona()
       toast.success('关于我已重新生成', { id: toastId })
     } catch (error) {

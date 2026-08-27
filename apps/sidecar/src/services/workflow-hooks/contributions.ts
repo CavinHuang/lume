@@ -27,15 +27,6 @@ export function createCoreWorkflowHookContributions(
       }
     ] satisfies LumeWorkflowHookContribution[]),
     {
-      id: "core.plugin.skill-activation",
-      pluginId: "lume-core",
-      event: "context.beforeAssemble",
-      phase: "decision",
-      priority: "normal",
-      capabilities: ["context.append"],
-      handlerRef: "core.plugin.skill-activation"
-    },
-    {
       id: "core.suggestion.completion",
       pluginId: "lume-core",
       event: "run.afterComplete",

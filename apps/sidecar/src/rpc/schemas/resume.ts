@@ -1,11 +1,6 @@
 import { idSchema, z } from "../validation";
 import { agentThreadIdInputSchema } from "./shared";
 
-export const agentTruncateThreadInputSchema = z.object({
-  threadId: idSchema,
-  messageId: idSchema,
-});
-
 export const resumeRunInputSchema = z.object({
   threadId: idSchema,
   runId: idSchema.optional(),

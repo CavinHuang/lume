@@ -491,25 +491,3 @@ export function createAssistantMessageVersion(params: {
 export function getLatestVisibleMessagesForThread(threadId: string): AgentMessage[] {
   return getVisibleAgentMessages(threadId);
 }
-
-export function getVisibleTurnIdForMessage(sessionId: string, messageId: string): string | null {
-  const store = readAgentMessageVersionStore(sessionId);
-  if (!store) {
-    return null;
-  }
-  const record = findMessageRecord(store, messageId);
-  if (!record) {
-    return null;
-  }
-  const group = findGroup(store, record.groupId);
-  return group?.turnId ?? null;
-}
-
-export function getLatestVisibleAssistantMessageForTurn(sessionId: string, turnId: string): AgentMessage | null {
-  const store = readAgentMessageVersionStore(sessionId);
-  if (!store) return null;
-  const group = store.groups.find((item) => item.turnId === turnId && item.role === "assistant");
-  if (!group || !store.visibleGroupIds.includes(group.groupId)) return null;
-  const record = store.messages.find((item) => item.messageId === group.latestMessageId);
-  return record ? toAgentMessage(record, group.messageIds.length) : null;
-}

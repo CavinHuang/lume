@@ -35,33 +35,6 @@ function writeJsonAtomic(path: string, payload: string): void {
   renameSync(tempPath, path);
 }
 
-function assignPath(root: Record<string, unknown>, path: string, value: unknown): void {
-  const segments = path.split(".").map((item) => item.trim()).filter(Boolean);
-  if (segments.length === 0) {
-    throw new Error("配置路径不能为空");
-  }
-  let cursor: Record<string, unknown> = root;
-  for (let index = 0; index < segments.length - 1; index += 1) {
-    const segment = segments[index];
-    if (!segment || segment === "__proto__" || segment === "prototype" || segment === "constructor") {
-      throw new Error("配置路径非法");
-    }
-    const next = cursor[segment];
-    if (!isPlainObject(next)) {
-      const created: Record<string, unknown> = {};
-      cursor[segment] = created;
-      cursor = created;
-    } else {
-      cursor = next;
-    }
-  }
-  const last = segments[segments.length - 1];
-  if (!last || last === "__proto__" || last === "prototype" || last === "constructor") {
-    throw new Error("配置路径非法");
-  }
-  cursor[last] = value;
-}
-
 function normalizeSystemConfig(input: unknown): LumeSystemConfig {
   const fallback = createDefaultSystemConfig();
   if (!isPlainObject(input)) {
@@ -130,17 +103,6 @@ function readOrCreatePrimarySystemConfig(): LumeSystemConfig {
 
 export function getPrimarySystemConfig(): LumeSystemConfig {
   return readOrCreatePrimarySystemConfig();
-}
-
-export function updatePrimarySystemConfigSection(input: {
-  path: string;
-  value: unknown;
-}): LumeSystemConfig {
-  const config = readOrCreatePrimarySystemConfig();
-  assignPath(config as unknown as Record<string, unknown>, input.path, input.value);
-  const normalized = normalizeSystemConfig(config);
-  writeJsonAtomic(getLumeJsonPath(), JSON.stringify(normalized, null, 2));
-  return normalized;
 }
 
 export function getEffectiveSystemConfig(workspaceSlug?: string): EffectiveSystemConfig {

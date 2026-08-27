@@ -55,7 +55,6 @@ export interface ReadingNoteGeneratorStreamRequest {
 export type ReadingNoteGeneratorStreamEvent =
   | { type: "text"; text: string }
   | { type: "tool_call"; id?: string; name: string; arguments?: string | Record<string, unknown> }
-  | { type: "tool_call_delta"; id?: string; name?: string; argumentsDelta?: string }
   | { type: "usage"; usage: ReadingModelUsage };
 
 export interface ReadingNoteGeneratorLlm {
@@ -319,7 +318,6 @@ async function collectStream(stream: AsyncIterable<ReadingNoteGeneratorStreamEve
 }> {
   let text = "";
   const toolCalls: ReadingNoteGeneratorToolCall[] = [];
-  const deltaCalls = new Map<string, ReadingNoteGeneratorToolCall & { argumentsText: string }>();
   let usage: ReadingModelUsage | undefined;
 
   for await (const event of stream) {
@@ -335,26 +333,9 @@ async function collectStream(stream: AsyncIterable<ReadingNoteGeneratorStreamEve
       });
       continue;
     }
-    if (event.type === "tool_call_delta") {
-      const id = event.id ?? `delta-${deltaCalls.size + 1}`;
-      const existing = deltaCalls.get(id) ?? { id, name: event.name ?? "", argumentsText: "" };
-      existing.name = event.name ?? existing.name;
-      existing.argumentsText += event.argumentsDelta ?? "";
-      deltaCalls.set(id, existing);
-      continue;
-    }
     if (event.type === "usage") {
       usage = mergeUsage(usage, event.usage);
     }
-  }
-
-  for (const call of deltaCalls.values()) {
-    if (!call.name.trim()) continue;
-    toolCalls.push({
-      id: call.id,
-      name: call.name,
-      arguments: call.argumentsText
-    });
   }
 
   return { text: text.trim(), toolCalls, usage };

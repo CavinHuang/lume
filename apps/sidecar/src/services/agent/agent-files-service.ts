@@ -39,9 +39,6 @@ import { lstat, readdir, stat } from "node:fs/promises";
 import { pipeline } from "node:stream/promises";
 import { createLogger } from "../infra/logger";
 import type {
-  AttachWorkspaceResourceToThreadInput,
-  AttachWorkspaceResourceToThreadResult,
-  AgentCopyFolderInput,
   AgentSaveFilesInput,
   AgentSavedFile,
   ExternalAttachmentMeta,
@@ -49,7 +46,6 @@ import type {
   FileRef,
   FileRefChangedEvent,
   FileSearchResult,
-  WorkspaceCopyFolderInput,
   WorkspaceSaveFilesInput,
 } from "@lume/shared";
 import { AGENT_ATTACHMENT_LIMITS } from "@lume/shared";
@@ -2263,161 +2259,4 @@ export function saveFilesToWorkspaceRoot(
 
   return results;
 }
-
-export function copyFolderToSession(
-  input: AgentCopyFolderInput,
-): AgentSavedFile[] {
-  const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
-  const sourcePath = resolve(input.sourcePath);
-  if (!existsSync(sourcePath)) {
-    throw new Error("源目录不存在");
-  }
-  if (!statSync(sourcePath).isDirectory()) {
-    throw new Error("源目录不存在");
-  }
-
-  const folderName =
-    sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
-  const targetDir = resolve(join(sessionDir, folderName));
-  if (!isWithin(sessionDir, targetDir)) {
-    throw new Error("目标路径越界");
-  }
-  if (existsSync(targetDir)) {
-    throw new Error("目标路径已存在同名文件");
-  }
-
-  assertAttachmentMetadataHealthy(
-    getThreadAttachmentScope(input.workspaceSlug, input.threadId),
-  );
-  cpSync(sourcePath, targetDir, { recursive: true });
-  if (isExternalSourcePath(input.workspaceSlug, sourcePath, input.threadId)) {
-    upsertAttachmentMeta(
-      getThreadAttachmentScope(input.workspaceSlug, input.threadId),
-      targetDir,
-      {
-        label: "外部附加",
-        absoluteSourcePath: sourcePath,
-      },
-    );
-  }
-
-  const results: AgentSavedFile[] = [];
-  const collect = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        collect(fullPath);
-      } else {
-        const rel = fullPath.slice(sessionDir.length + 1);
-        results.push({ filename: rel, targetPath: fullPath });
-      }
-    }
-  };
-  collect(targetDir);
-  return results;
-}
-
-export function copyFolderToWorkspace(
-  input: WorkspaceCopyFolderInput,
-): AgentSavedFile[] {
-  const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
-  const sourcePath = resolve(input.sourcePath);
-  if (!existsSync(sourcePath)) {
-    throw new Error("源目录不存在");
-  }
-  if (!statSync(sourcePath).isDirectory()) {
-    throw new Error("源目录不存在");
-  }
-
-  const folderName =
-    sourcePath.split(/[\\/]/).filter(Boolean).pop() ?? "folder";
-  const targetDir = resolve(join(resourcesDir, folderName));
-  if (!isWithin(resourcesDir, targetDir)) {
-    throw new Error("目标路径越界");
-  }
-  if (existsSync(targetDir)) {
-    throw new Error("目标路径已存在同名文件");
-  }
-
-  assertAttachmentMetadataHealthy(
-    getWorkspaceAttachmentScope(input.workspaceSlug),
-  );
-  cpSync(sourcePath, targetDir, { recursive: true });
-  if (isExternalSourcePath(input.workspaceSlug, sourcePath)) {
-    upsertAttachmentMeta(
-      getWorkspaceAttachmentScope(input.workspaceSlug),
-      targetDir,
-      {
-        label: "外部附加",
-        absoluteSourcePath: sourcePath,
-      },
-    );
-  }
-
-  const results: AgentSavedFile[] = [];
-  const collect = (dir: string): void => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      const fullPath = join(dir, entry.name);
-      if (entry.isDirectory()) {
-        collect(fullPath);
-      } else {
-        const rel = fullPath.slice(resourcesDir.length + 1);
-        results.push({ filename: rel, targetPath: fullPath });
-      }
-    }
-  };
-  collect(targetDir);
-  return results;
-}
-
-export function attachWorkspaceResourceToThread(
-  input: AttachWorkspaceResourceToThreadInput,
-): AttachWorkspaceResourceToThreadResult {
-  const workspaceScope = getWorkspaceAttachmentScope(input.workspaceSlug);
-  const threadScope = getThreadAttachmentScope(
-    input.workspaceSlug,
-    input.threadId,
-  );
-  const resourcesDir = resolveWorkspaceResourcesDir(input.workspaceSlug);
-  const sourcePath = resolveSafePath(
-    resourcesDir,
-    input.sourcePath,
-    "目标路径超出工作区共享目录",
-  );
-  const sessionDir = resolveSessionDir(input.workspaceSlug, input.threadId);
-  if (!existsSync(sourcePath)) {
-    throw new Error("目标不存在");
-  }
-
-  const targetPath = resolve(join(sessionDir, basename(sourcePath)));
-  if (!isWithin(sessionDir, targetPath)) {
-    throw new Error("目标路径越界");
-  }
-  if (existsSync(targetPath)) {
-    throw new Error("目标路径已存在同名文件");
-  }
-
-  assertAttachmentMetadataHealthy(workspaceScope);
-  assertAttachmentMetadataHealthy(threadScope);
-
-  const sourceMeta = getAttachmentMeta(workspaceScope, sourcePath);
-  const sourceStat = statSync(sourcePath);
-  if (sourceStat.isDirectory()) {
-    cpSync(sourcePath, targetPath, { recursive: true });
-  } else {
-    mkdirSync(dirname(targetPath), { recursive: true });
-    copyFileSync(sourcePath, targetPath);
-  }
-
-  if (sourceMeta) {
-    upsertAttachmentMeta(threadScope, targetPath, sourceMeta);
-  } else {
-    deleteAttachmentMeta(threadScope, targetPath);
-  }
-
-  return { ok: true, path: targetPath };
-}
-
-export const saveFilesToAgentThread = saveFilesToAgentSession;
 export const saveFilesToAgentThreadStreamed = saveFilesToAgentSessionStreamed;
-export const copyFolderToThread = copyFolderToSession;

@@ -34,6 +34,7 @@ import {
 import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
 import { REMOVED_BUNDLE_SKILLS, seedDefaultSkills } from "../skills/default-skills-seeder";
+import { normalizeRealpathKey } from "./agent-workdir-resolver";
 import { ensureBootstrapFiles } from "../system/workspace-bootstrap-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { createLogger } from "../infra/logger";
@@ -46,11 +47,6 @@ interface AgentWorkspacesIndex {
 
 const INDEX_VERSION = 1;
 const log = createLogger("agent-workspace-manager");
-
-function normalizeRealpathKey(path: string): string {
-  const resolved = realpathSync(path);
-  return process.platform === "win32" ? resolved.toLowerCase() : resolved;
-}
 
 function getWorkspaceStatusForRecord(workspace: AgentWorkspace): AgentWorkspaceStatus {
   if (!workspace.projectPath?.trim()) {

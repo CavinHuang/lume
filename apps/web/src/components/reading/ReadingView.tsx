@@ -244,7 +244,7 @@ export function ReadingView() {
       )
     }
     if (selectedId === '__all__') return snapshot.notes
-    if (selectedId === '__poetry__') return snapshot.notes.filter((note) => note.book?.title.includes('诗') || note.evidence.some((item) => item.sourceKind === 'poetry'))
+    if (selectedId === '__poetry__') return snapshot.notes.filter((note) => note.book?.title.includes('诗') || note.evidence.some((item) => (item.sourceKind as string) === 'poetry'))
     return snapshot.notes.filter((note) => note.bookId === selectedId)
   }, [selectedId, selectedWereadBook, snapshot])
   const noteIds = visibleNotes.map((note) => note.id)

@@ -11,7 +11,6 @@ export class LumeGuardrailRunner {
 
   async runToolInputGuardrails(input: RunToolInputGuardrailsInput): Promise<LumeGuardrailResult> {
     for (const guardrail of this.guardrails) {
-      if (guardrail.scope !== "tool_input") continue;
       const result = await guardrail.run(input, {
         ...input.context,
         toolName: input.toolName

@@ -4,43 +4,33 @@ import {
   mkdirSync,
   readFileSync,
   renameSync,
-  rmSync,
   writeFileSync
 } from "node:fs";
 import { dirname } from "node:path";
-import type { LLMProvider } from "@lume/agent-sdk";
 import type { PersonaProfile } from "@lume/shared";
-import { resolveChannelModelBinding } from "../channel/channel-manager";
 import { createLogger } from "../infra/logger";
-import { createLazyConnectionLlmProvider } from "../model-runtime/connection-provider";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { MEMORY_CLAIM_PREFERRED_NAME, claimFromEntry } from "./claim";
 import { resolveMemoryExtractionModelRefs } from "./extraction";
+import { resolveChatProvider } from "./chat-provider";
 import { listEntries, readActivation } from "./markdown-store";
 import { getPersonaPath } from "./paths";
-import type { MemoryV2Entry, MemoryV2Scope } from "./types";
+import type { MemoryV2Entry } from "./types";
 
 export { getPersonaPath };
 
 const log = createLogger("memory-persona");
 
-export function readPersonaRaw(scope: MemoryV2Scope, workspaceSlug?: string): string | null {
-  const path = getPersonaPath(scope, workspaceSlug);
+/** persona 仅存在于 global scope（无 workspace 维度写入方，投机 API 已删） */
+export function readPersonaRaw(): string | null {
+  const path = getPersonaPath("global");
   if (!existsSync(path)) return null;
   return readFileSync(path, "utf-8");
 }
 
-export function writePersona(
-  scope: MemoryV2Scope,
-  workspaceSlug: string | undefined,
-  markdown: string
-): boolean {
-  const path = getPersonaPath(scope, workspaceSlug);
+export function writePersona(markdown: string): boolean {
+  const path = getPersonaPath("global");
   return writePersonaAtomic(path, markdown);
-}
-
-export function deletePersona(scope: MemoryV2Scope, workspaceSlug?: string): void {
-  rmSync(getPersonaPath(scope, workspaceSlug), { force: true });
 }
 
 /**
@@ -195,54 +185,46 @@ export type PersonaProviderFactory = (userPrompt: string) => Promise<string>;
 export async function generatePersona(input: {
   entries: MemoryV2Entry[];
   existing?: string;
-  workspaceSlug?: string;
   providerFactory?: PersonaProviderFactory;
 }): Promise<string> {
   const factory =
-    input.providerFactory ?? createDefaultPersonaProviderFactory(input.workspaceSlug);
+    input.providerFactory ?? createDefaultPersonaProviderFactory();
   const userPrompt = buildPersonaUserPrompt(input.entries, input.existing);
   const raw = await factory(userPrompt);
   return parsePersonaMarkdown(raw);
 }
 
 /**
- * 三态编排：确保 scope 下存在 persona Markdown。
+ * 三态编排：确保 global scope 存在 persona Markdown。
  *
  * 1. 无 persona + LLM 可用 → generatePersona({entries}) → write
  * 2. 有 persona + LLM 可用 → generatePersona({entries, existing}) → write（增量合并）
  * 3. generatePersona 抛错（无模型 / provider 错误）→ buildPersonaFromRules(entries) 兜底 → write
  *
- * - entries 来自 listEntries（markdown-store，按 scope 取）
- * - scope 默认 global；传 workspaceSlug 时默认 workspace
+ * - entries 来自 listEntries（markdown-store，global scope）
  * - providerFactory 可注入（测试）；默认走 generatePersona 生产工厂
  * - **fail-open**：全程 try/catch，永不抛错（persona 失败不得阻塞 run/feedback）
  */
 export async function ensurePersona(input: {
-  scope?: MemoryV2Scope;
-  workspaceSlug?: string;
   providerFactory?: PersonaProviderFactory;
 }): Promise<boolean> {
   try {
-    const scope: MemoryV2Scope = "global";
-    const workspaceSlug = undefined;
-
-    const entries = listEntries({ workspaceSlug, scopes: [scope] })
+    const entries = listEntries({ scopes: ["global"] })
       .filter((entry) => readActivation(entry.frontmatter).persona);
-    const existing = readPersonaRaw(scope, workspaceSlug);
+    const existing = readPersonaRaw();
 
     let markdown: string;
     try {
       markdown = await generatePersona({
         entries,
         existing: existing ?? undefined,
-        workspaceSlug,
         providerFactory: input.providerFactory
       });
     } catch {
       // LLM 不可用或失败 → 规则兜底
       markdown = buildPersonaFromRules(entries);
     }
-    return writePersona(scope, workspaceSlug, markdown);
+    return writePersona(markdown);
   } catch (error) {
     // fail-open：persona 编排失败不得阻塞调用方
     log.warn("关于我编排失败，已忽略", {
@@ -307,11 +289,9 @@ function parsePersonaMarkdown(raw: string): string {
  * - provider 创建：`createLazyConnectionLlmProvider`（基于解析出的 channel binding）
  * - 遍历 fallback modelRefs，首个成功即返回；全部失败抛错
  */
-function createDefaultPersonaProviderFactory(
-  workspaceSlug?: string
-): PersonaProviderFactory {
+function createDefaultPersonaProviderFactory(): PersonaProviderFactory {
   return async (userPrompt: string): Promise<string> => {
-    const config = getEffectiveLumeConfig(workspaceSlug);
+    const config = getEffectiveLumeConfig();
     const modelRefs = resolveMemoryExtractionModelRefs(config, {});
     if (modelRefs.length === 0) {
       throw new Error("[generatePersona] 未配置记忆抽取模型（memory.extraction.modelRef）");
@@ -331,21 +311,14 @@ function createDefaultPersonaProviderFactory(
   };
 }
 
-/** 单模型调用：解析 binding → 创建 provider → createMessage → 拼接文本 */
+/** 单模型调用：解析 provider 与模型 id（#582② 共享 resolveChatProvider）→ createMessage → 拼接文本 */
 async function callPersonaLlmWithModel(input: {
   modelRef: string;
   userPrompt: string;
 }): Promise<string> {
-  const binding = resolveChannelModelBinding(input.modelRef, "chat");
-  if (!binding) {
-    throw new Error(`[generatePersona] 无法解析模型绑定: ${input.modelRef}`);
-  }
-  const provider: LLMProvider = createLazyConnectionLlmProvider({
-    connectionId: binding.channel.id,
-    modelId: binding.modelId
-  });
+  const { provider, modelId } = resolveChatProvider(input.modelRef);
   const response = await provider.createMessage({
-    model: binding.modelId,
+    model: modelId,
     maxTokens: PERSONA_MAX_TOKENS,
     system: PERSONA_SYSTEM_PROMPT,
     messages: [{ role: "user", content: input.userPrompt }],

@@ -19,11 +19,6 @@ export const workspacePathInputSchema = z.object({
   path: z.string().optional(),
 });
 
-export const legacyResourceExportInputSchema = z.object({
-  workspaceSlug: idSchema,
-  path: idSchema,
-  conflict: z.literal("error"),
-});
 export const workspaceRequiredPathInputSchema = z.object({
   workspaceSlug: idSchema,
   path: idSchema,
@@ -58,7 +53,7 @@ export const pathFileInputSchema = z.object({
   path: idSchema,
 });
 
-export const fileRefSchema = rendererFileRefSchema;
+const fileRefSchema = rendererFileRefSchema;
 
 export const fileRefInputSchema = z.object({ ref: fileRefSchema }).strict();
 export const fileRefUnwatchInputSchema = z
@@ -142,33 +137,11 @@ export const legacyFileRefConversionInputSchema = z.discriminatedUnion(
   ],
 );
 
-export const renameFileInputSchema = z.object({
-  workspaceSlug: optionalIdSchema,
-  threadId: idSchema,
-  path: idSchema,
-  newName: z.string().min(1),
-});
-
-export const moveFileInputSchema = z.object({
-  workspaceSlug: optionalIdSchema,
-  threadId: idSchema,
-  path: idSchema,
-  targetDir: idSchema,
-});
-
 export const promoteFileToWorkspaceInputSchema = z.object({
   workspaceSlug: idSchema,
   threadId: idSchema,
   filePath: idSchema,
   conflictMode: z.enum(["overwrite", "rename"]).optional(),
-});
-
-export const searchWorkspaceFilesInputSchema = z.object({
-  workspaceSlug: optionalIdSchema,
-  threadId: idSchema,
-  query: z.string().default(""),
-  limit: z.number().int().min(1).max(200).optional(),
-  rootPath: z.string().optional(),
 });
 
 // 单文件 base64 上限（25MB × 4/3 + padding 余量）；批总量对齐 service 层 maxTotalBytes 限额
@@ -234,14 +207,4 @@ export const saveFilesToWorkspaceInputSchema = z
     message: `附件总大小超过 ${Math.floor(AGENT_ATTACHMENT_LIMITS.maxTotalBytes / 1024 / 1024)}MB 上限`,
   });
 
-export const copyFolderToThreadInputSchema = z.object({
-  sourcePath: idSchema,
-  workspaceSlug: optionalIdSchema,
-  threadId: idSchema,
-});
 
-export const attachWorkspaceResourceToThreadInputSchema = z.object({
-  workspaceSlug: idSchema,
-  threadId: idSchema,
-  sourcePath: idSchema,
-});

@@ -28,8 +28,6 @@ describe("desktop context RPC handlers", () => {
         return { status: "permission_denied" };
       },
       listApps: async () => ({ status: "ok", apps: [{ id: "wechat.exe", name: "微信", isRunning: true }] }),
-      currentContext: async (input) => ({ status: "ok", input }),
-      searchContext: async (input) => ({ status: "ok", input }),
       getSettings: () => ({ enabled: false, allowedApps: [], retentionHours: 24, maxStorageBytes: 100 }),
       updateSettings: (settings) => settings,
       getStatus: async () => ({ host: { status: "ok" }, store: { unlocked: true, items: 0, bytes: 0 } }),
@@ -66,14 +64,6 @@ describe("desktop context RPC handlers", () => {
       status: "ok",
       apps: [{ id: "wechat.exe", name: "微信", isRunning: true }],
     });
-    expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.GET_CURRENT]?.({
-      snapshotId: "snap-1",
-      includeScreenshot: true,
-      refresh: true,
-    })).toEqual({
-      status: "ok",
-      input: { snapshotId: "snap-1", includeScreenshot: true, refresh: true },
-    });
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.LIST_PROPOSALS]?.({})).toEqual([{ id: "proposal-1", status: "pending" }]);
     expect(await handlers[DESKTOP_CONTEXT_IPC_CHANNELS.UPDATE_PROPOSAL]?.({ id: "proposal-1", status: "dismissed" })).toEqual({
       id: "proposal-1",
@@ -90,8 +80,6 @@ describe("desktop context RPC handlers", () => {
       captureWindow: async () => ({}),
       requestPermissions: async () => ({}),
       listApps: async () => ({ status: "ok", apps: [] }),
-      currentContext: async () => ({}),
-      searchContext: async () => ({}),
       getSettings: () => ({ enabled: false, allowedApps: [], retentionHours: 24, maxStorageBytes: 100 }),
       updateSettings: (settings) => settings,
       getStatus: async () => ({}),

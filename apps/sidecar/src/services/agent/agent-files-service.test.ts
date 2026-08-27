@@ -5,8 +5,6 @@ import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
 import { getWorkspaceResourcesPath } from "../infra/config-paths";
 import {
-  copyFolderToSession,
-  copyFolderToWorkspace,
   convertLegacyFileRef,
   createFileReferenceBinding,
   deleteAgentFile,
@@ -817,101 +815,6 @@ describe("agent-files-service file ops", () => {
 
     const entry = listWorkspaceDirectory(workspaceSlug).find((item) => item.name === "guide.md");
     expect(entry?.externalAttachment).toBeUndefined();
-  });
-
-  test("copyFolderToSession 应复制文件夹并为根目录记录外部附加元信息", () => {
-    createTempConfigDir();
-    const workspaceSlug = "workspace-h";
-    const sessionId = "session-h";
-    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-src-"));
-    createdDirs.push(sourceRoot);
-    writeFileSync(join(sourceRoot, "note.txt"), "hello", "utf-8");
-
-    copyFolderToSession({
-      workspaceSlug,
-      threadId: sessionId,
-      sourcePath: sourceRoot
-    });
-
-    const entries = listAgentDirectory(workspaceSlug, sessionId);
-    const folderName = sourceRoot.split(/[\\/]/).filter(Boolean).pop();
-    const entry = entries.find((item) => item.name === folderName);
-    expect(entry?.isDirectory).toBeTrue();
-    expect(entry?.externalAttachment).toEqual({
-      label: "外部附加",
-      absoluteSourcePath: sourceRoot
-    });
-  });
-
-  test("copyFolderToSession 应拒绝文件 sourcePath 和同名目标目录", () => {
-    createTempConfigDir();
-    const workspaceSlug = "workspace-h2";
-    const sessionId = "session-h2";
-    const sessionDir = getAgentSessionPath(workspaceSlug, sessionId);
-    const fileSourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-file-src-"));
-    const fileSource = join(fileSourceRoot, "single.txt");
-    const folderSourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-existing-src-"));
-    createdDirs.push(fileSourceRoot, folderSourceRoot);
-    writeFileSync(fileSource, "hello", "utf-8");
-    writeFileSync(join(folderSourceRoot, "note.txt"), "hello", "utf-8");
-    mkdirSync(join(sessionDir, folderSourceRoot.split(/[\\/]/).filter(Boolean).pop() as string), { recursive: true });
-
-    expect(() => copyFolderToSession({
-      workspaceSlug,
-      threadId: sessionId,
-      sourcePath: fileSource
-    })).toThrow("源目录不存在");
-
-    expect(() => copyFolderToSession({
-      workspaceSlug,
-      threadId: sessionId,
-      sourcePath: folderSourceRoot
-    })).toThrow("目标路径已存在同名文件");
-  });
-
-  test("copyFolderToWorkspace 应复制文件夹并为根目录记录外部附加元信息", () => {
-    createTempConfigDir();
-    const workspaceSlug = "workspace-i";
-    const sourceRoot = mkdtempSync(join(tmpdir(), "lume-folder-ws-src-"));
-    createdDirs.push(sourceRoot);
-    writeFileSync(join(sourceRoot, "note.txt"), "hello", "utf-8");
-
-    copyFolderToWorkspace({
-      workspaceSlug,
-      sourcePath: sourceRoot
-    });
-
-    const entries = listWorkspaceDirectory(workspaceSlug);
-    const folderName = sourceRoot.split(/[\\/]/).filter(Boolean).pop();
-    const entry = entries.find((item) => item.name === folderName);
-    expect(entry?.isDirectory).toBeTrue();
-    expect(entry?.externalAttachment).toEqual({
-      label: "外部附加",
-      absoluteSourcePath: sourceRoot
-    });
-  });
-
-  test("copyFolderToWorkspace 应拒绝文件 sourcePath 和同名目标目录", () => {
-    createTempConfigDir();
-    const workspaceSlug = "workspace-i2";
-    const resourcesDir = getWorkspaceResourcesPath(workspaceSlug);
-    const fileSourceRoot = mkdtempSync(join(tmpdir(), "lume-ws-folder-file-src-"));
-    const fileSource = join(fileSourceRoot, "single.txt");
-    const folderSourceRoot = mkdtempSync(join(tmpdir(), "lume-ws-folder-existing-src-"));
-    createdDirs.push(fileSourceRoot, folderSourceRoot);
-    writeFileSync(fileSource, "hello", "utf-8");
-    writeFileSync(join(folderSourceRoot, "note.txt"), "hello", "utf-8");
-    mkdirSync(join(resourcesDir, folderSourceRoot.split(/[\\/]/).filter(Boolean).pop() as string), { recursive: true });
-
-    expect(() => copyFolderToWorkspace({
-      workspaceSlug,
-      sourcePath: fileSource
-    })).toThrow("源目录不存在");
-
-    expect(() => copyFolderToWorkspace({
-      workspaceSlug,
-      sourcePath: folderSourceRoot
-    })).toThrow("目标路径已存在同名文件");
   });
 
   test("rename/move/delete 应同步外部附加元信息", () => {

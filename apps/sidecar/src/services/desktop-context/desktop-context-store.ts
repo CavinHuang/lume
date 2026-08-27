@@ -128,12 +128,6 @@ export class DesktopContextStore {
     return row ? JSON.parse(row.redacted_payload) as DesktopContextSnapshot : undefined;
   }
 
-  latest(): DesktopContextSnapshot | undefined {
-    const row = this.#db.prepare("SELECT id FROM desktop_context ORDER BY captured_at DESC LIMIT 1")
-      .get() as { id: string } | undefined;
-    return row ? this.get(row.id) : undefined;
-  }
-
   latestRedacted(): DesktopContextSnapshot | undefined {
     const row = this.#db.prepare("SELECT redacted_payload FROM desktop_context ORDER BY captured_at DESC LIMIT 1")
       .get() as unknown as SearchRow | undefined;

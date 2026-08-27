@@ -1,4 +1,4 @@
-import { mkdtemp, appendFile } from "node:fs/promises";
+import { mkdtemp, appendFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, test } from "bun:test";
@@ -102,5 +102,52 @@ describe("plugin-audit-store", () => {
     await appendFile(path, "this is not json\n", "utf-8");
     const events = await readPluginAuditEntries(path, {});
     expect(events).toHaveLength(1);
+  });
+
+  test("append rotates an over-cap file down to the newest tail (#531 复审)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lume-plugin-audit-rot-"));
+    const path = join(dir, "plugins-audit.jsonl");
+    // Fill past the 5 MiB cap with old single-line events.
+    const line = `${JSON.stringify({
+      id: "o",
+      pluginId: "old",
+      type: "needs_review",
+      createdAt: "t0",
+      summary: "x".repeat(120),
+    })}\n`;
+    const filler = line.repeat(Math.ceil((5 * 1024 * 1024) / line.length));
+    await writeFile(path, filler, "utf-8");
+
+    await appendPluginAuditEntry(path, {
+      id: "newest",
+      pluginId: "acme",
+      type: "sensitive_approval",
+      createdAt: "t9",
+      summary: "kept",
+    });
+
+    // Capped back under budget, newest entry survives, survivors stay valid jsonl.
+    const { size } = await stat(path);
+    expect(size).toBeLessThan(5 * 1024 * 1024);
+    const events = await readPluginAuditEntries(path, {});
+    expect(events.at(-1)?.id).toBe("newest");
+    expect(events.length).toBeGreaterThan(0);
+    expect(events.every((e) => e.id === "newest" || e.id === "o")).toBe(true);
+  });
+
+  test("append leaves a small file untouched (rotation only past cap)", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "lume-plugin-audit-small-"));
+    const path = join(dir, "plugins-audit.jsonl");
+    for (const id of ["1", "2"]) {
+      await appendPluginAuditEntry(path, {
+        id,
+        pluginId: "acme",
+        type: "needs_review",
+        createdAt: `t${id}`,
+        summary: "ok",
+      });
+    }
+    const events = await readPluginAuditEntries(path, {});
+    expect(events.map((e) => e.id)).toEqual(["1", "2"]);
   });
 });

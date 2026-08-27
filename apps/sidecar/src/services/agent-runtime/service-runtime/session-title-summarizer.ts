@@ -53,7 +53,7 @@ export function isWeakGeneratedTitle(value: string): boolean {
   return weakWords.some((word) => normalized === word || normalized.includes(` ${word}`));
 }
 
-export function deriveFallbackTitleFromSourceText(sourceText: string): string | null {
+export function deriveFallbackAgentTitleFromSourceText(sourceText: string): string | null {
   const trimmed = sourceText.trim();
   if (!trimmed) return null;
   const compact = trimmed
@@ -66,7 +66,7 @@ export function deriveFallbackTitleFromSourceText(sourceText: string): string | 
   return sliced || null;
 }
 
-export function resolveTitleSourceText(
+export function resolveAgentTitleSourceText(
   messages: AgentMessage[],
   fallbackUserMessage: string
 ): string {
@@ -79,10 +79,7 @@ export function resolveTitleSourceText(
   return fallbackUserMessage.trim();
 }
 
-export const deriveFallbackAgentTitleFromSourceText = deriveFallbackTitleFromSourceText;
-export const resolveAgentTitleSourceText = resolveTitleSourceText;
-
-export function resolveTitleConversationText(
+export function resolveAgentTitleConversationText(
   messages: AgentMessage[],
   fallbackUserMessage: string
 ): string {
@@ -97,5 +94,3 @@ export function resolveTitleConversationText(
   const assistantText = firstAssistant.content.trim().slice(0, TITLE_ASSISTANT_PREVIEW_LIMIT);
   return `用户：${userText}\n助手：${assistantText}`;
 }
-
-export const resolveAgentTitleConversationText = resolveTitleConversationText;

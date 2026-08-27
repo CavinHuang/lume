@@ -10,6 +10,17 @@ describe("tool-metadata", () => {
     });
   });
 
+  test("registers subagent dispatch tool (Agent) explicitly with approval semantics", () => {
+    // 正名注册：不依赖 canonicalize→"agent_spawn" 名称推断的巧合默认值
+    expect(getToolMetadata("Agent")).toMatchObject({
+      category: "execute",
+      riskLevel: "medium",
+      allowedInPlanMode: false
+    });
+    expect(getToolMetadata("Agent")).toEqual(getToolMetadata("agent_spawn"));
+    expect(isToolAllowedInPlanMode("Agent")).toBeFalse();
+  });
+
   test("classifies automation mutations as high-risk writes and read/query as plan-safe", () => {
     expect(getToolMetadata("automation_set")).toMatchObject({
       category: "write",

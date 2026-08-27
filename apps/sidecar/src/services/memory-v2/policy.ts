@@ -89,32 +89,6 @@ function compilePatterns(entries?: string[]): CompiledPattern[] {
   return compilePatterns_shared(expandToolEntries(entries), normalizeEntry);
 }
 
-export function deriveChatTypeFromThreadKey(threadKey?: string): MemoryChatType {
-  const raw = (threadKey ?? "").trim().toLowerCase();
-  if (!raw) return "direct";
-  const tokens = new Set(raw.split(":").filter(Boolean));
-  if (tokens.has("channel")) return "channel";
-  if (tokens.has("group")) return "group";
-  return "direct";
-}
-
-export function deriveChatTypeFromThreadType(threadType?: unknown): MemoryChatType | undefined {
-  if (threadType === "group" || threadType === "channel") {
-    return threadType;
-  }
-  if (threadType === "main" || threadType === "subagent") {
-    return "direct";
-  }
-  return undefined;
-}
-
-export function normalizeMemoryChatType(value: unknown): MemoryChatType | undefined {
-  if (value !== "direct" && value !== "group" && value !== "channel") {
-    return undefined;
-  }
-  return value;
-}
-
 export function parseMemoryRuntimeConfigPayload(payload: unknown): {
   toolPolicy: MemoryToolPolicy | undefined;
   citationsMode: MemoryCitationsMode;

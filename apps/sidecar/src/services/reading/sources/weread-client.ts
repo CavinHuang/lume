@@ -1,4 +1,5 @@
 import type { ReadingSearchResult } from "@lume/shared";
+import { readProgressPercent, readWereadBookStatus, readWereadTimestamp } from "../weread-payload";
 import type { ReadingSourceBook, ReadingSourceFetch } from "./types";
 
 interface WereadClientInput {
@@ -240,7 +241,7 @@ function mapWereadBook(item: Record<string, unknown>): ReadingSourceBook {
   const coverUrl = readString(item.cover) ?? readString(bookInfo.cover) ?? readString(item.coverUrl) ?? readString(bookInfo.coverUrl);
   const progressPercent = readProgressPercent(item, bookInfo, source);
   const lastReadAt = readWereadTimestamp(item, bookInfo, source);
-  const status = readWereadBookStatus(item, bookInfo, progressPercent);
+  const status = readWereadBookStatus(item, bookInfo);
   const deepLink = readString(item.deepLink) ?? readString(bookInfo.deepLink) ?? readString(source.deepLink);
   return {
     title,
@@ -260,154 +261,22 @@ function mapWereadBook(item: Record<string, unknown>): ReadingSourceBook {
   };
 }
 
-function readWereadBookStatus(
-  item: Record<string, unknown>,
-  bookInfo: Record<string, unknown>,
-  _progressPercent?: number
-): "reading" | "finished" {
-  if (hasFinishStatus(item) || hasFinishStatus(bookInfo)) return "finished";
-  if (hasFinishedDate(item) || hasFinishedDate(bookInfo)) return "finished";
-  const finishSignals = [
-    item.finishReading,
-    item.finished,
-    item.isFinished,
-    item.readFinished,
-    bookInfo.finishReading,
-    bookInfo.finished,
-    bookInfo.isFinished,
-    bookInfo.readFinished
-  ];
-  if (finishSignals.some(isTruthyStatus)) return "finished";
-
-  const textStatus = [
-    item.status,
-    item.readingStatus,
-    item.bookStatus,
-    bookInfo.status,
-    bookInfo.readingStatus,
-    bookInfo.bookStatus
-  ].map(readString).find(Boolean);
-  if (textStatus) {
-    const normalized = textStatus.toLowerCase();
-    if (normalized.includes("finish") || normalized.includes("done") || normalized.includes("complete") || normalized.includes("已读")) {
-      return "finished";
-    }
-  }
-
-  return readNumber(item.markedStatus) === 1 || readNumber(bookInfo.markedStatus) === 1 ? "finished" : "reading";
-}
-
-function hasFinishedDate(record: Record<string, unknown>): boolean {
-  const direct = readNumber(record.finishedDate);
-  if (typeof direct === "number" && direct > 0) return true;
-  for (const key of ["readInfo", "progressInfo"]) {
-    const nested = record[key];
-    if (!isRecord(nested)) continue;
-    const value = readNumber(nested.finishedDate);
-    if (typeof value === "number" && value > 0) return true;
-  }
-  return false;
-}
-
-function hasFinishStatus(record: Record<string, unknown>): boolean {
-  const finishStatus = readNumber(record.finishStatus);
-  if (finishStatus === 1) return true;
-  for (const key of ["bookInfo", "book", "readInfo", "progressInfo"]) {
-    const nested = record[key];
-    if (!isRecord(nested)) continue;
-    if (readNumber(nested.finishStatus) === 1) return true;
-  }
-  return false;
-}
-
-function isTruthyStatus(value: unknown): boolean {
-  return value === true || value === 1 || value === "1" || value === "true" || value === "finished" || value === "done";
-}
-
 function readBookInfo(item: Record<string, unknown>): Record<string, unknown> {
   if (isRecord(item.bookInfo)) return item.bookInfo;
   if (isRecord(item.book)) return item.book;
   return item;
 }
 
-function readProgressPercent(...records: Record<string, unknown>[]): number | undefined {
-  for (const record of records) {
-    const nestedValue = readNestedProgressPercent(record);
-    if (typeof nestedValue === "number") return nestedValue;
-    const value = readNumber(record.readingProgress)
-      ?? readNumber(record.progressPercent)
-      ?? readNumber(record.progress)
-      ?? readNumber(record.readProgress);
-    if (typeof value === "number") return value > 0 && value < 1 ? value * 100 : value;
-  }
-  return undefined;
-}
-
-function readWereadTimestamp(...records: Record<string, unknown>[]): number | undefined {
-  for (const record of records) {
-    const nestedValue = readNestedWereadTimestamp(record);
-    if (typeof nestedValue === "number") return nestedValue;
-    const value = readNumber(record.lastReadAt)
-      ?? readNumber(record.readUpdateTime)
-      ?? readNumber(record.lectureReadUpdateTime)
-      ?? readNumber(record.lastReadTime)
-      ?? readNumber(record.readAt)
-      ?? readNumber(record.readTime)
-      ?? readNumber(record.readingTime)
-      ?? readNumber(record.updateTime)
-      ?? readNumber(record.updatedAt)
-      ?? readNumber(record.finishedDate);
-    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
-  }
-  return undefined;
-}
-
 function mergeWereadProgress(book: ReadingSourceBook, progress: Record<string, unknown>): ReadingSourceBook {
   const progressPercent = readProgressPercent(progress);
   const lastReadAt = readWereadTimestamp(progress) ?? book.lastReadAt;
-  const progressStatus = readWereadBookStatus(progress, progress, progressPercent);
+  const progressStatus = readWereadBookStatus(progress, progress);
   return {
     ...book,
     status: progressStatus === "finished" ? "finished" : book.status,
     ...(typeof progressPercent === "number" ? { progressPercent } : {}),
     ...(typeof lastReadAt === "number" ? { lastReadAt } : {})
   };
-}
-
-function readNestedProgressPercent(record: Record<string, unknown>): number | undefined {
-  for (const key of ["readInfo", "progressInfo"]) {
-    const nested = record[key];
-    if (!isRecord(nested)) continue;
-    const value = readNumber(nested.readingProgress)
-      ?? readNumber(nested.progressPercent)
-      ?? readNumber(nested.progress)
-      ?? readNumber(nested.readProgress);
-    if (typeof value === "number") return value > 0 && value < 1 ? value * 100 : value;
-  }
-  return undefined;
-}
-
-function readNestedWereadTimestamp(record: Record<string, unknown>): number | undefined {
-  for (const key of ["readInfo", "progressInfo"]) {
-    const nested = record[key];
-    if (!isRecord(nested)) continue;
-    const value = readNumber(nested.lastReadAt)
-      ?? readNumber(nested.readUpdateTime)
-      ?? readNumber(nested.lectureReadUpdateTime)
-      ?? readNumber(nested.lastReadTime)
-      ?? readNumber(nested.readAt)
-      ?? readNumber(nested.readTime)
-      ?? readNumber(nested.readingTime)
-      ?? readNumber(nested.updateTime)
-      ?? readNumber(nested.updatedAt)
-      ?? readNumber(nested.finishedDate);
-    if (typeof value === "number" && value > 0) return normalizeWereadTimestamp(value);
-  }
-  return undefined;
-}
-
-function normalizeWereadTimestamp(value: number): number {
-  return value < 100_000_000_000 ? value * 1000 : value;
 }
 
 function extractBookArray(payload: unknown): Array<Record<string, unknown>> {
