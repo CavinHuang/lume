@@ -69,4 +69,29 @@ describe("prepareRuntimeCoreAttempt", () => {
       errorMessage: "当前渠道没有已启用的对话模型。请到设置 → 连接配置启用至少一个对话模型。",
     });
   });
+
+  // #559 残余：请求与渠道双方都无有效模型时，文案不得暴露内部组件名前缀，
+  // 且需与同文件其余错误一致给出下一步指引。
+  test("rejects an empty channel without exposing internal prefixes", async () => {
+    const channel = createChannel({
+      name: "Empty Models",
+      provider: "openai",
+      baseUrl: "https://api.openai.com/v1",
+      apiKey: "sk-test",
+      models: [],
+      enabled: true,
+    });
+
+    await expect(prepareRuntimeCoreAttempt({
+      input: { threadId: "thread-3", userMessage: "hello" },
+      runtime: {
+        sessionId: "thread-3",
+        channelId: channel.id,
+        resolvedModelId: "",
+      },
+    })).resolves.toEqual({
+      status: "errored",
+      errorMessage: "当前渠道未配置任何可用模型。请到设置 → 连接配置添加模型后重试。",
+    });
+  });
 });
