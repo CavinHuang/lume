@@ -48,6 +48,10 @@ import { installRuntimeHostPorts } from "./services/agent/agent-runtime-ports-bi
 
 // 组合根最先注入 agent-runtime 的宿主端口(#289):任何 RPC/服务调用之前。
 installRuntimeHostPorts();
+// #578 review fix round2:proxy 读取器顶层无条件注入——纯读盘操作不依赖
+// parentPort(stdio smoke/测试形态同样生效);且必须早于 rpcTransport.listen,
+// 否则启动窗口内出站 fetch 会静默降级直连绕过用户代理(fail-open)。
+setProxyConfigProvider(getActiveProxyConfig);
 
 const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
@@ -134,9 +138,6 @@ function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", seque
 if ((process as typeof process & { parentPort?: unknown }).parentPort) {
   // #580:出站通知写入器组合根一次注入,取代 agent/automation/desktop-context 三域分散 setter
   setOutboundNotificationWriter(writeNotification);
-  // #578 review fix:proxy 读取器与通知写入器同级顶层注入——若晚于 rpcTransport.listen 注入,
-  // 启动窗口内的出站 fetch 会静默降级直连绕过用户代理(fail-open)。
-  setProxyConfigProvider(getActiveProxyConfig);
   setLogBatchNotificationWriter((batch) => writeNotification("system.log-batch", batch));
   setPersistedSettingsMutationWriter((settings) => new Promise<void>((resolve, reject) => {
     const mutationId = randomUUID();

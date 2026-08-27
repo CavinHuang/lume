@@ -40,6 +40,9 @@ export class PendingRequestRegistry<K, T, M extends object> {
     // signal 已 aborted 时后加的 abort 监听永不触发,若不短路等待方将挂满
     // 超时(run 中止与发起审批竞争的窗口)。与 abort 事件路径同语义:
     // beforeResolve 持久化清理后返回 abort 值。
+    // 注:两消费方(tool-permission/ask-user)已在调用侧预检 signal.aborted
+    // 并跳过 persist/emit——本短路仅作原语层兜底;与正常路径的差异为无表项
+    // (同 key 二次 wait 不构成 superseded 重入),当前无此类消费方。
     if (input.signal.aborted) {
       const aborted = input.abortValue();
       return (async () => {

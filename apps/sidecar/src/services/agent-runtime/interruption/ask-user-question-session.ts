@@ -87,6 +87,13 @@ export function waitForAskUserQuestionAnswers(
     toolUseId,
     questions
   };
+  // 二轮复审 P2-3:死信号场景不得发提问卡、不得持久化——否则 registry 短路
+  // resolve 的持久化清理读不到尚未落盘的 pending 记录,runContinuation 残留
+  // waiting_for_interruption(desktop 收到死提问卡)。
+  if (signal.aborted) {
+    const abortedResult: AskUserQuestionWaitResult = { status: "aborted", answers: null };
+    return Promise.resolve(abortedResult);
+  }
   const promise = pendingAskUserQuestionResolvers.wait(toolUseId, {
     meta: { threadId, approvalSessionId: threadId, request },
     timeoutMs,
