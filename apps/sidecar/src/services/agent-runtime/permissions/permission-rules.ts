@@ -122,6 +122,9 @@ export function matchEncodedGrants(
  */
 export function allowsCommandScopeGrant(canonicalName: string, key: string): boolean {
   if (canonicalName !== "bash") return true;
+  // #776：单段 simple 仍可能是执行原语（find -exec / 解释器 -c / sed 'e' /
+  // tar --to-command / xargs·env 包装）——结构扫描双平台一致地拒发前缀档
+  if (bashCommandGrantsExecutionPrimitive(key)) return false;
   const analysis = analyzeBashCommand(key);
   if (analysis.status === "simple") {
     // 三轮 CI 实锤(Ubuntu 有 natives):tree-sitter 把「a && b」这类 list
@@ -135,6 +138,51 @@ export function allowsCommandScopeGrant(canonicalName: string, key: string): boo
   if (analysis.status === "parse-unavailable") {
     return !COMMAND_CONNECTOR_PATTERN.test(key);
   }
+  return false;
+}
+
+/** shell 语义解释器/执行器包装：任意参数即代码，一律拒发前缀档（#776） */
+const EXEC_ALWAYS_BASENAMES = new Set([
+  "bash", "sh", "zsh", "ksh", "fish", "dash", "csh", "tcsh", "pwsh",
+  "powershell", "powershell.exe", "cmd", "cmd.exe", "osascript", "busybox",
+  "awk", "gawk", "mawk",
+  "xargs", "env", "nohup", "stdbuf", "timeout", "nice", "watch",
+  "setsid", "setpriv", "parallel", "sponge",
+]);
+
+/** 内联代码解释器：携带 -c/-e/-m/-p/-r/--eval/--execute 类旗标时拒发（跑具名文件不拦） */
+const INLINE_CODE_INTERPRETER_BASENAMES = new Set([
+  "python", "python2", "python3", "pypy", "node", "deno", "bun", "perl",
+  "ruby", "php", "lua", "lua5.1", "lua5.3", "lua5.4", "luajit",
+  "rscript", "julia", "tclsh", "wish",
+]);
+
+const INLINE_CODE_FLAG_PATTERN = /(?:^|\s)--?(?:c|e|m|p|r)(?:\s|=|$)|--eval(?:=|\s)|--execute(?:=|\s)/;
+
+/**
+ * 结构级执行原语扫描（#776）：命令文本含执行类标志/解释器/执行器包装时
+ * 拒发 command 前缀档。字符串级实现，natives 可用与 parse-unavailable
+ * 平台行为一致——tree-sitter 判「逐段 simple」不构成豁免。
+ */
+export function bashCommandGrantsExecutionPrimitive(command: string): boolean {
+  const trimmed = command.trim();
+  if (!trimmed) return false;
+  const first = trimmed.split(/\s+/)[0]?.toLowerCase().replace(/^.*[\\/]/, "") ?? "";
+  if (EXEC_ALWAYS_BASENAMES.has(first)) return true;
+  if (INLINE_CODE_INTERPRETER_BASENAMES.has(first)) {
+    // 第一个词之后的剩余部分参与旗标判定
+    return INLINE_CODE_FLAG_PATTERN.test(trimmed.slice(first.length));
+  }
+  // GNU sed 的 'e' 命令在字符串层不可辨识：带脚本表达式的 sed 一律不给前缀档
+  if (first === "sed") {
+    const rest = trimmed.slice(first.length);
+    return /['"]/.test(rest) || /(?:\s)--expression(?:=|\s)/.test(rest) || /(?:\s)-e(?:\s|=)/.test(rest);
+  }
+  // find 族：-exec / -execdir / -ok / -okdir（后随空白或 =）
+  if (/(?:^|\s)--?exec(?:dir)?(?:=|\s|$)/.test(trimmed)) return true;
+  if (/(?:^|\s)--?(?:ok|okdir)(?:=|\s|$)/.test(trimmed)) return true;
+  // tar 类：--to-command / --compress-program
+  if (/(?:^|\s)--to-command(?:=|\s)/.test(trimmed) || /(?:^|\s)--compress-program(?:=|\s)/.test(trimmed)) return true;
   return false;
 }
 
