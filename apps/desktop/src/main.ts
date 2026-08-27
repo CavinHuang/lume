@@ -93,7 +93,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
-import { MAX_RPC_MESSAGE_BYTES } from '@lume/shared'
+import { MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -3320,9 +3320,12 @@ function createSidecarHost({ onNotification }) {
 
   // #579：sidecar 出站错误已带稳定 code（LumeRpcErrorShape），此处附着到
   // rejected Error 上，调用方按 `error.code` 判别而非字符串匹配 message。
+  // 有意不附着 shape.details：renderer 经 ipcRenderer.invoke 被 Electron
+  // 序列化剥掉自定义属性(见 @lume/shared rpc-error.ts 头注的断链声明)，
+  // 附了也不可达;details 的可见面保持为 main 进程日志（错误响应全量已入）。
   function withRpcErrorCode(shape: { code?: unknown; message?: string }): Error {
     const error = new Error(shape.message || 'sidecar rpc failed')
-    if (typeof shape.code === 'string' && shape.code && shape.code !== 'E_RPC') {
+    if (typeof shape.code === 'string' && shape.code && shape.code !== RPC_ERROR_CODES.RPC) {
       ;(error as Error & { code?: string }).code = shape.code
     }
     return error

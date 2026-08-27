@@ -20,7 +20,11 @@ export interface LumeRpcErrorShape {
   details?: unknown;
 }
 
-/** 稳定跨进程错误码;新增业务 code 一律显式携带并登记于此,勿依赖 name 兜底值。 */
+/**
+ * 稳定跨进程错误码。覆盖 #579 契约落地后**新增**的显式 code——存量手写 shape
+ * 码(E_NOT_IMPLEMENTED/connection_* 等)仍在各自定义点,待统一批迁再入账,
+ * 本表暂不作唯一事实源承诺,新增业务 code 一律在此登记,勿依赖 name 兜底值。
+ */
 export const RPC_ERROR_CODES = {
   /** 入参校验失败(validateInput) */
   INVALID_PARAMS: "E_INVALID_PARAMS",
@@ -35,6 +39,10 @@ export const RPC_ERROR_CODES = {
  * 注意:`name` 兜底系过渡态——类名即成为跨进程 code,重命名类会静默变更
  * 该错误族的对外标识(TypeError/ZodError 直抛亦然);消费方勿依赖具体
  * name 码判别,新增错误一律显式携带 `code`。
+ *
+ * details 透传的填充方责任除内容安全外还包括**可 JSON 序列化**(BigInt/
+ * circular/抛错的 toJSON 会让整条错误响应 stringify 失败)——当前出站路径
+ * 无序列化兜底,不可序列化的 details 等于丢弃整个错误响应。
  */
 export function toLumeRpcErrorShape(error: unknown): LumeRpcErrorShape {
   const source = typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
@@ -43,7 +51,7 @@ export function toLumeRpcErrorShape(error: unknown): LumeRpcErrorShape {
       ? source.code
       : typeof source.name === "string" && source.name && source.name !== "Error"
         ? source.name
-        : "E_RPC";
+        : RPC_ERROR_CODES.RPC;
   const message = typeof source.message === "string" && source.message ? source.message : String(error);
   return {
     code,
