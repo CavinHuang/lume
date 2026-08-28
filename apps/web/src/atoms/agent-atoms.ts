@@ -52,8 +52,6 @@ export const agentSubagentRunsFamily = createThreadSliceFamily(agentSubagentRuns
 
 export const agentPlanModePhaseAtom = atom<Record<string, PlanModePhaseChangedEvent>>({})
 export const agentPlanModePhaseFamily = createThreadSliceFamily(agentPlanModePhaseAtom)
-export const agentErrorMessagesAtom = atom<Record<string, string>>({})
-
 type AgentThreadPermissionMode = NonNullable<AgentSendInput['permissionMode']>
 /**
  * 每会话手动权限模式覆盖：按 threadId 落 localStorage。

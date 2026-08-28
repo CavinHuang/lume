@@ -576,7 +576,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   )
 }
 
-/** 打开设置 tab(动线 F6):供 ErrorBanner 等组件复用「一键到设置」;可带初始分段深链 */
+/** 打开设置 tab(动线 F6):供业务组件复用「一键到设置」;可带初始分段深链 */
 export function openSettingsTab(
   setTabs: (update: (tabs: Tab[]) => Tab[]) => void,
   setActiveTabId: (id: string) => void,

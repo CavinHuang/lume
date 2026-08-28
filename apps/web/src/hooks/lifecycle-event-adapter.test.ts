@@ -418,16 +418,13 @@ function createContext() {
   const ctx: BusEnvelopeConsumerContext & {
     enqueued: LumeRuntimeEvent[]
     streaming: Record<string, 'idle' | 'streaming' | 'errored'>
-    errors: Record<string, string>
   } = {
     deliveredSeqByThread: new Map(),
     adapterStatesByThread: new Map(),
     enqueued: [],
     streaming: {},
-    errors: {},
     enqueueRuntimeEvent: (event) => ctx.enqueued.push(event),
     setStreamingStates: (update) => { ctx.streaming = update(ctx.streaming) },
-    setErrorMessages: (update) => { ctx.errors = update(ctx.errors) },
   }
   return ctx
 }
@@ -462,22 +459,33 @@ test('push 全量副作用:delta 入队并置 streaming;run.completed 置 idle',
   expect(ctx.streaming).toEqual({ t1: 'idle' })
 })
 
-test('push run.failed 置 errored 并写错误信息', () => {
+test('push run.failed 置 errored 并将具体错误入队给消息流', () => {
   const ctx = createContext()
   consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'push', ctx)
   expect(ctx.streaming).toEqual({ t1: 'errored' })
-  expect(ctx.errors).toEqual({ t1: '运行过程中发生错误，本次运行已停止。' })
+  expect(ctx.enqueued).toEqual([
+    expect.objectContaining({
+      type: 'run.failed',
+      error: { code: 'runtime_error', message: '运行过程中发生错误，本次运行已停止。' },
+    }),
+  ])
 })
 
-test('run.failed 错误文案优先取 detail.result(F3 fix round 1)', () => {
-  const ctx = createContext()
+test('run.failed 消息流错误文案优先取 detail.result(F3 fix round 1)', () => {
+  const state = createLifecycleAdapterState()
   // F3 补发终值:stopReason='error',真实错误信息在 result
-  consumeBusEnvelope(runEnd(1, { stopReason: 'error', isError: true, result: 'session boom' }), 'push', ctx)
-  expect(ctx.errors).toEqual({ t1: 'session boom' })
+  const detailed = adaptLifecycleEvent(runEnd(1, { stopReason: 'error', isError: true, result: 'session boom' }), state)
+  expect(detailed).toEqual([
+    expect.objectContaining({ type: 'run.failed', error: { code: 'runtime_error', message: 'session boom' } }),
+  ])
   // 无 result 时按 subtype 映射人话(#778:内部枚举不再上屏)
-  const ctx2 = createContext()
-  consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'push', ctx2)
-  expect(ctx2.errors).toEqual({ t1: '运行过程中发生错误，本次运行已停止。' })
+  const fallback = adaptLifecycleEvent(runEnd(2, { stopReason: 'error_during_execution', isError: true }), state)
+  expect(fallback).toEqual([
+    expect.objectContaining({
+      type: 'run.failed',
+      error: { code: 'runtime_error', message: '运行过程中发生错误，本次运行已停止。' },
+    }),
+  ])
 })
 
 test('run.failed 错误文案 subtype 映射表(#778):已知枚举人话/未知值兜底', () => {
@@ -708,12 +716,17 @@ test('snapshot run.end 终态清残留 streaming→idle(不置 streaming 的保�
   expect(ctx.streaming).toEqual({ t1: 'idle' })
 })
 
-test('snapshot run.failed 清残留 streaming→errored 并写错误信息', () => {
+test('snapshot run.failed 清残留 streaming→errored 并恢复错误消息事件', () => {
   const ctx = createContext()
   ctx.setStreamingStates((prev) => ({ ...prev, t1: 'streaming' }))
   consumeBusEnvelope(runEnd(1, { stopReason: 'error_during_execution', isError: true }), 'snapshot', ctx)
   expect(ctx.streaming).toEqual({ t1: 'errored' })
-  expect(ctx.errors).toEqual({ t1: '运行过程中发生错误，本次运行已停止。' })
+  expect(ctx.enqueued).toEqual([
+    expect.objectContaining({
+      type: 'run.failed',
+      error: { code: 'runtime_error', message: '运行过程中发生错误，本次运行已停止。' },
+    }),
+  ])
 })
 
 test('snapshot 纯消息回放(悬空 run 无终态)不置也不清 streaming(既有保证回归)', () => {

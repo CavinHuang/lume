@@ -3,7 +3,6 @@ import { useSetAtom } from 'jotai'
 import {
   agentBrowserAttachmentsAtom,
   agentDiffCommentDraftsAtom,
-  agentErrorMessagesAtom,
   agentInputDraftAtom,
   agentInputHistoryAtom,
   agentMessageQueueAtom,
@@ -49,7 +48,6 @@ export function useReleaseThreadState() {
   const setQueueInterrupted = useSetAtom(agentQueueInterruptedAtom)
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
-  const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setThreadPermissionModes = useSetAtom(agentThreadPermissionModesAtom)
   const setDiffCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
   const setBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
@@ -65,7 +63,6 @@ export function useReleaseThreadState() {
       setQueueInterrupted((prev) => removeKey(prev, threadId))
       setSubagentRuns((prev) => removeKey(prev, threadId))
       setPlanModePhase((prev) => removeKey(prev, threadId))
-      setErrorMessages((prev) => removeKey(prev, threadId))
       setThreadPermissionModes((prev) => removeKey(prev, threadId))
       setDiffCommentDrafts((prev) => removeKey(prev, threadId))
       setBrowserAttachments((prev) => removeKey(prev, threadId))
@@ -100,7 +97,7 @@ export function useReleaseThreadState() {
     [
       setDraftState, setHistoryState, setRuntimeEvents, setStreamingStates, setRuntimeStatus,
       setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns,
-      setPlanModePhase, setErrorMessages, setThreadPermissionModes,
+      setPlanModePhase, setThreadPermissionModes,
       setDiffCommentDrafts, setBrowserAttachments, setQueuedAttachmentPreviewUrls,
     ],
   )
