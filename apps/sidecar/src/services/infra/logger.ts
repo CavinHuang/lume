@@ -252,6 +252,20 @@ function trySendBatch(): void {
 
 export function setLogBatchNotificationWriter(writer: LogBatchNotificationWriter | null): void {
   batchWriter = writer;
+  // #829:writer 变更即运输时代切换,历史态全部作废——通知语义非持久缓冲:
+  // - 前任时期积压/在途批次不得投递给新 writer(跨测试文件/跨生命周期污染;
+  //   armAckTimeout 的重试也会把前任批次重投新 writer,须一并解除);
+  // - 卸除时在途 ack 计时器无人应答会 arm 满整个超时周期,与后续使用方的
+  //   flush/ack 时序级联。
+  // 当前 writer 时期内的正常积压 flush(含 MAX_BATCH 触发)不受影响。
+  queue = [];
+  queueBytes = 0;
+  if (flushTimer) {
+    clearTimeout(flushTimer);
+    flushTimer = null;
+  }
+  if (inFlight?.timeout) clearTimeout(inFlight.timeout);
+  inFlight = null;
   if (writer) trySendBatch();
 }
 
