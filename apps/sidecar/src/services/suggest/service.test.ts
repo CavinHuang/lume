@@ -6,6 +6,9 @@
  * 这些依赖各自的单元测试已覆盖自身行为，此处只关心 service 的"装配 + 编排 + fail-open"。
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type {
   SuggestionCandidate,
   SuggestionFeedback,
@@ -43,6 +46,10 @@ const state = {
   analysisThrow: false,
 };
 
+const managerActual = await import("../automation/automation-manager");
+// 函数值快照：mock 注册后命名空间属性访问会路由进工厂，闭包内属性访问会递归回 spy 自身
+const realCreateAutomationJob = managerActual.createAutomationJob;
+
 const spies = {
   persistSuggestion: mock((candidate: SuggestionCandidate, ctx?: object): SuggestionRecord => {
     const rec: SuggestionRecord = {
@@ -58,10 +65,9 @@ const spies = {
     return rec;
   }),
   recordFeedback: mock((_id: number, _fb: SuggestionFeedback) => {}),
-  createAutomationJob: mock((input: { name: string; prompt: string; schedule: unknown }) => ({
-    id: "job-1",
-    ...input,
-  })),
+  createAutomationJob: mock((input: Parameters<typeof realCreateAutomationJob>[0]) =>
+    // 委托真实实现：tmpdir 隔离下真实落盘，且不向后加载文件泄漏假 spy（#833 治理）
+    realCreateAutomationJob(input)),
   remember: mock(async (_input: Record<string, unknown>) => ({
     action: "created",
   })),
@@ -69,8 +75,20 @@ const spies = {
   broadcaster: mock(() => {}),
 };
 
+// 真实模块全量 spread：残缺工厂会吞掉其余导出，毒化同 worker 后加载文件（#833）
+const storeActual = await import("./store");
+const engineActual = await import("./engine");
+const feedbackActual = await import("./feedback");
+const analystActual = await import("./analyst");
+const adapterActual = await import("./adapter");
+const rulesActual = await import("./rules");
+const commandServiceActual = await import("../memory-v2/command-service");
+const personaActual = await import("../memory-v2/persona");
+const loggerActual = await import("../infra/logger");
+
 // ===== mock.module 依赖 =====
 mock.module("./store", () => ({
+  ...storeActual,
   getEnabled: () => state.enabled,
   getTypeWeights: () => ({ ...state.typeWeights }),
   listSuggestions: (status?: SuggestionRecord["status"]) =>
@@ -84,6 +102,7 @@ mock.module("./store", () => ({
 }));
 
 mock.module("./engine", () => ({
+  ...engineActual,
   evaluateSuggestions: (_messages: unknown, _opts: unknown) => {
     if (state.evalThrow) throw new Error("engine boom");
     return { candidates: [...state.evalCandidates], suppressed: [] };
@@ -91,12 +110,14 @@ mock.module("./engine", () => ({
 }));
 
 mock.module("./feedback", () => ({
+  ...feedbackActual,
   recordFeedback: spies.recordFeedback,
   isTypeSilenced: (kind: SuggestionKind) => state.silencedKinds.has(kind),
   getNeverKeys: () => new Set(state.neverKeys),
 }));
 
 mock.module("./analyst", () => ({
+  ...analystActual,
   buildAnalysisInput: (_opts?: object) => "fake-context",
   runAnalysis: async (_input: object) => {
     if (state.analysisThrow) throw new Error("analyst boom");
@@ -107,6 +128,7 @@ mock.module("./analyst", () => ({
 }));
 
 mock.module("./adapter", () => ({
+  ...adapterActual,
   extractRecentConversation: async (_input: object) => {
     if (state.extractThrow) throw new Error("adapter boom");
     return [...state.extractedMessages];
@@ -114,26 +136,29 @@ mock.module("./adapter", () => ({
 }));
 
 mock.module("./rules", () => ({
+  ...rulesActual,
   loadDedupContext: () => ({ ...state.dedupContext }),
 }));
 
-const managerActual = await import("../automation/automation-manager");
 mock.module("../automation/automation-manager", () => ({
   ...managerActual,
   createAutomationJob: spies.createAutomationJob,
 }));
 
 mock.module("../memory-v2/command-service", () => ({
+  ...commandServiceActual,
   MemoryCommandService: class MemoryCommandService {
     remember = spies.remember;
   },
 }));
 
 mock.module("../memory-v2/persona", () => ({
+  ...personaActual,
   ensurePersona: spies.ensurePersona,
 }));
 
 mock.module("../infra/logger", () => ({
+  ...loggerActual,
   createLogger: () => ({
     trace: () => {},
     debug: () => {},
@@ -190,6 +215,18 @@ const automationCandidate: SuggestionCandidate = {
   rawConfidence: 0.9,
   action: { type: "open_automation_create", automationTitle: "每日汇总", suggestedPrompt: "汇总今日进度" },
 };
+
+
+// createAutomationJob 已委托真实实现——落盘必须隔离在 tmpdir，不得触达用户配置目录
+let configRoot = "";
+beforeEach(() => {
+  configRoot = mkdtempSync(join(tmpdir(), "lume-suggest-service-"));
+  process.env.LUME_CONFIG_DIR = configRoot;
+});
+afterEach(() => {
+  delete process.env.LUME_CONFIG_DIR;
+  if (configRoot) rmSync(configRoot, { recursive: true, force: true });
+});
 
 // ===== tests =====
 describe("evaluateSessionSuggestions", () => {

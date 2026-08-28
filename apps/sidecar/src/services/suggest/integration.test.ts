@@ -53,7 +53,15 @@ const spies = {
 // ===== mock.module：仅外部边界 =====
 
 // adapter：返回固定含纠正语的用户消息（绕开 thread transcript 读取）
+// 真实模块全量 spread：残缺工厂会吞掉其余导出，毒化同 worker 后加载文件（#833）
+const adapterActual = await import("./adapter");
+const markdownStoreActual = await import("../memory-v2/markdown-store");
+const commandServiceActual = await import("../memory-v2/command-service");
+const analystActual = await import("./analyst");
+const loggerActual = await import("../infra/logger");
+
 mock.module("./adapter", () => ({
+  ...adapterActual,
   extractRecentConversation: async (input: unknown) => {
     spies.extractCalls(input);
     return [{ role: "user", content: "以后不要用 var 声明变量" }];
@@ -68,6 +76,7 @@ mock.module("../automation/automation-manager", () => ({
 
 // memory-v2/markdown-store：listEntries/listPending→[]（dedup 空，不打 memory 文件）
 mock.module("../memory-v2/markdown-store", () => ({
+  ...markdownStoreActual,
   listEntries: () => [],
   listPending: () => [],
   readActivation: () => ({ recall: true, persona: true, suggestion: true, analyst: true }),
@@ -75,6 +84,7 @@ mock.module("../memory-v2/markdown-store", () => ({
 
 // memory-v2/command-service：spy（accepted memory_correction 动作不写真实记忆）
 mock.module("../memory-v2/command-service", () => ({
+  ...commandServiceActual,
   MemoryCommandService: class MemoryCommandService {
     remember = spies.remember;
   },
@@ -82,12 +92,14 @@ mock.module("../memory-v2/command-service", () => ({
 
 // analyst：LLM 链路不参与本集成测试（analyst.test.ts 已单独覆盖）
 mock.module("./analyst", () => ({
+  ...analystActual,
   buildAnalysisInput: () => "",
   runAnalysis: async () => [],
 }));
 
 // infra/logger：静默
 mock.module("../infra/logger", () => ({
+  ...loggerActual,
   createLogger: () => ({
     trace: () => {},
     debug: () => {},

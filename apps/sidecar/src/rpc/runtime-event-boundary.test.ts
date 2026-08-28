@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-const repoRoot = process.cwd();
+// 仓库根从测试文件位置推导：process.cwd() 在 bun 全量/子目录跑批下不等于仓库根，
+// 相对路径读源码会 ENOENT（基线池 A 根因）
+const repoRoot = join(import.meta.dir, "../../../..");
 
 function source(path: string): string {
   return readFileSync(join(repoRoot, path), "utf8");
