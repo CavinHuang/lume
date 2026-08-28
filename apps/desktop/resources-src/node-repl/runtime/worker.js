@@ -45,6 +45,19 @@ let previousBindings = [];
 let cellCounter = 0;
 let executionQueue = Promise.resolve();
 let fatalExitScheduled = false;
+/**
+ * #796：untrusted realm 的 Buffer 门面。此前直接注入宿主 Buffer——
+ * `Buffer.constructor("...")()` 是最短 realm 逃逸探针（constructor 即宿主
+ * Function，跨 realm 直达宿主 process）。null 原型 + 冻结门面切断该向量；
+ * 返回实例的原型链残留面（宿主 Uint8Array 链）仍依赖换隔离原语根除，
+ * 见 issue #634/#796 跟进。trusted realm 保持原生 Buffer（宿主自己的代码）。
+ */
+function createUntrustedBufferFacade() {
+    const facade = Object.create(null);
+    for (const method of ["from", "alloc", "allocUnsafe", "allocUnsafeSlow", "isBuffer", "isEncoding", "concat", "of", "compare", "byteLength"])
+        facade[method] = (...args) => Buffer[method](...args);
+    return Object.freeze(facade);
+}
 function createRuntimeContext(kind) {
     const context = vm.createContext({}, {
         name: `lume-cua:${kind}:${options.manifest.name}`,
@@ -53,7 +66,10 @@ function createRuntimeContext(kind) {
     const target = context;
     target.globalThis = context;
     target.global = context;
-    target.Buffer = Buffer;
+    if (kind === "trusted")
+        target.Buffer = Buffer;
+    else
+        target.Buffer = createUntrustedBufferFacade();
     target.console = console;
     target.URL = URL;
     target.URLSearchParams = URLSearchParams;
@@ -259,7 +275,14 @@ function renderOutput(events) {
 }
 function capturedConsole(state) {
     const line = (...values) => state.outputEvents.push({ kind: "line", text: formatLog(values) });
-    return { ...console, log: line, info: line, warn: line, error: line, debug: line };
+    // #796：不得以 {...console} 展开——会把宿主真方法引用（table/dir/...）拷进
+    // untrusted realm，`console.table.constructor` 即宿主 Function，与
+    // Buffer.constructor 同级逃逸。null 原型 + 冻结门面，全方法路由进捕获器，
+    // 输出只进 exec 的 outputEvents（不直通 kernel stdout）。
+    const capture = Object.create(null);
+    for (const method of ["log", "info", "warn", "error", "debug", "trace", "dir", "dirxml", "table", "count", "countReset", "group", "groupEnd", "groupCollapsed", "time", "timeEnd", "timeLog", "timeStamp", "assert", "clear", "profile", "profileEnd"])
+        capture[method] = line;
+    return Object.freeze(capture);
 }
 function isPlainObject(value) {
     // Codex uses a deliberately loose definition here: any truthy, non-array
@@ -718,7 +741,9 @@ class ModuleLoader {
     constructor() {
         for (const entry of options.moduleDirs ?? [])
             this.addModuleDir(entry);
-        this.addModuleDir(cwd);
+        // #796：cwd 不再默认成为 bare package 搜索基——项目内 node_modules 的
+        // 宿主 realm 执行（importNative 路径）此前是零审批通道；现须经
+        // js_add_node_module_dir（high 审批）显式注册后进入搜索基。
     }
     clearLocalCache() {
         this.fileModules.clear();
@@ -877,7 +902,7 @@ class ModuleLoader {
         }
         const resolvedPath = this.resolveBareSpecifier(specifier);
         if (!resolvedPath)
-            throw new Error(`Module not found: ${specifier}`);
+            throw new Error(`Module not found: ${specifier}. Bare packages are no longer resolved from the working directory by default (#796): register the project's node_modules directory via the js_add_node_module_dir tool (requires user approval) and retry.`);
         return { kind: "package", path: resolvedPath, specifier };
     }
     setImportMeta(meta, mod, isMain) {

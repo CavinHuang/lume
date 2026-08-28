@@ -159,7 +159,8 @@ describe("ContextAssembler", () => {
     });
 
     expect(result.runtimeContext).toContain("本会话当前 TodoWrite 的权威快照");
-    expect(result.runtimeContext).toContain('<todo_state source="lume_runtime">');
+    // #795：收敛后 todo_state 补 trust 属性与结构转义（原为裸 JSON 无转义）
+    expect(result.runtimeContext).toContain('<todo_state trust="trusted" source="lume_runtime">');
     expect(result.runtimeContext).toContain('"content":"Run tests"');
     expect(result.userMessageForModel).toBe("继续");
   });
