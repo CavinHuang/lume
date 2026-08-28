@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { mkdtemp } from "node:fs/promises";
 import type { LumeLogEventInput } from "@lume/shared";
-import { acknowledgeLogBatch, flushLogTransport, setLogBatchNotificationWriter } from "../../../infra/logger";
+import { acknowledgeLogBatch, discardInFlightLogBatchForTest, flushLogTransport, setLogBatchNotificationWriter } from "../../../infra/logger";
 import { buildNodeReplChildEnv, JsonlNodeReplRuntimeClient } from "./node-repl-runtime-manager";
 
 describe("node_repl trusted bundled runtimes", () => {
@@ -68,9 +68,11 @@ function createStderrIngester() {
   return runtime as unknown as { ingestStderrChunk(chunk: string): void; stderr: string };
 }
 
-function captureLogEvents(): { events: LumeLogEventInput[]; cleanup: () => void } {
+function captureLogEvents(): { events: LumeLogEventInput[]; ackReceived: () => void; cleanup: () => void } {
   const events: LumeLogEventInput[] = [];
   const batchIds: string[] = [];
+  // #829：前任测试可能遗留未 ack 的在途批次占住发送缝——先丢弃再挂本测 writer
+  discardInFlightLogBatchForTest();
   setLogBatchNotificationWriter((batch) => {
     events.push(...batch.events);
     batchIds.push(batch.batchId);
@@ -79,6 +81,10 @@ function captureLogEvents(): { events: LumeLogEventInput[]; cleanup: () => void 
   // 残留的 inFlight 会阻塞同进程内下一次 flush）。
   return {
     events,
+    // #829：单槽 inFlight——断言前调用，ack 已收批次放行后续批次发送
+    ackReceived: () => {
+      for (const batchId of batchIds.splice(0)) acknowledgeLogBatch(batchId);
+    },
     cleanup: () => {
       flushLogTransport();
       for (const batchId of batchIds.splice(0)) acknowledgeLogBatch(batchId);
@@ -90,11 +96,14 @@ function captureLogEvents(): { events: LumeLogEventInput[]; cleanup: () => void 
 describe("JsonlNodeReplRuntimeClient stderr LUMELOG ingestion", () => {
   test("structured lines go to the sidecar logger; plain and malformed lines stay as diagnostics", () => {
     const ingester = createStderrIngester();
-    const { events, cleanup } = captureLogEvents();
+    const { events, ackReceived, cleanup } = captureLogEvents();
     try {
       ingester.ingestStderrChunk('LUMELOG {"level":"fatal","context":"repl.lifecycle","event":"run.failed","message":"boom","data":{"code":7}}\n');
       ingester.ingestStderrChunk('LUMELOG not-json\n');
       ingester.ingestStderrChunk("plain diagnostic\n");
+      flushLogTransport();
+      // #829：单槽 inFlight——先 ack 已收批次（含前任遗留），放行本测事件的发送，再断言
+      ackReceived();
       flushLogTransport();
       expect(events).toContainEqual(expect.objectContaining({
         level: "error",
@@ -112,7 +121,7 @@ describe("JsonlNodeReplRuntimeClient stderr LUMELOG ingestion", () => {
 
   test("a LUMELOG line split across chunks is buffered and parsed once", () => {
     const ingester = createStderrIngester();
-    const { events, cleanup } = captureLogEvents();
+    const { events, ackReceived, cleanup } = captureLogEvents();
     try {
       ingester.ingestStderrChunk('LUMELOG {"level":"warn","context":"host.pipe"');
       expect(ingester.stderr).toBe("");

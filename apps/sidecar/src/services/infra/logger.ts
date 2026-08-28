@@ -252,7 +252,25 @@ function trySendBatch(): void {
 
 export function setLogBatchNotificationWriter(writer: LogBatchNotificationWriter | null): void {
   batchWriter = writer;
-  if (writer) trySendBatch();
+  if (writer) {
+    trySendBatch();
+    return;
+  }
+  // 摘除监听者：清空积压并解除在途 ack 计时器（测试进程可即刻退出；
+  // 生产语义一致——无人接收的批次不可达即弃）。
+  queue = [];
+  queueBytes = 0;
+  if (inFlight) {
+    if (inFlight.timeout) clearTimeout(inFlight.timeout);
+    inFlight = null;
+  }
+}
+
+/** 测试缝：丢弃未 ack 的在途批次（前任测试遗留时，防其阻塞后续发送与断言）。生产勿用。 */
+export function discardInFlightLogBatchForTest(): void {
+  if (!inFlight) return;
+  if (inFlight.timeout) clearTimeout(inFlight.timeout);
+  inFlight = null;
 }
 
 export function acknowledgeLogBatch(batchId: string): void {

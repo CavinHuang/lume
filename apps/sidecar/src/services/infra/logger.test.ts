@@ -103,3 +103,27 @@ describe("logger diagnostic helpers", () => {
     expect(batches).toHaveLength(1);
   });
 });
+
+describe("log transport writer lifecycle（#829 跨文件污染根修）", () => {
+  test("摘除 writer 清空积压与在途：下一任 writer 只收此后事件（#829）", () => {
+    const residue: Array<{ context?: string }> = [];
+    setLogBatchNotificationWriter((batch) => {
+      residue.push(...batch.events);
+      // 故意不 ack：制造带计时器的在途批次（污染源形态）
+    });
+    writeLogRecord({ level: "info", context: "t.residue", message: "prev-owner" });
+    flushLogTransport();
+    // 摘除即清：积压与在途计时器一并解除
+    setLogBatchNotificationWriter(null);
+    const seen: Array<{ context?: string }> = [];
+    setLogBatchNotificationWriter((batch) => {
+      seen.push(...batch.events);
+      acknowledgeLogBatch(batch.batchId);
+    });
+    expect(seen.some((event) => event.context === "t.residue")).toBeFalse();
+    writeLogRecord({ level: "info", context: "t.fresh", message: "new-world" });
+    flushLogTransport();
+    expect(seen.some((event) => event.context === "t.fresh")).toBeTrue();
+    setLogBatchNotificationWriter(null);
+  });
+});
