@@ -12,7 +12,7 @@ import { createLogger } from "../infra/logger";
 import {
   appendAgentThreadSDKMessages,
   getAgentThreadMeta,
-  getAgentThreadSDKMessages,
+  findAgentThreadSDKMessage,
 } from "./agent-thread-manager";
 
 const log = createLogger("background-process-recovery");
@@ -59,11 +59,12 @@ export function persistTerminalProcessJobNotification(job: ProcessJob): void {
   if (!thread || thread.status === "trashed") return;
 
   const notification = toTaskNotification(job);
-  const alreadyPersisted = getAgentThreadSDKMessages(job.threadId).some((message) => (
+  // #554 复核清单:终态通知恒尾部追加,尾窗谓词查找免全量解析(窗外回退语义等价)
+  const alreadyPersisted = findAgentThreadSDKMessage(job.threadId, (message) => (
     message.type === "system"
     && message.subtype === "task_notification"
     && message.task_id === job.id
-  ));
+  )) !== undefined;
   if (!alreadyPersisted) appendAgentThreadSDKMessages(job.threadId, [notification]);
   markProcessJobNotified(job.id);
 }

@@ -455,6 +455,21 @@ export function getRecentAgentThreadSDKMessages(id: string, maxBytes = 1024 * 10
   }
 }
 
+/**
+ * 尾部谓词查找(#554 复核清单):task_notification 等终态消息恒在文件尾部追加,
+ * 1MB 尾窗内命中即免全量解析;窗内未中回退全量读取,find/some 语义与全量
+ * 扫描严格等价。适用前提:谓词目标随时间尾部化(进程恢复取崩溃前任务通知、
+ * 终态落盘幂等查重)。
+ */
+export function findAgentThreadSDKMessage(
+  id: string,
+  predicate: (message: SDKMessage) => boolean
+): SDKMessage | undefined {
+  const recentHit = getRecentAgentThreadSDKMessages(id).find(predicate);
+  if (recentHit) return recentHit;
+  return getAgentThreadSDKMessages(id).find(predicate);
+}
+
 export function getAgentThreadSDKMessages(id: string): SDKMessage[] {
   const sdkMessagesPath = getAgentThreadMessagesPath(id);
   if (existsSync(sdkMessagesPath)) {

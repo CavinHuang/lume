@@ -10,9 +10,9 @@ import type { AgentSendInput } from "@lume/shared";
 import {
   createAgentThreadWithModelRef,
   deleteAgentThread,
+  findAgentThreadSDKMessage,
   getAgentThreadMeta,
   getAgentThreadMessages,
-  getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
   listAllAgentThreads,
   listAgentThreads,
@@ -404,13 +404,14 @@ export function createAgentHandlers(
         // 崩溃恢复(#411③):后台任务终态通知由 background-process-recovery 落盘
         // transcript,按 processJobId 取回供 waiting_background checkpoint 转换
         resolveBackgroundNotification: async (processJobId) => {
-          const notification = getAgentThreadSDKMessages(input.threadId).find(
+          // #554 复核清单:崩溃前任务的通知恒近尾部,尾窗谓词查找免全量解析
+          return findAgentThreadSDKMessage(
+            input.threadId,
             (message) =>
               message.type === "system" &&
               message.subtype === "task_notification" &&
               message.task_id === processJobId,
           );
-          return notification;
         },
       },
       async (checkpoint, state) => {
