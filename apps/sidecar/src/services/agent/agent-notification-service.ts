@@ -1,4 +1,4 @@
-import { AGENT_IPC_CHANNELS, type SensitiveDiagnosticEnvelope } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, RPC_ERROR_CODES, type SensitiveDiagnosticEnvelope } from "@lume/shared";
 import type { appendAgentMessage } from "./agent-service";
 import { getPersistedGeneralSettings } from "../system/general-settings-service";
 import { getOutboundNotificationWriter } from "../infra/outbound-notification";
@@ -65,7 +65,7 @@ export function createAgentNotificationEmitter(input: {
             runId: `runtime-error:${input.threadId}`,
             createdAt: new Date().toISOString(),
             error: {
-              code: "runtime_error",
+              code: RPC_ERROR_CODES.NOTIFICATION_RUNTIME_ERROR,
               message: error
             }
           }

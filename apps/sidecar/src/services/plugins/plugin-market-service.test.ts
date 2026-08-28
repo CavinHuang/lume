@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -290,7 +290,7 @@ describe("PluginMarketService", () => {
     expect(existsSync(join(root, "installed", "enabled-plugin", "1.0.0"))).toBeFalse();
   });
 
-  test("reads marketplace indexes and reinspects resolved sources", async () => {
+  test("reads marketplace indexes with one shared install-state snapshot", async () => {
     const pluginRoot = join(root, "source", "indexed");
     const indexPath = join(root, "market.json");
     await writeJson(join(pluginRoot, "lume-plugin.json"), {
@@ -305,6 +305,18 @@ describe("PluginMarketService", () => {
           id: "indexed",
           name: "Indexed",
           source: { type: "local", path: pluginRoot }
+        },
+        {
+          kind: "plugin",
+          id: "indexed-copy-1",
+          name: "Indexed copy 1",
+          source: { type: "local", path: pluginRoot }
+        },
+        {
+          kind: "plugin",
+          id: "indexed-copy-2",
+          name: "Indexed copy 2",
+          source: { type: "local", path: pluginRoot }
         }
       ]
     });
@@ -315,8 +327,11 @@ describe("PluginMarketService", () => {
       }
     }), "utf-8");
 
+    const readState = spyOn(FilePluginStateStore.prototype, "read");
     const catalog = await makeService(root).getMarketCatalog({ workspaceSlug: "default" });
     expect(catalog.plugins.map((plugin) => plugin.pluginId)).toContain("indexed");
+    expect(readState).toHaveBeenCalledTimes(2);
+    readState.mockRestore();
 
     const inspected = await makeService(root).inspectMarketSource({
       workspaceSlug: "default",

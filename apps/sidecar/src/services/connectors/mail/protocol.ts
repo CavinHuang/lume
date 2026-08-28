@@ -199,7 +199,10 @@ interface MailSmtpTransport {
 
 interface MailImapClient {
   connect(): Promise<void>;
-  logout(): Promise<void>;
+  // logout() 是孤儿面(#698 终审 P2 确认):连接终结统一走 close?(graceful
+  // LOGOUT 已随 #768 删除——fire-and-forget RTT 会与紧随的新 LOGIN 叠加成
+  // cap+1),接口不再声明这条永不走的路径。imapflow 实例自身仍带 logout,
+  // duck typing 不受影响。
   close?(): void;
   list(): Promise<unknown[]>;
   /** imapflow extends EventEmitter;fake 实现可不提供。 */
@@ -730,14 +733,22 @@ const imapPoolMetrics: ImapPoolMetrics = {
  */
 export interface ImapPoolMetricsSnapshot extends Readonly<ImapPoolMetrics> {
   idle_connections: number;
+  /** error_destroy 的 kind 细分(#784②/#790):watchdog 与 mapLibraryError kind 同表,事件数口径。 */
+  error_destroy_kinds: Record<string, number>;
 }
+
+const imapErrorDestroyKinds = new Map<string, number>();
 
 export function imapPoolMetricsSnapshot(): ImapPoolMetricsSnapshot {
   let idle = 0;
   for (const gate of imapAccountGates.values()) {
     idle += gate.idle.length;
   }
-  return { ...imapPoolMetrics, idle_connections: idle };
+  return {
+    ...imapPoolMetrics,
+    idle_connections: idle,
+    error_destroy_kinds: Object.fromEntries(imapErrorDestroyKinds),
+  };
 }
 
 const poolLogger = createLogger("connectors.mail.protocol");
@@ -749,14 +760,20 @@ const poolLogger = createLogger("connectors.mail.protocol");
  */
 function bumpPoolMetric(metric: keyof ImapPoolMetrics, kind?: string): void {
   imapPoolMetrics[metric] += 1;
+  if (metric === "error_destroy" && kind) {
+    // #784②/#790:本地判定错 vs 网络错占比的论证数据。此前只进 debug 日志,
+    // fileLevel=info 下生产拿不到——改为进程级累计随快照出口。
+    imapErrorDestroyKinds.set(kind, (imapErrorDestroyKinds.get(kind) ?? 0) + 1);
+  }
   poolLogger.debug("imap pool metric", { metric, total: imapPoolMetrics[metric], ...(kind ? { kind } : {}) });
 }
 
 /**
  * 排队等待一个连接名额;waitSignal 在排队阶段中止时退队并归还预占名额,
- * 以 signal.reason(或缺省 provider 错误)reject。
+ * 以 signal.reason(或缺省 provider 错误)reject。account 用于退出时按
+ * 「无人持有且无库存」谓词回收 gate 条目(#698 终审 P2:abort 后空壳残留)。
  */
-async function awaitImapSlot(gate: ImapAccountGate, waitSignal?: AbortSignal): Promise<void> {
+async function awaitImapSlot(gate: ImapAccountGate, account: string, waitSignal?: AbortSignal): Promise<void> {
   await new Promise<void>((resolve, reject) => {
     const leaveQueueWithoutSlot = () => {
       const index = gate.waiters.indexOf(wake);
@@ -770,6 +787,11 @@ async function awaitImapSlot(gate: ImapAccountGate, waitSignal?: AbortSignal): P
       // 连接数突破上限(#698 二轮审查实测复现)。放行只属于释放路径的真实
       // active-- 配对,FIFO 由「waiters>0 ⇒ active≥max」不变式保持。
       gate.active -= 1;
+      // 中止者是最后离场者时此处没有任何 finally 兜底(尚未进入 withImapConnectionLimit
+      // 的 try),空条目只有靠这同一谓词对称回收——否则幽灵 gate 在 Map 里滞留
+      if (gate.active === 0 && gate.waiters.length === 0 && gate.idle.length === 0) {
+        imapAccountGates.delete(account);
+      }
     };
     const onAbort = () => {
       leaveQueueWithoutSlot();
@@ -810,7 +832,7 @@ async function withImapConnectionLimit<T>(
       throw new MailProtocolError("busy", "Too many pending operations for this account; retry shortly.");
     }
     // 中止路径在 awaitImapSlot 内部已退队并还原名额,此处直接向上抛
-    await awaitImapSlot(gate, waitSignal);
+    await awaitImapSlot(gate, account, waitSignal);
   } else {
     gate.active += 1;
   }
@@ -950,7 +972,7 @@ async function acquirePooledClient(
     const expired = now() - candidate.idledAt > imapIdleReuseTtlMs;
     if (
       !candidate.dead &&
-      candidate.host === credential.imapHost &&
+      candidate.host === credential.imapHost.toLowerCase() &&
       candidate.authCode === credential.authorizationCode &&
       !(options.requireUnselected && hasSelectedMailbox(candidate.client)) &&
       !expired
@@ -993,7 +1015,9 @@ async function acquirePooledClient(
   const conn: PooledImapConnection = {
     client: fresh as RuntimeImapClient,
     idledAt: 0,
-    host: credential.imapHost,
+    // host 快照归一小写:IMAP host 本就不区分大小写,字面量差异(user 改大小写/
+    // provider 定义切换)不得造成 miss_host 假阳性销毁健康连接(#698 终审 P2)
+    host: credential.imapHost.toLowerCase(),
     authCode: credential.authorizationCode,
   };
   // 监听必须先于 connect 挂载:connect 未决期 imapflow 走 initialReject 不

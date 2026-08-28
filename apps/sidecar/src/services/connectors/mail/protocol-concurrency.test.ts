@@ -574,6 +574,9 @@ describe("per-account IMAP connection pool (#698)", () => {
     fake.advanceClock(imapIdleReuseTtlMs * 10);
     await protocol.listFolders(account);
     const before = imapPoolMetricsSnapshot();
+    // 冲刷前提显式钉死(#791③):清他例后本行 listFolders 自身会新建恰好一条
+    // 入池,故基线恒为 1;跨用例残留泄漏时红在本行而非末行差值处,定位省一轮
+    expect(before.idle_connections).toBe(1);
 
     // 复用 → pool_hit
     await protocol.getFolderStatus(account, "INBOX");
@@ -685,5 +688,58 @@ describe("per-account IMAP connection pool (#698)", () => {
     expect(after.miss_unselected - before.miss_unselected).toBe(1);
     // 单候选 pop 后放弃改走新建的变异 here 红(created 会变 3)
     expect(imapAccountGateStateForTest(account.email)).toMatchObject({ idle: 1 });
+  });
+
+  it("aggregates error_destroy kinds into the snapshot (#784②/#790)", async () => {
+    const fake = makeTrackingFactory({ failFlagsNetwork: true });
+    const protocol = createMailProtocol(config, fake.deps);
+    const account = credential();
+
+    // 模块级单例:先推时钟冲掉他例残留条目再取基线
+    fake.advanceClock(imapIdleReuseTtlMs * 10);
+    await protocol.listFolders(account);
+    const before = imapPoolMetricsSnapshot();
+
+    // 业务语义错健康回流(#806 口径):既不进 error_destroy 也不进 kind 细分表
+    await expect(protocol.markSeen(account, "INBOX", 999)).rejects.toMatchObject({ kind: "uid_not_found" });
+
+    // 看门狗 emit error 杀死空闲连接:kind=watchdog 记在监听侧
+    fake.clients.at(-1)!.__emitError();
+    await protocol.getFolderStatus(account, "INBOX");
+
+    // 动作期传输层错误:kind=network,mapLibraryError 映射码进同一张细分表
+    await expect(protocol.markSeen(account, "INBOX", 1)).rejects.toMatchObject({ kind: "network" });
+
+    const after = imapPoolMetricsSnapshot();
+    expect(after.error_destroy - before.error_destroy).toBe(2);
+    const delta = (kind: string) =>
+      (after.error_destroy_kinds[kind] ?? 0) - (before.error_destroy_kinds[kind] ?? 0);
+    expect(delta("watchdog")).toBe(1);
+    expect(delta("network")).toBe(1);
+    expect(delta("provider")).toBe(0);
+    expect(delta("auth")).toBe(0);
+    // 守恒:error_destroy 每次都带 kind,总量增量恒等于细分增量之和
+    const sumDelta = Object.keys(after.error_destroy_kinds).reduce(
+      (sum, kind) => sum + ((after.error_destroy_kinds[kind] ?? 0) - (before.error_destroy_kinds[kind] ?? 0)),
+      0,
+    );
+    expect(sumDelta).toBe(after.error_destroy - before.error_destroy);
+  });
+
+  it("matches pooled candidates case-insensitively on the imap host (#698 终审 P2)", async () => {
+    const fake = makeTrackingFactory();
+    const protocol = createMailProtocol(config, fake.deps);
+    // 独立 email ⇒ 独立 gate,免模块级计数器冲刷
+    const account = credential();
+
+    await protocol.getFolderStatus({ ...account, imapHost: "IMAP.QQ.COM" }, "INBOX");
+    const before = imapPoolMetricsSnapshot();
+    // 仅字面量大小写差异不是换源:必须命中而非 miss_host 销毁重建
+    await protocol.getFolderStatus({ ...account, imapHost: "imap.qq.com" }, "INBOX");
+
+    const after = imapPoolMetricsSnapshot();
+    expect(after.pool_hit - before.pool_hit).toBe(1);
+    expect(after.created - before.created).toBe(0);
+    expect(after.miss_host - before.miss_host).toBe(0);
   });
 });

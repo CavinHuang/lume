@@ -183,7 +183,9 @@ type BrowserSemanticRefSession = {
 }
 
 type BrowserSemanticSnapshotCursor = {
+  frameState: BrowserSemanticFrameState[]
   generation: number
+  interactiveOnly: boolean
   limit: number
   lines: BrowserSemanticLine[]
   offset: number
@@ -197,12 +199,26 @@ type BrowserSemanticSnapshotCursor = {
 
 type BrowserCdpFrameTree = {
   childFrames?: BrowserCdpFrameTree[]
-  frame?: { id?: string }
+  frame?: { id?: string; loaderId?: string }
 }
+
+type BrowserSemanticFrameState = { domRevision: number; frameId: string; loaderId: string }
 
 type BrowserCdpDebugger = {
   sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>
 }
+
+const BROWSER_DOM_REVISION_SCRIPT = `(() => {
+  const key = "__lumeBrowserActionEffect";
+  const root = globalThis;
+  if (!root[key]) {
+    const state = { revision: 0 };
+    const observer = new MutationObserver(() => { state.revision += 1; });
+    observer.observe(document, { attributes: true, characterData: true, childList: true, subtree: true });
+    root[key] = state;
+  }
+  return root[key].revision;
+})()`
 
 type BrowserAuthSession = {
   window: BrowserWindow
@@ -655,18 +671,25 @@ export class BrowserRuntime {
 
   private async browserDomRevision(tab: BrowserTab): Promise<number> {
     try {
-      const value = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: `(() => {
-        const key = "__lumeBrowserActionEffect";
-        const root = globalThis;
-        if (!root[key]) {
-          const state = { revision: 0 };
-          const observer = new MutationObserver(() => { state.revision += 1; });
-          observer.observe(document, { attributes: true, characterData: true, childList: true, subtree: true });
-          root[key] = state;
-        }
-        return root[key].revision;
-      })()` }], true)
+      const value = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: BROWSER_DOM_REVISION_SCRIPT }], true)
       return Number.isInteger(value) ? Number(value) : -1
+    } catch { return -1 }
+  }
+
+  private async browserFrameDomRevision(debuggerRef: BrowserCdpDebugger, frameId: string): Promise<number> {
+    try {
+      const isolated = await debuggerRef.sendCommand("Page.createIsolatedWorld", {
+        frameId,
+        worldName: "lume-semantic-snapshot-revision",
+        grantUniveralAccess: false,
+      }) as { executionContextId?: number }
+      if (!isolated.executionContextId) return -1
+      const evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
+        contextId: isolated.executionContextId,
+        expression: BROWSER_DOM_REVISION_SCRIPT,
+        returnByValue: true,
+      }) as { result?: { value?: unknown }; exceptionDetails?: unknown }
+      return !evaluated.exceptionDetails && Number.isInteger(evaluated.result?.value) ? Number(evaluated.result?.value) : -1
     } catch { return -1 }
   }
 
@@ -2569,19 +2592,24 @@ export class BrowserRuntime {
   private async dispatchMouse(tab: BrowserTab, method: string, params: Record<string, unknown>): Promise<void> {
     const x = boundedNumber(params.x, 0, 100_000)
     const y = boundedNumber(params.y, 0, 100_000)
+    const generation = tab.generation
     this.showAgentCursor(tab, x, y, method === "click" || method === "doubleClick")
     const from = tab.lastAgentPointer
     await withDebugger(browserContents(tab), async (debuggerRef) => {
       const sender = this.expectedAgentInputSender(tab, debuggerRef)
-      // #614:语义 ref 路径携带解析时 URL——注入前最后一刻重验,文档已换则坐标
-      // 作废(盲击新文档不可控),报 stale_target 让模型重观察
-      if (typeof params.documentUrl === "string") {
-        const current = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
-        if (current.result?.value !== params.documentUrl) throw browserError("stale_target")
+      const validateTarget = async (): Promise<void> => {
+        if (typeof params.documentUrl === "string") {
+          const current = await debuggerRef.sendCommand("Runtime.evaluate", { expression: "location.href", returnByValue: true }) as { result?: { value?: unknown } }
+          if (current.result?.value !== params.documentUrl) throw browserError("stale_target")
+        }
+        if (tab.generation !== generation) throw browserError("stale_target")
       }
       if (method === "click" || method === "doubleClick") {
-        await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { natural: this.humanizedInput, from })
+        // #614：自然轨迹最长约 520ms；generation/URL 校验必须贴近每次 mousePressed，
+        // 否则路径移动期间的自导航会把旧坐标盲击到新文档。
+        await dispatchBrowserClick(sender, { x, y }, method === "doubleClick" ? 2 : 1, { beforePress: validateTarget, natural: this.humanizedInput, from })
       } else {
+        await validateTarget()
         await moveBrowserPointer(sender, { x, y }, { natural: this.humanizedInput, from })
       }
     })
@@ -3051,11 +3079,40 @@ export class BrowserRuntime {
     // best-effort 等待加载完成再采集；超时仍返回当前状态，不阻塞快照链路。cursor/scope 命中缓存的路径无需等待。
     await this.waitForLoad(tab, 3_000).catch(() => undefined)
 
+    const interactiveOnly = params.interactiveOnly === true || params.interactive_only === true
+    const limit = boundedNumber(params.limit ?? 400, 50, 1_000)
+    const mainDomRevision = await this.browserDomRevision(tab)
+    const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
+      byIdentity: new Map<string, string>(),
+      entries: new Map(),
+      nextRef: 1,
+    }
+    const cached = session.snapshot
+
     const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
+      const page = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: BrowserCdpFrameTree }
+      const frames = browserFrames(page.frameTree)
+      // #604：每个 frame 用 loaderId + DOM revision 验证缓存。任一 frame 导航、变更或
+      // revision 读取失败都回退完整 AX 采集，不以陈旧 ref 换取快路径。
+      const frameState = await Promise.all(frames.map(async (frame, index): Promise<BrowserSemanticFrameState> => ({
+        domRevision: index === 0 ? mainDomRevision : await this.browserFrameDomRevision(debuggerRef, frame.id),
+        frameId: frame.id,
+        loaderId: frame.loaderId,
+      })))
+      if (cached
+        && cached.generation === tab.generation
+        && cached.interactiveOnly === interactiveOnly
+        && cached.tabId === tab.tabId
+        && cached.title === tab.title
+        && cached.url === tab.url
+        && reusableSemanticFrameState(frameState)
+        && sameSemanticFrameState(cached.frameState, frameState)) {
+        return { cached: true as const, snapshot: cached }
+      }
+
       await debuggerRef.sendCommand("DOM.enable")
       await debuggerRef.sendCommand("Accessibility.enable")
-      const page = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: BrowserCdpFrameTree }
-      const frameIds = browserFrameIds(page.frameTree)
+      const frameIds = frames.map((frame) => frame.id)
       const batches = await Promise.all(frameIds.map(async (frameId) => {
         try {
           const tree = await debuggerRef.sendCommand("Accessibility.getFullAXTree", { frameId }) as { nodes?: unknown }
@@ -3089,18 +3146,14 @@ export class BrowserRuntime {
           nodes.push(supplement)
         }
       }
-      return { mainFrameId: frameIds[0], nodes }
+      return { cached: false as const, frameState, mainFrameId: frameIds[0], nodes }
     })
-    const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
-      byIdentity: new Map<string, string>(),
-      entries: new Map(),
-      nextRef: 1,
-    }
+    if (result.cached) return this.semanticSnapshotPage({ ...result.snapshot, limit, offset: 0 })
     session.mainFrameId = result.mainFrameId
     this.semanticRefSessions.set(context.browserSessionId, session)
     const snapshotId = randomUUID()
     const tree = buildBrowserSemanticTree(result.nodes, {
-      interactiveOnly: params.interactiveOnly === true || params.interactive_only === true,
+      interactiveOnly,
       allocateRef: (entry) => {
         const identity = `${tab.tabId}\u0000${tab.generation}\u0000${entry.frameId ?? ""}\u0000${entry.backendNodeId}`
         let ref = session.byIdentity.get(identity)
@@ -3113,8 +3166,10 @@ export class BrowserRuntime {
       },
     })
     const snapshot = {
+      frameState: result.frameState,
       generation: tab.generation,
-      limit: boundedNumber(params.limit ?? 400, 50, 1_000),
+      interactiveOnly,
+      limit,
       lines: tree.lines,
       offset: 0,
       refs: tree.refs,
@@ -3130,7 +3185,7 @@ export class BrowserRuntime {
 
   private async cursorInteractiveAxNodes(debuggerRef: BrowserCdpDebugger, frameId: string): Promise<unknown[]> {
     let arrayObjectId: string | undefined
-    const elementObjectIds: string[] = []
+    const elements: Array<{ index: number; objectId: string }> = []
     try {
       const isolated = await debuggerRef.sendCommand("Page.createIsolatedWorld", {
         frameId,
@@ -3161,43 +3216,49 @@ export class BrowserRuntime {
       }) as { result?: { objectId?: string }; exceptionDetails?: unknown }
       if (evaluated.exceptionDetails || !evaluated.result?.objectId) return []
       arrayObjectId = evaluated.result.objectId
-      const properties = await debuggerRef.sendCommand("Runtime.getProperties", {
-        objectId: arrayObjectId,
-        ownProperties: true,
-      }) as { result?: Array<{ name?: string; value?: { objectId?: string } }> }
+      // #605：候选的 name/role 在页面内一次批量求值；每个元素只余一次 describeNode，
+      // 不再为最多 500 个候选各付一次额外 Runtime.callFunctionOn 往返。
+      const [properties, inspected] = await Promise.all([
+        debuggerRef.sendCommand("Runtime.getProperties", {
+          objectId: arrayObjectId,
+          ownProperties: true,
+        }) as Promise<{ result?: Array<{ name?: string; value?: { objectId?: string } }> }>,
+        debuggerRef.sendCommand("Runtime.callFunctionOn", {
+          objectId: arrayObjectId,
+          functionDeclaration: `function () {
+            return this.map((element) => {
+              try {
+                const style = getComputedStyle(element)
+                const pointer = style.cursor === "pointer"
+                const onclick = element.hasAttribute("onclick") || element.onclick !== null
+                return {
+                  name: (element.getAttribute("aria-label") || element.innerText || element.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500),
+                  role: element.isContentEditable ? "textbox" : pointer || onclick ? "clickable" : "focusable",
+                }
+              } catch { return null }
+            })
+          }`,
+          returnByValue: true,
+        }) as Promise<{ result?: { value?: unknown }; exceptionDetails?: unknown }>,
+      ])
+      const details = Array.isArray(inspected.result?.value) ? inspected.result.value : []
       for (const property of properties.result ?? []) {
         if (!/^\d+$/.test(property.name ?? "") || !property.value?.objectId) continue
-        elementObjectIds.push(property.value.objectId)
+        elements.push({ index: Number(property.name), objectId: property.value.objectId })
       }
-      return (await Promise.all(elementObjectIds.map(async (objectId, index) => {
+      return (await Promise.all(elements.map(async ({ index, objectId }) => {
         try {
-          const [described, inspected] = await Promise.all([
-            debuggerRef.sendCommand("DOM.describeNode", { objectId }) as Promise<{ node?: { backendNodeId?: number } }>,
-            debuggerRef.sendCommand("Runtime.callFunctionOn", {
-              objectId,
-              functionDeclaration: `function () {
-                const style = getComputedStyle(this)
-                const pointer = style.cursor === "pointer"
-                const onclick = this.hasAttribute("onclick") || this.onclick !== null
-                const editable = this.isContentEditable
-                return {
-                  name: (this.getAttribute("aria-label") || this.innerText || this.textContent || "").replace(/\\s+/g, " ").trim().slice(0, 500),
-                  role: editable ? "textbox" : pointer || onclick ? "clickable" : "focusable",
-                }
-              }`,
-              returnByValue: true,
-            }) as Promise<{ result?: { value?: unknown }; exceptionDetails?: unknown }>,
-          ])
+          const described = await debuggerRef.sendCommand("DOM.describeNode", { objectId }) as { node?: { backendNodeId?: number } }
           const backendNodeId = described.node?.backendNodeId
-          const details = isRecord(inspected.result?.value) ? inspected.result.value : {}
-          if (!Number.isInteger(backendNodeId) || typeof details.role !== "string") return undefined
+          const detail = isRecord(details[index]) ? details[index] : {}
+          if (!Number.isInteger(backendNodeId) || typeof detail.role !== "string") return undefined
           return {
             __frameId: frameId,
             backendDOMNodeId: backendNodeId,
             childIds: [],
-            name: { value: typeof details.name === "string" ? details.name : "" },
+            name: { value: typeof detail.name === "string" ? detail.name : "" },
             nodeId: `cursor:${frameId}:${backendNodeId}:${index}`,
-            role: { value: details.role },
+            role: { value: detail.role },
           }
         } catch {
           return undefined
@@ -3206,7 +3267,7 @@ export class BrowserRuntime {
     } catch {
       return []
     } finally {
-      await Promise.all(elementObjectIds.map((objectId) => debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)))
+      await Promise.all(elements.map(({ objectId }) => debuggerRef.sendCommand("Runtime.releaseObject", { objectId }).catch(() => undefined)))
       if (arrayObjectId) await debuggerRef.sendCommand("Runtime.releaseObject", { objectId: arrayObjectId }).catch(() => undefined)
     }
   }
@@ -4716,12 +4777,28 @@ async function browserPromiseTimeout<T>(promise: Promise<T>, timeoutMs: number):
   }
 }
 
-function browserFrameIds(tree: BrowserCdpFrameTree | undefined): string[] {
+function browserFrames(tree: BrowserCdpFrameTree | undefined): Array<{ id: string; loaderId: string }> {
   if (!tree) return []
+  const frame = typeof tree.frame?.id === "string"
+    ? [{ id: tree.frame.id, loaderId: typeof tree.frame.loaderId === "string" ? tree.frame.loaderId : "" }]
+    : []
   return [
-    ...(typeof tree.frame?.id === "string" ? [tree.frame.id] : []),
-    ...(tree.childFrames ?? []).flatMap(browserFrameIds),
+    ...frame,
+    ...(tree.childFrames ?? []).flatMap(browserFrames),
   ]
+}
+
+function reusableSemanticFrameState(state: BrowserSemanticFrameState[]): boolean {
+  return state.length > 0 && state.every((frame) => frame.domRevision >= 0 && frame.loaderId.length > 0)
+}
+
+function sameSemanticFrameState(left: BrowserSemanticFrameState[], right: BrowserSemanticFrameState[]): boolean {
+  return left.length === right.length && left.every((frame, index) => {
+    const candidate = right[index]
+    return candidate?.domRevision === frame.domRevision
+      && candidate.frameId === frame.frameId
+      && candidate.loaderId === frame.loaderId
+  })
 }
 
 function normalizeSemanticRef(value: unknown): string {

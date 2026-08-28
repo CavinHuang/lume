@@ -119,4 +119,201 @@ describe("im-runtime-manager", () => {
 
     expect(started).toEqual(["worker-1", "worker-2"]);
   });
+
+  test("coalesces concurrent starts for the same account", async () => {
+    let releaseStarting!: () => void;
+    const starting = new Promise<void>((resolve) => { releaseStarting = resolve; });
+    const started: string[] = [];
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: (_id, input) => input.status === "starting" ? starting : undefined,
+      createWorker: (account) => ({
+        start() { started.push(account.id); },
+        stop() {},
+        isRunning: () => true
+      })
+    });
+
+    const first = manager.startAccount("account-1");
+    const second = manager.startAccount("account-1");
+    releaseStarting();
+    await Promise.all([first, second]);
+
+    expect(started).toEqual(["account-1"]);
+  });
+
+  test("stop cancels an account while its start is pending", async () => {
+    let releaseStarting!: () => void;
+    let reachedStarting!: () => void;
+    const starting = new Promise<void>((resolve) => { releaseStarting = resolve; });
+    const reached = new Promise<void>((resolve) => { reachedStarting = resolve; });
+    const statuses: string[] = [];
+    const started: string[] = [];
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: (_id, input) => {
+        if (input.status) statuses.push(input.status);
+        if (input.status === "starting") {
+          reachedStarting();
+          return starting;
+        }
+      },
+      createWorker: (account) => ({
+        start() { started.push(account.id); },
+        stop() {},
+        isRunning: () => true
+      })
+    });
+
+    const start = manager.startAccount("account-1");
+    await reached;
+    manager.stopAccount("account-1");
+    releaseStarting();
+    await start;
+
+    expect(started).toEqual([]);
+    expect(manager.getRunningAccountIds()).toEqual([]);
+    expect(statuses.at(-1)).toBe("stopped");
+  });
+
+  test("a new start after stop does not reuse the cancelled pending start", async () => {
+    let releaseFirstStart!: () => void;
+    let reachedFirstStart!: () => void;
+    const firstStarting = new Promise<void>((resolve) => { releaseFirstStart = resolve; });
+    const reached = new Promise<void>((resolve) => { reachedFirstStart = resolve; });
+    let startingUpdates = 0;
+    const started: string[] = [];
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: (_id, input) => {
+        if (input.status !== "starting") return;
+        startingUpdates += 1;
+        if (startingUpdates === 1) {
+          reachedFirstStart();
+          return firstStarting;
+        }
+      },
+      createWorker: (account) => ({
+        start() { started.push(account.id); },
+        stop() {},
+        isRunning: () => true
+      })
+    });
+
+    const cancelledStart = manager.startAccount("account-1");
+    await reached;
+    manager.stopAccount("account-1");
+    const restarted = manager.startAccount("account-1");
+    releaseFirstStart();
+    await Promise.all([cancelledStart, restarted]);
+
+    expect(startingUpdates).toBe(2);
+    expect(started).toEqual(["account-1"]);
+    expect(manager.getRunningAccountIds()).toEqual(["account-1"]);
+  });
+
+  test("restart waits for asynchronous stopped status persistence", async () => {
+    let releaseStopped!: () => void;
+    const stopped = new Promise<void>((resolve) => { releaseStopped = resolve; });
+    let status = "stopped";
+    let starts = 0;
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: async (_id, input) => {
+        if (input.status === "stopped") await stopped;
+        if (input.status) status = input.status;
+      },
+      createWorker: () => ({
+        start() { starts += 1; },
+        stop() {},
+        isRunning: () => true
+      })
+    });
+
+    await manager.startAccount("account-1");
+    manager.stopAccount("account-1");
+    const restarted = manager.startAccount("account-1");
+    await Promise.resolve();
+    expect(starts).toBe(1);
+
+    releaseStopped();
+    await restarted;
+    expect(starts).toBe(2);
+    expect(status).toBe("running");
+  });
+
+  test("cleans up a started worker when running status persistence fails", async () => {
+    let stopped = 0;
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "weixin",
+        label: id,
+        token: `token-${id}`,
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: (_id, input) => {
+        if (input.status === "running") throw new Error("write failed");
+      },
+      createWorker: () => ({
+        start() {},
+        stop() { stopped += 1; },
+        isRunning: () => true
+      })
+    });
+
+    await expect(manager.startAccount("account-1")).rejects.toThrow("write failed");
+
+    expect(stopped).toBe(1);
+    expect(manager.getRunningAccountIds()).toEqual([]);
+  });
 });

@@ -204,6 +204,24 @@ describe("createImInboundPipeline", () => {
     gate.resolve();
   });
 
+  test("并发重投同一斜杠命令只路由一次", async () => {
+    const routed: InboundImRouteMessage[] = [];
+    const gate = deferred<void>();
+    const pipeline = createImInboundPipeline({
+      routeMessage: async (message) => {
+        routed.push(message);
+        await gate.promise;
+        return { threadId: "thread-1" };
+      },
+      ...localSeen()
+    });
+    const command = msg({ text: "/approve req-1 allow-once", messageId: "command-1" });
+
+    await Promise.all([pipeline.enqueue(command), pipeline.enqueue({ ...command })]);
+    expect(routed).toHaveLength(1);
+    gate.resolve();
+  });
+
   test("重复 messageId 不入队，成功后逐条标记已见", async () => {
     const routed: InboundImRouteMessage[] = [];
     const seen = new Set<string>();

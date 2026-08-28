@@ -15,8 +15,8 @@ const log = createLogger("im-pipeline");
  * 2. RunCoordinator —— 同一会话严格串行，全局并发上限防止多会话同时打满 runtime；
  *   单次路由超时（watchdog）防止挂死运行占满全局槽位。
  *
- * 斜杠命令白名单（当前 /approve）不排队直通路由：控制面操作不能被长运行阻塞，
- * 也不参与去重（路由器自带幂等）。
+ * 斜杠命令白名单不排队直通路由：控制面操作不能被长运行阻塞，但仍在入队时
+ * 抢占 messageId，避免平台并发重投重复执行命令。
  *
  * enqueue 返回的 Promise 在该消息所在批量路由落定后 resolve/reject：
  * 微信长轮询 worker await 它保持「失败不推 cursor → 下轮重投」的 at-least-once
@@ -299,13 +299,29 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
     // 失败只记日志不 reject：命令（如 /approve 回执）发送失败不应作为毒丸消息
     // 阻塞微信渠道的 cursor 推进，否则整个账号的后续消息被卡死在队头
     if (CONTROL_COMMAND_RE.test(message.text.trim())) {
-      void routeMessage(message).catch((error: unknown) => {
-        log.error("IM 命令直通路由失败", {
+      const commandKey = message.messageId
+        ? inflightKeyOf(message.provider, message.accountId, message.messageId)
+        : undefined;
+      if (commandKey && (inflightIds.has(commandKey) || hasSeen(message.provider, message.accountId, message.messageId!))) {
+        log.info("重复命令，跳过路由", {
           provider: message.provider,
-          peerId: message.peerId,
-          error: error instanceof Error ? error.message : String(error)
+          accountId: message.accountId,
+          messageId: message.messageId
         });
-      });
+        return Promise.resolve();
+      }
+      if (commandKey) inflightIds.add(commandKey);
+      void routeMessage(message)
+        .catch((error: unknown) => {
+          log.error("IM 命令直通路由失败", {
+            provider: message.provider,
+            peerId: message.peerId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        })
+        .finally(() => {
+          if (commandKey) inflightIds.delete(commandKey);
+        });
       return Promise.resolve();
     }
     const existingKey =

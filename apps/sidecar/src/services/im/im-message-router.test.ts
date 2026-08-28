@@ -7,6 +7,7 @@ import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 import { updateLumeConfigSection } from "../system/lume-config-service";
 import { createImAgentStreamEmitter, routeInboundImMessage } from "./im-message-router";
 import { createImAccount } from "./im-config-manager";
+import { hasSeenImMessage, resetImSeenMessageCacheForTest } from "./im-seen-message-store";
 import { getImThreadBindingByPeer, getImThreadBindingByThreadId, upsertImThreadBinding } from "./im-thread-binding-store";
 import { upsertImMirrorEntry } from "./im-mirror-store";
 
@@ -18,6 +19,7 @@ describe("im-message-router", () => {
     prevConfigDir = process.env.LUME_CONFIG_DIR;
     tempConfigDir = mkdtempSync(join(tmpdir(), "lume-im-router-test-"));
     process.env.LUME_CONFIG_DIR = tempConfigDir;
+    resetImSeenMessageCacheForTest();
   });
 
   afterEach(() => {
@@ -30,6 +32,7 @@ describe("im-message-router", () => {
       rmSync(tempConfigDir, { recursive: true, force: true });
       tempConfigDir = "";
     }
+    resetImSeenMessageCacheForTest();
   });
 
   test("creates and reuses one thread per account and peer", async () => {
@@ -202,7 +205,8 @@ describe("im-message-router", () => {
       accountId: "account-1",
       peerKind: "dm",
       peerId: "user-1",
-      text: "/approve perm-1 allow-once"
+      text: "/approve perm-1 allow-once",
+      messageId: "approve-message-1"
     }, {
       getThreadMeta: () => ({} as never),
       sendMessage() {
@@ -228,6 +232,7 @@ describe("im-message-router", () => {
       decision: "allow_once"
     }]);
     expect(sent[0]).toContain("已允许一次");
+    expect(hasSeenImMessage("weixin", "account-1", "approve-message-1")).toBeTrue();
     expect(notifications).toContainEqual(expect.objectContaining({
       method: AGENT_IPC_CHANNELS.RUNTIME_EVENT,
       params: expect.objectContaining({
@@ -239,6 +244,34 @@ describe("im-message-router", () => {
         })
       })
     }));
+  });
+
+  test("rejects /approve before a peer has an active thread", async () => {
+    const sent: string[] = [];
+
+    const result = await routeInboundImMessage({
+      provider: "weixin",
+      accountId: "account-1",
+      peerKind: "dm",
+      peerId: "unbound-user",
+      text: "/approve perm-1 allow-once",
+      messageId: "unbound-approve-message"
+    }, {
+      createThread() {
+        throw new Error("approval command should not create a thread");
+      },
+      sendMessage() {
+        throw new Error("approval command should not enter agent chat");
+      },
+      sendBoundTextMessage(input) {
+        sent.push(input.text);
+        return Promise.resolve({ ok: true });
+      }
+    });
+
+    expect(result.threadId).toBe("");
+    expect(sent).toEqual(["请先发送任意消息建立会话，再处理审批。"]);
+    expect(hasSeenImMessage("weixin", "account-1", "unbound-approve-message")).toBeTrue();
   });
 
   test("绑定线程被归档后消息换绑新建会话，不再路由进不可见线程(#588)", async () => {

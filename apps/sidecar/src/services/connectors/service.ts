@@ -7,7 +7,7 @@ import type {
   ProviderExecutors,
   ResolvedCredential,
 } from "./core/types";
-import type { ConnectorSetup } from "@lume/shared";
+import { RPC_ERROR_CODES, type ConnectorSetup } from "@lume/shared";
 import { executeAction } from "./core/execution";
 import { requestAuthorizationCodeToken, requestRefreshToken } from "./oauth/oauth-token";
 import { providerFetch } from "./providers/provider-runtime";
@@ -166,7 +166,9 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
     /** 本流自己的 map 占位:finish 删除前核对身份——孤儿流(占位已被后继 bind 覆盖出局)
      * 的单次合法终结也不得摘掉在位新流,否则新授权真回调 404、done 悬挂至超时。 */
     let self: PendingAuthorization | undefined;
-    const finish = (fn: () => void) => {
+    /** urlFailure:authorizationUrl 未产出时的结算理由(#791②)。默认仍是
+     * cancelled;listen 失败调用点传入真实码,#687 场景 await 一侧不再吞错。 */
+    const finish = (fn: () => void, urlFailure: Error = new ConnectorError("oauth_flow_cancelled", "授权流已终止")) => {
       // 幂等守卫:finish 只结算一次。迟到的 resolve/reject(流已被顶掉/断开后
       // 兑换才决算)重入会重放副作用;孤儿流的首次终结同样不得误删他流条目
       if (finished) return;
@@ -176,7 +178,7 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
       if (pendingAuthorizations.get(service) === self) pendingAuthorizations.delete(service);
       // listen 前失败(绑定被拒/supersede)时 url 永不产出,必须同步 settle,
       // 否则 handler 的 await authorizationUrl 挂死而真实错误丢失
-      settleUrlIfPending(new ConnectorError("oauth_flow_cancelled", "授权流已终止"));
+      settleUrlIfPending(urlFailure);
       fn();
     };
     const timer = setTimeout(() => {
@@ -184,7 +186,8 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
     }, OAUTH_CALLBACK_TIMEOUT_MS);
 
     server.on("error", (error) => {
-      finish(() => reject(new ConnectorError("oauth_listen_failed", `本地回调监听失败: ${String(error)}`)));
+      const listenFailed = new ConnectorError("oauth_listen_failed", `本地回调监听失败: ${String(error)}`);
+      finish(() => reject(listenFailed), listenFailed);
     });
     // 随机端口绑定后才能拼 redirect_uri,再构建授权 URL
     server.listen(0, "127.0.0.1", () => {
@@ -216,6 +219,15 @@ export function startConnectorAuthorization(service: string): ConnectorAuthoriza
 
   return { authorizationUrl, done };
 }
+
+/** 错误页可直接展示 message 的 code 白名单(#791①):这些流的文案由本侧拼装,
+ *  面向用户且不含内部细节;白名单外(含 oauth_flow_failed 兜底/vault/存储类
+ *  内部错)一律回固定文案+code,原始错误只进日志与 done 的 reject。 */
+const USER_FACING_OAUTH_CODES = new Set([
+  "oauth_denied",
+  "oauth_client_config_required",
+  "oauth_token_exchange_failed",
+]);
 
 async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, service: string): Promise<void> {
   const pending = pendingAuthorizations.get(service);
@@ -302,7 +314,13 @@ async function handleOAuthCallback(req: IncomingMessage, res: ServerResponse, se
       code: connectorError.code,
     });
     pending.reject(connectorError);
-    respondPage(false, connectorError.message);
+    // 内部错误串不得直达浏览器页(#791①):storeUnreadable 等经 String(error)
+    // 兜底进来的是堆栈级措辞。仅人类措辞的白名单 code 保留原 message,其余
+    // 回固定文案+code(state mismatch 页在 try 前段,不走此路径,不受影响)。
+    const pageMessage = USER_FACING_OAUTH_CODES.has(connectorError.code)
+      ? connectorError.message
+      : `授权失败(${connectorError.code}),请回到 Lume 重试;详情见应用日志。`;
+    respondPage(false, pageMessage);
   }
 }
 
@@ -563,7 +581,7 @@ export async function executeConnectorAction(
   const provider = getConnector(service);
   const action = provider.definition.actions.find((entry) => entry.name === actionName);
   if (!action) {
-    return { ok: false, error: { code: "action_unknown", message: `${service} 不支持动作: ${actionName}` } };
+    return { ok: false, error: { code: RPC_ERROR_CODES.CONNECTOR_ACTION_UNKNOWN, message: `${service} 不支持动作: ${actionName}` } };
   }
   const context = {
     getCredential: async () => {

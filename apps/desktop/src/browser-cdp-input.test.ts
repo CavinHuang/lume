@@ -117,6 +117,25 @@ describe("browser CDP input", () => {
     expect(sleeps.values.every((value) => value > 0 && value < 600)).toBe(true)
   })
 
+  test("revalidates after the natural pointer path before pressing (#614)", async () => {
+    const sender = recorder()
+    let validated = false
+
+    await expect(dispatchBrowserClick(sender, { x: 400, y: 300 }, 1, {
+      beforePress: () => {
+        validated = true
+        throw Object.assign(new Error("stale_target"), { code: "stale_target" })
+      },
+      from: { x: 40, y: 40 },
+      natural: true,
+      sleep: async () => undefined,
+    })).rejects.toThrow("stale_target")
+
+    expect(validated).toBe(true)
+    expect(sender.calls.some((call) => call.params.type === "mouseMoved")).toBe(true)
+    expect(sender.calls.some((call) => call.params.type === "mousePressed")).toBe(false)
+  })
+
   test("pointer path starts away from the target and lands exactly on it", () => {
     const path = pointerPath({ x: 0, y: 0 }, { x: 600, y: 0 })
 

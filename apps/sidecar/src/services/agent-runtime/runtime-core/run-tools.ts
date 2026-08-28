@@ -12,6 +12,8 @@ import {
   parseTaskRef,
   resolveForegroundSubagentTimeoutMs,
   resolveSubagentModelOverride,
+  createSubagentParentProgressReporter,
+  resolveSubagentProgressTitle,
   runForegroundSubagentWithTimeout,
   runSidecarSubagent,
   runTaskLinkedSubagent,
@@ -508,6 +510,16 @@ export function buildRuntimeCoreTools(input: {
         },
       };
       const runInBackground = toolInput.run_in_background === true;
+      // 前台折叠进度投影（#560②/#777）：仅前台发——后台委托的工具卡即刻返回，
+      // 无消费语境；后台可见性走会话栏子线程 + WaitForDelegations。
+      const progressReporter = runInBackground
+        ? undefined
+        : createSubagentParentProgressReporter({
+            parentThreadId,
+            runId: input.runId ?? parentThreadId,
+            title: resolveSubagentProgressTitle(toolInput),
+            emit: (event) => input.emitRuntimeEvent?.(event),
+          });
       const executionInput = buildSidecarSubagentExecutionInput({
         forwardedToolInput: subagentRun.forwardedToolInput,
         modelOverride,
@@ -559,6 +571,7 @@ export function buildRuntimeCoreTools(input: {
             }
             input.emitRuntimeEvent?.(event);
           },
+          progressReporter,
           permissionMode,
           emitAskUserQuestion: input.emitAskUserQuestion,
           emitBrowserAuthRequest: input.emitBrowserAuthRequest,
@@ -653,6 +666,12 @@ export function buildRuntimeCoreTools(input: {
               return getRuntimeCoreEntry().stopAgentRuntime(threadId);
             },
           });
+          // 终态帧在超时判定后补发：超时路径父流已继续，静默关闭不再回写
+          if (execution.status !== "timed_out") {
+            progressReporter?.finalize(execution.status);
+          } else {
+            progressReporter?.close();
+          }
           try {
             await enrichedContext.onSubagentEnd?.({
               runId: subagentRun.runId,
@@ -671,6 +690,7 @@ export function buildRuntimeCoreTools(input: {
           );
         }
       } catch (err: any) {
+        progressReporter?.finalize("errored");
         const existing = getSubagentRunRegistry().get(subagentRun.runId);
         if (!existing || !["completed", "errored", "aborted", "timed_out", "canceled"].includes(existing.status)) {
           getSubagentRunRegistry().update(subagentRun.runId, {
