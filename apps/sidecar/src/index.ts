@@ -517,6 +517,7 @@ async function boot(): Promise<void> {
   // 只能靠次日日程生成或用户恰好编辑任务才被拉起（#647 P0-1）。
   if (envAutostartEnabled("LUME_AUTOMATION_RUNNER_AUTOSTART", true)) {
     void startAutomationRunner().catch((error) => {
+      writeEmergencyLog("automation.runner_start_failed", error);
       writeLogRecord({
         level: "error",
         context: "sidecar.automation",

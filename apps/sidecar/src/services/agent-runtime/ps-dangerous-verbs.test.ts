@@ -94,7 +94,8 @@ describe("PowerShell dangerous verb vocabulary cross-layer consistency", () => {
       "C:\\tools\\mycmd.exe --list"
     ]) {
       expect(evaluateRuntimeToolSafety("Bash", { command }, POWERSHELL_SHELL).behavior).toBe("allow");
-      expect(classifyHeuristic({ toolName: "bash", command, shellKind: "powershell" }).riskLevel).toBe("low");
+      // #838:CI(Ubuntu) 曾出现其中一条被判 medium,附命令定位(平台分叉归因用)
+      expect(classifyHeuristic({ toolName: "bash", command, shellKind: "powershell" }).riskLevel, `lookalike: ${command}`).toBe("low");
     }
   });
 

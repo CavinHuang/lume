@@ -22,7 +22,7 @@ import { getAutomationRunsPath } from "../infra/config-paths";
 import { getEffectiveSystemConfig } from "../system/system-config-service";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
 import { getNextAutomationRunAt } from "./automation-schedule";
-import { writeLogRecord } from "../infra/logger";
+import { writeEmergencyLog, writeLogRecord } from "../infra/logger";
 import { getLostAutomationRuns, recordLostAutomationRun } from "./automation-lost-runs";
 import { issuePlanningScopeGrant, registerPlanningExecutionContext } from "../planning/planning-execution-context";
 import { readRoutine } from "../routine/routine-store";
@@ -607,10 +607,18 @@ export async function refreshAutomationRunnerJobs(): Promise<void> {
 export async function startAutomationRunner(): Promise<void> {
   if (runnerStarted) return;
   runnerStarted = true;
-  // #587:桌面端/IM 解决交互后收尾 waiting_* 任务并恢复调度
-  onAgentInteractionResolved(resumeAutomationAfterInteraction);
-  recoverAutomationRuntimeStates();
-  await refreshAutomationRunnerJobs();
+  // #838① 复活诊断:core job 首跑时 stderr 静默无法归因(查毕移除)
+  writeEmergencyLog("automation.runner start: begin");
+  try {
+    // #587:桌面端/IM 解决交互后收尾 waiting_* 任务并恢复调度
+    onAgentInteractionResolved(resumeAutomationAfterInteraction);
+    recoverAutomationRuntimeStates();
+    await refreshAutomationRunnerJobs();
+    writeEmergencyLog("automation.runner start: jobs refreshed");
+  } catch (error) {
+    writeEmergencyLog("automation.runner start FAILED", error);
+    throw error;
+  }
 }
 
 export async function stopAutomationRunner(): Promise<void> {
