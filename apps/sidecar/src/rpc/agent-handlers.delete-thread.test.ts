@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, mock, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,10 +6,6 @@ import { AGENT_IPC_CHANNELS } from "@lume/shared";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 
 let runtimeSessionActive = false;
-
-mock.module("../services/agent-runtime/runner/attempt", () => ({
-  isAgentRuntimeSessionActive: () => runtimeSessionActive
-}));
 
 import { createAgentHandlers } from "./agent-handlers";
 import { createAgentThread } from "../services/agent/agent-thread-manager";
@@ -47,7 +43,8 @@ describe("agent-handlers delete-thread guard", () => {
     const handlers = createAgentHandlers({
       writeNotification: () => undefined,
       planModePhaseTracker: createTestPlanModePhaseTracker(),
-      notifyPlanModePhaseChange: () => undefined
+      notifyPlanModePhaseChange: () => undefined,
+      isRuntimeSessionActive: () => runtimeSessionActive,
     });
     return { threadId: thread.id, workdir: resolveAgentThreadWorkdir(thread.id).lumeWorkDir, handlers };
   }

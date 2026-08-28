@@ -8,6 +8,12 @@ const legacyComputerUsePath = resolve(repoRoot, ".github", "workflows", "compute
 const workflow = readFileSync(workflowPath, "utf8");
 const packageJson = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8"));
 const bunVersion = packageJson.packageManager.split("@").at(-1);
+// 只看活跃(非注释)行:断言注释里的历史命令文本会产生假阳性(#780 后 core/windows
+// job 整块注释,旧断言 toContain 注释文本依旧绿——测试过了≠测到了)
+const activeWorkflow = workflow
+  .split("\n")
+  .filter((line) => !line.trim().startsWith("#"))
+  .join("\n");
 
 describe("PR verification workflow contract", () => {
   test("runs PRs once and keeps only the main push verification", () => {
@@ -20,31 +26,34 @@ describe("PR verification workflow contract", () => {
   });
 
   test("pins every Bun runner to the repository package manager", () => {
-    const configuredVersions = [...workflow.matchAll(/bun-version:\s*([^\s]+)/g)].map((match) => match[1]);
-    expect(configuredVersions).toHaveLength(4);
+    const configuredVersions = [...activeWorkflow.matchAll(/bun-version:\s*([^\s]+)/g)].map((match) => match[1]);
+    expect(configuredVersions).toHaveLength(2);
     expect(new Set(configuredVersions)).toEqual(new Set([bunVersion]));
-    expect(workflow.match(/bun install --frozen-lockfile/g)).toHaveLength(4);
+    expect(activeWorkflow.match(/bun install --frozen-lockfile/g)).toHaveLength(2);
   });
 
-  test("keeps all five platform checkpoints and their full commands", () => {
-    expect(workflow).toContain("name: Core verification (Ubuntu)");
-    expect(workflow).toContain("run: bun run typecheck");
-    expect(workflow).toContain("run: bun run test:core");
-    expect(workflow).toContain("run: bun run test:smoke");
+  test("keeps the active platform checkpoints and their full commands", () => {
+    expect(activeWorkflow).toContain("name: macOS desktop reliability");
+    expect(activeWorkflow).toContain("bun run --filter @lume/desktop typecheck");
+    expect(activeWorkflow).toContain("bun run --filter @lume/desktop test:smoke");
+    expect(activeWorkflow).toContain("bun run --filter @lume/agent-sdk test:smoke");
+  });
 
-    expect(workflow).toContain("name: Windows reliability");
-    expect(workflow).toContain("run: bun run test:windows");
-
-    expect(workflow).toContain("name: macOS desktop reliability");
-    expect(workflow).toContain("run: bun apps/desktop/scripts/build-agent-island-native.ts");
-    expect(workflow).toContain("bun run --filter @lume/desktop typecheck");
-    expect(workflow).toContain("bun run --filter @lume/desktop test:smoke");
-    expect(workflow).toContain("bun run --filter @lume/agent-sdk test:smoke");
-
-    expect(workflow).toContain("name: Computer Use (${{ matrix.os }})");
-    expect(workflow).toContain("os: [windows-latest, macos-15]");
-    expect(workflow).toContain("run: bun run verify:computer-use");
-    expect(workflow).toContain("run: bun scripts/build-desktop-host-resources.mjs");
+  test("keeps the native-backed permissions and tooling checkpoint (#838①)", () => {
+    expect(activeWorkflow).toContain("name: Native-backed permissions and tooling tests (Ubuntu)");
+    expect(activeWorkflow).toContain("run: bun run --filter @lume/natives build");
+    // analyzeBashCommand(tree-sitter)依赖的 skipIf(!isNativeAvailable()) 门控套件
+    // 必须在 natives 构建后的 job 内真实执行
+    for (const gatedTest of [
+      "packages/sdk/src/tools/bash.test.ts",
+      "packages/sdk/src/utils/shell-read-only.test.ts",
+      "packages/sdk/src/utils/tokens.test.ts",
+      "packages/natives/native-loader.test.ts",
+      "apps/sidecar/src/services/agent-runtime/ps-dangerous-verbs.test.ts",
+      "apps/sidecar/src/services/agent-runtime/permissions/permission-engine.test.ts",
+    ]) {
+      expect(activeWorkflow).toContain(gatedTest);
+    }
   });
 
   test("keeps Windows filesystem and sandbox regressions in the native checkpoint", () => {
@@ -54,11 +63,10 @@ describe("PR verification workflow contract", () => {
   });
 
   test("publishes one stable gate only after every checkpoint succeeds", () => {
-    expect(workflow).toContain("name: PR gate");
-    expect(workflow).toContain("if: always()");
-    expect(workflow).toContain("needs: [core, windows, macos]");
-    expect(workflow).toContain('test "$CORE_RESULT" = "success"');
-    expect(workflow).toContain('test "$WINDOWS_RESULT" = "success"');
-    expect(workflow).toContain('test "$MACOS_RESULT" = "success"');
+    expect(activeWorkflow).toContain("name: PR gate");
+    expect(activeWorkflow).toContain("if: always()");
+    expect(activeWorkflow).toContain("needs: [macos, natives]");
+    expect(activeWorkflow).toContain('test "$MACOS_RESULT" = "success"');
+    expect(activeWorkflow).toContain('test "$NATIVES_RESULT" = "success"');
   });
 });

@@ -1,25 +1,19 @@
 /**
  * create-suggestion-tools.test.ts — suggestion_analyze 工具注册测试
  *
- * 策略：用 mock.module 隔离 suggest/service.runAnalysisAndPersist，
+ * 策略：向工具工厂注入 runAnalysisAndPersist fake，
  * 验证工厂产出工具（无参数 + 非只读）+ handler 调用 runAnalysisAndPersist({})
  * 并返回 { added, summary }。service 自身的 fail-open / 去重逻辑由 service.test.ts 覆盖。
  */
 import type { ToolDefinition } from "@lume/agent-sdk";
 import { describe, expect, mock, test } from "bun:test";
+import { createSuggestionTools } from "./create-suggestion-tools";
 
-// ===== mock.module 依赖 =====
-const analysisMock = mock(async (_ctx: object): Promise<number> => 2);
-
-mock.module("../../../suggest/service", () => ({
-  runAnalysisAndPersist: analysisMock,
-}));
-
-const { createSuggestionTools } = await import("./create-suggestion-tools");
+const analysisMock = mock(async (_ctx?: object): Promise<number> => 2);
 
 // ===== helpers =====
 function resolveAnalyze(): ToolDefinition {
-  const tools = createSuggestionTools();
+  const tools = createSuggestionTools(analysisMock);
   const analyze = tools.find((t) => t.name === "suggestion_analyze");
   if (!analyze) throw new Error("suggestion_analyze 工具未注册");
   return analyze;

@@ -143,6 +143,16 @@ export interface BuildAnalysisInputOptions {
   workspaceSlug?: string;
 }
 
+export interface BuildAnalysisInputDependencies {
+  readPersonaRaw: typeof readPersonaRaw;
+  parsePersonaProfile: typeof parsePersonaProfile;
+}
+
+const defaultBuildAnalysisInputDependencies: BuildAnalysisInputDependencies = {
+  readPersonaRaw,
+  parsePersonaProfile,
+};
+
 /**
  * 构建分析输入摘要。
  * - recent memory-v2 entries：listEntries(active)，slice 60→40，statement slice(0,100)，`[kind]` 前缀
@@ -151,7 +161,14 @@ export interface BuildAnalysisInputOptions {
  * - persona：readPersonaRaw → parsePersonaProfile → 注入 summary + preferences.slice(0,8)
  *   （周期 2 完成；persona 不存在/读取失败 → fail-open 跳过该段）
  */
-export function buildAnalysisInput(opts: BuildAnalysisInputOptions = {}): string {
+export function buildAnalysisInput(
+  opts: BuildAnalysisInputOptions = {},
+  overrides: Partial<BuildAnalysisInputDependencies> = {},
+): string {
+  const dependencies = {
+    ...defaultBuildAnalysisInputDependencies,
+    ...overrides,
+  };
   const sections: string[] = [];
 
   // 近期记忆条目（activation.analyst=false 排除，Task 3）
@@ -209,9 +226,9 @@ export function buildAnalysisInput(opts: BuildAnalysisInputOptions = {}): string
   // 用户画像（persona）：readPersonaRaw → parsePersonaProfile → 注入 summary + preferences
   // （persona 仅 global scope，与 opts.workspaceSlug 无关）
   try {
-    const raw = readPersonaRaw();
+    const raw = dependencies.readPersonaRaw();
     if (raw !== null) {
-      const profile = parsePersonaProfile(raw);
+      const profile = dependencies.parsePersonaProfile(raw);
       const personaLines: string[] = [];
       if (profile.summary && profile.summary.trim().length > 0) {
         personaLines.push(`定位：${profile.summary.trim()}`);

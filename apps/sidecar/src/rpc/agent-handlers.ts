@@ -187,6 +187,7 @@ interface AgentHandlersContext {
   ) => void;
   appendAgentMessage?: typeof appendAgentMessage;
   analyzeThreadWorkspaceSkillImprovements?: typeof analyzeThreadWorkspaceSkillImprovements;
+  isRuntimeSessionActive?: typeof isAgentRuntimeSessionActive;
 }
 
 // Only objects created by the private handler below may carry a trusted
@@ -203,6 +204,8 @@ export function createAgentHandlers(
   const analyzeThreadWorkspaceSkillImprovementsForContext =
     context.analyzeThreadWorkspaceSkillImprovements ??
     analyzeThreadWorkspaceSkillImprovements;
+  const isRuntimeSessionActive =
+    context.isRuntimeSessionActive ?? isAgentRuntimeSessionActive;
 
   const resolveRequiredWorkspaceSlug = (
     threadId: string,
@@ -229,9 +232,9 @@ export function createAgentHandlers(
     threadId: string,
     action: string,
   ): Promise<void> => {
-    if (!isAgentRuntimeSessionActive(threadId)) return;
+    if (!isRuntimeSessionActive(threadId)) return;
     await new Promise((resolve) => setTimeout(resolve, 500));
-    if (isAgentRuntimeSessionActive(threadId)) {
+    if (isRuntimeSessionActive(threadId)) {
       throw new Error(`线程正在运行中，请停止后再${action}。`);
     }
   };
@@ -368,7 +371,7 @@ export function createAgentHandlers(
     const continuation = await continuationStore.get(runId);
     const isStaleRunningRun =
       runState.status === "running" &&
-      !isAgentRuntimeSessionActive(input.threadId) &&
+      !isRuntimeSessionActive(input.threadId) &&
       getDanglingToolUsesForThread(input.threadId).length > 0;
     if (
       !continuation &&
@@ -450,7 +453,7 @@ export function createAgentHandlers(
     threadId: string;
     runId?: string;
   }): Promise<{ ok: boolean; runId?: string; error?: string }> => {
-    if (isAgentRuntimeSessionActive(input.threadId)) {
+    if (isRuntimeSessionActive(input.threadId)) {
       return { ok: false, error: "任务仍在运行，暂时无法放弃恢复。" };
     }
     const runId = await resolveRunIdForThread(input.threadId, input.runId);
@@ -524,7 +527,7 @@ export function createAgentHandlers(
       // tool_use 且当前进程没有活跃 runtime 时提示恢复。
       if (
         lastRun.status === "running" &&
-        !isAgentRuntimeSessionActive(input.threadId)
+        !isRuntimeSessionActive(input.threadId)
       ) {
         if (getDanglingToolUsesForThread(input.threadId).length > 0) {
           return {
@@ -860,7 +863,7 @@ export function createAgentHandlers(
     [AGENT_IPC_CHANNELS.EMPTY_TRASH]: async () => {
       // 清空回收站会对每个 trashed 线程硬删；运行中的先拒绝（#397）。
       const activeTrashedCount = listTrashedThreads().filter(
-        (thread) => isAgentRuntimeSessionActive(thread.id),
+        (thread) => isRuntimeSessionActive(thread.id),
       ).length;
       if (activeTrashedCount > 0) {
         throw new Error(

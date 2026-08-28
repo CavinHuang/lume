@@ -47,6 +47,7 @@ import { reconcilePlanningStartOperations } from "./services/planning/planning-s
 import { closePlanningCalendarStore } from "./services/planning/planning-calendar-store";
 import { startPlanningReminderScheduler, stopPlanningReminderScheduler } from "./services/planning/planning-reminder-scheduler";
 import { getNodeReplRuntimeRegistry } from "./services/agent-runtime/tools/node-repl/node-repl-runtime-registry";
+import { getBrowserToolSessionRegistry } from "./services/agent-runtime/tools/browser/browser-tool-session";
 import { installRuntimeHostPorts } from "./services/agent/agent-runtime-ports-binding";
 
 // 组合根最先注入 agent-runtime 的宿主端口(#289):任何 RPC/服务调用之前。
@@ -253,6 +254,13 @@ async function handleRpcLine(line: string): Promise<void> {
   if (method === "system.log-ack") {
     const batchId = (payload.params as { batchId?: unknown } | null)?.batchId;
     if (typeof batchId === "string") acknowledgeLogBatch(batchId);
+    return;
+  }
+
+  // #838②:desktop 推送的 tab 生命周期事件(外部关 tab/导航换代),收到即清
+  // list_tabs 微缓存,失效窗口 0 延迟;fire-and-forget 无 ack,不涉 #829 运输语义
+  if (method === "browser:tab-closed" || method === "browser:tab-changed") {
+    getBrowserToolSessionRegistry().invalidateTabsCaches();
     return;
   }
 
