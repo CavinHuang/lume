@@ -90,18 +90,29 @@ export function PlanningCalendarView({
             scope: workspaceId ? 'current' : 'unassigned',
             ...(workspaceId ? { workspaceId } : {}),
           }),
-          listPlanningTodos({
-            scope: workspaceId ? 'current' : 'unassigned',
-            workspaceId: workspaceId ?? undefined,
-            view: 'all',
-            limit: 100,
-          }),
+          // store 侧单页硬上限 100，cursor 翻页拉全，避免日历静默截断（#647 P2-18）
+          (async () => {
+            const base = {
+              scope: (workspaceId ? 'current' : 'unassigned') as 'current' | 'unassigned',
+              workspaceId: workspaceId ?? undefined,
+              view: 'all' as const,
+            }
+            const first = await listPlanningTodos({ ...base, limit: 100 })
+            const items = [...first.items]
+            let cursor = first.nextCursor
+            while (cursor) {
+              const page = await listPlanningTodos({ ...base, cursor, limit: 100 })
+              items.push(...page.items)
+              cursor = page.nextCursor
+            }
+            return items
+          })(),
           listAutomationJobs(),
           listPlanningGroups('calendar'),
           listPlanningTags(),
         ])
       setEvents(nextEvents)
-      setTodos(nextTodos.items)
+      setTodos(nextTodos)
       setAutomations(nextAutomations)
       setGroups(nextGroups)
       setTags(nextTags)

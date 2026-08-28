@@ -129,6 +129,28 @@ describe("FileBackedTaskStore", () => {
     });
   });
 
+  test("truncates oversized executor error before persisting lastError", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Errored executor" }, context());
+      const claimed = await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: created.revision }, context());
+      await store.bindExecutor({
+        taskId: created.task.id,
+        claimToken: claimed.claimToken!,
+        expectedRevision: claimed.revision,
+        executorRef: "executor-error",
+      }, context());
+      const acknowledged = await store.acknowledgeExecutor({
+        taskId: created.task.id,
+        claimToken: claimed.claimToken!,
+        executorRef: "executor-error",
+        terminal: true,
+        error: "x".repeat(50_000),
+      }, context());
+      const lume = acknowledged.task.metadata?._lume as { lastError?: { message?: string } };
+      expect(lume.lastError?.message).toHaveLength(4_000);
+    });
+  });
+
   test("does not let metadata null erase server-managed claim data", async () => {
     await withStore(async (store) => {
       const created = await store.create({ subject: "Metadata" }, context());

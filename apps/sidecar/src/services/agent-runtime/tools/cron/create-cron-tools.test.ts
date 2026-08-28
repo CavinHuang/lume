@@ -9,6 +9,7 @@ import {
   startAutomationRunner,
   stopAutomationRunner
 } from "../../../automation/automation-runner-service";
+import { createAutomationJob } from "../../../automation/automation-manager";
 
 function resolveTool(tools: ToolDefinition[], name: string): ToolDefinition {
   const tool = tools.find((item) => item.name === name);
@@ -163,5 +164,27 @@ describe("create-cron-tools", () => {
     const runs = listAutomationRuns({ jobId: createdId, limit: 5 });
     expect(runs.length).toBeGreaterThan(0);
     expect(runs[0]?.trigger).toBe("schedule");
+  });
+
+  test("system 任务对 agent 工具面不可操作(#647 follow-up1)", async () => {
+    const systemJob = createAutomationJob({
+      name: "系统蒸馏任务",
+      prompt: "p",
+      schedule: { type: "interval", intervalMs: 60000 },
+      source: "system",
+      systemAction: "memory_distill_workspace"
+    });
+
+    const tools = createSdkCronTools({ workspaceId: "ws-1", sessionId: "session-main-1" });
+    const setTool = resolveTool(tools, "automation_set");
+
+    await expect(callTool(setTool, { action: "run_now", id: systemJob.id })).rejects.toThrow();
+    await expect(callTool(setTool, { action: "delete", id: systemJob.id })).rejects.toThrow();
+    await expect(callTool(setTool, { action: "update", id: systemJob.id, name: "劫持" })).rejects.toThrow();
+
+    // 仍存在于索引中（守卫是拒绝操作，不是误删）
+    const queryResult = await callTool(resolveTool(tools, "automation_query"), {}) as { jobs?: Array<{ id?: string }> };
+    const listed = JSON.stringify(queryResult);
+    expect(listed).not.toContain(systemJob.id);
   });
 });

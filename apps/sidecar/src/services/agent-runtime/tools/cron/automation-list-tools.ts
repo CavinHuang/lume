@@ -1,7 +1,7 @@
 import type { ToolDefinition } from "@lume/agent-sdk";
-import type { AutomationJob } from "@lume/shared";
 import { listAutomationJobs } from "../../../automation/automation-manager";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
+import { isJobAccessible } from "./cron-job-access";
 
 function asString(value: unknown): string | undefined {
   if (typeof value !== "string") return undefined;
@@ -15,11 +15,6 @@ function asBoolean(value: unknown): boolean | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function isJobAccessible(job: AutomationJob, workspaceId?: string): boolean {
-  if (!workspaceId) return true;
-  return !job.workspaceId || job.workspaceId === workspaceId;
 }
 
 export function createAutomationListTools(_input: { workspaceId?: string }): ToolDefinition[] {

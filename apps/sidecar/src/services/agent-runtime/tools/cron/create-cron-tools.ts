@@ -13,6 +13,7 @@ import {
   startAutomationRunner
 } from "../../../automation/automation-runner-service";
 import { createSdkJsonResultTool } from "../sdk-tool-result";
+import { isJobAccessible } from "./cron-job-access";
 import { createLogger } from "../../../infra/logger";
 
 const log = createLogger("cron-tools");
@@ -34,11 +35,6 @@ function asBoolean(value: unknown): boolean | undefined {
 
 function asNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function isJobAccessible(job: AutomationJob, workspaceId?: string): boolean {
-  if (!workspaceId) return true;
-  return !job.workspaceId || job.workspaceId === workspaceId;
 }
 
 function resolveTargetJob(jobId: string, workspaceId?: string): AutomationJob {
