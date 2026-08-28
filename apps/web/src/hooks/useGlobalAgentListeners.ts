@@ -12,7 +12,6 @@ import {
   agentSubagentRunsAtom,
   agentPlanModePhaseAtom,
   agentThreadsAtom,
-  agentErrorMessagesAtom,
   desktopActionVisualAtom,
   activeTabIdAtom,
   currentWorkspaceIdAtom,
@@ -102,7 +101,6 @@ export function useGlobalAgentListeners() {
   const setSubagentRuns = useSetAtom(agentSubagentRunsAtom)
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreads = useSetAtom(agentThreadsAtom)
-  const setErrorMessages = useSetAtom(agentErrorMessagesAtom)
   const setDesktopActionVisual = useSetAtom(desktopActionVisualAtom)
   const setTabs = useSetAtom(tabsAtom)
   const tabs = useAtomValue(tabsAtom)
@@ -157,7 +155,6 @@ export function useGlobalAgentListeners() {
         adapterStatesByThread: lifecycleAdapterStatesByThread,
         enqueueRuntimeEvent,
         setStreamingStates,
-        setErrorMessages,
         // 批次5:run.cancelled 被跳过清单接管后,queue-interrupted(Resume 横幅)副作用
         // 移至总线版——与旧路 RUNTIME_EVENT 分支同逻辑(队列非空才置位,幂等不重复置)
         onRunCancelled: (threadId) => {
@@ -282,7 +279,6 @@ export function useGlobalAgentListeners() {
           }
           if (event.type === 'run.failed') {
             setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
-            setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
           }
           break
         }
@@ -463,5 +459,5 @@ export function useGlobalAgentListeners() {
         setRuntimeEvents((prev) => appendRuntimeEvents(prev, batch))
       }
     }
-  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setPlanModePhase, setThreads, setErrorMessages, setDesktopActionVisual, setTabs, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
+  }, [setStreamingStates, setRuntimeStatus, setRuntimeEvents, setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns, setPlanModePhase, setThreads, setDesktopActionVisual, setTabs, setActiveTabId, setWelcomePromptSeed, setSuggestionsVersion, setMemoryCenterVersion, enqueueRuntimeEvent])
 }

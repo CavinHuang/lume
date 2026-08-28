@@ -63,7 +63,6 @@ export interface BusEnvelopeConsumerContext {
   adapterStatesByThread: Map<string, LifecycleAdapterState>
   enqueueRuntimeEvent: (event: LumeRuntimeEvent) => void
   setStreamingStates: (update: (prev: Record<string, 'idle' | 'streaming' | 'errored'>) => Record<string, 'idle' | 'streaming' | 'errored'>) => void
-  setErrorMessages: (update: (prev: Record<string, string>) => Record<string, string>) => void
   /** 批次5:run.cancelled 旁路——队列非空时置 interrupted(Resume 横幅),对齐被跳过的旧路分支。 */
   onRunCancelled?: (threadId: string) => void
 }
@@ -101,7 +100,6 @@ export function consumeBusEnvelope(
         ctx.onRunCancelled?.(threadId)
       } else if (event.type === 'run.failed') {
         ctx.setStreamingStates((prev) => ({ ...prev, [threadId]: 'errored' }))
-        ctx.setErrorMessages((prev) => ({ ...prev, [threadId]: event.error.message }))
       } else if (event.type === 'background.task.completed') {
         // 批次4:对齐旧路 useGlobalAgentListeners background.task.completed 分支的映射
         // (跳过清单接管该类型后,streaming 副作用由总线版承担)

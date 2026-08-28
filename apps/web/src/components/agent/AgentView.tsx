@@ -17,7 +17,6 @@ import { AgentInput, type PendingMessageAttachment } from './AgentInput'
 import { PermissionBanner } from './PermissionBanner'
 import { AskUserBanner } from './AskUserBanner'
 import { DesktopActionBanner } from './DesktopActionBanner'
-import { ErrorBanner } from './ErrorBanner'
 import { ThreadFileEnvProvider } from './thread-file-env'
 import { Upload } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -325,7 +324,6 @@ export function AgentView({
           ) : (
             <AgentTraceView key={threadId} threadId={threadId} />
           )}
-          {streamingState === 'errored' && <ErrorBanner threadId={threadId} />}
           {!readOnly && (
             <div className="relative">
               <div
