@@ -1010,7 +1010,7 @@ describe("runtime-core run", () => {
       permissionMode: "acceptEdits"
     });
 
-    expect(result.runtimeContext).toContain('<todo_state source="lume_runtime">');
+    expect(result.runtimeContext).toContain('<todo_state trust="trusted" source="lume_runtime">');
     expect(result.runtimeContext).toContain('"content":"D"');
     expect(result.userMessageForModel).toBe("继续");
     const todoTool = availableTools(result).find((tool) => tool.name === "TodoWrite");

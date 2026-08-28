@@ -17,8 +17,12 @@ import {
   type ImProvider,
   type LumeRuntimeEvent,
   formatCodingRevertSummary,
-  IM_PROVIDER_LABELS
+  IM_PROVIDER_LABELS,
+  neutralizeStructureTags
 } from "@lume/shared";
+
+/** IM 围栏结构标签：中和面与 buildImUserMessage 的围栏形态同源钉死。 */
+const IM_STRUCTURE_TAGS = ["quoted_message", "user_message", "im_context"] as const;
 import { randomUUID } from "node:crypto";
 import { emitAgentNotification } from "../agent/agent-notification-service";
 import { createAgentThread, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
@@ -153,9 +157,10 @@ export function buildImUserMessage(
   if (!quoted?.text) {
     return base;
   }
-  // 引用与正文均来自不可信输入：中和结构标签（含 < / tag 空格变体）防止逃逸块语义
+  // 引用与正文均来自不可信输入：中和结构标签（含 < / tag 空格变体）防止逃逸块
+  // 语义——原语已收敛至 shared（#795），保留正文可读性故不 JSON 化
   const neutralize = (text: string): string =>
-    text.replace(/<\s*(\/?\s*(?:quoted_message|user_message|im_context))/gi, "[$1");
+    neutralizeStructureTags(text, IM_STRUCTURE_TAGS);
   const senderAttr = quoted.senderId ? ` sender="${quoted.senderId}"` : "";
   return [
     '<im_context trust="untrusted">',
