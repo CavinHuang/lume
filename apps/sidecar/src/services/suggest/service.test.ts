@@ -1,8 +1,7 @@
 /**
  * service.test.ts — 编排层测试
  *
- * 策略：用 mock.module 隔离所有依赖（store/engine/feedback/analyst/adapter/rules/
- * automation-manager/MemoryCommandService/logger），用 mutable state + mock spies 验证编排逻辑。
+ * 策略：通过 service 的窄化依赖入口注入 mutable state + mock spies，验证编排逻辑。
  * 这些依赖各自的单元测试已覆盖自身行为，此处只关心 service 的"装配 + 编排 + fail-open"。
  */
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
@@ -13,6 +12,14 @@ import type {
   SuggestionRecord,
   SuggestionTypeWeights,
 } from "@lume/shared";
+import {
+  evaluateSessionSuggestions as evaluateSessionSuggestionsImpl,
+  handleSuggestionFeedback as handleSuggestionFeedbackImpl,
+  runAnalysisAndPersist as runAnalysisAndPersistImpl,
+  setSuggestionChangeBroadcaster,
+  type SuggestionServiceDependencies,
+  type SuggestionServiceOverrides,
+} from "./service";
 
 // ===== 可变状态 + spy =====
 const ALL_KINDS: SuggestionKind[] = ["correction", "followup", "automation", "todo", "skill"];
@@ -58,45 +65,33 @@ const spies = {
     return rec;
   }),
   recordFeedback: mock((_id: number, _fb: SuggestionFeedback) => {}),
-  createAutomationJob: mock((input: { name: string; prompt: string; schedule: unknown }) => ({
-    id: "job-1",
-    ...input,
-  })),
-  remember: mock(async (_input: Record<string, unknown>) => ({
-    action: "created",
-  })),
-  ensurePersona: mock(async (_input: { workspaceSlug?: string }) => {}),
+  createAutomationJob: mock(
+    (input: Parameters<SuggestionServiceDependencies["createAutomationJob"]>[0]) => ({
+      id: "job-1",
+      ...input,
+    }) as ReturnType<SuggestionServiceDependencies["createAutomationJob"]>,
+  ),
+  remember: mock(
+    async (_input: Parameters<SuggestionServiceDependencies["remember"]>[0]) => ({
+      action: "created",
+    }) as Awaited<ReturnType<SuggestionServiceDependencies["remember"]>>,
+  ),
   broadcaster: mock(() => {}),
 };
 
-// ===== mock.module 依赖 =====
-mock.module("./store", () => ({
+const dependencies: SuggestionServiceOverrides = {
   getEnabled: () => state.enabled,
   getTypeWeights: () => ({ ...state.typeWeights }),
   listSuggestions: (status?: SuggestionRecord["status"]) =>
     status ? state.records.filter((r) => r.status === status) : [...state.records],
   persistSuggestion: spies.persistSuggestion,
-  updateSuggestionStatus: (id: number, status: SuggestionRecord["status"]) => {
-    state.records = state.records.map((r) =>
-      r.id === id ? { ...r, status, feedbackAt: Date.now() } : r,
-    );
-  },
-}));
-
-mock.module("./engine", () => ({
   evaluateSuggestions: (_messages: unknown, _opts: unknown) => {
     if (state.evalThrow) throw new Error("engine boom");
     return { candidates: [...state.evalCandidates], suppressed: [] };
   },
-}));
-
-mock.module("./feedback", () => ({
   recordFeedback: spies.recordFeedback,
   isTypeSilenced: (kind: SuggestionKind) => state.silencedKinds.has(kind),
   getNeverKeys: () => new Set(state.neverKeys),
-}));
-
-mock.module("./analyst", () => ({
   buildAnalysisInput: (_opts?: object) => "fake-context",
   runAnalysis: async (_input: object) => {
     if (state.analysisThrow) throw new Error("analyst boom");
@@ -104,48 +99,25 @@ mock.module("./analyst", () => ({
     await state.analysisGate;
     return [...state.analysisCandidates];
   },
-}));
-
-mock.module("./adapter", () => ({
   extractRecentConversation: async (_input: object) => {
     if (state.extractThrow) throw new Error("adapter boom");
     return [...state.extractedMessages];
   },
-}));
-
-mock.module("./rules", () => ({
   loadDedupContext: () => ({ ...state.dedupContext }),
-}));
-
-const managerActual = await import("../automation/automation-manager");
-mock.module("../automation/automation-manager", () => ({
-  ...managerActual,
   createAutomationJob: spies.createAutomationJob,
-}));
+  remember: spies.remember,
+};
 
-mock.module("../memory-v2/command-service", () => ({
-  MemoryCommandService: class MemoryCommandService {
-    remember = spies.remember;
-  },
-}));
-
-mock.module("../memory-v2/persona", () => ({
-  ensurePersona: spies.ensurePersona,
-}));
-
-mock.module("../infra/logger", () => ({
-  createLogger: () => ({
-    trace: () => {},
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    fatal: () => {},
-  }),
-}));
-
-const { evaluateSessionSuggestions, handleSuggestionFeedback, runAnalysisAndPersist, setSuggestionChangeBroadcaster } =
-  await import("./service");
+const evaluateSessionSuggestions = (
+  ctx: Parameters<typeof evaluateSessionSuggestionsImpl>[0],
+) => evaluateSessionSuggestionsImpl(ctx, dependencies);
+const handleSuggestionFeedback = (
+  id: number,
+  feedback: SuggestionFeedback,
+) => handleSuggestionFeedbackImpl(id, feedback, dependencies);
+const runAnalysisAndPersist = (
+  ctx: Parameters<typeof runAnalysisAndPersistImpl>[0],
+) => runAnalysisAndPersistImpl(ctx, dependencies);
 
 // ===== helpers =====
 function resetState(): void {
@@ -167,7 +139,6 @@ function resetState(): void {
   spies.recordFeedback.mockClear();
   spies.createAutomationJob.mockClear();
   spies.remember.mockClear();
-  spies.ensurePersona.mockClear();
   spies.broadcaster.mockClear();
 }
 
@@ -316,51 +287,13 @@ describe("handleSuggestionFeedback", () => {
       throw new Error("remember boom");
     });
     await expect(handleSuggestionFeedback(5, "accepted")).resolves.toBeUndefined();
-    spies.remember.mockImplementation(async () => ({ action: "created" }));
+    spies.remember.mockImplementation(
+      async () => ({ action: "created" }) as Awaited<
+        ReturnType<SuggestionServiceDependencies["remember"]>
+      >,
+    );
   });
 
-  test("accepted + memory_correction → 由 memory mutation 失效派生画像，不直接调用 ensurePersona", async () => {
-    state.records = [
-      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
-    ];
-    await handleSuggestionFeedback(5, "accepted");
-    expect(spies.ensurePersona).toHaveBeenCalledTimes(0);
-  });
-
-  test("ignored → ensurePersona 不回流", async () => {
-    state.records = [
-      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
-    ];
-    await handleSuggestionFeedback(5, "ignored");
-    expect(spies.ensurePersona).not.toHaveBeenCalled();
-  });
-
-  test("never → ensurePersona 不回流", async () => {
-    state.records = [
-      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
-    ];
-    await handleSuggestionFeedback(5, "never");
-    expect(spies.ensurePersona).not.toHaveBeenCalled();
-  });
-
-  test("accepted + open_automation_create → ensurePersona 不回流（仅 memory_correction 回流）", async () => {
-    state.records = [
-      { ...automationCandidate, id: 7, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
-    ];
-    await handleSuggestionFeedback(7, "accepted");
-    expect(spies.ensurePersona).not.toHaveBeenCalled();
-  });
-
-  test("ensurePersona 抛错 → fail-open（不阻塞反馈流）", async () => {
-    state.records = [
-      { ...correctionCandidate, id: 5, status: "suggested", createdAt: 0, workspaceSlug: "ws" },
-    ];
-    spies.ensurePersona.mockImplementation(async () => {
-      throw new Error("persona boom");
-    });
-    await expect(handleSuggestionFeedback(5, "accepted")).resolves.toBeUndefined();
-    spies.ensurePersona.mockImplementation(async () => {});
-  });
 });
 
 describe("runAnalysisAndPersist", () => {

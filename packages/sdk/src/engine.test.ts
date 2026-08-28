@@ -918,6 +918,56 @@ describe("QueryEngine turn limits", () => {
     }))
   })
 
+  test("refuses an identical Delegate call within the same concurrent batch", async () => {
+    let calls = 0
+    const duplicateInput = { prompt: "inspect the repository", description: "inspect repository" }
+    const engine = new QueryEngine({
+      cwd: process.cwd(),
+      model: "test-model",
+      provider: new StaticProvider([
+        {
+          content: [
+            { type: "tool_use", id: "delegate-1", name: "Delegate", input: duplicateInput },
+            { type: "tool_use", id: "delegate-2", name: "Delegate", input: duplicateInput },
+          ],
+          stopReason: "tool_use",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+        {
+          content: [{ type: "text", text: "used the first delegation" }],
+          stopReason: "end_turn",
+          usage: { input_tokens: 1, output_tokens: 1 },
+        },
+      ]),
+      tools: [{
+        name: "Delegate",
+        description: "delegate",
+        inputSchema: { type: "object", properties: {} },
+        isConcurrencySafe: () => true,
+        async call() {
+          calls++
+          return { type: "tool_result", tool_use_id: "", content: "delegation started" }
+        },
+      }],
+      systemPrompt: "test",
+      maxTurns: 8,
+      maxTokens: 256,
+      includePartialMessages: false,
+      canUseTool: async () => ({ behavior: "allow" }),
+    })
+
+    await expect(collectResult(engine)).resolves.toMatchObject({ subtype: "success", is_error: false })
+    expect(calls).toBe(1)
+    expect(engine.getMessages()).toContainEqual(expect.objectContaining({
+      role: "user",
+      content: expect.arrayContaining([expect.objectContaining({
+        tool_use_id: "delegate-2",
+        is_error: true,
+        content: expect.stringContaining("already running"),
+      })]),
+    }))
+  })
+
   test("blocks repeated equivalent failures of read-only tools without stopping the run", async () => {
     let calls = 0
     const grepCall = (id: string): CreateMessageResponse => ({
@@ -3888,4 +3938,3 @@ describe("QueryEngine isEnabled injection filter (#700)", () => {
     expect(observedTools[1]).toEqual(["Read", "gmail_send_email"])
   })
 })
-

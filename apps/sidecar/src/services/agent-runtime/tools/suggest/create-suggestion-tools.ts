@@ -12,7 +12,9 @@ import { createSdkJsonResultTool } from "../sdk-tool-result";
  *
  * 周期 3 Task 2。
  */
-export function createSuggestionTools(): ToolDefinition[] {
+export function createSuggestionTools(
+  analyze: typeof runAnalysisAndPersist = runAnalysisAndPersist,
+): ToolDefinition[] {
   return [
     createSdkJsonResultTool({
       name: "suggestion_analyze",
@@ -23,7 +25,7 @@ export function createSuggestionTools(): ToolDefinition[] {
         properties: {},
       },
       async call() {
-        const added = await runAnalysisAndPersist({});
+        const added = await analyze({});
         return {
           ok: true,
           added,

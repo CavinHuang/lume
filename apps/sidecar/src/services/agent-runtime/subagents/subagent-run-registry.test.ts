@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import {
   getSubagentRunRegistry,
@@ -130,6 +130,59 @@ describe("subagent-run-registry", () => {
     expect(restored?.outcome?.errorCode).toBe("process_restarted");
     expect(restored?.outcome?.error).toContain("Sidecar 进程重启");
     expect(typeof restored?.endedAt).toBe("number");
+  });
+
+  test("损坏 store 应先检疫原文件再从空账本恢复", () => {
+    const storePath = getSubagentRunStorePath();
+    writeFileSync(storePath, "{broken", "utf8");
+
+    expect(getSubagentRunRegistry().listAll()).toEqual([]);
+    expect(existsSync(storePath)).toBe(false);
+    const storeDir = dirname(storePath);
+    const backups = readdirSync(storeDir).filter((name) => name.startsWith("delegation-runs.json.corrupt-"));
+    expect(backups).toHaveLength(1);
+    expect(readFileSync(join(storeDir, backups[0]!), "utf8")).toBe("{broken");
+  });
+
+  test("未知 store 版本应检疫而不是按当前 schema 静默误读", () => {
+    const storePath = getSubagentRunStorePath();
+    writeFileSync(storePath, JSON.stringify({ version: 2, runs: [] }), "utf8");
+
+    expect(getSubagentRunRegistry().listAll()).toEqual([]);
+    expect(existsSync(storePath)).toBe(false);
+    expect(readdirSync(dirname(storePath)).some((name) => name.startsWith("delegation-runs.json.corrupt-"))).toBe(true);
+  });
+
+  test("持久化上限应保留旧的未终态 run 并让终态历史让位", () => {
+    const storePath = getSubagentRunStorePath();
+    const terminalRuns = Array.from({ length: 500 }, (_, index) => ({
+      runId: `done-${index}`,
+      parentThreadId: "session-main",
+      rootThreadId: "session-main",
+      depth: 1,
+      childThreadId: `child-${index}`,
+      task: `done ${index}`,
+      status: "completed",
+      cleanup: "keep",
+      createdAt: 1_000 + index,
+      updatedAt: 1_000 + index,
+    }));
+    writeFileSync(storePath, JSON.stringify({ version: 1, runs: terminalRuns }), "utf8");
+
+    getSubagentRunRegistry().create({
+      runId: "old-active",
+      parentThreadId: "session-main",
+      childThreadId: "child-active",
+      task: "long running task",
+      cleanup: "keep",
+      status: "running",
+      createdAt: 1,
+    });
+
+    const persisted = JSON.parse(readFileSync(storePath, "utf8")) as { runs: Array<{ runId: string }> };
+    expect(persisted.runs).toHaveLength(500);
+    expect(persisted.runs.some((run) => run.runId === "old-active")).toBe(true);
+    expect(persisted.runs.some((run) => run.runId === "done-0")).toBe(false);
   });
 
   test("应支持按控制会话聚合 runs 并统计状态", () => {

@@ -1,8 +1,8 @@
 /**
  * integration.test.ts — 建议系统端到端集成测试
  *
- * 目标：跑通 REAL signals → rules → engine → store → feedback 管线，仅在外部边界
- * 打桩（adapter / dedup 源 / memory-v2 写入 / automation 写入 / LLM analyst）。
+ * 目标：跑通 REAL signals → rules → engine → store → feedback 管线，仅通过
+ * service 依赖入口替换会话读取、memory-v2 写入与 automation 写入边界。
  *
  * 验证两条关键链路：
  *  1) 用户含纠正语气的消息 → evaluateSessionSuggestions → correction 候选 →
@@ -14,13 +14,10 @@
  *
  * 真实 vs 打桩：
  *  REAL：signals / rules / engine / feedback / store / service（编排逻辑本身）
- *  MOCK：
+ *  FAKE：
  *    - adapter.extractRecentConversation：返回固定含纠正语的消息数组（不打线程 transcript）
- *    - automation-manager：listAutomationJobs→[]（dedup 空）/ createAutomationJob→spy
- *    - memory-v2/markdown-store：listEntries/listPending→[]（dedup 空）
  *    - memory-v2/command-service：remember→spy（不写真实记忆）
- *    - analyst：buildAnalysisInput/runAnalysis→[]（LLM 链路在 analyst.test.ts 单独覆盖）
- *    - infra/logger：静默
+ *    - automation-manager：createAutomationJob→spy
  *
  * Store I/O 走 tmpdir + LUME_CONFIG_DIR（同 store.test.ts / feedback.test.ts 套路）。
  */
@@ -28,86 +25,57 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
+import {
+  evaluateSessionSuggestions as evaluateSessionSuggestionsImpl,
+  handleSuggestionFeedback as handleSuggestionFeedbackImpl,
+  setSuggestionChangeBroadcaster,
+  type SuggestionServiceDependencies,
+  type SuggestionServiceOverrides,
+} from "./service";
+import {
+  getTypeWeights,
+  listSuggestions,
+  persistSuggestion,
+  resetSuggestionStoreForTest,
+} from "./store";
 
 // ===== 外部边界 spy =====
 const spies = {
   /** adapter 调用计数（验证管线确实读取了会话消息） */
   extractCalls: mock((_input: unknown) => {}),
   /** MemoryCommandService.remember 捕获（accepted memory_correction 动作） */
-  remember: mock(async (_input: Record<string, unknown>) => ({
-    action: "created" as const,
-  })),
+  remember: mock(
+    async (_input: Parameters<SuggestionServiceDependencies["remember"]>[0]) => ({
+      action: "created" as const,
+    }) as Awaited<ReturnType<SuggestionServiceDependencies["remember"]>>,
+  ),
   /** createAutomationJob 捕获（accepted open_automation_create 动作） */
-  createAutomationJob: mock((input: { name: string; prompt: string; schedule: unknown }) => ({
-    id: "job-1",
-    ...input,
-  })),
+  createAutomationJob: mock(
+    (input: Parameters<SuggestionServiceDependencies["createAutomationJob"]>[0]) => ({
+      id: "job-1",
+      ...input,
+    }) as ReturnType<SuggestionServiceDependencies["createAutomationJob"]>,
+  ),
   /** IPC 建议变更广播器捕获 */
   broadcaster: mock(() => {}),
 };
 
-// ===== mock.module：仅外部边界 =====
-
-// adapter：返回固定含纠正语的用户消息（绕开 thread transcript 读取）
-mock.module("./adapter", () => ({
+const dependencies: SuggestionServiceOverrides = {
   extractRecentConversation: async (input: unknown) => {
     spies.extractCalls(input);
     return [{ role: "user", content: "以后不要用 var 声明变量" }];
   },
-}));
-
-// automation-manager：listAutomationJobs→[]（dedup 空）+ createAutomationJob→spy
-const managerActual = await import("../automation/automation-manager");
-mock.module("../automation/automation-manager", () => ({
-  ...managerActual,
-  listAutomationJobs: () => [],
   createAutomationJob: spies.createAutomationJob,
-}));
+  remember: spies.remember,
+};
 
-// memory-v2/markdown-store：listEntries/listPending→[]（dedup 空，不打 memory 文件）
-mock.module("../memory-v2/markdown-store", () => ({
-  listEntries: () => [],
-  listPending: () => [],
-  readActivation: () => ({ recall: true, persona: true, suggestion: true, analyst: true }),
-}));
-
-// memory-v2/command-service：spy（accepted memory_correction 动作不写真实记忆）
-mock.module("../memory-v2/command-service", () => ({
-  MemoryCommandService: class MemoryCommandService {
-    remember = spies.remember;
-  },
-}));
-
-// analyst：LLM 链路不参与本集成测试（analyst.test.ts 已单独覆盖）
-mock.module("./analyst", () => ({
-  buildAnalysisInput: () => "",
-  runAnalysis: async () => [],
-}));
-
-// infra/logger：静默
-mock.module("../infra/logger", () => ({
-  createLogger: () => ({
-    trace: () => {},
-    debug: () => {},
-    info: () => {},
-    warn: () => {},
-    error: () => {},
-    fatal: () => {},
-  }),
-}));
-
-// ===== 在 mock 装配完成后，再 import 真实模块 =====
-const {
-  evaluateSessionSuggestions,
-  handleSuggestionFeedback,
-  setSuggestionChangeBroadcaster,
-} = await import("./service");
-const {
-  getTypeWeights,
-  listSuggestions,
-  persistSuggestion,
-  resetSuggestionStoreForTest,
-} = await import("./store");
+const evaluateSessionSuggestions = (
+  ctx: Parameters<typeof evaluateSessionSuggestionsImpl>[0],
+) => evaluateSessionSuggestionsImpl(ctx, dependencies);
+const handleSuggestionFeedback = (
+  id: number,
+  feedback: Parameters<typeof handleSuggestionFeedbackImpl>[1],
+) => handleSuggestionFeedbackImpl(id, feedback, dependencies);
 
 // ===== 真实 tmpdir store I/O（同 store.test.ts / feedback.test.ts） =====
 let root: string;
