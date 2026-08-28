@@ -235,8 +235,14 @@ function parseFeishuMessageContent(msgType: string | undefined, contentJson: str
         }
         return [title, ...lines].filter(Boolean).join("\n");
       }
-      case "interactive":
-        return "[卡片消息]";
+      case "interactive": {
+        // #598：引用卡片透传 title + 原始 JSON（截断），模型至少能读到卡片
+        // 结构化内容，而非丢失全部信息的「[卡片消息]」占位
+        const title = typeof parsed.title === "string" ? parsed.title : "";
+        const raw = contentJson ?? "";
+        const body = raw.length > 2000 ? `${raw.slice(0, 2000)}…` : raw;
+        return [title, body].filter(Boolean).join("\n");
+      }
       case "image":
         return "[图片]";
       case "file":

@@ -115,7 +115,9 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
     .map((m) => {
       const trimmed = m.text.trim();
       if (!trimmed) return "";
-      return multiSender && m.senderId?.trim() ? `${m.senderId.trim()}: ${trimmed}` : trimmed;
+      // #598：前缀优先发送者显示名，open_id 退居兜底
+      const senderLabel = m.senderName?.trim() || m.senderId?.trim();
+      return multiSender && senderLabel ? `${senderLabel}: ${trimmed}` : trimmed;
     })
     .filter(Boolean)
     .join("\n\n");

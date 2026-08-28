@@ -21,7 +21,7 @@ import {
 } from "@lume/shared";
 import { randomUUID } from "node:crypto";
 import { emitAgentNotification } from "../agent/agent-notification-service";
-import { createAgentThread, getAgentThreadMeta, updateAgentThreadMeta } from "../agent/agent-thread-manager";
+import { createAgentThread, getAgentThreadMeta, listAgentThreads, updateAgentThreadMeta } from "../agent/agent-thread-manager";
 import { appendAgentMessage, stopAgent, submitAgentToolPermission } from "../agent/agent-service";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 import { saveFilesToAgentSession } from "../agent/agent-files-service";
@@ -67,6 +67,8 @@ export interface InboundImRouteMessage {
   peerId: string;
   peerName?: string;
   senderId?: string;
+  /** 发送者显示名（#598，群聊前缀优先于 senderId 的 open_id） */
+  senderName?: string;
   text: string;
   contents?: ImMessageContent[];
   contextToken?: string;
@@ -93,6 +95,8 @@ export interface ImMessageRouterDeps {
   listChannels?: () => Channel[];
   stopThread?: (threadId: string) => Promise<boolean>;
   getThreadMeta?: (threadId: string) => AgentThreadMeta | undefined;
+  /** /list /switch 的历史线程来源（#598）；默认全量线程列表按 IM source 过滤 */
+  listThreads?: () => AgentThreadMeta[];
   updateThreadModelSelection?: (
     threadId: string,
     patch: Pick<AgentThreadMeta, "channelId" | "modelRef" | "modelId" | "modelSelectionSource">
@@ -678,6 +682,56 @@ async function routeImChatCommand(
       rememberCommand();
       break;
     }
+    case "list": {
+      const history = listPeerHistoryThreads(message, existing?.threadId, deps.listThreads ?? listAgentThreads);
+      await reply(
+        history.length === 0
+          ? "该会话暂无可切换的历史对话。发送消息开始当前对话，或 /new 开启新对话。"
+          : formatImHistoryThreads(history)
+      );
+      rememberCommand();
+      break;
+    }
+    case "switch": {
+      const index = Number(command.args[0]);
+      if (!Number.isInteger(index) || index < 1) {
+        await reply("命令格式不正确：/switch <序号>，序号见 /list。");
+        rememberCommand();
+        break;
+      }
+      const history = listPeerHistoryThreads(message, existing?.threadId, deps.listThreads ?? listAgentThreads);
+      const target = history[index - 1];
+      if (!target) {
+        await reply(history.length === 0 ? "该会话暂无可切换的历史对话。" : `序号超出范围（1-${history.length}），发送 /list 查看。`);
+        rememberCommand();
+        break;
+      }
+      // 与 /new 同理由：换绑后旧线程回复会静默丢失，先停止其进行中运行
+      if (existing) {
+        try {
+          await stopThread(existing.threadId);
+        } catch (error) {
+          log.warn("/switch 停止旧线程运行失败（继续切换）", {
+            threadId: existing.threadId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+        }
+      }
+      deleteImThreadBindingByPeer(message);
+      upsertImThreadBinding({
+        provider: message.provider,
+        accountId: message.accountId,
+        peerKind: message.peerKind,
+        peerId: message.peerId,
+        peerName: message.peerName,
+        threadId: target.id,
+        contextToken: message.contextToken
+      });
+      log.info("IM 命令切换历史对话", { peerId: message.peerId, from: existing?.threadId, to: target.id });
+      await reply(`已切换到「${target.title}」。`);
+      rememberCommand();
+      return { threadId: target.id };
+    }
     case "now": {
       const meta = existing ? getThreadMeta(existing.threadId) ?? null : null;
       await reply(
@@ -821,6 +875,40 @@ async function updateThreadSourceMeta(
   if (updateThreadMeta) {
     await updateThreadMeta(threadId, { source: sourceForMessage(message) });
   }
+}
+
+
+/**
+ * #598：/list /switch 的历史线程——同 IM 来源（provider/accountId/peerId）且非
+ * 当前绑定线程，按最近更新排序取前 10 条。
+ */
+function listPeerHistoryThreads(
+  message: InboundImRouteMessage,
+  currentThreadId: string | undefined,
+  listThreads: () => AgentThreadMeta[]
+): AgentThreadMeta[] {
+  return listThreads()
+    .filter((thread) =>
+      thread.source
+      && thread.source.provider === message.provider
+      && (thread.source.accountId ?? "") === message.accountId
+      && (thread.source.peerId ?? "") === message.peerId
+      && thread.id !== currentThreadId)
+    .sort((a, b) => b.updatedAt - a.updatedAt)
+    .slice(0, 10);
+}
+
+function formatImHistoryThreads(threads: AgentThreadMeta[]): string {
+  const lines = ["可切换的历史对话："];
+  threads.forEach((thread, index) => {
+    const date = new Date(thread.updatedAt);
+    const stamp = Number.isFinite(date.getTime())
+      ? `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`
+      : "";
+    lines.push(`${index + 1}. ${thread.title}${stamp ? `（${stamp}）` : ""}`);
+  });
+  lines.push("", "发送 /switch <序号> 切回对应对话。");
+  return lines.join("\n");
 }
 
 export function createImAgentStreamEmitter(

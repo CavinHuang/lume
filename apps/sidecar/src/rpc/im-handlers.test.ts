@@ -35,7 +35,10 @@ describe("im-handlers", () => {
         startAccount: async (accountId) => { calls.push(`start:${accountId}`) },
         stopAccount: (accountId) => { calls.push(`stop:${accountId}`) },
         stopAll: () => undefined,
-        getRunningAccountIds: () => []
+        getRunningAccountIds: () => [],
+        runRecoveryTick: async () => [],
+        startAutoRecovery: () => {},
+        stopAutoRecovery: () => {}
       }
     });
 
@@ -90,7 +93,10 @@ describe("im-handlers", () => {
         startAccount: async (accountId) => { calls.push(`start:${accountId}`) },
         stopAccount: (accountId) => { calls.push(`stop:${accountId}`) },
         stopAll: () => undefined,
-        getRunningAccountIds: () => []
+        getRunningAccountIds: () => [],
+        runRecoveryTick: async () => [],
+        startAutoRecovery: () => {},
+        stopAutoRecovery: () => {}
       },
       loginManager: {
         startLogin: async (input) => {

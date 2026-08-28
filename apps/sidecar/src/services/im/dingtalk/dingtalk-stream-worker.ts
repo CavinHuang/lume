@@ -97,6 +97,7 @@ export function parseDingtalkEvent(
     peerId: data.conversationId ?? data.senderStaffId ?? "unknown",
     peerName: data.conversationName ?? data.senderNick,
     senderId: data.senderStaffId ?? data.senderId,
+    senderName: data.senderNick,
     text,
     contextToken: data.sessionWebhook, // 出站回复用(存入 thread binding)
     messageId: data.msgId,

@@ -541,6 +541,8 @@ async function boot(): Promise<void> {
     seedDefaultSkills();
   }
   if (envAutostartEnabled("LUME_IM_AUTOSTART", true)) {
+    // #598：error 态账号指数退避自愈（随 IM 启动同生命周期）
+    imRuntimeManager.startAutoRecovery();
     void imRuntimeManager.startEnabledAccounts().catch((error) => {
       writeLogRecord({
         level: "error",

@@ -136,7 +136,7 @@ describe("入站增强读取面", () => {
               if (req.params.message_id === "om_card") {
                 return {
                   code: 0,
-                  data: { items: [{ msg_type: "interactive", body: { content: "{}" } }] },
+                  data: { items: [{ msg_type: "interactive", body: { content: JSON.stringify({ title: "工单通知", elements: [{ tag: "div", text: "详情正文" }] }) } }] },
                 };
               }
               return { code: 0, data: { items: [] } };
@@ -151,7 +151,10 @@ describe("入站增强读取面", () => {
     const textQuote = await getFeishuQuotedMessage({ appId: "a", appSecret: "s", messageId: "om_text" }, deps);
     expect(textQuote).toEqual({ senderId: "ou_1", text: "被引用的正文" });
     const cardQuote = await getFeishuQuotedMessage({ appId: "a", appSecret: "s", messageId: "om_card" }, deps);
-    expect(cardQuote?.text).toBe("[卡片消息]");
+    // #598：引用卡片透传 title + 原始 JSON，模型能读到卡片结构化内容
+    expect(cardQuote?.text).toContain("工单通知");
+    expect(cardQuote?.text).toContain('"elements"');
+    expect(cardQuote?.text).toContain("详情正文");
     expect(await getFeishuQuotedMessage({ appId: "a", appSecret: "s", messageId: "missing" }, deps)).toBeNull();
   });
 });

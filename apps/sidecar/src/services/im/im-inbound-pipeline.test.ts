@@ -67,6 +67,14 @@ describe("mergeImMessageBatch", () => {
     expect(merged.senderId).toBeUndefined();
   });
 
+  test("#598 群聊多发送者前缀优先显示名（senderName 覆盖 open_id）", () => {
+    const merged = mergeImMessageBatch([
+      msg({ peerKind: "group", text: "帮我看看", senderId: "user-a", senderName: "张三" }),
+      msg({ peerKind: "group", text: "收到", senderId: "user-b" })
+    ]);
+    expect(merged.text).toBe("张三: 帮我看看\n\nuser-b: 收到");
+  });
+
   test("群聊单发送者保持原语义（senderId 保留）", () => {
     const merged = mergeImMessageBatch([
       msg({ peerKind: "group", text: "第一条", senderId: "user-a" }),
