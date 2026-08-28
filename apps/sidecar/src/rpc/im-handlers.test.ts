@@ -207,7 +207,10 @@ describe("im-handlers #544 会话镜像", () => {
         startAccount: async () => undefined,
         stopAccount: () => undefined,
         stopAll: () => undefined,
-        getRunningAccountIds: () => []
+        getRunningAccountIds: () => [],
+        runRecoveryTick: async () => [],
+        startAutoRecovery: () => undefined,
+        stopAutoRecovery: () => undefined
       }
     });
   }

@@ -1,5 +1,16 @@
 import { describe, expect, test } from "bun:test";
-import { createFeishuCardStream, type FeishuCardStreamOptions, abortActiveFeishuRunCards } from "./feishu-card-stream";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import {
+  createFeishuCardStream,
+  type FeishuCardStreamOptions,
+  abortActiveFeishuRunCards,
+  recoverInterruptedFeishuRunCards
+} from "./feishu-card-stream";
+import { createImAccount } from "../im-config-manager";
+import { initialImRunCardState } from "./feishu-card-state";
+import { listActiveFeishuCards, registerActiveFeishuCard } from "./feishu-card-recovery-store";
 import type { FeishuRestClient } from "./feishu-api";
 import type { LumeRuntimeEvent } from "@lume/shared";
 
@@ -56,7 +67,7 @@ function fakeClock() {
 interface FakeApiCalls {
   cardCreates: Array<{ payloadType: string; hasFullJson: boolean }>;
   messageCreates: unknown[];
-  updates: Array<{ cardId: string; sequence: number; fullJson: boolean }>;
+  updates: Array<{ cardId: string; sequence: number; fullJson: boolean; cardJson: string }>;
   /** 前 N 次 update 失败（模拟限流），create 不受影响 */
   failUpdateAttempts?: number;
 }
@@ -105,7 +116,8 @@ function fakeClient(calls: FakeApiCalls): FeishuRestClient {
             calls.updates.push({
               cardId: req.path.card_id,
               sequence: req.data.sequence,
-              fullJson: req.data.card.type === "card_json" && req.data.card.data.includes('"schema"')
+              fullJson: req.data.card.type === "card_json" && req.data.card.data.includes('"schema"'),
+              cardJson: req.data.card.data
             });
             return { code: 0 };
           }
@@ -310,5 +322,48 @@ describe("abortActiveFeishuRunCards（#598 优雅关停卡片收尾）", () => {
     await abortActiveFeishuRunCards();
     await settle();
     expect(calls.updates.length).toBe(countAfterAbort);
+  });
+});
+
+describe("recoverInterruptedFeishuRunCards（#598 强杀后启动补偿）", () => {
+  test("下次启动用账号凭据补写中断终态并清除恢复条目", async () => {
+    const previousConfigDir = process.env.LUME_CONFIG_DIR;
+    const configDir = mkdtempSync(join(tmpdir(), "lume-feishu-card-recover-run-"));
+    process.env.LUME_CONFIG_DIR = configDir;
+    try {
+      const account = createImAccount({
+        provider: "feishu",
+        accountKey: "cli_x",
+        label: "飞书",
+        token: "sec",
+        enabled: true
+      });
+      registerActiveFeishuCard({
+        cardId: "stale-card",
+        accountId: account.id,
+        chatId: "oc_chat",
+        state: {
+          ...initialImRunCardState(1000),
+          blocks: [{ kind: "text", id: "text:m1", text: "已生成的部分内容" }]
+        }
+      });
+      const calls: FakeApiCalls = { cardCreates: [], messageCreates: [], updates: [] };
+
+      await expect(recoverInterruptedFeishuRunCards({ getClient: () => fakeClient(calls) })).resolves.toEqual({
+        recovered: 1,
+        failed: 0,
+        discarded: 0
+      });
+
+      expect(listActiveFeishuCards()).toEqual([]);
+      const recovered = JSON.parse(calls.updates[0]!.cardJson) as { header: { title: { content: string } }; body: unknown };
+      expect(recovered.header.title.content).toBe("已中断");
+      expect(JSON.stringify(recovered.body)).toContain("已生成的部分内容");
+      expect(JSON.stringify(recovered.body)).toContain("上次进程异常退出");
+    } finally {
+      if (previousConfigDir === undefined) delete process.env.LUME_CONFIG_DIR;
+      else process.env.LUME_CONFIG_DIR = previousConfigDir;
+      rmSync(configDir, { recursive: true, force: true });
+    }
   });
 });
