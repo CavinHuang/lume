@@ -90,3 +90,13 @@ export function decryptSecret(encryptedSecret: string): string {
   }
   return unseal(getLegacyKey(), Buffer.from(encryptedSecret, "base64"));
 }
+
+/**
+ * 读可能从未加密过的存量明文（#598：钉钉 binding 的 contextToken 是明文
+ * sessionWebhook）：带 enc: 前缀走解密，明文透传；带前缀但损坏仍抛错，
+ * 不静默当明文——嗅探只兼容历史形态，不吞密文故障。
+ */
+export function decryptSecretIfEncrypted(value: string | undefined): string | undefined {
+  if (value === undefined) return undefined;
+  return value.startsWith("enc:") ? decryptSecret(value) : value;
+}

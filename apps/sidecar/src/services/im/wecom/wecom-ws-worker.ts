@@ -40,8 +40,9 @@ export function parseWecomEvent(
   if (!body) return null;
   const rawText = body.text?.content?.trim();
   if (!rawText) return null;
-  // 群聊 @ 门控（#405，启发式同 feishu/dingtalk）
-  if (body.chattype === "group" && !rawText.includes("@")) return null;
+  // 群聊 @ 门控（#405，启发式同 feishu/dingtalk）；#598 词边界收紧：企微平台
+  // 无结构化 at 字段，@ 须位于文本开头或空白后，"a@b.com" 这类内嵌 @ 不算 at
+  if (body.chattype === "group" && !/(^|\s)@\S/.test(rawText)) return null;
   // 企微 @ 机器人前缀清理
   const text = rawText.replace(/^@\S+\s*/, "").trim() || rawText;
   return {

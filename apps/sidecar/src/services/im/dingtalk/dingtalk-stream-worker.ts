@@ -36,6 +36,8 @@ interface DingtalkImEventData {
   senderId?: string;
   senderNick?: string;
   text?: { content?: string };
+  /** 平台结构化 at 列表（#598）：群消息真实 @ 时由平台填充 */
+  atUsers?: unknown[];
   sessionWebhook?: string;
   msgId?: string;
   conversationName?: string;
@@ -60,6 +62,12 @@ function extractEventData(event: unknown): DingtalkImEventData | null {
   return null;
 }
 
+
+/** 词首 @ 判定（#598）：@ 须位于文本开头或空白后，"a@b.com" 这类内嵌 @ 不算 at。 */
+export function mentionsAtWord(text: string): boolean {
+  return /(^|\s)@\S/.test(text);
+}
+
 /** 解析钉钉 Stream IM 事件 → 统一入站路由消息。 */
 export function parseDingtalkEvent(
   event: unknown,
@@ -69,8 +77,15 @@ export function parseDingtalkEvent(
   if (!data) return null;
   const rawText = data.text?.content?.trim();
   if (!rawText) return null;
-  // 群聊 @ 门控（#405，启发式同 feishu/wecom）
-  if (data.conversationType !== "1" && !rawText.includes("@")) return null;
+  // 群聊 @ 门控（#405）：atUsers 结构化字段优先（#598）——平台给定时以它为准，
+  // 空数组即确认无 at；字段缺失退回词边界启发式（词首 @，"a@b.com" 不触发）
+  if (data.conversationType !== "1") {
+    if (Array.isArray(data.atUsers)) {
+      if (data.atUsers.length === 0) return null;
+    } else if (!mentionsAtWord(rawText)) {
+      return null;
+    }
+  }
   // 钉钉机器人文案常带 @机器人 前缀,简单清理
   const text = rawText.replace(/^@\S+\s*/, "").trim() || rawText;
   return {

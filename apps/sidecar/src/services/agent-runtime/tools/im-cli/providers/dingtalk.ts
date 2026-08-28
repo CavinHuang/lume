@@ -14,6 +14,8 @@ export interface CliProviderConfig {
   envDirs: Record<string, string>;
   authCommand: string[];
   authUrlPattern: RegExp;
+  /** #598：authUrl host 白名单（后缀匹配，hostname === h 或以 .h 结尾）；命中 pattern 后须经此校验 */
+  allowedAuthUrlHosts: string[];
   /** 授权后确认 connected 的独立命令(两段 spawn:authCommand exit 0 后再跑此命令判定) */
   statusCommand: string[];
   /** 解析 statusCommand 输出,判定是否已连接 */
@@ -37,6 +39,7 @@ export const dingtalkCliConfig: CliProviderConfig = {
   },
   authCommand: ["auth", "login", "--yes", "--format", "json", "--no-browser"],
   authUrlPattern: /https:\/\/login\.dingtalk\.com\/oauth2\/auth[^\s"']*/,
+  allowedAuthUrlHosts: ["login.dingtalk.com"],
   statusCommand: ["auth", "status", "--format", "json"],
   parseAuthStatus: parseDingtalkAuthStatus,
   authTimeoutMs: 16 * 60 * 1000,

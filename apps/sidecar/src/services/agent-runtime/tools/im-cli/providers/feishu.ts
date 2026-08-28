@@ -16,6 +16,7 @@ export const larkCliConfig: CliProviderConfig = {
   },
   authCommand: ["auth", "login", "--recommend", "--json"],
   authUrlPattern: /https:\/\/[^"'\s]*(?:feishu\.cn|larksuite\.com)[^"'\s]*/,
+  allowedAuthUrlHosts: ["feishu.cn", "larksuite.com"],
   statusCommand: ["auth", "status", "--json", "--verify"],
   parseAuthStatus: parseLarkAuthStatus,
   authTimeoutMs: 5 * 60 * 1000,

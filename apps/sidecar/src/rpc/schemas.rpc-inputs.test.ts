@@ -10,6 +10,7 @@ import {
   desktopAssistantSettingsInputSchema,
   forkThreadInputSchema,
   githubReleaseListOptionsSchema,
+  imAccountCreateInputSchema,
   routineGetByDateInputSchema,
   routineTriggerEntryInputSchema,
   testSearchBackendInputSchema
@@ -109,5 +110,25 @@ describe("#522 rpc input schemas", () => {
     expect(() =>
       desktopAssistantSettingsInputSchema.parse({ enabled: true, allowedApps: [] })
     ).toThrow();
+  });
+});
+
+describe("#598 imAccountCreateInputSchema", () => {
+  test("合法载荷通过，多余字段拒绝（.strict）", () => {
+    const input = { provider: "dingtalk", accountKey: "k", label: "l", token: "t", enabled: false };
+    expect(imAccountCreateInputSchema.safeParse(input).success).toBe(true);
+    expect(imAccountCreateInputSchema.safeParse({ ...input, rogue: 1 }).success).toBe(false);
+  });
+
+  test("字段长度上限拒绝超长值", () => {
+    const base = { provider: "weixin", token: "t" };
+    expect(imAccountCreateInputSchema.safeParse({ ...base, accountKey: "k".repeat(257) }).success).toBe(false);
+    expect(imAccountCreateInputSchema.safeParse({ ...base, label: "l".repeat(129) }).success).toBe(false);
+    expect(imAccountCreateInputSchema.safeParse({ ...base, token: "t".repeat(4097) }).success).toBe(false);
+    expect(imAccountCreateInputSchema.safeParse({ ...base, uin: "u".repeat(129) }).success).toBe(false);
+    expect(imAccountCreateInputSchema.safeParse({ ...base, workspaceId: "w".repeat(257) }).success).toBe(false);
+    expect(imAccountCreateInputSchema.safeParse({ ...base, baseUrl: "https://x.com/".padEnd(2049, "a") }).success).toBe(false);
+    // 上限内放行
+    expect(imAccountCreateInputSchema.safeParse({ ...base, accountKey: "k".repeat(256), label: "l".repeat(128), token: "t".repeat(4096) }).success).toBe(true);
   });
 });

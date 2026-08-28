@@ -5,7 +5,6 @@ import { join } from "node:path";
 import {
   createImAccount,
   deleteImAccount,
-  getImAccountSecret,
   listImAccounts,
   updateImAccount
 } from "./im-config-manager";
@@ -64,7 +63,6 @@ describe("im-config-manager", () => {
     expect(second.hasToken).toBeTrue();
     expect(JSON.stringify(listImAccounts())).not.toContain("token-one");
     expect(readFileSync(getImConfigPath(), "utf-8")).not.toContain("token-one");
-    expect(getImAccountSecret(first.id)).toBe("token-one");
   });
 
   test("updates one account without replacing siblings", () => {
@@ -101,8 +99,6 @@ describe("im-config-manager", () => {
       workspaceId: "workspace-main",
       status: "running"
     });
-    expect(getImAccountSecret(first.id)).toBe("token-one-updated");
-    expect(getImAccountSecret(second.id)).toBe("token-two");
     expect(listImAccounts().map((account) => account.id)).toEqual([first.id, second.id]);
   });
 

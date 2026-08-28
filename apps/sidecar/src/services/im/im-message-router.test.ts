@@ -9,6 +9,7 @@ import { createImAgentStreamEmitter, routeInboundImMessage } from "./im-message-
 import { createImAccount } from "./im-config-manager";
 import { hasSeenImMessage, resetImSeenMessageCacheForTest } from "./im-seen-message-store";
 import { getImThreadBindingByPeer, upsertImThreadBinding } from "./im-thread-binding-store";
+import { decryptSecret } from "../infra/secret-crypto";
 
 describe("im-message-router", () => {
   let prevConfigDir: string | undefined;
@@ -649,11 +650,11 @@ describe("im-message-router", () => {
         peerId: "user-1"
       }
     });
-    expect(sent).toEqual([{
-      peerId: "user-1",
-      text: "你好，我在。",
-      contextToken: "ctx-1"
-    }]);
+    expect(sent[0]?.peerId).toBe("user-1");
+    expect(sent[0]?.text).toBe("你好，我在。");
+    // #598：store 出口的 binding.contextToken 为密文形态，明文仅在出站口还原
+    expect(sent[0]?.contextToken).not.toBe("ctx-1");
+    expect(decryptSecret(sent[0]?.contextToken ?? "")).toBe("ctx-1");
   });
 
   test("IM stream emitter sends tool permission approval instructions to direct bound peer", async () => {
