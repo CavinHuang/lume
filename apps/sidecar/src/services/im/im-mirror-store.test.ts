@@ -48,15 +48,12 @@ describe("im-mirror-store", () => {
     expect(getImMirrorEntryByThreadId("t1")).not.toBeNull();
   });
 
-  test("upsert 按 threadId 幂等，同线程换 chat 跟随最新值且清错误", () => {
+  test("upsert 按 threadId 幂等，同线程换 chat 跟随最新值", () => {
     const first = upsertImMirrorEntry({ threadId: "t1", accountId: "a1", chatId: "oc_old", carrier: "card" });
-    noteMirrorConfigError("a1", "boom");
     const second = upsertImMirrorEntry({ threadId: "t1", accountId: "a1", chatId: "oc_new", carrier: "card" });
     expect(second.threadId).toBe(first.threadId);
     expect(second.chatId).toBe("oc_new");
     expect(listImMirrorEntries()).toHaveLength(1);
-    // 同线程再次落成（重试成功）后账号级历史错误不再展示
-    expect(second.lastError).toBeUndefined();
   });
 
   test("getByChat 以 accountId+chatId 双键命中，防串账号", () => {

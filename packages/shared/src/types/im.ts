@@ -258,7 +258,6 @@ export interface ImMirrorEntryPublic {
   chatId: string;
   carrier: ImMirrorCarrier;
   createdAt: number;
-  lastError?: string;
 }
 
 export interface ImMirrorSettingsPublic {

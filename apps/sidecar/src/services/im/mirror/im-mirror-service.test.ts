@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { LumeRuntimeEvent } from "@lume/shared";
@@ -182,14 +182,10 @@ function installFakeCardStream(): {
   return { builtSessions };
 }
 
-async function until(condition: () => boolean, ms = 1500, debug?: () => string): Promise<void> {
+async function until(condition: () => boolean, ms = 1500): Promise<void> {
   const startedAt = Date.now();
   while (!condition()) {
     if (Date.now() - startedAt > ms) {
-      if (debug) {
-        // bun 会去重重复 stderr 行，且 afterEach 会删临时目录——转储写到固定路径
-        appendFileSync(join(tmpdir(), "lume-mirror-dump.log"), `${debug()}\n`, "utf-8");
-      }
       throw new Error("等待超时");
     }
     await new Promise((resolve) => setTimeout(resolve, 5));
@@ -282,14 +278,7 @@ describe("im-mirror-service wrapAgentEmitterForMirror", () => {
     // 就绪前事件全部进 buffer；就绪后一次性按序投喂、不重不漏
     wrapped.onRuntimeEvent(triggerEvent("thr_ok"));
     wrapped.onRuntimeEvent(triggerEvent("thr_ok"));
-    await until(
-      () => activity.length === 1 && activity[0] === true,
-      1500,
-      () =>
-        `activity=${JSON.stringify(activity)} sessions=${builtSessions.length} evs=${
-          builtSessions[0]?.events.length ?? "-"
-        } groups=${fake.createdGroups.length} ownerErr=${getImMirrorSettings().lastError ?? "-"}`
-    );
+    await until(() => activity.length === 1 && activity[0] === true);
 
     wrapped.onComplete(undefined);
     await until(() =>

@@ -22,6 +22,7 @@ import {
   upsertImMirrorEntry
 } from "../services/im/im-mirror-store";
 import { getAgentThreadMeta } from "../services/agent/agent-thread-manager";
+import { forgetMirrorTitleMemo } from "../services/im/mirror/im-mirror-service";
 import { imRuntimeManager, type ImRuntimeManager } from "../services/im/im-runtime-manager";
 import {
   weixinLoginManager,
@@ -201,6 +202,8 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
         chatId,
         carrier: definition.mirror.carrier
       });
+      // 换群附着后群名必须重新同步：清旧标题 memo
+      forgetMirrorTitleMemo(threadId);
       return { ok: true, entry };
     },
     [IM_IPC_CHANNELS.MIRROR_DETACH]: async (params) => {
@@ -210,6 +213,7 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
         IM_IPC_CHANNELS.MIRROR_DETACH
       ) as { threadId: string };
       removeImMirrorEntriesByThreadId(threadId);
+      forgetMirrorTitleMemo(threadId);
       return { ok: true };
     },
     [IM_IPC_CHANNELS.START_ACCOUNT]: async (params) => {

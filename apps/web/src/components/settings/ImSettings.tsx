@@ -267,7 +267,7 @@ export function ImSettings() {
         toast.error(result.error ?? '附着失败')
         return
       }
-      toast.success('已附着：该桌面线程的运行将同步到此群')
+      toast.success('已附着：运行进度同步到此群，群内回复也将进入该桌面线程')
       setAttachPanelAccountId(null)
       await refresh()
     } catch (error) {

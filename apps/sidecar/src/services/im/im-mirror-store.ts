@@ -125,8 +125,7 @@ export function upsertImMirrorEntry(input: UpsertImMirrorEntryInput): ImMirrorEn
         ...existing,
         accountId: input.accountId,
         chatId: input.chatId,
-        carrier: input.carrier,
-        lastError: undefined
+        carrier: input.carrier
       };
       config.mirrors[index] = updated;
       writeConfigUnlocked(config);

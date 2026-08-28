@@ -36,6 +36,7 @@ const MIRROR_START_TRIGGER_EVENTS = new Set([
 ]);
 
 const MAX_PENDING_EVENTS = 400;
+let pendingOverflowWarned = false;
 
 function sanitizeGroupName(title: string): string {
   const trimmed = title.trim();
@@ -161,20 +162,22 @@ async function startMirrorCarry(threadId: string): Promise<ImRunCardSession | nu
   }
 
   if (capabilities.carrier === "card") {
+    const mirrorChatId = entry.chatId;
     return buildImRunCardSession({
       threadId,
       appId: account.accountKey ?? "",
       appSecret: account.token ?? "",
-      chatId: entry.chatId,
+      chatId: mirrorChatId,
       onTerminalFlushFailed: (finalText) => {
         if (!finalText) return;
-        void postToMirror(account, entry!.chatId, finalText).catch(() => {});
+        void postToMirror(account, mirrorChatId, finalText).catch(() => {});
       }
     });
   }
+  const transcriptChatId = entry.chatId;
   return createMirrorTranscriptCarrier({
     threadTitle: getAgentThreadMeta(threadId)?.title ?? "",
-    send: (text) => postToMirror(account, entry!.chatId, text)
+    send: (text) => postToMirror(account, transcriptChatId, text)
   });
 }
 
@@ -294,7 +297,17 @@ export function wrapAgentEmitterForMirror<T extends object>(threadId: string, em
       }
       if (carry) {
         carry.handleEvent(event);
-      } else if (starting && !aborted && pendingEvents.length < MAX_PENDING_EVENTS) {
+      } else if (starting && !aborted) {
+        if (pendingEvents.length >= MAX_PENDING_EVENTS) {
+          if (!pendingOverflowWarned) {
+            pendingOverflowWarned = true;
+            log.warn("镜像事件缓冲溢出，超出部分不再上卡（会话建立后恢复）", {
+              threadId: threadId.slice(0, 8),
+              dropped: true
+            });
+          }
+          return;
+        }
         pendingEvents.push(event);
       }
     },
@@ -314,6 +327,14 @@ export function wrapAgentEmitterForMirror<T extends object>(threadId: string, em
 // ---------------------------------------------------------------------------
 
 const lastSyncedTitles = new Map<string, string>();
+
+/**
+ * 清除线程的群名同步记忆：attach/detach 换群后必须调——否则标题未变时
+ * rename 会被旧 memo 挡掉，新附着群永远拿不到正确的群名。
+ */
+export function forgetMirrorTitleMemo(threadId: string): void {
+  lastSyncedTitles.delete(threadId);
+}
 
 /** 标题变化时同步群名；无 renameGroup 能力的渠道静默跳过。fire-and-forget。 */
 export async function syncMirrorGroupNameFromMeta(threadId: string, title: string): Promise<void> {
