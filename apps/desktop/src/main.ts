@@ -93,7 +93,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
-import { MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES } from '@lume/shared'
+import { MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES, toLumeRpcErrorEnvelope } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -3384,7 +3384,10 @@ function createSidecarHost({ onNotification }) {
           ...correlation,
           data: { method },
         })
-        rejectCall(new Error(`sidecar request timed out: ${method}`))
+        // #782:code 随 envelope 贯通 renderer,消费方按码判别(LeftSidebar 上报分类)
+        const timeoutError = new Error(`sidecar request timed out: ${method}`)
+        ;(timeoutError as Error & { code?: string }).code = RPC_ERROR_CODES.RPC_TIMEOUT
+        rejectCall(timeoutError)
       }, timeoutMs)
 
       pending.set(requestId, {
@@ -3520,12 +3523,20 @@ ipcMain.handle('lume:invoke', async (event, command, payload) => {
   } catch {
     surfaceOrigin = 'renderer_unknown'
   }
-  return logIpcCommand(
-    commandName,
-    payload,
-    () => dispatchCommand(commandName, payload, { ownerWebContentsId }),
-    surfaceOrigin,
-  )
+  try {
+    return await logIpcCommand(
+      commandName,
+      payload,
+      () => dispatchCommand(commandName, payload, { ownerWebContentsId }),
+      surfaceOrigin,
+    )
+  } catch (error) {
+    // #782：Error 跨 ipc 序列化剥掉自定义属性（code 契约在边界断裂）——错误
+    // 路径改返回普通对象 envelope（结构化克隆全保真），renderer 侧
+    // desktop-runtime invoke 解包重建带 code 的 Error。成功路径不经此分支；
+    // 埋点层（logIpcCommand）已记录并原样 rethrow，观测语义不变。
+    return toLumeRpcErrorEnvelope(error)
+  }
 })
 handleLogged('lume:window-control', async (event, op) => {
   // 操作 sender 对应的受信任窗口（主窗口或快速输入子窗口）。

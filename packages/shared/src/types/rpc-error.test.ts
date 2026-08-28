@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { toLumeRpcErrorShape } from "./rpc-error";
+import { extractRpcErrorCode, isLumeRpcErrorEnvelope, toLumeRpcErrorEnvelope, toLumeRpcErrorShape } from "./rpc-error";
 
 describe("toLumeRpcErrorShape", () => {
   test("显式 code 优先", () => {
@@ -62,5 +62,36 @@ describe("toLumeRpcErrorShape", () => {
     });
     const withoutDetails = toLumeRpcErrorShape(new Error("plain"));
     expect(Object.keys(withoutDetails)).toEqual(["code", "message"]);
+  });
+});
+
+// ─── #782 renderer 段贯通:envelope 往返 + extractRpcErrorCode ───
+describe("rpc error envelope (#782)", () => {
+  test("toLumeRpcErrorEnvelope 折任意 throw 值为可序列化普通对象", () => {
+    const envelope = toLumeRpcErrorEnvelope(
+      Object.assign(new Error("vault rejected"), { code: "connection_vault_password_invalid" }),
+    );
+    expect(isLumeRpcErrorEnvelope(envelope)).toBe(true);
+    expect(envelope).toMatchObject({
+      __lumeRpcError: true,
+      code: "connection_vault_password_invalid",
+      message: "vault rejected",
+    });
+    // 普通对象形态(无 Error 原型依赖)——结构化克隆跨 ipc/contextBridge 保真
+    expect(Object.getPrototypeOf(envelope)).toBe(Object.prototype);
+  });
+
+  test("isLumeRpcErrorEnvelope 仅认严格 true 哨兵,正常返回值不误判", () => {
+    expect(isLumeRpcErrorEnvelope({ __lumeRpcError: "yes", message: "fake" })).toBe(false);
+    expect(isLumeRpcErrorEnvelope({ data: { __lumeRpcError: true } })).toBe(false);
+    expect(isLumeRpcErrorEnvelope(null)).toBe(false);
+    expect(isLumeRpcErrorEnvelope({ ok: true, value: 42 })).toBe(false);
+  });
+
+  test("extractRpcErrorCode 仅提取显式字符串 code", () => {
+    expect(extractRpcErrorCode(Object.assign(new Error("x"), { code: "rpc_timeout" }))).toBe("rpc_timeout");
+    expect(extractRpcErrorCode(new Error("plain"))).toBeUndefined();
+    expect(extractRpcErrorCode({ code: 42 })).toBeUndefined();
+    expect(extractRpcErrorCode("string error")).toBeUndefined();
   });
 });

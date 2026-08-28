@@ -1,6 +1,16 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from 'node:crypto'
 import { existsSync, readFileSync, renameSync, writeFileSync } from 'node:fs'
 
+/**
+ * #782：错误码附着于 Error.code 随 ipc envelope 贯通 renderer（extractRpcErrorCode
+ * 判别）；message 保持同码原文——既有 includes 消费者与桌面日志均不受影响。
+ */
+function vaultError(code: string): Error {
+  const error = new Error(code)
+  ;(error as Error & { code?: string }).code = code
+  return error
+}
+
 export interface ConnectionVaultSafeStorage {
   isEncryptionAvailable(): boolean
   getSelectedStorageBackend?(): string
@@ -46,7 +56,7 @@ function readKeyFile(path: string): ConnectionVaultKeyFile {
     || !value.passwordWrappedKey
     || typeof value.deviceWrappedKey !== 'string'
   ) {
-    throw new Error('connection_vault_record_invalid')
+    throw vaultError('connection_vault_record_invalid')
   }
   return value
 }
@@ -80,7 +90,7 @@ function unwrapKey(record: WrappedKey, wrappingKey: Buffer): Buffer {
   ])
   if (value.length !== 32) {
     value.fill(0)
-    throw new Error('connection_vault_key_invalid')
+    throw vaultError('connection_vault_key_invalid')
   }
   return value
 }
@@ -106,9 +116,9 @@ export function setupConnectionVault(input: {
   password: string
   safeStorage: ConnectionVaultSafeStorage
 }): Buffer {
-  if (existsSync(input.path)) throw new Error('connection_vault_already_configured')
-  if (!isSecureStorage(input.safeStorage)) throw new Error('connection_vault_secure_storage_unavailable')
-  if (input.password.length < 8) throw new Error('connection_vault_password_too_short')
+  if (existsSync(input.path)) throw vaultError('connection_vault_already_configured')
+  if (!isSecureStorage(input.safeStorage)) throw vaultError('connection_vault_secure_storage_unavailable')
+  if (input.password.length < 8) throw vaultError('connection_vault_password_too_short')
 
   const masterKey = randomBytes(32)
   const salt = randomBytes(16)
@@ -142,12 +152,12 @@ export function autoUnlockConnectionVault(input: {
   safeStorage: ConnectionVaultSafeStorage
 }): Buffer | undefined {
   if (!existsSync(input.path)) return undefined
-  if (!isSecureStorage(input.safeStorage)) throw new Error('connection_vault_secure_storage_unavailable')
+  if (!isSecureStorage(input.safeStorage)) throw vaultError('connection_vault_secure_storage_unavailable')
   const record = readKeyFile(input.path)
   const value = Buffer.from(input.safeStorage.decryptString(Buffer.from(record.deviceWrappedKey, 'base64')), 'base64')
   if (value.length !== 32) {
     value.fill(0)
-    throw new Error('connection_vault_key_invalid')
+    throw vaultError('connection_vault_key_invalid')
   }
   return value
 }
@@ -171,13 +181,13 @@ export function unlockConnectionVaultWithPassword(input: {
   path: string
   password: string
 }): Buffer {
-  if (!existsSync(input.path)) throw new Error('connection_vault_not_configured')
+  if (!existsSync(input.path)) throw vaultError('connection_vault_not_configured')
   const record = readKeyFile(input.path)
   const passwordKey = derivePasswordKey(input.password, record)
   try {
     return unwrapKey(record.passwordWrappedKey, passwordKey)
   } catch {
-    throw new Error('connection_vault_password_invalid')
+    throw vaultError('connection_vault_password_invalid')
   } finally {
     passwordKey.fill(0)
   }
