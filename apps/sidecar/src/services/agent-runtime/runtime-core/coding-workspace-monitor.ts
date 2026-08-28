@@ -1,6 +1,6 @@
 import { isPathInside } from "./path-containment";
 import { existsSync, watch, type FSWatcher } from "node:fs";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
 import { Worker } from "node:worker_threads";
 
 const ATTRIBUTION_GRACE_MS = 120;
@@ -8,6 +8,7 @@ const SETTLE_QUIET_MS = 150;
 const SETTLE_TIMEOUT_MS = 400;
 const WATCHER_READY_TIMEOUT_MS = 10_000;
 const MAX_CANDIDATE_PATHS = 10_000;
+const ATOMIC_WRITE_TEMP_FILENAME = /^\..+\.[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\.tmp$/i;
 
 const MUTATION_WINDOW_TOOLS = new Set(["bash", "write", "edit", "multiedit", "notebookedit"]);
 
@@ -102,6 +103,9 @@ export function createCodingWorkspaceMonitor(
     const canonical = resolve(path);
     if (!workspaceRoots.some((root) => isPathInside(root, canonical))) return;
     if (relativePathSegments(canonical).some((segment) => segment.toLowerCase() === ".git")) return;
+    // SDK Write/Edit 先写入 `.<filename>.<uuid>.tmp` 再原子 rename。watcher 会同时
+    // 看到 tmp 的创建与消失，但它不是用户变更，不应进入最终 diff。
+    if (ATOMIC_WRITE_TEMP_FILENAME.test(basename(canonical))) return;
 
     if (!attributedPaths.has(canonical) && !externalPaths.has(canonical)
       && attributedPaths.size + externalPaths.size >= MAX_CANDIDATE_PATHS) {
@@ -281,4 +285,3 @@ export function createCodingWorkspaceMonitor(
 function relativePathSegments(path: string): string[] {
   return path.split(/[\\/]+/).filter(Boolean);
 }
-
