@@ -234,4 +234,18 @@ describe("automation-manager", () => {
     const created = createAutomationJob({ name: "恢复写入", schedule: { type: "manual" }, prompt: "x" });
     expect(created.name).toBe("恢复写入");
   });
+
+  test("per-job thinkingLevel 落盘并在 update 中可改(#647 P2-19)", () => {
+    const created = createAutomationJob({
+      name: "思考档位任务",
+      schedule: { type: "interval", intervalMs: 60_000 },
+      thinkingLevel: "high",
+      prompt: "x"
+    });
+    expect(created.thinkingLevel).toBe("high");
+    expect(listAutomationJobs().find((job) => job.id === created.id)?.thinkingLevel).toBe("high");
+
+    const updated = updateAutomationJob({ id: created.id, thinkingLevel: "off" });
+    expect(updated.thinkingLevel).toBe("off");
+  });
 });
