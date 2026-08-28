@@ -722,6 +722,7 @@ export async function runTaskLinkedSubagent(input: {
     actor,
   );
   let childThreadId: string | undefined;
+  let registryRunCreated = false;
   let execution: Awaited<ReturnType<typeof runSidecarSubagent>>;
   // 前台 task-linked 子代理同享折叠进度（#560②/#777）；task-linked 无父 runId，
   // 与 task-tools 同口径以 parentThreadId 兜底 runId。
@@ -732,6 +733,14 @@ export async function runTaskLinkedSubagent(input: {
     emit: (event) => input.emitRuntimeEvent?.(event),
   });
   try {
+    // task_ref 在 bindExecutor 前后均可能与普通 Delegate 并发；在真正 spawn 前
+    // 重查 fanout，并把执行器登记进统一 registry，令限流、父 Run 级联停止与
+    // 重启记账都覆盖这条路径。
+    const policy = resolveSubagentSpawnPolicy({
+      parentThreadId: input.parentThreadId,
+      parentPermissionMode: input.permissionMode,
+    });
+    if (!policy.ok) throw new Error(policy.error ?? "spawn policy rejected");
     const childMeta = getRuntimeHostPorts().createThreadWithModelRef(
       typeof input.toolInput.description === "string"
         ? input.toolInput.description
@@ -744,6 +753,31 @@ export async function runTaskLinkedSubagent(input: {
       { fileContextMode: "inherit" },
     );
     childThreadId = childMeta.id;
+    getSubagentRunRegistry().create({
+      runId: executorRef,
+      parentThreadId: input.parentThreadId,
+      ...(input.context.runId ? { parentRunId: input.context.runId } : {}),
+      rootThreadId: policy.rootThreadId,
+      depth: policy.depth,
+      childThreadId: childMeta.id,
+      deliveryThreadId: input.parentThreadId,
+      threadBound: true,
+      background: false,
+      ...(typeof input.toolInput.description === "string" ? { label: input.toolInput.description } : {}),
+      task: typeof input.toolInput.prompt === "string" ? input.toolInput.prompt : "Task executor",
+      status: "running",
+      cleanup: "keep",
+      ...(input.context.toolUseId ? { parentToolUseId: input.context.toolUseId } : {}),
+      ...(typeof input.toolInput.subagent_type === "string" ? { requestedAgentId: input.toolInput.subagent_type } : {}),
+      ...(input.modelOverride.modelRef ? { modelRef: input.modelOverride.modelRef } : {}),
+      ...(input.modelOverride.channelId ?? input.channelId
+        ? { channelId: input.modelOverride.channelId ?? input.channelId }
+        : {}),
+      ...(input.modelOverride.resolvedModelId ?? input.context.model
+        ? { modelId: input.modelOverride.resolvedModelId ?? input.context.model }
+        : {}),
+    });
+    registryRunCreated = true;
     taskExecutorStopHandlers.set(executorRef, () => {
       Promise.resolve()
         .then(() => getRuntimeCoreEntry().stopAgentRuntime(childMeta.id))
@@ -799,6 +833,16 @@ export async function runTaskLinkedSubagent(input: {
     };
   } finally {
     taskExecutorStopHandlers.delete(executorRef);
+  }
+  if (registryRunCreated) {
+    const registry = getSubagentRunRegistry();
+    const recorded = registry.get(executorRef);
+    if (recorded && !["completed", "errored", "aborted", "timed_out", "canceled"].includes(recorded.status)) {
+      registry.update(executorRef, {
+        status: execution.status,
+        outcome: { output: execution.output, error: execution.error },
+      });
+    }
   }
   // 终态帧在超时判定后补发：超时路径父流已继续，静默关闭不再回写
   if (execution.status !== "timed_out") {

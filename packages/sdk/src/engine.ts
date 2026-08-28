@@ -154,6 +154,17 @@ function createRepeatGuardSkippedToolResult(block: ToolUseBlock): ToolResult & {
   }
 }
 
+function createSameBatchDuplicateDelegateResult(block: ToolUseBlock): ToolResult & { tool_name: string } {
+  return {
+    type: 'tool_result',
+    tool_use_id: block.id,
+    content: 'Runtime repeat guard: an identical Delegate call is already running in this tool batch. Reuse that delegation instead of spawning a duplicate child session.',
+    is_error: true,
+    tool_name: block.name,
+    _meta: { error: { code: 'duplicate_concurrent_tool_call', retryable: false } },
+  }
+}
+
 function extractAssistantText(response: CreateMessageResponse): string {
   return response.content
     .filter((block): block is { type: 'text'; text: string } => block.type === 'text')
@@ -1769,11 +1780,20 @@ export class QueryEngine {
 
       // Pre-check signatures synchronously before spawning parallel work.
       const executable: typeof batch = []
+      const delegateSignatures = new Set<string>()
       let guardStoppedHere = false
       for (const item of batch) {
         if (guardStoppedHere) {
           results[item.index] = createRepeatGuardSkippedToolResult(item.block)
           continue
+        }
+        if (item.block.name === 'Delegate') {
+          const signature = toolCallSignature(item.block)
+          if (delegateSignatures.has(signature)) {
+            results[item.index] = createSameBatchDuplicateDelegateResult(item.block)
+            continue
+          }
+          delegateSignatures.add(signature)
         }
         const blocked = this.repeatGuardPreCheck(item.block)
         if (!blocked) {

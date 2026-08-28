@@ -1,5 +1,6 @@
 import { useMemo, useState, useRef, useLayoutEffect } from 'react'
 import { useAtomValue } from 'jotai'
+import { toast } from 'sonner'
 import { Loader2, ChevronDown, Bot, Square } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -80,6 +81,10 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
     setStopping(true)
     try {
       await sidecarCall(AGENT_IPC_CHANNELS.STOP_THREAD, { threadId: childThreadId })
+    } catch (error) {
+      toast.error('停止子代理失败', {
+        description: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       setStopping(false)
     }
@@ -164,7 +169,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
         <SubagentRunningPreview
           output={collapsedOutput}
           latestToolName={runActivity.toolName}
-          onStop={handleStopSubagent}
+          onStop={childThreadId ? handleStopSubagent : undefined}
           stopping={stopping}
         />
       )}
@@ -192,7 +197,7 @@ export function SubagentInlinePanel({ runId, threadId, toolUseId, description, a
               messages={runMessages}
               childThreadId={childThreadId}
               usageTotalTokens={usageTotalTokens}
-              onStop={handleStopSubagent}
+              onStop={childThreadId ? handleStopSubagent : undefined}
               stopping={stopping}
               onUserResizeStart={onUserResizeStart}
             />
@@ -278,18 +283,20 @@ function SubagentRunningPreview({ output, latestToolName, onStop, stopping }: {
 
 function SubagentStopButton({ onStop, stopping }: { onStop: () => void; stopping?: boolean }) {
   return (
-    <button
+    <Button
       type="button"
+      variant="destructive"
+      size="xs"
       onClick={(event) => {
         event.stopPropagation()
         onStop()
       }}
       disabled={stopping}
-      className="inline-flex flex-shrink-0 items-center gap-1 rounded-md border border-border/50 px-1.5 py-0.5 text-caption text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+      className="h-5 flex-shrink-0 px-1.5 text-caption"
     >
       <Square size={8} strokeWidth={3} />
       {stopping ? '停止中...' : '停止'}
-    </button>
+    </Button>
   )
 }
 

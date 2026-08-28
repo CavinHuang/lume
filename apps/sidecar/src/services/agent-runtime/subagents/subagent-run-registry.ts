@@ -1,6 +1,7 @@
 import { createLogger } from "../../infra/logger";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getAgentConfigDir } from "../../infra/config-paths";
+import { backupCorruptFile } from "../../infra/corrupt-file-backup";
 import {
   SUBAGENT_RUN_STORE_VERSION,
   type CreateSubagentRunInput,
@@ -135,10 +136,16 @@ class SubagentRunRegistry {
   private persist(): void {
     this.ensureLoaded();
     this.pruneMemoryRuns();
-    const runs = Array.from(this.runs.values())
+    const allRuns = Array.from(this.runs.values());
+    const activeRuns = allRuns.filter((run) => !this.terminalStatuses.has(run.status));
+    const terminalRuns = allRuns
+      .filter((run) => this.terminalStatuses.has(run.status))
       .sort((a, b) => b.updatedAt - a.updatedAt)
-      .slice(0, MAX_PERSISTED_RUNS)
-      .reverse();
+      .slice(0, Math.max(0, MAX_PERSISTED_RUNS - activeRuns.length));
+    // 未终态 run 是重启恢复的必要账本，不能被历史终态记录挤出磁盘上限。
+    // 极端情况下 active 本身超过上限时允许临时超限，终态历史让位。
+    const runs = [...activeRuns, ...terminalRuns]
+      .sort((a, b) => a.updatedAt - b.updatedAt);
     try {
       writeSubagentRunStore({
         version: SUBAGENT_RUN_STORE_VERSION,
@@ -568,33 +575,48 @@ function readSubagentRunStore(): SubagentRunStoreSchema {
     };
   }
 
+  let parsed: unknown;
   try {
-    const parsed = readJson(path);
-    if (!parsed || typeof parsed !== "object") {
-      return {
-        version: SUBAGENT_RUN_STORE_VERSION,
-        runs: []
-      };
-    }
-
-    const record = parsed as Record<string, unknown>;
-    const runs = Array.isArray(record.runs)
-      ? record.runs.map(normalizeRun).filter((item): item is SubagentRun => !!item)
-      : [];
-
-    return {
-      version: SUBAGENT_RUN_STORE_VERSION,
-      runs
-    };
+    parsed = readJson(path);
   } catch (error) {
-    storeLog.warn("读取 subagent run store 失败，使用空数据", {
-      error: error instanceof Error ? error.message : String(error)
-    });
-    return {
-      version: SUBAGENT_RUN_STORE_VERSION,
-      runs: []
-    };
+    return quarantineInvalidStore(
+      path,
+      error instanceof Error ? error.message : String(error)
+    );
   }
+  if (!parsed || typeof parsed !== "object") {
+    return quarantineInvalidStore(path, "根对象不是 JSON object");
+  }
+
+  const record = parsed as Record<string, unknown>;
+  if (record.version !== SUBAGENT_RUN_STORE_VERSION) {
+    return quarantineInvalidStore(path, `不支持的版本: ${String(record.version)}`);
+  }
+  if (!Array.isArray(record.runs)) {
+    return quarantineInvalidStore(path, "runs 不是数组");
+  }
+  const runs = record.runs.map(normalizeRun).filter((item): item is SubagentRun => !!item);
+
+  return {
+    version: SUBAGENT_RUN_STORE_VERSION,
+    runs
+  };
+}
+
+function quarantineInvalidStore(path: string, reason: string): SubagentRunStoreSchema {
+  const backupPath = backupCorruptFile(path);
+  if (!backupPath) {
+    throw new Error(`subagent run store 损坏且备份失败: ${reason}`);
+  }
+  storeLog.warn("subagent run store 损坏，已检疫后重建", {
+    path,
+    backupPath,
+    reason
+  });
+  return {
+    version: SUBAGENT_RUN_STORE_VERSION,
+    runs: []
+  };
 }
 
 function writeSubagentRunStore(schema: SubagentRunStoreSchema): void {
