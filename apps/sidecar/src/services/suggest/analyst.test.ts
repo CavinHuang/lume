@@ -9,26 +9,27 @@ import { DEFAULT_ACTIVATION } from "../memory-v2/types";
 import {
   ALLOWED_KINDS,
   MAX_CANDIDATES,
-  buildAnalysisInput,
+  buildAnalysisInput as buildAnalysisInputImpl,
   parseAnalystResponse,
   runAnalysis,
   validateAnalystCandidate,
   validateAnalystCandidates,
 } from "./analyst";
 
-// ===== buildAnalysisInput: persona 注入 mock（周期 3 Task 1） =====
-// 通过 mock.module 替换 ../memory-v2/persona 的读取/解析，控制 readPersonaRaw/parsePersonaProfile 行为。
+// ===== buildAnalysisInput: persona 注入 fake（周期 3 Task 1） =====
 let personaRaw: string | null;
 let personaProfile: PersonaProfile;
 let personaReadThrows: boolean;
 
-mock.module("../memory-v2/persona", () => ({
+const buildAnalysisInput = (
+  opts: Parameters<typeof buildAnalysisInputImpl>[0],
+) => buildAnalysisInputImpl(opts, {
   readPersonaRaw: () => {
     if (personaReadThrows) throw new Error("persona read fail");
     return personaRaw;
   },
   parsePersonaProfile: () => personaProfile,
-}));
+});
 
 let root: string;
 
