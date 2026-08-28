@@ -63,8 +63,6 @@ export const countPlanningTodos = (workspaceId?: string) =>
   )
 export const startPlanningTodo = (input: PlanningTodoStartInput) =>
   call<PlanningTodoStartResult>(PLANNING_TODO_IPC_CHANNELS.START, input)
-export const continuePlanningTodo = (input: PlanningTodoStartInput) =>
-  call<PlanningTodoStartResult>(PLANNING_TODO_IPC_CHANNELS.CONTINUE, input)
 export const listPlanningCalendarEvents = (
   input: PlanningCalendarEventListInput = {},
 ) =>

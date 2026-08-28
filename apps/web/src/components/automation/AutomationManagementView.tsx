@@ -349,13 +349,23 @@ export function AutomationManagementView() {
               runs={selectedJobRuns}
               onBack={() => setSelectedJobId(null)}
               onToggle={async () => {
-                const updated = await toggleAutomationJob(selectedJob.id)
-                setJobs((prev) => upsertAutomationJob(prev, updated))
+                try {
+                  const updated = await toggleAutomationJob(selectedJob.id)
+                  setJobs((prev) => upsertAutomationJob(prev, updated))
+                } catch (error) {
+                  console.error('[AutomationManagementView] 切换自动化状态失败:', error)
+                  toast.error(`切换状态失败：${error instanceof Error ? error.message : String(error)}`)
+                }
               }}
               onDelete={async () => {
-                await deleteAutomationJob(selectedJob.id)
-                setJobs((prev) => prev.filter((j) => j.id !== selectedJob.id))
-                setSelectedJobId(null)
+                try {
+                  await deleteAutomationJob(selectedJob.id)
+                  setJobs((prev) => prev.filter((j) => j.id !== selectedJob.id))
+                  setSelectedJobId(null)
+                } catch (error) {
+                  console.error('[AutomationManagementView] 删除自动化失败:', error)
+                  toast.error(`删除失败：${error instanceof Error ? error.message : String(error)}`)
+                }
               }}
               onRun={async () => {
                 // #586:受理即返回，完成靠 automation:run-completed 推送刷新
@@ -367,16 +377,21 @@ export function AutomationManagementView() {
                 }
               }}
               onSave={async (draft) => {
-                const updated = await updateAutomationJob({
-                  id: selectedJob.id,
-                  name: draft.name,
-                  description: summarizePrompt(draft.prompt),
-                  prompt: draft.prompt,
-                  schedule: scheduleForDraft(draft.scheduleFrequency, draft.scheduleMinute, draft.scheduleDayOfWeek, draft.customCronExpr),
-                  defaultModel: draft.defaultModel || undefined,
-                  thinkingLevel: draft.thinkingLevel === 'off' ? undefined : draft.thinkingLevel,
-                })
-                setJobs((prev) => upsertAutomationJob(prev, updated))
+                try {
+                  const updated = await updateAutomationJob({
+                    id: selectedJob.id,
+                    name: draft.name,
+                    description: summarizePrompt(draft.prompt),
+                    prompt: draft.prompt,
+                    schedule: scheduleForDraft(draft.scheduleFrequency, draft.scheduleMinute, draft.scheduleDayOfWeek, draft.customCronExpr),
+                    defaultModel: draft.defaultModel || undefined,
+                    thinkingLevel: draft.thinkingLevel === 'off' ? undefined : draft.thinkingLevel,
+                  })
+                  setJobs((prev) => upsertAutomationJob(prev, updated))
+                } catch (error) {
+                  console.error('[AutomationManagementView] 保存自动化失败:', error)
+                  toast.error(`保存自动化失败：${error instanceof Error ? error.message : String(error)}`)
+                }
               }}
             />
           ) : (
@@ -636,12 +651,22 @@ function AutomationJobGroup({
                 onEdit={() => onEdit(job)}
                 onSelect={() => onSelect(job.id)}
                 onToggle={async () => {
-                  const updated = await toggleAutomationJob(job.id)
-                  setJobs((prev) => upsertAutomationJob(prev, updated))
+                  try {
+                    const updated = await toggleAutomationJob(job.id)
+                    setJobs((prev) => upsertAutomationJob(prev, updated))
+                  } catch (error) {
+                    console.error('[AutomationManagementView] 切换自动化状态失败:', error)
+                    toast.error(`切换状态失败：${error instanceof Error ? error.message : String(error)}`)
+                  }
                 }}
                 onDelete={async () => {
-                  await deleteAutomationJob(job.id)
-                  setJobs((prev) => prev.filter((j) => j.id !== job.id))
+                  try {
+                    await deleteAutomationJob(job.id)
+                    setJobs((prev) => prev.filter((j) => j.id !== job.id))
+                  } catch (error) {
+                    console.error('[AutomationManagementView] 删除自动化失败:', error)
+                    toast.error(`删除失败：${error instanceof Error ? error.message : String(error)}`)
+                  }
                 }}
                 onRun={async () => {
                   // #586:受理即返回，完成靠 automation:run-completed 推送刷新

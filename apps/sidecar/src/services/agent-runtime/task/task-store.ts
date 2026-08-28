@@ -472,7 +472,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       delete lume.executorRef;
       delete lume.executionFence;
       lume.recoveryState = input.forced ? "forced_terminated" : "terminal_ack";
-      if (input.error) lume.lastError = { source: "executor", message: input.error, recordedAt: now };
+      if (input.error) lume.lastError = { source: "executor", message: input.error.slice(0, 4_000), recordedAt: now };
       if (input.resultStatus || input.error || (typeof input.resultSummary === "string" && input.resultSummary.trim())) {
         lume.lastResult = {
           status: input.resultStatus ?? (input.error ? "errored" : "completed"),
