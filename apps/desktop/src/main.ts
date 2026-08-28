@@ -3489,6 +3489,12 @@ function createSidecarHost({ onNotification }) {
     call,
     callPluginPackagePrivileged,
     notifyBrowserSettings,
+    // #838②:desktop→sidecar 的通用 fire-and-forget 通知原语(与 notifyBrowserSettings
+    // 同型,无 ack/无积压队列,不涉 #829 运输语义)。当前消费方:tab 生命周期失效推送。
+    async notify(method, params) {
+      await start()
+      child.postMessage(JSON.stringify({ method, params }))
+    },
     stop,
     setMigrationInProgress: (value) => {
       migrationInProgress = value
@@ -3724,7 +3730,14 @@ app.whenReady().then(async () => {
   browserRuntime = createBrowserRuntime({
     getWindow: () => mainWindow,
     configDir: () => configDir,
-    emit: (event) => emitRendererEvent('browser:event', event),
+    emit: (event) => {
+      emitRendererEvent('browser:event', event)
+      // #838②:tab 关闭/换代时推送 sidecar,令 list_tabs 微缓存 0 延迟失效
+      // (TTL 与 tab_not_found 防线保留为纵深)。幂等:agent 自身动作在工具层已显式清缓存。
+      if (event.method === 'browser:tab-closed' || event.method === 'browser:tab-changed') {
+        void sidecarHost.notify(event.method, event.params)
+      }
+    },
     initialSettings: getPersistedBrowserSettings() as Partial<BrowserSettings>,
     persistSettings: persistBrowserSettings,
     isAgentPluginEnabled: () => agentBrowserPluginEnabled,
