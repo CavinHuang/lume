@@ -48,6 +48,7 @@ export const NOTIFY_ONLY_CHANNEL_VALUES: ReadonlySet<string> = new Set([
   "agent:tool-permission-request",
   "agent:workspace-files-changed",
   "desktop-context:proposal-updated",
+  "im-mirror:stream-active",
   "memory:source-files-changed",
   "reading:noteGenDone",
   "reading:noteGenFailed",

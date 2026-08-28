@@ -323,6 +323,17 @@ impl Runtime {
                 }
             };
             let message_type = next.get("type").and_then(Value::as_str).unwrap_or("");
+            // #796：cell 可经宿主 console 直通 stdout 写任意协议行——此前结果帧
+            // （exec_result 等）仅按 id 匹配无认证，执行结果可被 cell 伪造。握手
+            // 后的所有 kernel 帧必须携带 bridge token；无 token/不匹配的帧丢弃
+            // 并告警（特权帧的既有 assert_token 校验与此幂等）。
+            let frame_token = next.get("token").and_then(Value::as_str).unwrap_or("");
+            if frame_token != session.bridge_token {
+                eprintln!(
+                    "node_repl host: dropping kernel frame without valid bridge token (type={message_type})"
+                );
+                continue;
+            }
             match message_type {
                 "exec_redacted_source" if next.get("id").and_then(Value::as_str) == Some(id.as_str()) => {
                     redacted_source = next.get("source").and_then(Value::as_str).map(ToOwned::to_owned);

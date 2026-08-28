@@ -187,3 +187,31 @@ describe("parseDingtalkEvent", () => {
     expect(parseDingtalkEvent({ data: JSON.stringify({ conversationType: "1" }) }, makeAccount())).toBeNull();
   });
 });
+
+describe("parseDingtalkEvent #544 镜像群免 @", () => {
+  const groupEvent = {
+    data: {
+      conversationId: "cid",
+      conversationType: "2",
+      text: { content: "普通群聊" },
+      senderStaffId: "s",
+      sessionWebhook: "hw",
+      msgId: "m",
+    },
+  };
+
+  it("镜像谓词命中：群聊消息免 @ 放行", () => {
+    const msg = parseDingtalkEvent(groupEvent, makeAccount(), () => true);
+    expect(msg?.peerKind).toBe("group");
+    expect(msg?.peerId).toBe("cid");
+    expect(msg?.text).toBe("普通群聊");
+  });
+
+  it("恒假谓词仍按门控丢弃", () => {
+    expect(parseDingtalkEvent(groupEvent, makeAccount(), () => false)).toBeNull();
+  });
+
+  it("默认不传谓词行为不变（回归钉死）", () => {
+    expect(parseDingtalkEvent(groupEvent, makeAccount())).toBeNull();
+  });
+});

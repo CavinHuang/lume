@@ -396,15 +396,26 @@ describe("ThreadListChanged notification", () => {
 // “task_ref 执行必须经 runForegroundSubagentWithTimeout 包装”这一不变量，
 // 防止未来改回直调时 #647 P1-3 无声复活。
 describe("task_ref 委派超时接线", () => {
-  test("runTaskLinkedSubagent 必须经 runForegroundSubagentWithTimeout 且超时来自共享 resolver", () => {
+  function taskLinkedSource(): string {
     const source = readFileSync(join(import.meta.dir, "run-subagent.ts"), "utf8");
     const fnStart = source.indexOf("export async function runTaskLinkedSubagent");
     expect(fnStart).toBeGreaterThanOrEqual(0);
     const rest = source.slice(fnStart);
     const nextExport = rest.indexOf("\nexport ", 1);
-    const body = nextExport === -1 ? rest : rest.slice(0, nextExport);
+    return nextExport === -1 ? rest : rest.slice(0, nextExport);
+  }
+
+  test("runTaskLinkedSubagent 必须经 runForegroundSubagentWithTimeout 且超时来自共享 resolver", () => {
+    const body = taskLinkedSource();
     expect(body).toContain("runForegroundSubagentWithTimeout({");
     expect(body).toContain("timeoutMs: resolveForegroundSubagentTimeoutMs()");
+  });
+
+  test("task_ref spawn 前必须重查 fanout 并登记统一 registry", () => {
+    const body = taskLinkedSource();
+    expect(body).toContain("const policy = resolveSubagentSpawnPolicy({");
+    expect(body).toContain("getSubagentRunRegistry().create({");
+    expect(body).toContain("runId: executorRef");
   });
 });
 

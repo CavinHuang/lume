@@ -6,6 +6,7 @@ import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
 import { getFeishuBotOpenId, getFeishuChatUserCount } from "./feishu-api";
 import { resolveImGroupAccess } from "../im-group-policy";
+import { getImMirrorEntryByChat } from "../im-mirror-store";
 import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
@@ -144,6 +145,11 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
    */
   async function gateGroupAccess(parsed: InboundImRouteMessage): Promise<InboundImRouteMessage | null> {
     if (parsed.peerKind !== "group") return parsed;
+    // #544 镜像群免 @ 放行：命中注册表即过门，跳过 bot 身份与群人数查询
+    if (getImMirrorEntryByChat(input.account.id, parsed.peerId)) {
+      log.info("镜像群免 @ 放行", { accountId: input.account.id, peerId: parsed.peerId });
+      return parsed;
+    }
     const botOpenId = await ensureBotOpenId();
     const botMentioned =
       botOpenId === null

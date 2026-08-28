@@ -28,6 +28,7 @@ import {
   emptyTrash,
 } from "../services/agent/agent-thread-manager";
 import { deleteImThreadBindingsForThreadIds } from "../services/im/im-thread-binding-store";
+import { dissolveMirrorForThread } from "../services/im/mirror/im-mirror-service";
 import { getAgentMessageVersions } from "../services/agent/agent-message-versioning-service";
 import { getAgentSubmissionStore } from "../services/agent/agent-submission-store";
 import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-status-manager";
@@ -787,6 +788,8 @@ export function createAgentHandlers(
       deleteAgentThread(input.threadId);
       // 同步清 IM 绑定（#588）：残留会让 IM 侧在已死线程的壳里从零失忆地对话
       deleteImThreadBindingsForThreadIds(new Set([input.threadId]));
+      // #544 镜像联动：bot 退群+清映射（fire-and-forget，失败静默不影响删除主链路）
+      void dissolveMirrorForThread(input.threadId);
       getAgentRuntimeStatusManager().clearSession(input.threadId);
       context.planModePhaseTracker.clearSession(input.threadId);
       releaseThreadEventBridge(input.threadId);

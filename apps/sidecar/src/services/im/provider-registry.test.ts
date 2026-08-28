@@ -33,4 +33,17 @@ describe("provider-registry", () => {
     // 用保证永不注册的字符串,避免与正式注册的 provider(weixin/dingtalk/feishu/wecom)耦合
     expect(() => getImProvider("unregistered-provider" as never)).toThrow(/未注册|provider/i);
   });
+
+  it("#544 mirror 能力位缺省为 undefined，声明后原样透传", () => {
+    registerImProvider(makeDef("dingtalk"));
+    expect(getImProvider("dingtalk").mirror).toBeUndefined();
+
+    const def: ImProviderDefinition = {
+      ...makeDef("dingtalk"),
+      mirror: { carrier: "text", renameGroup: async () => ({ ok: true }) },
+    };
+    registerImProvider(def);
+    expect(getImProvider("dingtalk").mirror?.carrier).toBe("text");
+    expect(typeof getImProvider("dingtalk").mirror?.renameGroup).toBe("function");
+  });
 });

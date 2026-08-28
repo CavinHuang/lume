@@ -11,10 +11,11 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
-import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, IM_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
-import { cleanupExpiredTrash, subscribeThreadListChanged } from "./services/agent/agent-thread-manager";
+import { cleanupExpiredTrash, subscribeThreadListChanged, onAgentThreadTitleChanged } from "./services/agent/agent-thread-manager";
+import { subscribeImMirrorStreamActivity, syncMirrorGroupNameFromMeta } from "./services/im/mirror/im-mirror-service";
 import type { JsonRpcRequest, JsonRpcResponse } from "./rpc/types";
 import {
   acknowledgeLogBatch,
@@ -585,12 +586,21 @@ async function boot(): Promise<void> {
   const unsubscribeThreadListChanged = subscribeThreadListChanged(() => {
     writeNotification(AGENT_IPC_CHANNELS.THREAD_LIST_CHANGED, null);
   });
+  // #544 会话镜像：保活窗口推桌面 main（引用计数 powerSaveBlocker）+ 群名跟随标题
+  const unsubscribeMirrorStreamActivity = subscribeImMirrorStreamActivity((activity) => {
+    writeNotification(IM_IPC_CHANNELS.MIRROR_STREAM_ACTIVE, activity);
+  });
+  const unsubscribeMirrorTitle = onAgentThreadTitleChanged((threadId, title) => {
+    void syncMirrorGroupNameFromMeta(threadId, title);
+  });
   let stopping: Promise<void> | undefined;
   const stopWatcher = (): Promise<void> => {
     if (stopping) return stopping;
     stopping = (async () => {
     unsubscribeSubagentAnnounce();
     unsubscribeThreadListChanged();
+    unsubscribeMirrorStreamActivity();
+    unsubscribeMirrorTitle();
     stopBackgroundProcessRecovery();
     stopWorkspaceWatcher();
     await Promise.allSettled([
