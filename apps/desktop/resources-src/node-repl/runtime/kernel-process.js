@@ -286,7 +286,10 @@ function shutdown() {
     timer.unref?.();
 }
 function send(message) {
-    process.stdout.write(`${JSON.stringify(message)}\n`);
+    // #796：全帧附 bridge token。cell 可经宿主 console 直通 stdout 写任意行，
+    // 无 token 的协议帧（exec_result 等）会被宿主照单解析、执行结果可被伪造；
+    // 宿主侧对握手后的所有帧校验 token。与特权帧既有 token 字段同值，幂等。
+    process.stdout.write(`${JSON.stringify({ ...message, token: bridgeToken })}\n`);
 }
 function fatalProtocol(message) {
     console.error(message);
