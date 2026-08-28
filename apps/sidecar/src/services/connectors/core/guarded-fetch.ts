@@ -1,5 +1,8 @@
 import type { LookupFunction } from "node:net";
+import { createLogger } from "../../infra/logger";
 import { assertPublicHttpUrl, classifyIpAddress, isIpAddress, isIpv4Address } from "./request";
+
+const logger = createLogger("connectors.core.guarded-fetch");
 
 /**
  * Single resolved address returned by a DNS lookup, mirroring the shape of
@@ -444,7 +447,7 @@ async function loadPinnedDispatcherFactory(): Promise<
       }))
       .catch((error): null => {
         // 防护静默失效必须留痕:任何一次 import 失败都会 memoize 到进程死
-        console.warn("[guarded-fetch] undici unavailable; connection pinning disabled", error);
+        logger.warn("undici unavailable; connection pinning disabled", { error: error instanceof Error ? error.message : String(error) });
         return null;
       });
   }
@@ -455,7 +458,7 @@ async function loadPinnedDispatcherFactory(): Promise<
     if (isProxyLikeDispatcher(globalDispatcher, module.proxyClasses)) {
       if (!proxyPinSkipLogged) {
         proxyPinSkipLogged = true;
-        console.warn("[guarded-fetch] proxy dispatcher active; keeping proxied transport instead of connection pinning");
+        logger.warn("proxy dispatcher active; keeping proxied transport instead of connection pinning");
       }
       return undefined;
     }

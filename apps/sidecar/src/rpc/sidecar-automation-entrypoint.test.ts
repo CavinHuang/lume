@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -116,7 +116,14 @@ function createSidecarClient(configDir: string, options?: { autostart?: boolean 
       }
       const timer = setTimeout(() => {
         onNotification = undefined;
-        rejectPromise(new Error(`等待通知超时: ${method}\n${stderrText}`));
+        // #838 诊断：超时附带 sidecar 结构化日志与已收通知清单（CI 上无他法观测进程内态）
+        let logDump = "";
+        try {
+          logDump = readFileSync(join(configDir, "sidecar.log"), "utf8").slice(-8_000);
+        } catch {}
+        rejectPromise(new Error(
+          `等待通知超时: ${method}\n[notifications] ${JSON.stringify(notifications.map((n) => n.method))}\n[sidecar.log]\n${logDump}\n${stderrText}`,
+        ));
       }, timeoutMs);
       onNotification = (notification) => {
         if (notification.method !== method) return;

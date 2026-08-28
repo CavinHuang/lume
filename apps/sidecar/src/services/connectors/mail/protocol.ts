@@ -1058,7 +1058,7 @@ function attachDeadMarker(conn: PooledImapConnection) {
   if (typeof emitter.on !== "function") {
     // 缺 on 的自定义注入会让 dead 标记失效,行为无声退回
     // 「空闲 emit error → uncaughtException」的原 P0——宁可吵闹不可静默
-    console.warn("[mail] pooled IMAP client does not support on(); dead-marking disabled");
+    poolLogger.warn("pooled IMAP client does not support on(); dead-marking disabled");
     return;
   }
   emitter.on("error", () => {

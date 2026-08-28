@@ -84,7 +84,8 @@ describe("runtime-core attempt observability", () => {
     expect(runFiles.some((file) => file.endsWith(".json"))).toBeTrue();
     expect(runFiles.some((file) => file.endsWith(".items.jsonl"))).toBeTrue();
     expect(traceFiles.some((file) => file.endsWith(".json"))).toBeTrue();
-    expect(existsSync(join(sessionDir, "runtime-state.json"))).toBeTrue();
+    // #527 三审①：状态源迁移至 transcript.jsonl（runtime-state.json 已移除）
+    expect(existsSync(join(sessionDir, "transcript.jsonl"))).toBeTrue();
     expect(existsSync(join(getAgentThreadRootPath(workspace.slug, thread.id), "systemPrompt.md"))).toBeFalse();
 
     rmSync(configDir, { recursive: true, force: true });
