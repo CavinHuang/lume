@@ -45,7 +45,7 @@ import { BrowserCredentialVault } from "./browser-credentials"
 import { BrowserWorkspaceStore, type BrowserWorkspaceLogEvent } from "./browser-workspace-store"
 import { BrowserReferenceGrantStore } from "./browser-reference-grants"
 import { BrowserAnnotationManager } from "./browser-annotation-manager"
-import { buildBrowserSemanticTree, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
+import { buildBrowserSemanticTree, reusableSemanticFrameState, sameSemanticFrameState, type BrowserSemanticFrameRevision, type BrowserSemanticLine, type BrowserSemanticRef } from "./browser-semantic-snapshot"
 import { normalizeBrowserAgentScriptResult, prepareBrowserAgentScript, type BrowserAgentScriptResult } from "./browser-agent-script"
 import { dispatchBrowserClick, dispatchBrowserKey, dispatchBrowserText, focusBrowserPoint, moveBrowserPointer, type BrowserCdpCommandSender, type BrowserCdpPoint } from "./browser-cdp-input"
 import { BrowserActionQueue } from "./browser-action-queue"
@@ -183,7 +183,9 @@ type BrowserSemanticRefSession = {
 }
 
 type BrowserSemanticSnapshotCursor = {
-  frameState: BrowserSemanticFrameState[]
+  // #604：帧级复用凭证 + 建树时间（TTL 兜底 closed shadow 等无信号盲区）
+  cachedAt: number
+  frameState: BrowserSemanticFrameRevision[]
   generation: number
   interactiveOnly: boolean
   limit: number
@@ -202,13 +204,15 @@ type BrowserCdpFrameTree = {
   frame?: { id?: string; loaderId?: string }
 }
 
-type BrowserSemanticFrameState = { domRevision: number; frameId: string; loaderId: string }
-
 type BrowserCdpDebugger = {
   sendCommand(method: string, params?: Record<string, unknown>): Promise<unknown>
 }
 
-const BROWSER_DOM_REVISION_SCRIPT = `(() => {
+// #604：effect 检测的 DOM 指纹——DOM revision 之外并入三类零 mutation 信号却进语义树的状态：
+// 原生控件 IDL 串（checked/selectedIndex/value 是 property 不写 attribute）、内建 closed shadow
+// （video/audio 媒体状态）、视口尺寸（media query 随 viewport:set 翻转驱动元素显隐，observer 无信号）。
+// 只遍历表单控件/媒体元素（非全表），300ms 轮询窗口内成本可忽略，不回归 #605。
+const BROWSER_DOM_FINGERPRINT_SCRIPT = `(() => {
   const key = "__lumeBrowserActionEffect";
   const root = globalThis;
   if (!root[key]) {
@@ -217,7 +221,21 @@ const BROWSER_DOM_REVISION_SCRIPT = `(() => {
     observer.observe(document, { attributes: true, characterData: true, childList: true, subtree: true });
     root[key] = state;
   }
-  return root[key].revision;
+  const controls = Array.from(document.querySelectorAll("input, select, textarea"))
+    .map((el) => (el.checked ? 1 : 0) + "-" + (el.selectedIndex >>> 0) + "-" + String(el.value ?? "").length)
+    .join(",");
+  // 内建 closed shadow（video/audio 媒体控件）状态进 AX 树但零 mutation 信号——并入指纹
+  const media = Array.from(document.querySelectorAll("video, audio"))
+    .map((el) => (el.paused ? 1 : 0) + "-" + Math.round(el.currentTime * 10) + "-" + (el.muted ? 1 : 0))
+    .join(",");
+  return root[key].revision + "|" + controls + "|" + media + "|" + innerWidth + "x" + innerHeight;
+})()`
+
+// #604：快照复用的帧级指纹——effect 指纹之外加 open shadow 检测（零信号内容，检出即判该帧
+// 不可信；第三方 closed shadow 无法探测，由复用 TTL 兜底）。仅快照请求频率执行，轮询不走此脚本。
+const BROWSER_SEMANTIC_FRAME_REVISION_SCRIPT = `(() => {
+  for (const el of document.querySelectorAll("*")) if (el.shadowRoot) return null;
+  return (${BROWSER_DOM_FINGERPRINT_SCRIPT})();
 })()`
 
 type BrowserAuthSession = {
@@ -669,28 +687,35 @@ export class BrowserRuntime {
     return { kind: "no_detectable_change" }
   }
 
-  private async browserDomRevision(tab: BrowserTab): Promise<number> {
+  private async browserDomRevision(tab: BrowserTab): Promise<string> {
     try {
-      const value = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: BROWSER_DOM_REVISION_SCRIPT }], true)
-      return Number.isInteger(value) ? Number(value) : -1
-    } catch { return -1 }
+      const value = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: BROWSER_DOM_FINGERPRINT_SCRIPT }], true)
+      return typeof value === "string" ? value : ""
+    } catch { return "" }
   }
 
-  private async browserFrameDomRevision(debuggerRef: BrowserCdpDebugger, frameId: string): Promise<number> {
+  private async browserFrameSemanticRevision(debuggerRef: BrowserCdpDebugger, frameId: string): Promise<string | null> {
     try {
       const isolated = await debuggerRef.sendCommand("Page.createIsolatedWorld", {
         frameId,
         worldName: "lume-semantic-snapshot-revision",
         grantUniveralAccess: false,
       }) as { executionContextId?: number }
-      if (!isolated.executionContextId) return -1
+      if (!isolated.executionContextId) return null
       const evaluated = await debuggerRef.sendCommand("Runtime.evaluate", {
         contextId: isolated.executionContextId,
-        expression: BROWSER_DOM_REVISION_SCRIPT,
+        expression: BROWSER_SEMANTIC_FRAME_REVISION_SCRIPT,
         returnByValue: true,
       }) as { result?: { value?: unknown }; exceptionDetails?: unknown }
-      return !evaluated.exceptionDetails && Number.isInteger(evaluated.result?.value) ? Number(evaluated.result?.value) : -1
-    } catch { return -1 }
+      return !evaluated.exceptionDetails && typeof evaluated.result?.value === "string" ? evaluated.result.value : null
+    } catch { return null }
+  }
+
+  private async browserMainSemanticRevision(tab: BrowserTab): Promise<string | null> {
+    try {
+      const value = await browserContents(tab).executeJavaScriptInIsolatedWorld(999, [{ code: BROWSER_SEMANTIC_FRAME_REVISION_SCRIPT }], true)
+      return typeof value === "string" ? value : null
+    } catch { return null }
   }
 
   async dispatch(request: BrowserActionRequest): Promise<unknown> {
@@ -3081,7 +3106,7 @@ export class BrowserRuntime {
 
     const interactiveOnly = params.interactiveOnly === true || params.interactive_only === true
     const limit = boundedNumber(params.limit ?? 400, 50, 1_000)
-    const mainDomRevision = await this.browserDomRevision(tab)
+    const mainFrameRevision = await this.browserMainSemanticRevision(tab)
     const session: BrowserSemanticRefSession = this.semanticRefSessions.get(context.browserSessionId) ?? {
       byIdentity: new Map<string, string>(),
       entries: new Map(),
@@ -3089,13 +3114,15 @@ export class BrowserRuntime {
     }
     const cached = session.snapshot
 
+    // #604：帧弃采/异常产出的树已知残缺——帧凭证压为不可信，防止残缺树被快路径持续复用
+    let frameScanDegraded = false
     const result = await withDebugger(browserContents(tab), async (debuggerRef) => {
       const page = await debuggerRef.sendCommand("Page.getFrameTree") as { frameTree?: BrowserCdpFrameTree }
       const frames = browserFrames(page.frameTree)
-      // #604：每个 frame 用 loaderId + DOM revision 验证缓存。任一 frame 导航、变更或
-      // revision 读取失败都回退完整 AX 采集，不以陈旧 ref 换取快路径。
-      const frameState = await Promise.all(frames.map(async (frame, index): Promise<BrowserSemanticFrameState> => ({
-        domRevision: index === 0 ? mainDomRevision : await this.browserFrameDomRevision(debuggerRef, frame.id),
+      // #604：每个 frame 用 loaderId + 帧指纹（DOM revision + 控件 IDL 状态）验证缓存。任一 frame
+      // 导航、变更、检出零信号内容（open shadow）或指纹读取失败都回退完整 AX 采集，不以陈旧 ref 换取快路径。
+      const frameState = await Promise.all(frames.map(async (frame, index): Promise<BrowserSemanticFrameRevision> => ({
+        frameRevision: index === 0 ? mainFrameRevision : await this.browserFrameSemanticRevision(debuggerRef, frame.id),
         frameId: frame.id,
         loaderId: frame.loaderId,
       })))
@@ -3105,7 +3132,7 @@ export class BrowserRuntime {
         && cached.tabId === tab.tabId
         && cached.title === tab.title
         && cached.url === tab.url
-        && reusableSemanticFrameState(frameState)
+        && reusableSemanticFrameState(frameState, cached.cachedAt, Date.now())
         && sameSemanticFrameState(cached.frameState, frameState)) {
         return { cached: true as const, snapshot: cached }
       }
@@ -3118,7 +3145,10 @@ export class BrowserRuntime {
           const tree = await debuggerRef.sendCommand("Accessibility.getFullAXTree", { frameId }) as { nodes?: unknown }
           // #604：AX 原始负载与 DOMSnapshot 同级字节护栏——极端页面单帧可达数十 MB，
           // 超限帧弃采（该 frame 无语义节点），防主进程内存/序列化爆炸。
-          if (JSON.stringify(tree.nodes ?? []).length > 4_000_000) return []
+          if (JSON.stringify(tree.nodes ?? []).length > 4_000_000) {
+            frameScanDegraded = true
+            return []
+          }
           return Array.isArray(tree.nodes)
             ? tree.nodes.map((node) => isRecord(node) ? {
                 ...node,
@@ -3128,6 +3158,7 @@ export class BrowserRuntime {
               } : node)
             : []
         } catch {
+          frameScanDegraded = true
           return []
         }
       }))
@@ -3166,7 +3197,11 @@ export class BrowserRuntime {
       },
     })
     const snapshot = {
-      frameState: result.frameState,
+      cachedAt: Date.now(),
+      // #604：残缺树的帧凭证压为不可信，下次请求走全扫
+      frameState: frameScanDegraded
+        ? result.frameState.map((frame) => ({ ...frame, frameRevision: null }))
+        : result.frameState,
       generation: tab.generation,
       interactiveOnly,
       limit,
@@ -4786,19 +4821,6 @@ function browserFrames(tree: BrowserCdpFrameTree | undefined): Array<{ id: strin
     ...frame,
     ...(tree.childFrames ?? []).flatMap(browserFrames),
   ]
-}
-
-function reusableSemanticFrameState(state: BrowserSemanticFrameState[]): boolean {
-  return state.length > 0 && state.every((frame) => frame.domRevision >= 0 && frame.loaderId.length > 0)
-}
-
-function sameSemanticFrameState(left: BrowserSemanticFrameState[], right: BrowserSemanticFrameState[]): boolean {
-  return left.length === right.length && left.every((frame, index) => {
-    const candidate = right[index]
-    return candidate?.domRevision === frame.domRevision
-      && candidate.frameId === frame.frameId
-      && candidate.loaderId === frame.loaderId
-  })
 }
 
 function normalizeSemanticRef(value: unknown): string {
