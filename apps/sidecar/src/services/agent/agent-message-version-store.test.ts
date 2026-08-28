@@ -40,6 +40,42 @@ describe("agent-message-version-store", () => {
     expect(store.messages).toEqual([]);
   });
 
+  // #527 遗留(sdkMessages 双留存去重):全局 sdkMessages.jsonl 是原始流唯一正典,
+  // 版本 store 落盘时裁剪至 compaction 子集(与传输裁剪同口径),内存对象不受影响
+  test("writeAgentMessageVersionStore 落盘裁剪 sdkMessages 至 compaction 子集,重读只余 compaction", () => {
+    const store = createEmptyAgentMessageVersionStore("session-trim");
+    store.groups.push({
+      groupId: "group-trim",
+      turnId: "turn-trim",
+      role: "assistant",
+      latestMessageId: "message-trim",
+      messageIds: ["message-trim"],
+      createdAt: 1,
+      updatedAt: 1
+    });
+    store.messages.push({
+      messageId: "message-trim",
+      groupId: "group-trim",
+      role: "assistant",
+      versionIndex: 1,
+      isLatestVersion: true,
+      createdAt: 1,
+      content: "回答",
+      sdkMessages: [
+        { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "raw" }] } },
+        { type: "system", subtype: "compact_boundary" },
+        { type: "system", subtype: "unrelated" }
+      ] as never
+    });
+
+    writeAgentMessageVersionStore("session-trim", store);
+    const loaded = readAgentMessageVersionStore("session-trim");
+
+    expect(loaded?.messages[0]?.sdkMessages).toEqual([{ type: "system", subtype: "compact_boundary" }]);
+    // 内存对象不受写盘裁剪影响(内部链路语义不变)
+    expect(store.messages[0]?.sdkMessages).toHaveLength(3);
+  });
+
   test("write/read 应保持 store 内容一致", () => {
     const store = createEmptyAgentMessageVersionStore("session-b");
     store.groups.push({

@@ -67,6 +67,14 @@ describe("mergeImMessageBatch", () => {
     expect(merged.senderId).toBeUndefined();
   });
 
+  test("#598 群聊多发送者前缀优先显示名（senderName 覆盖 open_id）", () => {
+    const merged = mergeImMessageBatch([
+      msg({ peerKind: "group", text: "帮我看看", senderId: "user-a", senderName: "张三" }),
+      msg({ peerKind: "group", text: "收到", senderId: "user-b" })
+    ]);
+    expect(merged.text).toBe("张三: 帮我看看\n\nuser-b: 收到");
+  });
+
   test("群聊单发送者保持原语义（senderId 保留）", () => {
     const merged = mergeImMessageBatch([
       msg({ peerKind: "group", text: "第一条", senderId: "user-a" }),
@@ -305,26 +313,36 @@ describe("createImInboundPipeline", () => {
     await expect(second).resolves.toBeUndefined();
   });
 
-  test("运行超时看门狗：释放槽位且按失败处理，后续消息可继续", async () => {
+  test("运行超时看门狗：释放槽位、标记已见避免微信重投双跑，后续消息可继续", async () => {
     const routed: InboundImRouteMessage[] = [];
-    const seen = localSeen();
+    const seenIds = new Set<string>();
+    let slowCalls = 0;
     const pipeline = createImInboundPipeline({
       quietWindowMs: 10,
       maxConcurrentRuns: 1,
       runTimeoutMs: 40,
       routeMessage: async (m) => {
         if (m.peerId === "u-slow") {
+          slowCalls += 1;
           // 挂死：永不返回
           await new Promise(() => undefined);
         }
         routed.push(m);
         return { threadId: "t" };
       },
-      ...seen
+      hasSeen: (_provider, _accountId, messageId) => seenIds.has(messageId),
+      remember: (_provider, _accountId, messageId) => {
+        seenIds.add(messageId);
+      }
     });
     const slow = pipeline.enqueue(msg({ peerId: "u-slow", text: "挂死", messageId: "s1" }));
-    slow.catch(() => {});
     await new Promise((resolve) => setTimeout(resolve, 80));
+    await expect(slow).resolves.toBeUndefined();
+    expect(seenIds.has("s1")).toBe(true);
+    // 微信 cursor 未及时落盘时同一消息再到达，也不得启动第二个 agent 运行。
+    await expect(pipeline.enqueue(msg({ peerId: "u-slow", text: "重投", messageId: "s1" }))).resolves.toBeUndefined();
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(slowCalls).toBe(1);
     // 超时释放唯一槽位后，其他会话可以继续路由
     pipeline.enqueue(msg({ peerId: "u-ok", text: "正常", messageId: "ok1" }));
     await waitFor(() => routed.length === 1 && routed[0]?.peerId === "u-ok");

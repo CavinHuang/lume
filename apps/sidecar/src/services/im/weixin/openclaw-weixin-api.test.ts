@@ -671,4 +671,22 @@ describe("openclaw-weixin-api", () => {
       },
     });
   });
+
+  test("#598 senderName 提取：from_user_name 与 open_id 分离", async () => {
+    const api = createOpenClawWeixinApi({
+      baseUrl: "https://ilink.example.com/",
+      token: "token-1"
+    }, async () => Response.json({
+      msgs: [{
+        message_id: 789,
+        from_user_id: "wxid_abc",
+        from_user_name: "张三",
+        item_list: [{ type: 1, text_item: { text: "hi" } }]
+      }]
+    }));
+
+    await expect(api.getUpdates()).resolves.toMatchObject({
+      updates: [{ senderId: "wxid_abc", senderName: "张三" }]
+    });
+  });
 });

@@ -39,7 +39,10 @@ describe("im-handlers", () => {
         startAccount: async (accountId) => { calls.push(`start:${accountId}`) },
         stopAccount: (accountId) => { calls.push(`stop:${accountId}`) },
         stopAll: () => undefined,
-        getRunningAccountIds: () => []
+        getRunningAccountIds: () => [],
+        runRecoveryTick: async () => [],
+        startAutoRecovery: () => {},
+        stopAutoRecovery: () => {}
       }
     });
 
@@ -94,7 +97,10 @@ describe("im-handlers", () => {
         startAccount: async (accountId) => { calls.push(`start:${accountId}`) },
         stopAccount: (accountId) => { calls.push(`stop:${accountId}`) },
         stopAll: () => undefined,
-        getRunningAccountIds: () => []
+        getRunningAccountIds: () => [],
+        runRecoveryTick: async () => [],
+        startAutoRecovery: () => {},
+        stopAutoRecovery: () => {}
       },
       loginManager: {
         startLogin: async (input) => {
@@ -201,7 +207,10 @@ describe("im-handlers #544 会话镜像", () => {
         startAccount: async () => undefined,
         stopAccount: () => undefined,
         stopAll: () => undefined,
-        getRunningAccountIds: () => []
+        getRunningAccountIds: () => [],
+        runRecoveryTick: async () => [],
+        startAutoRecovery: () => undefined,
+        stopAutoRecovery: () => undefined
       }
     });
   }

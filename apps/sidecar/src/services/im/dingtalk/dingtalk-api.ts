@@ -1,5 +1,5 @@
 import { createLogger } from "../../infra/logger";
-import { splitImMessage } from "../outbound-segment";
+import { sendImSegments, splitImMessage } from "../outbound-segment";
 
 const log = createLogger("im-dingtalk-api");
 
@@ -28,9 +28,11 @@ export async function sendDingtalkText(
   if (!input.contextToken) {
     return { ok: false, error: "缺少 sessionWebhook(钉钉会话已过期或未提供),无法回复" };
   }
-  try {
-    for (const segment of splitImMessage(input.text, { maxChars: 3000 })) {
-      const res = await fetchImpl(input.contextToken, {
+  const webhook = input.contextToken;
+  // #598：分段逐段发送 + 瞬时错误（网络/超时）一次重发 + 中途失败归因「已送达 N/M 段」
+  return sendImSegments(splitImMessage(input.text, { maxChars: 3000 }), async (segment) => {
+    try {
+      const res = await fetchImpl(webhook, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ msgtype: "text", text: { content: segment } }),
@@ -49,10 +51,12 @@ export async function sendDingtalkText(
           error: `钉钉回复被拒(errcode ${payload.errcode})${payload.errmsg ? `: ${payload.errmsg}` : ""}`,
         };
       }
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log.error("钉钉 sendText 段发送失败", { error: message });
+      // fetch throw（网络/超时）属瞬时失败，允许一次重发
+      return { ok: false, error: message, transient: true };
     }
-    return { ok: true };
-  } catch (error) {
-    log.error("钉钉 sendText 失败", { error: error instanceof Error ? error.message : String(error) });
-    return { ok: false, error: error instanceof Error ? error.message : String(error) };
-  }
+  });
 }

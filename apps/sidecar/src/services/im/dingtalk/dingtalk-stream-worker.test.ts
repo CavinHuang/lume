@@ -148,6 +148,14 @@ describe("parseDingtalkEvent", () => {
     expect(msg?.text).toBe("你好");
   });
 
+  it("#598 senderName 取 senderNick（群聊前缀显示名来源）", () => {
+    const msg = parseDingtalkEvent(
+      { data: { conversationId: "c", conversationType: "2", text: { content: "帮忙看下" }, senderNick: "李四", senderStaffId: "s", sessionWebhook: "hw", msgId: "m", atUsers: [{ dingtalkId: "x" }] } },
+      makeAccount(),
+    );
+    expect(msg?.senderName).toBe("李四");
+  });
+
   it("群聊无 @ 门控直接忽略（#405）", () => {
     expect(
       parseDingtalkEvent(

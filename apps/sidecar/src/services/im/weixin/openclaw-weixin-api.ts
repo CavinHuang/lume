@@ -14,6 +14,8 @@ export interface OpenClawWeixinInboundMessage {
   peerId: string;
   peerKind: ImPeerKind;
   senderId?: string;
+  /** 发送者显示名（#598，from_user_name；群聊前缀优先于 open_id） */
+  senderName?: string;
   text: string;
   contents: ImMessageContent[];
   peerName?: string;
@@ -269,6 +271,7 @@ function parseInboundMessage(raw: unknown): OpenClawWeixinInboundMessage | null 
     peerId,
     peerKind: update.group_id ? "group" : normalizePeerKind(update.peer_kind ?? update.peerKind ?? update.chat_type),
     senderId,
+    senderName: asString(update.from_user_name) ?? asString(update.fromUserName),
     text,
     contents,
     peerName: asString(update.peer_name) ?? asString(update.peerName) ?? asString(update.nickname),

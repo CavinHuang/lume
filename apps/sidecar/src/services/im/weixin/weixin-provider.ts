@@ -7,7 +7,8 @@ import type {
 } from "../provider-registry";
 import { registerImProvider } from "../provider-registry";
 import { createOpenClawWeixinWorker } from "./openclaw-weixin-worker";
-import { createOpenClawWeixinApi } from "./openclaw-weixin-api";
+import { createOpenClawWeixinApi, OpenClawWeixinAuthError } from "./openclaw-weixin-api";
+import { sendImSegments, splitImMessage } from "../outbound-segment";
 import { uploadMediaToWeixinCdn } from "./openclaw-weixin-cdn";
 import { createLogger } from "../../infra/logger";
 
@@ -29,12 +30,26 @@ async function sendText(input: ImSendInput): Promise<ImSendResult> {
       token: input.account.token,
       uin: input.account.uin,
     });
-    await api.sendText({
-      peerId: input.peerId,
-      peerKind: input.peerKind,
-      text: input.text,
-      contextToken: input.contextToken,
+    // #598：微信超长回复此前未分段（行为未定义），对齐钉钉按 3000 字符分段；
+    // 瞬时错误（网络/服务端）一次重发，认证失败不重发；中途失败归因已送达段数
+    const result = await sendImSegments(splitImMessage(input.text, { maxChars: 3000 }), async (segment) => {
+      try {
+        await api.sendText({
+          peerId: input.peerId,
+          peerKind: input.peerKind,
+          text: segment,
+          contextToken: input.contextToken,
+        });
+        return { ok: true };
+      } catch (error) {
+        return {
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+          transient: !(error instanceof OpenClawWeixinAuthError),
+        };
+      }
     });
+    if (!result.ok) return result;
     log.info("文本消息发送完成", { peerId: input.peerId });
     return { ok: true };
   } catch (error) {

@@ -31,6 +31,10 @@ export interface ImRunCardState {
   startedAtMs: number;
   endedAtMs?: number;
   error?: string;
+  usage?: {
+    totalTokens: number;
+    totalCostUSD: number;
+  };
   /** 恢复压缩进行中（#709 第 4 项）：卡片头部显示「正在压缩上下文」中间态 */
   compacting?: boolean;
 }
@@ -118,8 +122,8 @@ function terminal(state: ImRunCardState, status: Exclude<ImRunCardStatus, "runni
 
 /** 消费一条运行时事件，返回新状态（无变化时返回原引用）。 */
 export function reduceImRunCardEvent(state: ImRunCardState, event: LumeRuntimeEvent, nowMs: number = Date.now()): ImRunCardState {
-  // 终态冻结：卡片完成后不再接受任何事件（含迟到的 delta/工具帧）
-  if (state.status !== "running") {
+  // 终态冻结正文/工具帧；usage.updated 允许迟到补齐终态 footer。
+  if (state.status !== "running" && event.type !== "usage.updated") {
     return state;
   }
   switch (event.type) {
@@ -148,6 +152,19 @@ export function reduceImRunCardEvent(state: ImRunCardState, event: LumeRuntimeEv
       return state.compacting ? state : { ...state, compacting: true };
     case "context.compaction.completed":
       return state.compacting ? { ...state, compacting: false } : state;
+    case "usage.updated": {
+      const totalTokens = event.billing.cumulative.totalTokens;
+      const totalCostUSD = event.billing.totalCostUSD;
+      if (!Number.isFinite(totalTokens) || !Number.isFinite(totalCostUSD)) return state;
+      if (state.usage?.totalTokens === totalTokens && state.usage.totalCostUSD === totalCostUSD) return state;
+      return {
+        ...state,
+        usage: {
+          totalTokens: Math.max(0, totalTokens),
+          totalCostUSD: Math.max(0, totalCostUSD)
+        }
+      };
+    }
     case "run.completed":
       return terminal(state, "completed", nowMs);
     case "run.failed":

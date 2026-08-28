@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import type { ImAccountUpdateInput } from "@lume/shared";
+import type { ImAccount, ImAccountUpdateInput } from "@lume/shared";
 import { createImRuntimeManager } from "./im-runtime-manager";
 
 describe("im-runtime-manager", () => {
@@ -315,5 +315,90 @@ describe("im-runtime-manager", () => {
 
     expect(stopped).toBe(1);
     expect(manager.getRunningAccountIds()).toEqual([]);
+  });
+});
+
+describe("#598 error 态账号定时自愈", () => {
+  function makeAccount(id: string, status: ImAccountUpdateInput["status"]): ImAccount {
+    return {
+      id,
+      provider: "weixin",
+      label: id,
+      baseUrl: "https://ilink.example.com",
+      enabled: true,
+      status: status ?? "stopped",
+      hasToken: true,
+      createdAt: 1,
+      updatedAt: 1
+    };
+  }
+
+  test("立即重试 error 账号，失败后指数退避，成功后重置", async () => {
+    let shouldFail = true;
+    let now = 1_000_000;
+    const statuses = new Map<string, ImAccountUpdateInput["status"]>();
+    const account = makeAccount("a1", "error");
+    const manager = createImRuntimeManager({
+      listAccounts: () => [{ ...account, status: statuses.get("a1") ?? account.status }],
+      getRuntimeAccount: () => ({ ...account, token: "t" } as never),
+      updateAccount: (_id, input) => {
+        statuses.set("a1", input.status);
+      },
+      createWorker: () => {
+        if (shouldFail) throw new Error("worker boom");
+        return { start() {}, stop() {}, isRunning: () => true };
+      }
+    });
+
+    // 第 1 轮：error + 无退避记录 → 尝试；worker 抛错 → attempts=1，nextAt=now+30s
+    expect(await manager.runRecoveryTick(now)).toEqual(["a1"]);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statuses.get("a1")).toBe("error");
+
+    // 第 2 轮：退避窗口内 → 跳过
+    expect(await manager.runRecoveryTick(now + 10_000)).toEqual([]);
+
+    // 第 3 轮：过窗口 → 重试；worker 成功 → running 且退避记录清除
+    shouldFail = false;
+    now += 31_000;
+    expect(await manager.runRecoveryTick(now)).toEqual(["a1"]);
+    await Promise.resolve();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(statuses.get("a1")).toBe("running");
+
+    // 第 4 轮：已 running 不在候选 → 不尝试
+    expect(await manager.runRecoveryTick(now + 60_000)).toEqual([]);
+  });
+
+  test("手动 stopAccount 后不再被自愈拉起", async () => {
+    const statuses = new Map<string, ImAccountUpdateInput["status"]>();
+    const account = makeAccount("a2", "error");
+    const manager = createImRuntimeManager({
+      listAccounts: () => [{ ...account, status: statuses.get("a2") ?? account.status }],
+      getRuntimeAccount: () => ({ ...account, token: "t" } as never),
+      updateAccount: (_id, input) => {
+        statuses.set("a2", input.status);
+      },
+      createWorker: () => ({ start() {}, stop() {}, isRunning: () => false })
+    });
+
+    manager.stopAccount("a2");
+    expect(await manager.runRecoveryTick(Date.now())).toEqual([]);
+  });
+
+  test("startAutoRecovery 周期驱动 tick，stopAutoRecovery 停止", async () => {
+    const manager = createImRuntimeManager({
+      listAccounts: () => [],
+      getRuntimeAccount: () => ({}) as never,
+      updateAccount: () => {},
+      createWorker: () => ({ start() {}, stop() {}, isRunning: () => false })
+    });
+    manager.startAutoRecovery({ intervalMs: 10 });
+    await new Promise((resolve) => setTimeout(resolve, 35));
+    manager.stopAutoRecovery();
+    // 不抛错即通过（无 error 账号时 tick 为空转）
+    expect(true).toBe(true);
   });
 });

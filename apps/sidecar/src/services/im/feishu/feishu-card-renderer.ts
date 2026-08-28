@@ -11,6 +11,7 @@ import type { ImRunCardBlock, ImRunCardState } from "./feishu-card-state";
 /** 单个 markdown 元素的内容上限（飞书单元素约 30KB，留足余量） */
 const MAX_TEXT_CHARS = 3500;
 const MAX_PREVIEW_CHARS = 160;
+const MAX_SUMMARY_CHARS = 120;
 const MAX_TOOL_LINES = 20;
 /** 工具调用数超过该值时面板默认折叠 */
 const TOOLS_COLLAPSE_THRESHOLD = 3;
@@ -29,6 +30,7 @@ export interface FeishuRunCardJson {
     update_multi?: boolean;
     wide_screen_mode?: boolean;
     enable_forward?: boolean;
+    summary: { content: string };
   };
   header: {
     title: { tag: "plain_text"; content: string };
@@ -84,18 +86,40 @@ function renderToolLine(block: Extract<ImRunCardBlock, { kind: "tool" }>): Feish
   return markdown(`\`${block.toolName}\` ${statusText}${detailPart}`);
 }
 
-function footerLine(state: ImRunCardState): string | null {
-  if (state.status !== "completed" && state.status !== "failed" && state.status !== "interrupted" && state.status !== "turn_limited") {
-    return null;
+function summaryContent(state: ImRunCardState, fallback: string): string {
+  for (let index = state.blocks.length - 1; index >= 0; index -= 1) {
+    const block = state.blocks[index];
+    if (block?.kind !== "text") continue;
+    const text = block.text.replace(/\s+/g, " ").trim();
+    if (!text) continue;
+    return text.length <= MAX_SUMMARY_CHARS ? text : `${text.slice(0, MAX_SUMMARY_CHARS - 1)}…`;
   }
-  const durationMs = (state.endedAtMs ?? Date.now()) - state.startedAtMs;
-  const seconds = Math.max(0, Math.round(durationMs / 1000));
-  const durationText = seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `${seconds} 秒`;
-  const parts = [`耗时 ${durationText}`];
+  return fallback;
+}
+
+function usageLine(state: ImRunCardState): string | null {
+  if (!state.usage) return null;
+  const tokens = Math.round(state.usage.totalTokens).toLocaleString("en-US");
+  const cost = state.usage.totalCostUSD >= 1
+    ? state.usage.totalCostUSD.toFixed(2)
+    : state.usage.totalCostUSD.toFixed(4);
+  return `${tokens} tokens · $${cost}`;
+}
+
+function footerLine(state: ImRunCardState): string | null {
+  const parts: string[] = [];
+  if (state.status !== "running") {
+    const durationMs = (state.endedAtMs ?? Date.now()) - state.startedAtMs;
+    const seconds = Math.max(0, Math.round(durationMs / 1000));
+    const durationText = seconds >= 60 ? `${Math.floor(seconds / 60)} 分 ${seconds % 60} 秒` : `${seconds} 秒`;
+    parts.push(`耗时 ${durationText}`);
+  }
+  const usage = usageLine(state);
+  if (usage) parts.push(usage);
   if (state.error) {
     parts.push(truncateMiddle(state.error.replace(/\s+/g, " ").trim(), MAX_PREVIEW_CHARS));
   }
-  return parts.join(" · ");
+  return parts.length > 0 ? parts.join(" · ") : null;
 }
 
 export function renderImRunCard(state: ImRunCardState): FeishuRunCardJson {
@@ -107,6 +131,10 @@ export function renderImRunCard(state: ImRunCardState): FeishuRunCardJson {
   const elements: FeishuCardElement[] = [];
 
   const toolBlocks = state.blocks.filter((block): block is Extract<ImRunCardBlock, { kind: "tool" }> => block.kind === "tool");
+  const latestRunningTool = state.status === "running" && toolBlocks.length > TOOLS_COLLAPSE_THRESHOLD
+    ? toolBlocks.at(-1)
+    : undefined;
+  const historicalToolBlocks = latestRunningTool ? toolBlocks.slice(0, -1) : toolBlocks;
   const textBlocks = state.blocks.filter((block): block is Extract<ImRunCardBlock, { kind: "text" }> => block.kind === "text");
   // 超出保留数的更早正文合并为一行省略提示（update 全量重发，块数必须封顶）
   const omittedTextCount = Math.max(0, textBlocks.length - MAX_TEXT_BLOCKS);
@@ -138,10 +166,17 @@ export function renderImRunCard(state: ImRunCardState): FeishuRunCardJson {
   }
   if (toolBlocks.length > TOOLS_COLLAPSE_THRESHOLD) {
     elements.push(collapsiblePanel({
-      title: `工具调用（${toolBlocks.length}）`,
+      title: `工具调用（${historicalToolBlocks.length}）`,
       expanded: false,
-      children: toolBlocks.slice(0, MAX_TOOL_LINES).map(renderToolLine)
+      children: historicalToolBlocks.slice(0, MAX_TOOL_LINES).map(renderToolLine)
     }));
+    if (latestRunningTool) {
+      elements.push(collapsiblePanel({
+        title: `最新工具 · ${latestRunningTool.toolName}`,
+        expanded: true,
+        children: [renderToolLine(latestRunningTool)]
+      }));
+    }
   }
   if (elements.length === 0 && state.status === "running") {
     elements.push(markdown("…"));
@@ -158,7 +193,8 @@ export function renderImRunCard(state: ImRunCardState): FeishuRunCardJson {
       streaming_mode: state.status === "running",
       update_multi: true,
       wide_screen_mode: true,
-      enable_forward: true
+      enable_forward: true,
+      summary: { content: summaryContent(state, header.title) }
     },
     header: {
       title: { tag: "plain_text", content: header.title },

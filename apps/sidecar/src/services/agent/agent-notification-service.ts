@@ -1,4 +1,12 @@
-import { AGENT_IPC_CHANNELS, RPC_ERROR_CODES, type SensitiveDiagnosticEnvelope } from "@lume/shared";
+import {
+  AGENT_IPC_CHANNELS,
+  RPC_ERROR_CODES,
+  type AgentCapabilityReferenceView,
+  type AgentMessage,
+  type AgentUserMessagePart,
+  type LumeRuntimeEvent,
+  type SensitiveDiagnosticEnvelope
+} from "@lume/shared";
 import type { appendAgentMessage } from "./agent-service";
 import { getPersistedGeneralSettings } from "../system/general-settings-service";
 import { getOutboundNotificationWriter } from "../infra/outbound-notification";
@@ -8,6 +16,55 @@ type AgentStreamEmitter = Parameters<typeof appendAgentMessage>[1];
 
 export function emitAgentNotification(method: string, params: unknown): void {
   getOutboundNotificationWriter()?.(method, params);
+}
+
+// #553 第四轮补充:RUNTIME_EVENT 的 envelope({threadId,event}) 组装与
+// id/runId 字段口径收敛本文件单点,各域只声明「发什么类型的事件」
+export function emitRuntimeEventNotification(
+  threadId: string,
+  event: LumeRuntimeEvent,
+  writeNotification: AgentNotificationWriter = emitAgentNotification
+): void {
+  writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId, event });
+}
+
+export function createUserSubmittedRuntimeEvent(
+  threadId: string,
+  message: AgentMessage
+): Extract<LumeRuntimeEvent, { type: "message.user.submitted" }> {
+  const createdAt = new Date(message.createdAt ?? Date.now()).toISOString();
+  const messageKey = message.id ?? createdAt;
+  return {
+    id: `${threadId}:${messageKey}:message.user.submitted`,
+    type: "message.user.submitted",
+    runId: `message:${messageKey}`,
+    threadId,
+    text: message.content,
+    createdAt,
+    messageId: message.id,
+    versionGroupId: message.versionGroupId,
+    versionIndex: message.versionIndex,
+    versionCount: message.versionCount,
+    messageParts: message.metadata?.messageParts as AgentUserMessagePart[] | undefined,
+    capabilityReferences: message.metadata?.capabilityReferenceViews as AgentCapabilityReferenceView[] | undefined
+  };
+}
+
+export function createRunFailedRuntimeEvent(
+  threadId: string,
+  message: string
+): Extract<LumeRuntimeEvent, { type: "run.failed" }> {
+  return {
+    id: `${threadId}:${Date.now()}:run.failed`,
+    type: "run.failed",
+    threadId,
+    runId: `runtime-error:${threadId}`,
+    createdAt: new Date().toISOString(),
+    error: {
+      code: RPC_ERROR_CODES.NOTIFICATION_RUNTIME_ERROR,
+      message
+    }
+  };
 }
 
 export function createAgentNotificationEmitter(input: {
@@ -20,33 +77,13 @@ export function createAgentNotificationEmitter(input: {
   return {
     onRuntimeEvent: (event) => {
       const eventThreadId = typeof event.threadId === "string" ? event.threadId : input.threadId;
-      writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId: eventThreadId,
-        event
-      });
+      emitRuntimeEventNotification(eventThreadId, event, writeNotification);
     },
     onMessageAppended: (event) => {
       writeNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);
       if (event.message.role !== "user" || typeof event.message.content !== "string") return;
 
-      const createdAt = new Date(event.message.createdAt ?? Date.now()).toISOString();
-      writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId: input.threadId,
-        event: {
-          id: `${input.threadId}:${event.message.id ?? createdAt}:message.user.submitted`,
-          type: "message.user.submitted",
-          runId: `message:${event.message.id ?? createdAt}`,
-          threadId: input.threadId,
-          text: event.message.content,
-          createdAt,
-          messageId: event.message.id,
-          versionGroupId: event.message.versionGroupId,
-          versionIndex: event.message.versionIndex,
-          versionCount: event.message.versionCount,
-          messageParts: event.message.metadata?.messageParts,
-          capabilityReferences: event.message.metadata?.capabilityReferenceViews
-        }
-      });
+      emitRuntimeEventNotification(input.threadId, createUserSubmittedRuntimeEvent(input.threadId, event.message), writeNotification);
     },
     onComplete: (payload) => input.onComplete?.(payload),
     onError: (error, options) => {
@@ -56,20 +93,7 @@ export function createAgentNotificationEmitter(input: {
       // 兜底合成。注:不用 isAgentRuntimeSessionActive——session 在 run 收尾
       // unregisterAbort 后才调 onError,判定恒 false(评审 Major-1)。
       if (options?.fromActiveRun !== true) {
-        writeNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-          threadId: input.threadId,
-          event: {
-            id: `${input.threadId}:${Date.now()}:run.failed`,
-            type: "run.failed",
-            threadId: input.threadId,
-            runId: `runtime-error:${input.threadId}`,
-            createdAt: new Date().toISOString(),
-            error: {
-              code: RPC_ERROR_CODES.NOTIFICATION_RUNTIME_ERROR,
-              message: error
-            }
-          }
-        });
+        emitRuntimeEventNotification(input.threadId, createRunFailedRuntimeEvent(input.threadId, error), writeNotification);
       }
       input.onError?.(error);
     },

@@ -19,9 +19,10 @@ const log = createLogger("im-pipeline");
  * 抢占 messageId，避免平台并发重投重复执行命令。
  *
  * enqueue 返回的 Promise 在该消息所在批量路由落定后 resolve/reject：
- * 微信长轮询 worker await 它保持「失败不推 cursor → 下轮重投」的 at-least-once
- * 语义；WS 三渠道 worker void 掉即可。注意防抖窗口内的消息驻留内存，进程崩溃
- * 即丢（微信 cursor 未推进的部分由重投兜底），这是防抖合并的固有权衡。
+ * 普通路由失败会 reject，使微信长轮询 worker 保持「不推 cursor → 下轮重投」的
+ * at-least-once 语义；watchdog 超时则 resolve 并结算已见消息，因为底层运行无法
+ * 取消，继续重投会造成晚成功与重试双跑。WS 三渠道 worker void 掉即可。注意防抖
+ * 窗口内的消息驻留内存，进程崩溃即丢（微信 cursor 未推进的部分由重投兜底）。
  */
 
 /**
@@ -41,7 +42,7 @@ export interface ImInboundPipelineOptions {
   quietWindowMs?: number;
   /** 全局并发运行上限 */
   maxConcurrentRuns?: number;
-  /** 单次路由超时毫秒数；超时按失败处理释放槽位（底层运行不中断） */
+  /** 单次路由超时毫秒数；超时释放槽位并结算已见消息（底层运行不中断） */
   runTimeoutMs?: number;
   /** 路由函数（默认真实路由器，测试注入） */
   routeMessage?: (message: InboundImRouteMessage) => Promise<{ threadId: string }>;
@@ -67,6 +68,13 @@ interface CompletionDeferred {
   promise: Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
+}
+
+class ImInboundRouteTimeoutError extends Error {
+  constructor(timeoutMs: number) {
+    super(`IM 入站路由超时(${timeoutMs}ms)，释放槽位`);
+    this.name = "ImInboundRouteTimeoutError";
+  }
 }
 
 function scopeKeyOf(message: InboundImRouteMessage): string {
@@ -115,7 +123,9 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
     .map((m) => {
       const trimmed = m.text.trim();
       if (!trimmed) return "";
-      return multiSender && m.senderId?.trim() ? `${m.senderId.trim()}: ${trimmed}` : trimmed;
+      // #598：前缀优先发送者显示名，open_id 退居兜底
+      const senderLabel = m.senderName?.trim() || m.senderId?.trim();
+      return multiSender && senderLabel ? `${senderLabel}: ${trimmed}` : trimmed;
     })
     .filter(Boolean)
     .join("\n\n");
@@ -142,7 +152,7 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
 export interface ImInboundPipeline {
   /**
    * 入队一条入站消息。返回的 Promise 在该消息所属批量路由成功后 resolve、
-   * 失败/超时后 reject（重复 messageId 的调用共享同一 Promise）。
+   * 普通失败后 reject；watchdog 超时会 resolve 并结算消息（重复 messageId 的调用共享同一 Promise）。
    * 不关心结果的调用方（WS worker）可 void 掉。
    */
   enqueue: (message: InboundImRouteMessage) => Promise<void>;
@@ -231,7 +241,7 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
       await new Promise<{ threadId: string }>((resolve, reject) => {
         const watchdog =
           runTimeoutMs > 0
-            ? setTimer(() => reject(new Error(`IM 入站路由超时(${runTimeoutMs}ms)，释放槽位`)), runTimeoutMs)
+            ? setTimer(() => reject(new ImInboundRouteTimeoutError(runTimeoutMs)), runTimeoutMs)
             : undefined;
         routeMessage(merged).then(
           (value) => {
@@ -257,20 +267,39 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
       );
       settleBatch(batch);
     } catch (error) {
-      // 不标记已见且回滚在途标记：平台重投后可在下个窗口重试
       for (const item of batch) {
         if (item.messageId) {
           inflightIds.delete(inflightKeyOf(item.provider, item.accountId, item.messageId));
         }
       }
-      settleBatch(batch, error);
-      log.error("IM 入站批量路由失败", {
-        provider: merged.provider,
-        accountId: merged.accountId,
-        peerId: merged.peerId,
-        batchSize: batch.length,
-        error: error instanceof Error ? error.message : String(error)
-      });
+      if (error instanceof ImInboundRouteTimeoutError) {
+        // watchdog 只能放弃等待，无法取消底层 agent。若按普通失败回滚，微信不会
+        // 推进 cursor 并会重投同一消息，与晚成功的原运行形成双跑。这里选择
+        // at-most-once：标记已见并让 awaiter 成功落定，宁可丢失挂死运行也不双跑。
+        rememberMany(
+          batch
+            .filter((item) => item.messageId)
+            .map((item) => ({ provider: item.provider, accountId: item.accountId, messageId: item.messageId! }))
+        );
+        settleBatch(batch);
+        log.warn("IM 入站路由超时，消息已结算以避免平台重投双跑", {
+          provider: merged.provider,
+          accountId: merged.accountId,
+          peerId: merged.peerId,
+          batchSize: batch.length,
+          timeoutMs: runTimeoutMs
+        });
+      } else {
+        // 普通失败未启动出不可取消的长期运行：回滚已见标记，允许平台重投重试。
+        settleBatch(batch, error);
+        log.error("IM 入站批量路由失败", {
+          provider: merged.provider,
+          accountId: merged.accountId,
+          peerId: merged.peerId,
+          batchSize: batch.length,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      }
     } finally {
       release?.();
       state.blocked = false;
