@@ -1520,6 +1520,11 @@ export const revokeToolPermissionGrantInputSchema = z
     message: "需提供 ids 或 workspaceSlug 之一",
   });
 
+// #838②:desktop→sidecar 私有通道（tab 关闭下推,不走 renderer 白名单）
+export const browserTabClosedInputSchema = z.object({
+  tabId: z.string().min(1),
+});
+
 export const pendingInteractiveInputSchema = z.object({
   threadId: z.string().optional(),
 });

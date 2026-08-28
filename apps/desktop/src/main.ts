@@ -3693,7 +3693,17 @@ app.whenReady().then(async () => {
   browserRuntime = createBrowserRuntime({
     getWindow: () => mainWindow,
     configDir: () => configDir,
-    emit: (event) => emitRendererEvent('browser:event', event),
+    emit: (event) => {
+      // #838②：tab 关闭下推 sidecar，令 agent 工具层 list_tabs 缓存即时失效。
+      // sidecar 未就绪/失败时静默——缓存还有 TTL 与错误驱动失效两道纵深。
+      if (event.method === 'browser:tab-closed') {
+        const tabId = (event.params as { tabId?: unknown } | undefined)?.tabId
+        if (typeof tabId === 'string' && tabId) {
+          void sidecarHost.call('agent:browser-tab-closed', { tabId }).catch(() => {})
+        }
+      }
+      emitRendererEvent('browser:event', event)
+    },
     initialSettings: getPersistedBrowserSettings() as Partial<BrowserSettings>,
     persistSettings: persistBrowserSettings,
     isAgentPluginEnabled: () => agentBrowserPluginEnabled,

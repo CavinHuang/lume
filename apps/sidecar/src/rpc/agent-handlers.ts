@@ -119,6 +119,7 @@ import {
   ensureToolGrantsHydrated,
   toolGrantMirror,
 } from "../services/agent-runtime/permissions/persisted-grant-store";
+import { invalidateBrowserTabsCacheByTab } from "../services/agent-runtime/tools/browser/browser-tool-session";
 import {
   getAgentProxyStatus,
   saveAgentProxySettings,
@@ -152,6 +153,7 @@ import {
   submitToolPermissionInputSchema,
   listToolPermissionGrantsInputSchema,
   revokeToolPermissionGrantInputSchema,
+  browserTabClosedInputSchema,
   threadRunEventsInputSchema,
   workspaceCreateInputSchema,
   workspaceDeleteInputSchema,
@@ -1210,6 +1212,17 @@ export function createAgentHandlers(
       }
       const removed = await toolGrantMirror.removeByWorkspace(input.workspaceSlug!);
       return { removed };
+    },
+    // #838②：desktop→sidecar 私有通道（tab 关闭下推）——不进 AGENT_IPC_CHANNELS，
+    // renderer 白名单派生不可达；desktop 内部经 sidecarHost.call 直呼。
+    "agent:browser-tab-closed": async (params) => {
+      const input = validateInput(
+        browserTabClosedInputSchema,
+        params,
+        "agent:browser-tab-closed",
+      );
+      const cleared = invalidateBrowserTabsCacheByTab(input.tabId);
+      return { ok: true, cleared };
     },
     "agent:ensure-default-workspace": async () => ensureDefaultWorkspace(),
     [AGENT_IPC_CHANNELS.SEND_THREAD_MESSAGE]: async (params) => {

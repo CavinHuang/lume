@@ -41,6 +41,21 @@ export class BrowserToolSessionRegistry {
     return session
   }
 
+  /**
+   * #838②：desktop 下推 tab 关闭时，清空缓存中包含该 tab 的会话条目。
+   * 返回清除的会话数；0 = 无会话缓存受影响。
+   */
+  invalidateTabsCacheByTab(tabId: string): number {
+    let cleared = 0
+    for (const session of this.sessions.values()) {
+      if (session.tabsCache?.tabs.some((tab) => tab.tabId === tabId)) {
+        session.tabsCache = undefined
+        cleared += 1
+      }
+    }
+    return cleared
+  }
+
   take(threadId: string): BrowserToolSession | undefined {
     const session = this.sessions.get(threadId)
     this.sessions.delete(threadId)
@@ -51,3 +66,8 @@ export class BrowserToolSessionRegistry {
 const registry = new BrowserToolSessionRegistry()
 
 export function getBrowserToolSessionRegistry(): BrowserToolSessionRegistry { return registry }
+
+/** #838②：desktop 下推 tab 关闭的入口（agent:browser-tab-closed 私有通道用） */
+export function invalidateBrowserTabsCacheByTab(tabId: string): number {
+  return registry.invalidateTabsCacheByTab(tabId)
+}
