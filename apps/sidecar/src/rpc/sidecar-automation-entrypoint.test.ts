@@ -53,7 +53,7 @@ function createSidecarClient(configDir: string, options?: { autostart?: boolean 
       LUME_CONFIG_DIR: configDir,
       LUME_DEFAULT_SKILLS_AUTOSTART: "false",
       LUME_IM_AUTOSTART: "false",
-      LUME_LOG_FILE: "false",
+      LUME_LOG_FILE: join(configDir, "sidecar.log"),
       LUME_READING_RUNNER_AUTOSTART: "false"
     }
   });
