@@ -14,35 +14,35 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # core:
-  #   name: Core verification (Ubuntu)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v4
-  #     - uses: oven-sh/setup-bun@v2
-  #       with:
-  #         bun-version: 1.3.13
-  #     # 构建 natives 使 skipIf(!isNativeAvailable()) 门控的安全测试在 CI 真实执行
-  #     # （shell 只读证明的 fail-closed 向量等，此前整块恒跳，#720 review 发现）
-  #     - uses: dtolnay/rust-toolchain@stable
-  #     - uses: Swatinem/rust-cache@v2
-  #       with:
-  #         workspaces: crates/lume-natives
-  #     - name: Build natives
-  #       run: bun run --filter @lume/natives build
-  #     - name: Install dependencies
-  #       run: bun install --frozen-lockfile
-  #     - name: Typecheck
-  #       run: bun run typecheck
-  #     - name: Unit tests
-  #       run: bun run test:core
-  #     # 双态反向覆盖（#729 review 安全方向）：natives 就位后 fail-closed 回退
-  #     # 块（bash.test.ts 反向门控）与 tokens JS 计数分支在主测试里恒跳，
-  #     # 此处以空产物路径补跑
-  #     - name: Unit tests (natives-absent fail-closed fallback)
-  #       run: LUME_NATIVES_PATH=/nonexistent.node bun test packages/sdk/src/tools/bash.test.ts packages/sdk/src/utils/tokens.test.ts
-  #     - name: Core smoke
-  #       run: bun run test:smoke
+  core:
+    name: Core verification (Ubuntu)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.3.13
+      # 构建 natives 使 skipIf(!isNativeAvailable()) 门控的安全测试在 CI 真实执行
+      # （shell 只读证明的 fail-closed 向量等，此前整块恒跳，#720 review 发现）
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: crates/lume-natives
+      - name: Build natives
+        run: bun run --filter @lume/natives build
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Typecheck
+        run: bun run typecheck
+      - name: Unit tests
+        run: bun run test:core
+      # 双态反向覆盖（#729 review 安全方向）：natives 就位后 fail-closed 回退
+      # 块（bash.test.ts 反向门控）与 tokens JS 计数分支在主测试里恒跳，
+      # 此处以空产物路径补跑
+      - name: Unit tests (natives-absent fail-closed fallback)
+        run: LUME_NATIVES_PATH=/nonexistent.node bun test packages/sdk/src/tools/bash.test.ts packages/sdk/src/utils/tokens.test.ts
+      - name: Core smoke
+        run: bun run test:smoke
 
   # windows:
   #   name: Windows reliability
