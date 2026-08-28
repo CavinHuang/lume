@@ -3,6 +3,7 @@ import { existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpath
 import { basename, join } from "node:path";
 import { tmpdir } from "node:os";
 import { createHash } from "node:crypto";
+import { pathToFileURL } from "node:url";
 import { getWorkspaceResourcesPath } from "../infra/config-paths";
 import {
   convertLegacyFileRef,
@@ -28,6 +29,7 @@ import {
   readWorkspaceRootPath,
   renameAuthorizedFileRef,
   resolveAuthorizedFileRef,
+  resolveAuthorizedBrowserPreviewPath,
   resolveAuthorizedBrowserUploadPaths,
   validateGuardedFileRef,
   resolveThreadAttachmentPath,
@@ -245,6 +247,26 @@ describe("agent-files-service file ops", () => {
     const outside = join(configDir, "outside-upload.txt");
     writeFileSync(outside, "outside", "utf8");
     expect(() => resolveAuthorizedBrowserUploadPaths(thread.id, [outside])).toThrow("不属于当前任务");
+  });
+
+  test("browser file previews accept current task files and reject outside paths", () => {
+    const configDir = createTempConfigDir();
+    const projectPath = join(configDir, "browser-preview-project");
+    mkdirSync(projectPath);
+    const workspace = createAgentWorkspace("browser-preview", { projectPath });
+    const thread = createAgentThread("browser preview", undefined, workspace.id);
+    const previewFile = join(projectPath, "preview page.html");
+    writeFileSync(previewFile, "<h1>preview</h1>", "utf8");
+
+    expect(resolveAuthorizedBrowserPreviewPath(thread.id, pathToFileURL(previewFile).toString()))
+      .toBe(realpathSync(previewFile));
+
+    const outside = join(configDir, "outside-preview.html");
+    writeFileSync(outside, "<h1>outside</h1>", "utf8");
+    expect(() => resolveAuthorizedBrowserPreviewPath(thread.id, pathToFileURL(outside).toString()))
+      .toThrow("不属于当前任务");
+    expect(() => resolveAuthorizedBrowserPreviewPath(thread.id, "https://example.com"))
+      .toThrow("本地预览地址非法");
   });
 
   test("reads and atomically writes editable FileRefs with encoding and mtime conflict protection", () => {

@@ -117,7 +117,9 @@ function canonicalActionMethod(method: string): string {
 function isPrivateBrowserUrl(value: unknown): boolean {
   if (typeof value !== "string") return false
   try {
-    const host = new URL(value).hostname.toLowerCase().replace(/^\[|\]$/g, "")
+    const parsed = new URL(value)
+    if (parsed.protocol === "file:") return true
+    const host = parsed.hostname.toLowerCase().replace(/^\[|\]$/g, "")
     if (host === "localhost" || host === "::1" || host.endsWith(".local") || host.startsWith("fc") || host.startsWith("fd") || host.startsWith("fe80:")) return true
     const octets = host.split(".").map(Number)
     if (octets.length !== 4 || octets.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return false
@@ -129,7 +131,13 @@ function isPrivateBrowserUrl(value: unknown): boolean {
   } catch { return false }
 }
 
-function safeOrigin(value: unknown): string | undefined { try { return typeof value === "string" ? new URL(value).origin : undefined } catch { return undefined } }
+function safeOrigin(value: unknown): string | undefined {
+  try {
+    if (typeof value !== "string") return undefined
+    const origin = new URL(value).origin
+    return origin === "null" ? undefined : origin
+  } catch { return undefined }
+}
 
 function preview(method: string, params: Record<string, unknown>): string {
   if (method === "browser_run_script") return "在当前 Agent 任务标签页执行 JavaScript"

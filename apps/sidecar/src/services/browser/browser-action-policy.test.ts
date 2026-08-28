@@ -40,6 +40,11 @@ test("browser policy hands payment and CAPTCHA back to the user", () => {
   assert.equal(privateNested.category, "authorize")
   // 无 url 的建 tab 不入导航门
   assert.equal(classifyBrowserAction("create_tab", {}).decision, "allow")
+  assert.deepEqual(classifyBrowserAction("navigate", { url: "file:///tmp/preview.html" }), {
+    decision: "confirm",
+    category: "authorize",
+    preview: "打开本地或私有地址：未知地址",
+  })
   // #649 review P1-3:双键冲突时取序与 broker normalize(options.url ?? params.url)一致,
   // 门评估的 URL 必须等于实际导航的 URL,否则弹窗确认 A 实际导航 B(同意失真)
   const dualKey = classifyBrowserAction("create_tab", { url: "https://confirmed.example.com", options: { url: "http://169.254.169.254/latest/meta-data" } })
