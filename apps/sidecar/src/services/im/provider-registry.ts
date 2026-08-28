@@ -1,4 +1,4 @@
-import type { ImProvider, ImAccountUpdateInput, ImPeerKind } from "@lume/shared";
+import type { ImMirrorCarrier, ImProvider, ImAccountUpdateInput, ImPeerKind } from "@lume/shared";
 import type { ImRuntimeAccount } from "./im-config-manager";
 import type { InboundImRouteMessage } from "./im-message-router";
 
@@ -43,11 +43,38 @@ export interface ImCreateWorkerDeps {
   updateAccount?: (id: string, input: ImAccountUpdateInput) => Promise<void> | void;
 }
 
+/**
+ * #544 会话镜像能力位：只声明该渠道真正具备的写操作，上层（编排服务/RPC/UI）
+ * 对缺省项一律不放行——「能力声明式」让各 provider 的平台差异收敛在自己文件内。
+ */
+export interface ImMirrorProviderCapabilities {
+  /** 运行进度落到镜像群的载体形态 */
+  carrier: ImMirrorCarrier;
+  /** 建群（目标用户随建群一并入群）；缺省=无法主动建群（附着档只能附着既有群） */
+  createGroup?: (input: {
+    account: ImRuntimeAccount;
+    name: string;
+    userOpenId?: string;
+  }) => Promise<{ ok: boolean; chatId?: string; error?: string }>;
+  /** 同步群名（线程标题变更）；缺省=平台无改群名 API */
+  renameGroup?: (input: {
+    account: ImRuntimeAccount;
+    chatId: string;
+    name: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
+  /** 机器人退群（#544 裁决：线程删除固定退群、不解散）；缺省=平台无退群路径 */
+  leaveGroup?: (input: {
+    account: ImRuntimeAccount;
+    chatId: string;
+  }) => Promise<{ ok: boolean; error?: string }>;
+}
+
 export interface ImProviderDefinition {
   provider: ImProvider;
   createWorker: (account: ImRuntimeAccount, deps?: ImCreateWorkerDeps) => ImWorker;
   sendText: (input: ImSendInput) => Promise<ImSendResult>;
   sendMedia?: (input: ImSendMediaInput) => Promise<ImSendResult>;
+  mirror?: ImMirrorProviderCapabilities;
 }
 
 const registry = new Map<ImProvider, ImProviderDefinition>();

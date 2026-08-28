@@ -1,5 +1,6 @@
-import { IM_IPC_CHANNELS } from "@lume/shared";
-import type { ImAccountCreateInput, ImAccountUpdateInput, ImWeixinLoginStartInput } from "@lume/shared";
+import { IM_IPC_CHANNELS, IM_MIRROR_TIERS } from "@lume/shared";
+import type { ImAccountCreateInput, ImAccountUpdateInput, ImMirrorSettingsPublic, ImWeixinLoginStartInput } from "@lume/shared";
+import { getImProvider } from "../services/im/provider-registry";
 import {
   createImAccount,
   deleteImAccount,
@@ -7,7 +8,21 @@ import {
   listImAccounts,
   updateImAccount
 } from "../services/im/im-config-manager";
-import { deleteImThreadBindingsForAccount } from "../services/im/im-thread-binding-store";
+import {
+  deleteImThreadBindingsForAccount,
+  getImThreadBindingByThreadId,
+  listImThreadBindings
+} from "../services/im/im-thread-binding-store";
+import {
+  getImMirrorSettings,
+  listImMirrorEntries,
+  removeImMirrorEntriesByThreadId,
+  removeImMirrorEntriesForAccount,
+  setMirrorOwnerAccountId,
+  upsertImMirrorEntry
+} from "../services/im/im-mirror-store";
+import { getAgentThreadMeta } from "../services/agent/agent-thread-manager";
+import { forgetMirrorTitleMemo } from "../services/im/mirror/im-mirror-service";
 import { imRuntimeManager, type ImRuntimeManager } from "../services/im/im-runtime-manager";
 import {
   weixinLoginManager,
@@ -24,6 +39,11 @@ import {
   imAccountCreateInputSchema,
   imAccountIdInputSchema,
   imAccountUpdateInputSchema,
+  imMirrorAttachCandidatesInputSchema,
+  imMirrorAttachInputSchema,
+  imMirrorDetachInputSchema,
+  imMirrorEmptyInputSchema,
+  imMirrorSetOwnerInputSchema,
   imWeixinLoginPollInputSchema,
   imWeixinLoginStartInputSchema
 } from "./schemas";
@@ -82,6 +102,118 @@ export function createImHandlers(input: CreateImHandlersInput = {}): Record<stri
       runtimeManager.stopAccount(payload.id);
       deleteImAccount(payload.id);
       deleteImThreadBindingsForAccount(payload.id);
+      // #544 镜像联动：清映射，若该账号正承担镜像则一并归还 owner 位
+      removeImMirrorEntriesForAccount(payload.id);
+      return { ok: true };
+    },
+    [IM_IPC_CHANNELS.MIRROR_GET_SETTINGS]: async (params) => {
+      validateInput(imMirrorEmptyInputSchema, params, IM_IPC_CHANNELS.MIRROR_GET_SETTINGS);
+      return getImMirrorSettings();
+    },
+    [IM_IPC_CHANNELS.MIRROR_SET_OWNER]: async (params) => {
+      const { accountId } = validateInput(
+        imMirrorSetOwnerInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_SET_OWNER
+      ) as { accountId: string | null };
+      if (accountId === null) {
+        setMirrorOwnerAccountId(null);
+        return { ok: true, settings: getImMirrorSettings() };
+      }
+      const fail = (error: string): { ok: false; error: string; settings: ImMirrorSettingsPublic } => ({
+        ok: false,
+        error,
+        settings: getImMirrorSettings()
+      });
+      const account = getImAccount(accountId);
+      if (!account) return fail("IM 账号不存在");
+      if (!account.enabled) return fail("该账号未启用，请先启用后再承担镜像");
+      const tier = IM_MIRROR_TIERS[account.provider];
+      if (tier.tier === "unsupported") return fail(tier.reason ?? "该渠道暂不支持镜像");
+      const current = getImMirrorSettings().enabledMirrorAccountId;
+      if (current && current !== accountId) return fail("已由其他账号承担镜像，请先取消原承担账号");
+      setMirrorOwnerAccountId(accountId);
+      return { ok: true, settings: getImMirrorSettings() };
+    },
+    [IM_IPC_CHANNELS.MIRROR_LIST]: async (params) => {
+      validateInput(imMirrorEmptyInputSchema, params, IM_IPC_CHANNELS.MIRROR_LIST);
+      const entries = listImMirrorEntries();
+      const titles: Record<string, string> = {};
+      for (const entry of entries) {
+        titles[entry.threadId] = getAgentThreadMeta(entry.threadId)?.title ?? "";
+      }
+      return { entries, titles };
+    },
+    // ─── #544 attach 附着档：机器人已在的群 × 桌面线程 显式配对 ───
+    [IM_IPC_CHANNELS.MIRROR_ATTACH_CANDIDATES]: async (params) => {
+      const { accountId } = validateInput(
+        imMirrorAttachCandidatesInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_ATTACH_CANDIDATES
+      ) as { accountId: string };
+      const entries = listImMirrorEntries();
+      const candidates = listImThreadBindings()
+        .filter(
+          (binding) =>
+            binding.accountId === accountId &&
+            binding.peerKind === "group" &&
+            !entries.some((entry) => entry.accountId === accountId && entry.chatId === binding.peerId)
+        )
+        .map((binding) => ({
+          peerId: binding.peerId,
+          peerName: binding.peerName,
+          threadId: binding.threadId
+        }));
+      return { ok: true, candidates };
+    },
+    [IM_IPC_CHANNELS.MIRROR_ATTACH]: async (params) => {
+      const { accountId, chatId, threadId } = validateInput(
+        imMirrorAttachInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_ATTACH
+      ) as { accountId: string; chatId: string; threadId: string };
+      const fail = (error: string): { ok: false; error: string } => ({ ok: false, error });
+      const account = getImAccount(accountId);
+      if (!account) return fail("IM 账号不存在");
+      if (!account.enabled) return fail("该账号未启用");
+      let definition;
+      try {
+        definition = getImProvider(account.provider);
+      } catch (error) {
+        return fail(`渠道未注册：${error instanceof Error ? error.message : String(error)}`);
+      }
+      if (!definition.mirror) return fail("该渠道暂不支持镜像");
+      // 群必须真实存在互动痕迹（该账号的 group binding），防乱配对
+      const groupBinding = listImThreadBindings().find(
+        (binding) =>
+          binding.accountId === accountId && binding.peerKind === "group" && binding.peerId === chatId
+      );
+      if (!groupBinding) return fail("该群尚未与机器人互动——先把机器人拉入群并发送一条消息");
+      // 自环守卫①：附着目标必须是桌面线程（无任何 IM 绑定）
+      if (getImThreadBindingByThreadId(threadId)) return fail("该线程已是 IM 来源会话，不能附着");
+      const meta = getAgentThreadMeta(threadId);
+      if (!meta) return fail("桌面线程不存在");
+      if (meta.status === "archived" || meta.status === "trashed") {
+        return fail("桌面线程已归档或回收站，不能附着");
+      }
+      const entry = upsertImMirrorEntry({
+        threadId,
+        accountId,
+        chatId,
+        carrier: definition.mirror.carrier
+      });
+      // 换群附着后群名必须重新同步：清旧标题 memo
+      forgetMirrorTitleMemo(threadId);
+      return { ok: true, entry };
+    },
+    [IM_IPC_CHANNELS.MIRROR_DETACH]: async (params) => {
+      const { threadId } = validateInput(
+        imMirrorDetachInputSchema,
+        params,
+        IM_IPC_CHANNELS.MIRROR_DETACH
+      ) as { threadId: string };
+      removeImMirrorEntriesByThreadId(threadId);
+      forgetMirrorTitleMemo(threadId);
       return { ok: true };
     },
     [IM_IPC_CHANNELS.START_ACCOUNT]: async (params) => {

@@ -72,7 +72,13 @@ function fakeClient(calls: FakeApiCalls): FeishuRestClient {
           get: async () => ({ code: 0 })
         },
         chat: {
-          get: async () => ({ code: 0 })
+          get: async () => ({ code: 0 }),
+          create: async () => ({ code: 0, data: { chat_id: "oc_group" } }),
+          update: async () => ({ code: 0 })
+        },
+        chatMembers: {
+          create: async () => ({ code: 0 }),
+          delete: async () => ({ code: 0 })
         }
       }
     },
@@ -235,7 +241,7 @@ describe("createFeishuCardStream", () => {
 
   test("开卡失败返回 false 且 close 后不再发送", async () => {
     const failingClient: FeishuRestClient = {
-      im: { v1: { message: { create: async () => undefined, get: async () => ({ code: 0 }) }, chat: { get: async () => ({ code: 0 }) } } }, bot: { v3: { botInfo: { get: async () => ({ code: 0 }) } } },
+      im: { v1: { message: { create: async () => undefined, get: async () => ({ code: 0 }) }, chat: { get: async () => ({ code: 0 }), create: async () => ({ code: 0, data: { chat_id: "oc_group" } }), update: async () => ({ code: 0 }) }, chatMembers: { create: async () => ({ code: 0 }), delete: async () => ({ code: 0 }) } } }, bot: { v3: { botInfo: { get: async () => ({ code: 0 }) } } },
       cardkit: {
         v1: {
           card: {
@@ -259,7 +265,7 @@ describe("createFeishuCardStream", () => {
 
   test("业务码非 0 的 create 视为开卡失败", async () => {
     const rejectedClient: FeishuRestClient = {
-      im: { v1: { message: { create: async () => undefined, get: async () => ({ code: 0 }) }, chat: { get: async () => ({ code: 0 }) } } }, bot: { v3: { botInfo: { get: async () => ({ code: 0 }) } } },
+      im: { v1: { message: { create: async () => undefined, get: async () => ({ code: 0 }) }, chat: { get: async () => ({ code: 0 }), create: async () => ({ code: 0, data: { chat_id: "oc_group" } }), update: async () => ({ code: 0 }) }, chatMembers: { create: async () => ({ code: 0 }), delete: async () => ({ code: 0 }) } } }, bot: { v3: { botInfo: { get: async () => ({ code: 0 }) } } },
       cardkit: {
         v1: {
           card: {
