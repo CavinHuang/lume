@@ -24,7 +24,7 @@ import {
 /** IM 围栏结构标签：中和面与 buildImUserMessage 的围栏形态同源钉死。 */
 const IM_STRUCTURE_TAGS = ["quoted_message", "user_message", "im_context"] as const;
 import { randomUUID } from "node:crypto";
-import { emitAgentNotification } from "../agent/agent-notification-service";
+import { createRunFailedRuntimeEvent, createUserSubmittedRuntimeEvent, emitAgentNotification, emitRuntimeEventNotification } from "../agent/agent-notification-service";
 import { createAgentThread, getAgentThreadMeta, listAgentThreads, updateAgentThreadMeta } from "../agent/agent-thread-manager";
 import { appendAgentMessage, stopAgent, submitAgentToolPermission } from "../agent/agent-service";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
@@ -276,22 +276,7 @@ function emitUserSubmittedRuntimeEvent(
   if (event.message.role !== "user" || typeof event.message.content !== "string") {
     return;
   }
-  const createdAt = new Date(event.message.createdAt ?? Date.now()).toISOString();
-  emitNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-    threadId,
-    event: {
-      id: `${threadId}:${event.message.id ?? createdAt}:message.user.submitted`,
-      type: "message.user.submitted",
-      runId: `message:${event.message.id ?? createdAt}`,
-      threadId,
-      text: event.message.content,
-      createdAt,
-      messageId: event.message.id,
-      versionGroupId: event.message.versionGroupId,
-      versionIndex: event.message.versionIndex,
-      versionCount: event.message.versionCount
-    }
-  });
+  emitRuntimeEventNotification(threadId, createUserSubmittedRuntimeEvent(threadId, event.message), emitNotification);
 }
 
 async function deliverAssistantReplyToIm(
@@ -361,20 +346,7 @@ function emitRuntimeError(
   message: string,
   emitNotification: (method: string, params: unknown) => void
 ): void {
-  emitNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-    threadId,
-    event: {
-      id: `${threadId}:${Date.now()}:run.failed`,
-      type: "run.failed",
-      threadId,
-      runId: `runtime-error:${threadId}`,
-      createdAt: new Date().toISOString(),
-      error: {
-        code: "runtime_error",
-        message
-      }
-    }
-  });
+  emitRuntimeEventNotification(threadId, createRunFailedRuntimeEvent(threadId, message), emitNotification);
 }
 
 function emitImDeliveryRuntimeEvent(
@@ -385,28 +357,25 @@ function emitImDeliveryRuntimeEvent(
   emitNotification: (method: string, params: unknown) => void,
   error?: string
 ): void {
-  emitNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
+  emitRuntimeEventNotification(threadId, {
+    id: `${threadId}:${event.message.id}:im.delivery:${status}:${Date.now()}`,
+    type: "im.delivery",
+    runId: `message:${event.message.id}`,
     threadId,
-    event: {
-      id: `${threadId}:${event.message.id}:im.delivery:${status}:${Date.now()}`,
-      type: "im.delivery",
-      runId: `message:${event.message.id}`,
-      threadId,
-      createdAt: new Date().toISOString(),
-      messageId: event.message.id,
-      provider: binding?.provider ?? "weixin",
-      accountId: binding?.accountId ?? "",
-      peerKind: binding?.peerKind ?? "dm",
-      peerId: binding?.peerId ?? "",
-      status,
-      ...(error ? {
-        error: {
-          code: "im_delivery_failed",
-          message: redactSensitiveText(error)
-        }
-      } : {})
-    }
-  });
+    createdAt: new Date().toISOString(),
+    messageId: event.message.id,
+    provider: binding?.provider ?? "weixin",
+    accountId: binding?.accountId ?? "",
+    peerKind: binding?.peerKind ?? "dm",
+    peerId: binding?.peerId ?? "",
+    status,
+    ...(error ? {
+      error: {
+        code: "im_delivery_failed",
+        message: redactSensitiveText(error)
+      }
+    } : {})
+  }, emitNotification);
 }
 
 function emitPermissionResolvedRuntimeEvent(
@@ -415,19 +384,16 @@ function emitPermissionResolvedRuntimeEvent(
   emitNotification: (method: string, params: unknown) => void
 ): void {
   const createdAt = new Date().toISOString();
-  emitNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
+  emitRuntimeEventNotification(threadId, {
+    id: `${threadId}:${input.requestId}:permission.resolved:${Date.now()}`,
+    type: "permission.resolved",
+    runId: `permission:${input.requestId}`,
     threadId,
-    event: {
-      id: `${threadId}:${input.requestId}:permission.resolved:${Date.now()}`,
-      type: "permission.resolved",
-      runId: `permission:${input.requestId}`,
-      threadId,
-      createdAt,
-      requestId: input.requestId,
-      decision: input.decision,
-      source: "im"
-    }
-  });
+    createdAt,
+    requestId: input.requestId,
+    decision: input.decision,
+    source: "im"
+  }, emitNotification);
 }
 
 function formatDecisionLabel(decision: AgentToolPermissionDecision): string {
@@ -937,10 +903,7 @@ export function createImAgentStreamEmitter(
   return {
     onRuntimeEvent: (event) => {
       cardSession?.handleEvent(event);
-      emitNotification(AGENT_IPC_CHANNELS.RUNTIME_EVENT, {
-        threadId,
-        event
-      });
+      emitRuntimeEventNotification(threadId, event, emitNotification);
     },
     onMessageAppended: (event) => {
       emitNotification(AGENT_IPC_CHANNELS.MESSAGE_APPENDED, event);

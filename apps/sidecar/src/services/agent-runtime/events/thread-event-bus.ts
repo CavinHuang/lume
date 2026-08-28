@@ -244,8 +244,9 @@ export class ThreadEventBus {
   private state(threadId: string): ThreadState {
     let st = this.threads.get(threadId)
     if (!st) {
-      const envelopes = this.readFile(threadId)
-      this.repairTornTail(threadId)
+      // #556 复核补充:首建同一次读取同时喂 nextSeq 与增量水位——此前 readFile +
+      // repairTornTail 两次全量读,且水位留空导致后续 read() 再付第三次
+      const envelopes = this.readFileAndRepairTail(threadId)
       st = {
         // 序号续上而非重写:以文件尾部最后一条合法行为基数(半行被截断,不参与计数)
         nextSeq: (envelopes[envelopes.length - 1]?.seq ?? 0) + 1,
@@ -257,6 +258,7 @@ export class ThreadEventBus {
         readOffset: null,
         maxSeqSeen: 0,
       }
+      this.resetReadWatermark(st, threadId, envelopes)
       this.threads.set(threadId, st)
     }
     return st
@@ -277,16 +279,29 @@ export class ThreadEventBus {
   }
 
   /**
-   * 半行尾修复(每线程每进程一次,首次触达时):若文件不以 \n 结尾(断电残行),
-   * 截掉最后一个 \n 之后的内容。否则下一次 append 会把合法行拼进毒行,
+   * state 首建专用(#556):一次读取同时完成半行尾修复与解析。
+   * 残尾语义与原 repairTornTail 严格一致:文件不以 \n 结尾(断电残行)即截掉
+   * 最后一个 \n 之后的内容——否则下一次 append 会把合法行拼进毒行,
    * read() 在毒行截断后该线程 seq≥2 的事件将永久不可读。
    */
-  private repairTornTail(threadId: string): void {
+  private readFileAndRepairTail(threadId: string): SdkEventEnvelope[] {
     const file = this.file(threadId)
-    if (!existsSync(file)) return
-    const content = readFileSync(file, "utf8")
-    if (content === "" || content.endsWith("\n")) return
-    writeFileSync(file, content.slice(0, content.lastIndexOf("\n") + 1))
+    if (!existsSync(file)) return []
+    let content = readFileSync(file, "utf8")
+    if (content !== "" && !content.endsWith("\n")) {
+      content = content.slice(0, content.lastIndexOf("\n") + 1)
+      writeFileSync(file, content)
+    }
+    const out: SdkEventEnvelope[] = []
+    for (const line of content.split("\n")) {
+      if (!line) continue
+      try {
+        out.push(JSON.parse(line) as SdkEventEnvelope)
+      } catch {
+        break
+      }
+    }
+    return out
   }
 
   /** 逐行读取;遇非法 JSON 行(断电半行)即截断后续。 */

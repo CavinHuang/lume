@@ -2,13 +2,13 @@ import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import type { SDKMessage } from "@lume/agent-sdk";
-import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryEvidenceRef } from "@lume/shared";
+import { type LumeRuntimeEvent, type MemoryEvidenceRef } from "@lume/shared";
 import { appendAgentThreadSDKMessages, createAgentThreadWithModelRef, getAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 import { createSilentAgentEmitter, extractAssistantText } from "./sdk-thread-utils";
 import { getAgentWorkspaceBySlug } from "../agent/agent-workspace-manager";
 import { sendAgentMessage } from "../agent/agent-service";
 // #580 review fix:出站通知直连 infra 单点,不经 agent 域借道。
-import { getOutboundNotificationWriter } from "../infra/outbound-notification";
+import { emitRuntimeEventNotification } from "../agent/agent-notification-service";
 import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import { MemoryCommandService, hasMemoryMutationForRun } from "./command-service";
 import {
@@ -459,7 +459,7 @@ function notifyMemorySaved(input: BackgroundMemoryExtractionRequest, receipts: M
     summary,
     details
   };
-  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+  emitRuntimeEventNotification(input.threadId, event);
 }
 
 function notifyExtractionProgress(
@@ -480,7 +480,7 @@ function notifyExtractionProgress(
     processedItems: progress.processedItems,
     changedItems: progress.changedItems
   };
-  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+  emitRuntimeEventNotification(input.threadId, event);
 }
 
 function notifyExtractionCompleted(
@@ -501,7 +501,7 @@ function notifyExtractionCompleted(
     summary: `后台提取完成，处理 ${result.scannedItems} 条来源，变更 ${result.changedItems} 条记忆`,
     changedItems: result.changedItems
   };
-  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: input.threadId, event });
+  emitRuntimeEventNotification(input.threadId, event);
 }
 
 function cursorPath(input: Pick<BackgroundMemoryExtractionRequest, "workspaceSlug" | "threadId">): string {

@@ -6,7 +6,7 @@ import {
   writeFileSync
 } from "node:fs";
 import { join } from "node:path";
-import type { FileReferenceBinding, FileReferenceProtocolVersion, SDKMessage } from "@lume/shared";
+import { isCompactionSdkMessage, type FileReferenceBinding, type FileReferenceProtocolVersion, type SDKMessage } from "@lume/shared";
 import { getAgentSessionDataDir } from "../infra/config-paths";
 import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { createLogger } from "../infra/logger";
@@ -114,16 +114,30 @@ export function readAgentMessageVersionStore(sessionId: string): AgentMessageVer
   }
 }
 
+/**
+ * #527 遗留(sdkMessages 双留存去重):全局 sdkMessages.jsonl 是原始流唯一正典,
+ * 版本 store 落盘时不再冗余持久化全量 SDK 片段——与传输裁剪(message-payload-trim)
+ * 同口径,仅保留 compaction system 消息(前端会话恢复唯一所需)。仅裁磁盘字节,
+ * 内存对象不动(内部链路语义不变);flatten 回退(jsonl 缺失时)仅服务旧数据,
+ * 新写入消息所在 run 必然已补全 jsonl,回退面不扩大。
+ */
+function sdkMessagesForRecord(sdkMessages: SDKMessage[] | undefined): SDKMessage[] | undefined {
+  if (!sdkMessages || sdkMessages.length === 0) return undefined;
+  const compactionOnly = sdkMessages.filter(isCompactionSdkMessage);
+  return compactionOnly.length > 0 ? compactionOnly : undefined;
+}
+
 export function writeAgentMessageVersionStore(sessionId: string, store: AgentMessageVersionStore): void {
   const path = getAgentMessageVersionStorePath(sessionId);
   const normalized = normalizeStore(sessionId, store);
   const prunedGroups = pruneInvisibleGroups(normalized.groups, normalized.visibleGroupIds);
+  const messages = prunedGroups.droppedGroupIds.size > 0
+    ? normalized.messages.filter((record) => !prunedGroups.droppedGroupIds.has(record.groupId))
+    : normalized.messages;
   const payload: AgentMessageVersionStore = {
     ...normalized,
     groups: prunedGroups.groups,
-    messages: prunedGroups.droppedGroupIds.size > 0
-      ? normalized.messages.filter((record) => !prunedGroups.droppedGroupIds.has(record.groupId))
-      : normalized.messages,
+    messages: messages.map((record) => ({ ...record, sdkMessages: sdkMessagesForRecord(record.sdkMessages) })),
     version: STORE_VERSION,
     sessionId,
     updatedAt: Date.now()
