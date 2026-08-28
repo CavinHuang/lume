@@ -180,6 +180,58 @@ describe("ThreadEventBus", () => {
     expect(bus.hasEvents("th1")).toBe(true)
   })
 
+  // #556 对抗性复核补充:冷启动四连读中 state() 路径未被 #737 覆盖——
+  // state 首建(readFile + repairTornTail 两次全量读)应一次读取同时喂 nextSeq/maxSeqSeen/readOffset
+  describe("#556 补充:state 首建零重复全量读", () => {
+    const stateOf = (bus: ThreadEventBus, threadId: string) =>
+      (bus as unknown as { threads: Map<string, { readOffset: number | null; maxSeqSeen: number }> }).threads.get(threadId)
+
+    test("publish(state 首建)即立增量水位,旁路追加由快路增量读出", async () => {
+      dir = mkdtempSync(join(tmpdir(), "bus-state-wm-"))
+      const bus = new ThreadEventBus(dir)
+      // 预置老线程历史(sidecar 重启后 state 首建的典型场景)
+      await Bun.write(
+        join(dir, "th1.events.jsonl"),
+        JSON.stringify({ v: 1, seq: 1, threadId: "th1", runId: "r1", turnId: "t1", ts: 1, kind: "run", phase: "start", detail: { type: "run.start" } }) + "\n"
+      )
+      await bus.publish("th1", "r1", skeletonEvent("message", "end"))
+
+      const st = stateOf(bus, "th1")
+      expect(st?.readOffset).not.toBeNull()
+      expect(st?.maxSeqSeen).toBe(1)
+
+      // 水位立起后快路真实工作:旁路写入的新行增量读出不丢
+      const { appendFileSync } = await import("node:fs")
+      appendFileSync(
+        join(dir, "th1.events.jsonl"),
+        JSON.stringify({ v: 1, seq: 3, threadId: "th1", runId: "r1", turnId: "t1", ts: 1, kind: "run", phase: "end", detail: { type: "run.end" } }) + "\n"
+      )
+      const inc = await bus.read("th1", 2)
+      expect(inc.map((e) => e.seq)).toEqual([3])
+    })
+
+    test("state 首建与后续 read 全程不触第二次全量解析(readFile 计数)", async () => {
+      dir = mkdtempSync(join(tmpdir(), "bus-state-count-"))
+      const bus = new ThreadEventBus(dir)
+      await Bun.write(
+        join(dir, "th1.events.jsonl"),
+        JSON.stringify({ v: 1, seq: 1, threadId: "th1", runId: "r1", turnId: "t1", ts: 1, kind: "run", phase: "start", detail: { type: "run.start" } }) + "\n"
+      )
+      let fullReads = 0
+      const original = (bus as unknown as { readFile: (t: string) => SdkEventEnvelope[] }).readFile.bind(bus)
+      ;(bus as unknown as { readFile: (t: string) => SdkEventEnvelope[] }).readFile = (threadId: string) => {
+        fullReads += 1
+        return original(threadId)
+      }
+
+      await bus.publish("th1", "r1", skeletonEvent("message", "end"))
+      expect(await bus.read("th1", 1)).toHaveLength(1)
+
+      // state 首建走合并读取(非 readFile),水位已立 → read 走快路:全程零全量解析
+      expect(fullReads).toBe(0)
+    })
+  })
+
   test("releaseThreadEventBus 释放线程 state 与实例，重建后 nextSeq 从文件续读", async () => {
     dir = mkdtempSync(join(tmpdir(), "bus-release-"))
     const bus = getThreadEventBus(dir)

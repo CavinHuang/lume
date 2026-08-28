@@ -144,20 +144,9 @@ describe("agent-thread-manager multi-turn merge", () => {
     expect(assistant.content).toContain("你好！我是工作空间里的 AI 伙伴");
     expect(assistant.content).toContain("好的，有什么需要帮忙的直接说");
 
-    expect(assistant.sdkMessages).toBeDefined();
-    const sdkMessages = assistant.sdkMessages ?? [];
-    const toolUses = sdkMessages
-      .filter((message) => message.type === "assistant")
-      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
-      .filter((block) => !!block && typeof block === "object" && block.type === "tool_use")
-      .map((block) => (block as { name?: string; id?: string }).name ?? "");
-    const toolResults = sdkMessages
-      .filter((message) => message.type === "user")
-      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
-      .filter((block) => !!block && typeof block === "object" && block.type === "tool_result")
-      .map((block) => (block as { tool_use_id?: string }).tool_use_id ?? "");
-    expect(toolUses).toEqual(["read", "AskUserQuestion"]);
-    expect(toolResults).toEqual(["call_1", "call_2"]);
+    // #527 去重:tool 合并素材由 transcript 投影现场合成,版本 store 读回
+    // 不再冗余内嵌非 compaction 片段(原始流唯一正典是 sdkMessages.jsonl)
+    expect(assistant.sdkMessages).toBeUndefined();
   });
 
   test("reasoning-only + content-only 两个 turn 应合并", () => {
@@ -221,18 +210,9 @@ describe("agent-thread-manager multi-turn merge", () => {
     expect(assistant.reasoning).toContain("先搜索一下");
     expect(assistant.content).toContain("搜索完成");
 
-    const toolUses = (assistant.sdkMessages ?? [])
-      .filter((message) => message.type === "assistant")
-      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
-      .filter((block) => !!block && typeof block === "object" && block.type === "tool_use");
-    const toolResults = (assistant.sdkMessages ?? [])
-      .filter((message) => message.type === "user")
-      .flatMap((message) => Array.isArray(message.message?.content) ? message.message.content : [])
-      .filter((block) => !!block && typeof block === "object" && block.type === "tool_result");
-    expect(toolUses).toHaveLength(1);
-    expect((toolUses[0] as { name?: string }).name).toBe("grep");
-    expect(toolResults).toHaveLength(1);
-    expect((toolResults[0] as { tool_use_id?: string }).tool_use_id).toBe("call_a");
+    // #527 去重:tool 合并素材由 transcript 投影现场合成,版本 store 读回
+    // 不再冗余内嵌非 compaction 片段(原始流唯一正典是 sdkMessages.jsonl)
+    expect(assistant.sdkMessages).toBeUndefined();
   });
 
   test("不同用户消息之间的 assistant 不应合并", () => {
@@ -384,10 +364,9 @@ describe("agent-thread-manager multi-turn merge", () => {
     expect(messages[0]!.content).toBe("请帮我搜索");
     expect(messages[1]!.content).toBe("已完成搜索并总结");
     expect(messages[1]!.reasoning).toBe("先搜索再总结");
-    expect(messages[1]!.sdkMessages).toBeDefined();
-    expect(messages[1]!.sdkMessages).toHaveLength(3);
-    expect(messages[1]!.sdkMessages?.[0]?.type).toBe("assistant");
-    expect(messages[1]!.sdkMessages?.[1]?.type).toBe("user");
-    expect(messages[1]!.sdkMessages?.[2]?.type).toBe("result");
+    // #527 去重后 sdkMessages 落盘被裁,改用 model 探针验证数据来源仍是
+    // version store(优先于空 transcript 的读优先级修复不回归)
+    expect(messages[1]!.model).toBe("anthropic/claude-sonnet-4-5");
+    expect(messages[1]!.sdkMessages).toBeUndefined();
   });
 });

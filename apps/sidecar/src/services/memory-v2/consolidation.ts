@@ -2,10 +2,10 @@ import { closeSync, existsSync, openSync, readFileSync, renameSync, unlinkSync, 
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { SDKMessage } from "@lume/agent-sdk";
-import { AGENT_IPC_CHANNELS, type LumeRuntimeEvent, type MemoryDreamResult, type MemoryOrganizeProgress } from "@lume/shared";
+import { type LumeRuntimeEvent, type MemoryDreamResult, type MemoryOrganizeProgress } from "@lume/shared";
 import { appendAgentThreadSDKMessages } from "../agent/agent-thread-manager";
 // #580 review fix:出站通知直连 infra 单点,不经 agent 域借道。
-import { getOutboundNotificationWriter } from "../infra/outbound-notification";
+import { emitRuntimeEventNotification } from "../agent/agent-notification-service";
 import { isProcessAlive } from "../infra/index-mutation-lock";
 import { runDreamOrganizer } from "./dream-organizer";
 import { buildDreamEvidenceWindow, type DreamEvidenceCursor } from "./dream-evidence";
@@ -162,7 +162,7 @@ function notifyProgress(
     processedItems: progress.processedItems,
     changedItems: 0
   };
-  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: context.threadId, event });
+  emitRuntimeEventNotification(context.threadId, event);
 }
 
 function notifyCompleted(
@@ -205,7 +205,7 @@ function notifyCompleted(
     summary,
     details: []
   };
-  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: context.threadId, event: memoryChangedEvent });
+  emitRuntimeEventNotification(context.threadId, memoryChangedEvent);
   const event: Extract<LumeRuntimeEvent, { type: "memory.job.completed" }> = {
     id: `${jobId}:completed`,
     type: "memory.job.completed",
@@ -218,7 +218,7 @@ function notifyCompleted(
     summary,
     changedItems
   };
-  getOutboundNotificationWriter()?.(AGENT_IPC_CHANNELS.RUNTIME_EVENT, { threadId: context.threadId, event });
+  emitRuntimeEventNotification(context.threadId, event);
 }
 
 function changedItemCount(result: MemoryDreamResult): number {

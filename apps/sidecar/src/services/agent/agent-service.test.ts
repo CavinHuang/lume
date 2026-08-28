@@ -712,7 +712,8 @@ describe("agent-service", () => {
     });
 
     expect(visibleMessages.map((message) => message.role)).toEqual(["user", "assistant"]);
-    expect(visibleMessages[0]?.sdkMessages?.[0]?.type).toBe("user");
+    // #527 去重:读出链(version store)不再冗余内嵌非 compaction 片段,原始流唯一正典是 sdkMessages.jsonl
+    expect(visibleMessages[0]?.sdkMessages).toBeUndefined();
     expect(visibleMessages[1]?.content).toBe("mock assistant output");
     expect(visibleMessages[1]?.metadata?.tokenUsage).toEqual({
       source: "provider",

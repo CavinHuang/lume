@@ -12,6 +12,7 @@ import {
   forkAgentThread,
   getAgentThreadMeta,
   getAgentThreadMessages,
+  findAgentThreadSDKMessage,
   getAgentThreadSDKMessages,
   getRecentAgentThreadMessages,
   tryUpdateAgentThreadMeta,
@@ -181,6 +182,29 @@ describe("agent-thread-manager advanced ops", () => {
     expect(sdkMessages[0]?.type).toBe("assistant");
     expect((sdkMessages[0] as { message?: { content?: Array<{ text?: string }> } }).message?.content?.[0]?.text).toBe("assistant raw");
     expect(sdkMessages[1]?.type).toBe("result");
+  });
+
+  // #554 复核清单:task_notification 等终态消息恒在尾部追加,谓词查找尾窗命中
+  // 即免全量解析;窗外回退全量,find/some 语义与全量扫描严格等价
+  test("findAgentThreadSDKMessage 尾窗命中与窗外回退全量语义等价", () => {
+    const session = createAgentThread("find recent sdk");
+    appendAgentThreadSDKMessages(session.id, [
+      { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "old" }] } } as any
+    ]);
+    const notification = { type: "system", subtype: "task_notification", task_id: "job-1" } as any;
+    appendAgentThreadSDKMessages(session.id, [notification]);
+
+    const isNotification = (m: { type?: string; task_id?: string }) =>
+      m.type === "system" && m.task_id !== undefined;
+    expect(findAgentThreadSDKMessage(session.id, isNotification)).toEqual(notification);
+    expect(findAgentThreadSDKMessage(session.id, (m) => (m as { task_id?: string }).task_id === "nope")).toBeUndefined();
+
+    // 窗外老消息:notification 在 >1MB filler 之前,尾窗 miss → 回退全量仍命中
+    const session2 = createAgentThread("find fallback sdk");
+    appendAgentThreadSDKMessages(session2.id, [notification]);
+    const filler = { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "x".repeat(2048) }] } } as any;
+    appendAgentThreadSDKMessages(session2.id, Array.from({ length: 600 }, () => filler));
+    expect(findAgentThreadSDKMessage(session2.id, isNotification)).toEqual(notification);
   });
 
   test("transcript 回放应分离 reasoning 与正式正文", () => {

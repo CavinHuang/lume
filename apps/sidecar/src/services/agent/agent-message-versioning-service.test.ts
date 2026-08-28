@@ -206,7 +206,8 @@ describe("agent-message-versioning-service", () => {
     const visible = getVisibleAgentMessages("session-sdk-user");
     expect(created.message.sdkMessages).toHaveLength(1);
     expect(created.message.sdkMessages?.[0]?.type).toBe("user");
-    expect(visible[0]?.sdkMessages?.[0]?.type).toBe("user");
+    // #527 去重:内存出参保留,落盘读出(visible 走 readAgentMessageVersionStore)被裁
+    expect(visible[0]?.sdkMessages).toBeUndefined();
   });
 
   test("syncVersionStoreFromMessages 在已有历史版本时不应重置版本链", () => {
@@ -256,5 +257,58 @@ describe("agent-message-versioning-service", () => {
     const visible = getVisibleAgentMessages("session-g");
 
     expect((visible[0]?.metadata as Record<string, unknown> | undefined)?.pendingClientMessageId).toBe("pending-1");
+  });
+
+  // #527 遗留(sdkMessages 双留存去重):全局 sdkMessages.jsonl 是原始流唯一正典,
+  // 版本 store 落盘时裁剪至 compaction 子集——内存对象不变,重读只余 compaction
+  describe("版本记录 sdkMessages 持久化裁剪(#527 遗留)", () => {
+    test("createAssistantMessageVersion 只持久化 compaction 子集", () => {
+      initializeVersionStoreFromMessages("session-sdk-trim", []);
+      const user = createUserMessageVersion({ sessionId: "session-sdk-trim", content: "问题", createdAt: 1 });
+      const assistant = createAssistantMessageVersion({
+        sessionId: "session-sdk-trim",
+        turnId: user.turnId,
+        message: {
+          id: "assistant-sdk-trim",
+          role: "assistant",
+          content: "回答",
+          createdAt: 2,
+          model: "provider/model",
+          sdkMessages: [
+            { type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "raw" }] } },
+            { type: "user", message: { role: "user", content: "tool_result" } },
+            { type: "system", subtype: "compact_boundary" },
+            { type: "system", subtype: "unrelated_system" }
+          ] as never
+        }
+      });
+
+      // 内存返回不变(内部链路语义)
+      expect(assistant?.sdkMessages).toHaveLength(4);
+      // 落盘重读被裁(getAgentMessageVersions 走 readAgentMessageVersionStore)
+      const versions = getAgentMessageVersions("session-sdk-trim", assistant?.versionGroupId ?? "");
+      expect(versions[0]?.sdkMessages).toEqual([{ type: "system", subtype: "compact_boundary" }]);
+    });
+
+    test("纯非 compaction 片段持久化为 undefined", () => {
+      initializeVersionStoreFromMessages("session-sdk-trim-2", []);
+      const user = createUserMessageVersion({ sessionId: "session-sdk-trim-2", content: "问题", createdAt: 1 });
+      const assistant = createAssistantMessageVersion({
+        sessionId: "session-sdk-trim-2",
+        turnId: user.turnId,
+        message: {
+          id: "assistant-sdk-trim-2",
+          role: "assistant",
+          content: "回答",
+          createdAt: 2,
+          sdkMessages: [{ type: "assistant", message: { role: "assistant", content: [{ type: "text", text: "raw" }] } }] as never
+        }
+      });
+
+      // 内存返回不变;纯非 compaction 片段落盘为 undefined(store 层已覆盖同语义)
+      expect(assistant?.sdkMessages).toHaveLength(1);
+      const versions = getAgentMessageVersions("session-sdk-trim-2", assistant?.versionGroupId ?? "");
+      expect(versions[0]?.sdkMessages).toBeUndefined();
+    });
   });
 });
