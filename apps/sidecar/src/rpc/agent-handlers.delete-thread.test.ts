@@ -7,8 +7,13 @@ import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tra
 
 let runtimeSessionActive = false;
 
+// 全量 spread + false 时委托真实：残缺工厂会吞掉 stopAgentRuntime 等其余导出，
+// 毒化同 worker 后加载的动态 import 方（automation wall-clock 超时路径等）（#833）
+const attemptActual = await import("../services/agent-runtime/runner/attempt");
+const realIsAgentRuntimeSessionActive = attemptActual.isAgentRuntimeSessionActive;
 mock.module("../services/agent-runtime/runner/attempt", () => ({
-  isAgentRuntimeSessionActive: () => runtimeSessionActive
+  ...attemptActual,
+  isAgentRuntimeSessionActive: () => (runtimeSessionActive ? true : realIsAgentRuntimeSessionActive()),
 }));
 
 import { createAgentHandlers } from "./agent-handlers";
