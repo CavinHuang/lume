@@ -168,6 +168,10 @@ export class PlanningTodoStore {
           todo.workspaceId ?? null, todo.dueDate ?? null, todo.dueAt ?? null, todo.dueTimezone ?? null,
           now, todo.completedAt ?? null, todo.deletedAt ?? null, todo.id
         );
+        // 与 reopen/restore 同语义：open+dueAt 的恢复任务须复活 due 提醒（#647 follow-up11）
+        if (todo.status === "open" && todo.dueAt !== undefined && todo.deletedAt == null) {
+          this.#syncDueReminder(todo.id, todo.dueAt, now);
+        }
         eventSeqs.set(todo.id, this.#event(todo.id, "project_compensated", now, { restored: todo }, operationId, "compensating"));
       }
       this.#db.exec("COMMIT");
@@ -175,16 +179,17 @@ export class PlanningTodoStore {
       try { this.#db.exec("ROLLBACK"); } catch { /* preserve original error */ }
       throw error;
     }
-    for (const todo of snapshot) this.#publish({ eventSeq: eventSeqs.get(todo.id)!, todoId: todo.id, workspaceId: todo.workspaceId, operation: "project_compensated", updatedAt: now });
+    for (const todo of snapshot) this.#publish({ eventSeq: eventSeqs.get(todo.id)!, todoId: todo.id, workspaceId: todo.workspaceId, operation: "project_compensated", resources: ["todos", "reminders"], updatedAt: now });
   }
 
   removeWorkspace(workspaceId: string, mode: "keepHistory" | "deleteLumeData"): { count: number; conflicts: number } {
-    const rows = this.#db.prepare("SELECT * FROM planning_todo WHERE workspace_id = ?").all(workspaceId) as TodoRow[];
     let conflicts = 0;
     const now = this.#now();
     const eventSeqs = new Map<string, number>();
     this.#db.exec("BEGIN IMMEDIATE");
     try {
+      // 快照读移入事务内：与写串行化，避免并发变更落在读与写之间被覆盖（#647 follow-up9）
+      const rows = this.#db.prepare("SELECT * FROM planning_todo WHERE workspace_id = ?").all(workspaceId) as TodoRow[];
       for (const row of rows) {
         let title = row.title;
         let normalized = row.normalized_title;
@@ -516,7 +521,8 @@ function localDate(timestamp: number, timezone: string): string {
 }
 
 function dueBucket(todo: PlanningTodo, today: string, timezone: string): number {
-  const date = todo.dueDate ?? (todo.dueAt === undefined ? undefined : localDate(todo.dueAt, timezone));
+  // P2-16：dueAt 的日期归属按任务自身时区换算（UI 写入 dueTimezone），缺省回退进程时区
+  const date = todo.dueDate ?? (todo.dueAt === undefined ? undefined : localDate(todo.dueAt, todo.dueTimezone ?? timezone));
   if (!date) return 3;
   if (date < today) return 0;
   if (date === today) return 1;

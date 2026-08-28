@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { decryptSecret, encryptSecret, installSecretEncryptionKey } from "./secret-crypto";
+import { decryptSecret, decryptSecretIfEncrypted, encryptSecret, installSecretEncryptionKey } from "./secret-crypto";
 
 // 未注入时走 legacy 弱种子路径——这条密文供"注入后仍可读存量"用例复用
 const legacyCiphertext = encryptSecret("legacy-secret");
@@ -56,5 +56,20 @@ describe("secret-crypto", () => {
 
     // GCM tag 校验失败必须抛错，而不是返回垃圾明文
     expect(() => decryptSecret(encrypted)).toThrow();
+  });
+
+  test("decryptSecretIfEncrypted passes plaintext through (#598 legacy sessionWebhook)", () => {
+    // 存量钉钉 binding 的 contextToken 是从未加密过的明文 webhook，无前缀透传
+    const webhook = "https://oapi.dingtalk.com/robot/sendBySession?access_token=legacy-plain";
+    expect(decryptSecretIfEncrypted(webhook)).toBe(webhook);
+    expect(decryptSecretIfEncrypted(undefined)).toBeUndefined();
+  });
+
+  test("decryptSecretIfEncrypted unwraps v2 ciphertext and still fails closed on corrupt records", () => {
+    installSecretEncryptionKey(Buffer.alloc(32, 42).toString("base64"));
+    const encrypted = encryptSecret("sealed-webhook");
+    expect(decryptSecretIfEncrypted(encrypted)).toBe("sealed-webhook");
+    // 带 enc: 前缀但内容损坏 → 抛错而不是当明文透传
+    expect(() => decryptSecretIfEncrypted(`enc:v2:${Buffer.alloc(48, 9).toString("base64")}`)).toThrow();
   });
 });

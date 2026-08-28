@@ -24,7 +24,7 @@ import {
   syncDesktopTrayState,
 } from '@/lib/desktop-api'
 import type { AgentThreadMeta, AgentWorkspace, AgentWorkspaceRemovalImpact, AgentWorkspaceRemoveMode } from '@lume/shared'
-import { AGENT_IPC_CHANNELS } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, extractRpcErrorCode, RPC_ERROR_CODES } from '@lume/shared'
 import { LumeSidebar } from './LumeSidebar'
 import {
   buildLumeSidebarViewModel,
@@ -234,7 +234,8 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
           reportDesktopTrayNavigationConfirmationFailed(
             generation as number,
             threadId,
-            error instanceof Error && error.message.includes('timed out') ? 'timeout' : 'query_failed',
+            // #782：sidecar RPC 超时经 envelope 带 rpc_timeout 码，按码判别
+            extractRpcErrorCode(error) === RPC_ERROR_CODES.RPC_TIMEOUT ? 'timeout' : 'query_failed',
           ).catch(() => {})
         })
       }

@@ -44,8 +44,13 @@ export function parseWecomEvent(
   const rawText = body.text?.content?.trim();
   if (!rawText) return null;
   const peerId = body.chatid ?? body.from?.userid ?? "unknown";
-  // 群聊 @ 门控（#405，启发式同 feishu/dingtalk）；镜像群豁免（#544）
-  if (body.chattype === "group" && !rawText.includes("@") && !(isMirrorChat?.(peerId) ?? false)) {
+  // 群聊 @ 门控（#405）；#598 词边界收紧：企微平台无结构化 at 字段，@ 须位于
+  // 文本开头或空白后，"a@b.com" 这类内嵌 @ 不算 at；镜像群豁免（#544）
+  if (
+    body.chattype === "group" &&
+    !/(^|\s)@\S/.test(rawText) &&
+    !(isMirrorChat?.(peerId) ?? false)
+  ) {
     return null;
   }
   // 企微 @ 机器人前缀清理

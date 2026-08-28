@@ -1,6 +1,6 @@
 import { describe, it, expect } from "bun:test";
 import { EventEmitter } from "node:events";
-import { createCliAuthManager, type CliAuthSpawnFn, type EnsureBinaryFn } from "./cli-auth-manager";
+import { createCliAuthManager, isAllowedAuthUrlHost, type CliAuthSpawnFn, type EnsureBinaryFn } from "./cli-auth-manager";
 import { dingtalkCliConfig } from "./providers/dingtalk";
 
 interface FakeProc extends EventEmitter {
@@ -179,5 +179,19 @@ describe("createCliAuthManager", () => {
     await startP;
     manager.stopAll();
     expect(manager.pollAuth("s8").phase).toBe("error");
+  });
+});
+
+describe("isAllowedAuthUrlHost（#598 authUrl host 白名单）", () => {
+  it("白名单域与子域放行，跨域/畸形 URL 拒绝", () => {
+    expect(isAllowedAuthUrlHost("https://login.dingtalk.com/oauth2/auth?x=1", ["login.dingtalk.com"])).toBe(true);
+    // 合法子域放行（控制子域解析的前提是已控制父域 DNS，安全语义成立）
+    expect(isAllowedAuthUrlHost("https://api.login.dingtalk.com/a", ["login.dingtalk.com"])).toBe(true);
+    expect(isAllowedAuthUrlHost("https://notdingtalk.com/a", ["login.dingtalk.com"])).toBe(false);
+    // 后缀伪装：login.dingtalk.com.evil.com 不是白名单子域
+    expect(isAllowedAuthUrlHost("https://login.dingtalk.com.evil.com/a", ["login.dingtalk.com"])).toBe(false);
+    expect(isAllowedAuthUrlHost("https://login.work.weixin.qq.com/a", ["work.weixin.qq.com"])).toBe(true);
+    expect(isAllowedAuthUrlHost("https://evil.com/?x=work.weixin.qq.com", ["work.weixin.qq.com"])).toBe(false);
+    expect(isAllowedAuthUrlHost("not a url", ["login.dingtalk.com"])).toBe(false);
   });
 });

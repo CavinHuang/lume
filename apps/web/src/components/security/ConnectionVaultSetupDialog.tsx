@@ -1,3 +1,4 @@
+import { extractRpcErrorCode, RPC_ERROR_CODES } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -19,12 +20,20 @@ import { useCallback, useEffect, useState } from 'react'
 type VaultStatus = Awaited<ReturnType<typeof getConnectionVaultStatus>>
 
 function errorMessage(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error)
-  if (message.includes('password_too_short')) return '密码至少需要 8 个字符。'
-  if (message.includes('secure_storage_unavailable')) return '当前系统无法使用安全凭据存储。'
-  if (message.includes('already_configured')) return '凭据保险库已经初始化，请重启 Lume。'
-  if (message.includes('password_invalid')) return '本地密码不正确。'
-  return '无法初始化凭据保险库，请重试。'
+  // #782：稳定码经 ipc envelope 贯通 renderer（connection-vault 侧 Error.code），
+  // 按码判别替代 message 子串匹配
+  switch (extractRpcErrorCode(error)) {
+    case RPC_ERROR_CODES.CONNECTION_VAULT_PASSWORD_TOO_SHORT:
+      return '密码至少需要 8 个字符。'
+    case RPC_ERROR_CODES.CONNECTION_VAULT_SECURE_STORAGE_UNAVAILABLE:
+      return '当前系统无法使用安全凭据存储。'
+    case RPC_ERROR_CODES.CONNECTION_VAULT_ALREADY_CONFIGURED:
+      return '凭据保险库已经初始化，请重启 Lume。'
+    case RPC_ERROR_CODES.CONNECTION_VAULT_PASSWORD_INVALID:
+      return '本地密码不正确。'
+    default:
+      return '无法初始化凭据保险库，请重试。'
+  }
 }
 
 export function ConnectionVaultSetupDialog() {

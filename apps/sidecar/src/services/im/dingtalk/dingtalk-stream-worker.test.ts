@@ -157,6 +157,31 @@ describe("parseDingtalkEvent", () => {
     ).toBeNull();
   });
 
+  it("#598 群聊内嵌 @（如邮箱 a@b.com）不触发门控", () => {
+    expect(
+      parseDingtalkEvent(
+        { data: { conversationId: "c", conversationType: "2", text: { content: "联系我 a@b.com" }, senderStaffId: "s", sessionWebhook: "hw", msgId: "m" } },
+        makeAccount(),
+      ),
+    ).toBeNull();
+  });
+
+  it("#598 atUsers 结构化字段优先：为空即使文本含 @ 也忽略，非空则放行", () => {
+    // 平台确认未 at 任何人（atUsers 空数组）→ 文本里的 a@b.com 不触发
+    expect(
+      parseDingtalkEvent(
+        { data: { conversationId: "c", conversationType: "2", text: { content: "联系我 a@b.com" }, atUsers: [], senderStaffId: "s", sessionWebhook: "hw", msgId: "m" } },
+        makeAccount(),
+      ),
+    ).toBeNull();
+    // 真实 at → 放行（文本无需再含 @ 字面量）
+    const msg = parseDingtalkEvent(
+      { data: { conversationId: "c", conversationType: "2", text: { content: "帮忙看下" }, atUsers: [{ dingtalkId: "x" }], senderStaffId: "s", sessionWebhook: "hw", msgId: "m" } },
+      makeAccount(),
+    );
+    expect(msg?.text).toBe("帮忙看下");
+  });
+
   it("无文本返回 null", () => {
     expect(parseDingtalkEvent({ data: { conversationId: "c" } }, makeAccount())).toBeNull();
     expect(parseDingtalkEvent({ data: JSON.stringify({ conversationType: "1" }) }, makeAccount())).toBeNull();

@@ -80,6 +80,21 @@ function killSession(session: AuthSession): void {
   }
 }
 
+
+/**
+ * #598：authUrl host 白名单（后缀匹配）。authUrlPattern 是宽松 regex（CLI stdout
+ * 可被恶意 auth 端污染），命中后再以 URL 解析钉死 hostname，防
+ * login.dingtalk.com.evil.com 这类后缀伪装进外开通道。
+ */
+export function isAllowedAuthUrlHost(rawUrl: string, allowedHosts: string[]): boolean {
+  try {
+    const hostname = new URL(rawUrl).hostname;
+    return allowedHosts.some((allowed) => hostname === allowed || hostname.endsWith("." + allowed));
+  } catch {
+    return false;
+  }
+}
+
 export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthManager {
   const spawnFn = deps.spawn ?? spawnCli;
   const ensureBinaryFn = deps.ensureBinary ?? ensureBinary;
@@ -189,8 +204,13 @@ export function createCliAuthManager(deps: CliAuthManagerDeps = {}): CliAuthMana
           if (!session.authUrl) {
             const m = buf.match(config.authUrlPattern);
             if (m) {
-              session.authUrl = m[0];
-              done({ sessionKey, authUrl: session.authUrl });
+              // #598：host 不在白名单的命中丢弃并消费掉，继续扫后续输出
+              if (isAllowedAuthUrlHost(m[0], config.allowedAuthUrlHosts)) {
+                session.authUrl = m[0];
+                done({ sessionKey, authUrl: session.authUrl });
+              } else {
+                buf = buf.slice((m.index ?? 0) + m[0].length);
+              }
             }
           }
         };

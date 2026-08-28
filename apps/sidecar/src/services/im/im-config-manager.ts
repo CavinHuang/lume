@@ -173,10 +173,6 @@ export function getImRuntimeAccount(id: string): ImRuntimeAccount {
   };
 }
 
-export function getImAccountSecret(id: string): string {
-  return getImRuntimeAccount(id).token;
-}
-
 export function createImAccount(input: ImAccountCreateInput): ImAccount {
   return mutateConfig((config) => {
     const now = Date.now();

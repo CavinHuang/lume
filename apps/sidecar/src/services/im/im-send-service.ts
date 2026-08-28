@@ -1,4 +1,5 @@
 import type { ImThreadBinding } from "@lume/shared";
+import { decryptSecretIfEncrypted } from "../infra/secret-crypto";
 import { getImRuntimeAccount } from "./im-config-manager";
 import { getImProvider } from "./provider-registry";
 
@@ -15,7 +16,7 @@ export async function sendBoundImTextMessage(input: SendBoundImTextMessageInput)
     peerId: input.binding.peerId,
     peerKind: input.binding.peerKind,
     text: input.text,
-    contextToken: input.binding.contextToken,
+    contextToken: decryptSecretIfEncrypted(input.binding.contextToken),
   });
   if (!result.ok) throw new Error(result.error ?? "发送失败");
   return { ok: true };
@@ -39,7 +40,7 @@ export async function sendBoundImMediaMessage(input: SendBoundImMediaInput): Pro
     account,
     peerId: input.binding.peerId,
     peerKind: input.binding.peerKind,
-    contextToken: input.binding.contextToken,
+    contextToken: decryptSecretIfEncrypted(input.binding.contextToken),
     mediaType: input.mediaType,
     fileData: input.fileData,
     fileName: input.fileName,

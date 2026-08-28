@@ -19,6 +19,7 @@ export const wecomCliConfig: CliProviderConfig = {
   },
   authCommand: ["init", "--noninteractive", "--no-open"],
   authUrlPattern: /https:\/\/[^"'\s]*work\.weixin\.qq\.com[^"'\s]*/,
+  allowedAuthUrlHosts: ["work.weixin.qq.com"],
   statusCommand: ["auth", "show", "--auth-status"],
   parseAuthStatus: parseWecomAuthStatus,
   authTimeoutMs: 5 * 60 * 1000,

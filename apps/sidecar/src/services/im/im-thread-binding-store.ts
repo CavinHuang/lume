@@ -5,6 +5,7 @@ import { getImThreadBindingsPath } from "../infra/config-paths";
 import { backupCorruptFile } from "../infra/corrupt-file-backup";
 import { createLogger } from "../infra/logger";
 import { withIndexMutationLock } from "../infra/index-mutation-lock";
+import { encryptSecret } from "../infra/secret-crypto";
 
 const CONFIG_VERSION = 1;
 const log = createLogger("im-thread-bindings");
@@ -105,7 +106,7 @@ export function upsertImThreadBinding(input: UpsertImThreadBindingInput): ImThre
         ...existing,
         ...(nextThreadId && nextThreadId !== existing.threadId ? { threadId: nextThreadId } : {}),
         peerName: input.peerName ?? existing.peerName,
-        contextToken: input.contextToken ?? existing.contextToken,
+        contextToken: input.contextToken !== undefined ? encryptSecret(input.contextToken) : existing.contextToken,
         updatedAt: now
       };
       config.bindings[index] = updated;
@@ -121,7 +122,8 @@ export function upsertImThreadBinding(input: UpsertImThreadBindingInput): ImThre
       peerId: input.peerId,
       peerName: input.peerName,
       threadId: input.threadId,
-      contextToken: input.contextToken,
+      // #598：contextToken 承载钉钉 sessionWebhook（内嵌访问凭据），加密落盘
+      contextToken: input.contextToken !== undefined ? encryptSecret(input.contextToken) : undefined,
       createdAt: now,
       updatedAt: now
     };

@@ -566,16 +566,18 @@ export const planningReminderSnoozeInputSchema = planningReminderIdSchema
   .extend({ minutes: z.number().int().min(1).max(10_080) })
   .strict();
 
-export const imAccountCreateInputSchema = z.object({
-  provider: z.enum(["weixin", "dingtalk", "feishu", "wecom"]),
-  accountKey: z.string().optional(),
-  label: z.string().optional(),
-  token: z.string().trim().min(1),
-  uin: z.string().optional(),
-  workspaceId: z.string().optional(),
-  baseUrl: z.string().optional(),
-  enabled: z.boolean().optional(),
-});
+export const imAccountCreateInputSchema = z
+  .object({
+    provider: z.enum(["weixin", "dingtalk", "feishu", "wecom"]),
+    accountKey: z.string().max(256).optional(),
+    label: z.string().max(128).optional(),
+    token: z.string().trim().min(1).max(4096),
+    uin: z.string().max(128).optional(),
+    workspaceId: z.string().max(256).optional(),
+    baseUrl: z.string().max(2048).optional(),
+    enabled: z.boolean().optional(),
+  })
+  .strict();
 
 export const imAccountUpdateInputSchema = z.object({
   id: idSchema,
@@ -1589,6 +1591,8 @@ export const automationCreateInputSchema = z.object({
   triggerModes: z.array(automationTriggerModeSchema).optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
+  // P2-19：此前被 zod 非严格 object 静默剥离，UI 选了存不下来
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1),
 });
@@ -1603,6 +1607,7 @@ export const automationUpdateInputSchema = z.object({
   triggerModes: z.array(automationTriggerModeSchema).optional(),
   description: z.string().optional(),
   defaultModel: z.string().optional(),
+  thinkingLevel: z.enum(["off", "low", "medium", "high", "max"]).optional(),
   toolResourceIds: z.array(z.string()).optional(),
   prompt: z.string().min(1).optional(),
 });

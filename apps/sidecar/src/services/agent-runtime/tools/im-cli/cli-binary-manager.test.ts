@@ -15,6 +15,7 @@ function makeMockConfig(acquireBinary: CliProviderConfig["acquireBinary"]): CliP
     envDirs: {},
     authCommand: [],
     authUrlPattern: /x/,
+    allowedAuthUrlHosts: ["login.dingtalk.com"],
     statusCommand: [],
     parseAuthStatus: () => ({ connected: false }),
     authTimeoutMs: 1000,

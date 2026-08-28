@@ -61,6 +61,7 @@ export interface ImThreadBinding {
   peerId: string;
   peerName?: string;
   threadId: string;
+  /** 落盘为 encryptSecret v2 密文（#598，承载钉钉 sessionWebhook）；存量明文经 decryptSecretIfEncrypted 兼容读取 */
   contextToken?: string;
   createdAt: number;
   updatedAt: number;

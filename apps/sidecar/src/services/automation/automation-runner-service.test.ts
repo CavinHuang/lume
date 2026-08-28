@@ -15,6 +15,24 @@ type DispatchEmit = { onComplete?: (payload?: { reason?: "max_turns" | "repeat_g
 let dispatchStub: (input: unknown, emit: DispatchEmit) => Promise<unknown> = async () => {
   throw new Error("model unavailable (test stub)");
 };
+// config/channel mock：让 run 真正走到 dispatchAgentRun（同 cross-job-skip 先例）。
+// 默认无模型配置时 pickExecutionChannel 在派发前即抛，挂死 stub 与超时路径不可达。
+const configActual = await import("../system/lume-config-service");
+mock.module("../system/lume-config-service", () => ({
+  ...configActual,
+  getEffectiveLumeConfig: () => ({ models: { agent: { defaultModelRef: "test:p1" } } })
+}));
+const systemConfigActual = await import("../system/system-config-service");
+mock.module("../system/system-config-service", () => ({
+  ...systemConfigActual,
+  getEffectiveSystemConfig: () => ({ models: { agent: { defaultModelRef: "test:p1" } } })
+}));
+const channelActual = await import("../channel/channel-manager");
+mock.module("../channel/channel-manager", () => ({
+  ...channelActual,
+  resolveChannelModelBinding: () => ({ channel: { id: "c1" }, modelId: "m1", family: "anthropic" })
+}));
+
 mock.module("../agent/agent-service", () => ({
   ...agentServiceActual,
   dispatchAgentRun: (input: unknown, emit: DispatchEmit) => dispatchStub(input, emit)
@@ -116,6 +134,10 @@ describe("automation-runner-service", () => {
       prompt: "测试"
     });
     await runAutomationJobNow({ id: job.id });
+    // 首笔到达 dispatch 后为真异步，须等其收尾再触发第二笔，否则撞 runningJobs 拒绝
+    for (let i = 0; i < 50 && listAutomationRuns({ jobId: job.id, limit: 10 }).length === 0; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
     await runAutomationJobNow({ id: job.id });
 
     const runsPath = join(tempConfigDir, "automation", "runs", "all.jsonl");
@@ -129,6 +151,152 @@ describe("automation-runner-service", () => {
     }
     expect(existsSync(runsPath)).toBeTrue();
     expect(lines.length).toBeGreaterThanOrEqual(2);
+  });
+
+  it("notification writer 抛错(EPIPE)不断掉 run 收尾与重放链(#647 follow-up7)", async () => {
+    const { setOutboundNotificationWriter } = await import("../infra/outbound-notification");
+    setOutboundNotificationWriter(() => {
+      throw new Error("EPIPE: broken pipe");
+    });
+    try {
+      const job = createAutomationJob({
+        name: "通知炸链任务",
+        schedule: { type: "interval", intervalMs: 120 },
+        prompt: "测试"
+      });
+      await startAutomationRunner();
+
+      // writer 抛错只允许丢事件本身，不得跳过后续 merged-trigger 重放：
+      // 修复前 writer 位于 executeJob 尾部重调度块之前，抛错即整条调度链静默终止
+      let runs: ReturnType<typeof listAutomationRuns> = [];
+      for (let i = 0; i < 60; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        runs = listAutomationRuns({ jobId: job.id, limit: 20 }).filter((run) => run.status !== "skipped");
+        if (runs.length >= 2) break;
+      }
+      expect(runs.length).toBeGreaterThanOrEqual(2);
+    } finally {
+      setOutboundNotificationWriter(() => {});
+    }
+  }, 12_000);
+
+  it("启动追账的过期任务错峰触发，不再同一 sweep 齐发(#647 follow-up6)", async () => {
+    const jobs = Array.from({ length: 5 }, (_, i) => createAutomationJob({
+      name: `追账齐发任务${i}`,
+      schedule: { type: "interval", intervalMs: 60_000 },
+      prompt: "测试"
+    }));
+    // 全部 backdate 成过期任务，模拟停机期间累积的待补跑（默认 misfire=补跑最新一次）
+    const indexPath = join(tempConfigDir, "automation", "jobs.json");
+    const index = JSON.parse(readFileSync(indexPath, "utf-8")) as {
+      version: number;
+      jobs: Array<Record<string, unknown>>;
+    };
+    const past = Date.now() - 5_000;
+    for (const entry of index.jobs) entry.nextRunAt = past;
+    writeFileSync(indexPath, JSON.stringify(index), "utf-8");
+
+    await startAutomationRunner();
+    // 轮询等 5 个 run 全部落盘（错峰后最迟一批 ≈ 6s）
+    let runs: ReturnType<typeof listAutomationRuns> = [];
+    for (let i = 0; i < 120 && runs.length < jobs.length; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 100));
+      runs = listAutomationRuns({ limit: 100 });
+    }
+    expect(runs.length).toBeGreaterThanOrEqual(jobs.length);
+    // 修复前：全部 delay=0 → 同一 timer sweep 齐发，startedAt 散布 <100ms；
+    // 错峰后按刷新轮内序数 1.5s 步进摊开（5 任务散布 ≈ 6s）
+    const starts = runs.map((run) => run.startedAt).sort((a, b) => a - b);
+    expect(starts[starts.length - 1]! - starts[0]!).toBeGreaterThanOrEqual(4_000);
+  }, 20_000);
+
+
+  it("无人值守 run 超过 wall-clock 上限即中止并记 failed(#647 follow-up3)", async () => {
+    process.env.LUME_AUTOMATION_RUN_TIMEOUT_MS = "300";
+    const previous = dispatchStub;
+    // dispatch 挂死：模拟 provider 无响应——租约心跳持续续命、runningJobs 永久占位
+    dispatchStub = () => new Promise(() => {});
+    try {
+      const job = createAutomationJob({
+        name: "超时中止任务",
+        schedule: { type: "interval", intervalMs: 60_000 },
+        prompt: "测试"
+      });
+      await runAutomationJobNow({ id: job.id });
+
+      let timedOut: ReturnType<typeof listAutomationRuns>[number] | undefined;
+      for (let i = 0; i < 50 && !timedOut; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        timedOut = listAutomationRuns({ jobId: job.id, limit: 10 }).find((run) => run.status === "failed");
+      }
+      expect(timedOut?.message).toContain("wall-clock");
+    } finally {
+      dispatchStub = previous;
+      delete process.env.LUME_AUTOMATION_RUN_TIMEOUT_MS;
+    }
+  }, 15_000);
+
+  it("per-job thinkingLevel 与 toolResourceIds 透传 dispatch(#647 P2-19)", async () => {
+    const dispatched: Array<{ thinkingLevel?: string; messageMetadata?: { toolPolicy?: { allow?: string[] } } }> = [];
+    const previous = dispatchStub;
+    dispatchStub = ((input: unknown) => {
+      dispatched.push(input as { thinkingLevel?: string; messageMetadata?: { toolPolicy?: { allow?: string[] } } });
+      return Promise.reject(new Error("jobfield test stub"));
+    }) as typeof dispatchStub;
+    try {
+      const job = createAutomationJob({
+        name: "字段接线任务",
+        schedule: { type: "interval", intervalMs: 60_000 },
+        thinkingLevel: "high",
+        toolResourceIds: ["browser:*", "mcp:fetch"],
+        prompt: "测试"
+      });
+      await runAutomationJobNow({ id: job.id });
+      for (let i = 0; i < 50 && dispatched.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(dispatched[0]?.thinkingLevel).toBe("high");
+      expect(dispatched[0]?.messageMetadata?.toolPolicy?.allow).toEqual(["browser:*", "mcp:fetch"]);
+    } finally {
+      dispatchStub = previous;
+    }
+  });
+
+  it("job.defaultModel 覆盖系统默认 modelRef，未配置则回落(#647 P2-19)", async () => {
+    const dispatched: Array<{ modelRef?: string; thinkingLevel?: string }> = [];
+    const previous = dispatchStub;
+    dispatchStub = ((input: unknown) => {
+      dispatched.push(input as { modelRef?: string; thinkingLevel?: string });
+      return Promise.reject(new Error("jobfield test stub"));
+    }) as typeof dispatchStub;
+    try {
+      const override = createAutomationJob({
+        name: "模型覆盖任务",
+        schedule: { type: "interval", intervalMs: 60_000 },
+        defaultModel: "custom:model-ref",
+        prompt: "测试"
+      });
+      await runAutomationJobNow({ id: override.id });
+      for (let i = 0; i < 50 && dispatched.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(dispatched[0]?.modelRef).toBe("custom:model-ref");
+
+      dispatched.length = 0;
+      const fallback = createAutomationJob({
+        name: "默认回落任务",
+        schedule: { type: "interval", intervalMs: 60_000 },
+        prompt: "测试"
+      });
+      await runAutomationJobNow({ id: fallback.id });
+      for (let i = 0; i < 50 && dispatched.length === 0; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      }
+      expect(dispatched[0]?.modelRef).toBe("test:p1");
+      expect(dispatched[0]?.thinkingLevel).toBeUndefined();
+    } finally {
+      dispatchStub = previous;
+    }
   });
 
   it("正常完成的 run(onComplete 无载荷)记 success(#649 review P1-1 对照)", () => {

@@ -5,9 +5,12 @@
  * 与 `connection_*` 式字符串码经 duck-typing 提取后获得跨进程生存权，
  * 消除"desktop 只能字符串匹配猜错误类别"的根因。
  *
- * 已知缺口(review 定性):code 目前只贯通到 desktop main 进程;renderer 经
- * ipcRenderer.invoke 取回的错误被 Electron 平台序列化剥掉自定义属性,仍靠
- * message 判别。贯通 renderer 需在 ipc 边界显式序列化 {code,message},另行承接。
+ * renderer 段贯通(#782)：Error 跨 ipcRenderer.invoke 与 contextBridge 两次
+ * 序列化都会剥掉自定义属性（仅 message 存活），code 契约在此断链。正解是
+ * 错误路径改走**普通对象 envelope**（结构化克隆对普通对象全保真）——main 侧
+ * lume:invoke handler 捕获后返回 toLumeRpcErrorEnvelope 产物，preload 原样
+ * 透传（不 throw），renderer 侧 desktop-runtime invoke 解包合成带 code 的
+ * Error。成功路径不经 envelope，返回值形态不受影响。
  */
 
 export interface LumeRpcErrorShape {
@@ -18,6 +21,38 @@ export interface LumeRpcErrorShape {
    * 不含敏感内容(内部绝对路径/凭证/env 片段)。
    */
   details?: unknown;
+}
+
+/** envelope 哨兵键：正常返回值携带该键的概率为零，判断以严格 true 为准。 */
+export const LUME_RPC_ERROR_ENVELOPE_KEY = "__lumeRpcError" as const;
+
+export interface LumeRpcErrorEnvelope extends LumeRpcErrorShape {
+  [LUME_RPC_ERROR_ENVELOPE_KEY]: true;
+}
+
+/** main 侧：把 ipc handler 的任意 throw 值折成可序列化 envelope（#782）。 */
+export function toLumeRpcErrorEnvelope(error: unknown): LumeRpcErrorEnvelope {
+  return { [LUME_RPC_ERROR_ENVELOPE_KEY]: true, ...toLumeRpcErrorShape(error) };
+}
+
+export function isLumeRpcErrorEnvelope(value: unknown): value is LumeRpcErrorEnvelope {
+  return (
+    typeof value === "object" &&
+    value !== null &&
+    (value as Record<string, unknown>)[LUME_RPC_ERROR_ENVELOPE_KEY] === true
+  );
+}
+
+/**
+ * renderer 侧从错误对象提取稳定 code（#782）。仅 desktop-runtime invoke
+ * 解包合成的 Error 携带 code；浏览器环境/无契约错误返回 undefined。
+ */
+export function extractRpcErrorCode(error: unknown): string | undefined {
+  const code =
+    typeof error === "object" && error !== null
+      ? (error as Record<string, unknown>).code
+      : undefined;
+  return typeof code === "string" && code ? code : undefined;
 }
 
 /**
@@ -42,6 +77,20 @@ export const RPC_ERROR_CODES = {
   NOT_IMPLEMENTED: "E_NOT_IMPLEMENTED",
   /** 连接凭证库密钥注入被拒(desktop 启动关键路径) */
   CONNECTION_VAULT_KEY_INVALID: "connection_vault_key_invalid",
+  /** 凭据保险库已初始化，重复 setup(connection-vault) */
+  CONNECTION_VAULT_ALREADY_CONFIGURED: "connection_vault_already_configured",
+  /** 系统安全凭据存储不可用(connection-vault) */
+  CONNECTION_VAULT_SECURE_STORAGE_UNAVAILABLE: "connection_vault_secure_storage_unavailable",
+  /** 保险库密码长度不足(connection-vault) */
+  CONNECTION_VAULT_PASSWORD_TOO_SHORT: "connection_vault_password_too_short",
+  /** 保险库本地密码不正确(connection-vault) */
+  CONNECTION_VAULT_PASSWORD_INVALID: "connection_vault_password_invalid",
+  /** 保险库未初始化即被访问(connection-vault) */
+  CONNECTION_VAULT_NOT_CONFIGURED: "connection_vault_not_configured",
+  /** 保险库记录文件损坏/非法(connection-vault) */
+  CONNECTION_VAULT_RECORD_INVALID: "connection_vault_record_invalid",
+  /** sidecar RPC 等待响应超时(desktop main call 层本地 reject) */
+  RPC_TIMEOUT: "rpc_timeout",
   /** 密文加密密钥注入被拒(desktop 启动关键路径) */
   SECRET_ENCRYPTION_KEY_INVALID: "secret_encryption_key_invalid",
   /** desktop 浏览器主进程通道断开/不可用。与 shared browser-runtime.ts 的 BrowserErrorCode "browser_unavailable" 同字符串双域,改须核对彼侧白名单 */

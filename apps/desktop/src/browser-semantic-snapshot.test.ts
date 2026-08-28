@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { buildBrowserSemanticTree } from "./browser-semantic-snapshot"
+import { buildBrowserSemanticTree, reusableSemanticFrameState, sameSemanticFrameState, SEMANTIC_SNAPSHOT_REUSE_TTL_MS, type BrowserSemanticFrameRevision } from "./browser-semantic-snapshot"
 
 const nodes = [
   { nodeId: "1", role: { value: "RootWebArea" }, name: { value: "Example" }, childIds: ["2", "3"] },
@@ -73,5 +73,38 @@ describe("buildBrowserSemanticTree", () => {
 
     expect(tree.lines.find((line) => line.ref === "e91")?.scopeRefs).toEqual(["e91"])
     expect(tree.lines.find((line) => line.ref === "e92")?.scopeRefs).toEqual(["e91", "e92"])
+  })
+})
+
+describe("semantic snapshot frame-state reuse (#604)", () => {
+  const frame = (overrides: Partial<BrowserSemanticFrameRevision> = {}): BrowserSemanticFrameRevision => ({
+    frameId: "main",
+    frameRevision: "7|0-0-0",
+    loaderId: "loader-1",
+    ...overrides,
+  })
+  const frames = [frame(), frame({ frameId: "iframe-1", frameRevision: "3|1-0-5", loaderId: "loader-2" })]
+  const cachedAt = 1_000
+
+  test("reusable while every frame is trusted and within the TTL", () => {
+    expect(reusableSemanticFrameState(frames, cachedAt, cachedAt + SEMANTIC_SNAPSHOT_REUSE_TTL_MS)).toBe(true)
+    expect(reusableSemanticFrameState(frames, cachedAt, cachedAt + SEMANTIC_SNAPSHOT_REUSE_TTL_MS + 1)).toBe(false)
+  })
+
+  test("unreusable when any frame revision is untrustworthy (null)", () => {
+    expect(reusableSemanticFrameState([frame({ frameRevision: null })], cachedAt, cachedAt)).toBe(false)
+    expect(reusableSemanticFrameState([frame(), frame({ frameRevision: null })], cachedAt, cachedAt)).toBe(false)
+  })
+
+  test("unreusable with empty state or missing frame loader identity", () => {
+    expect(reusableSemanticFrameState([], cachedAt, cachedAt)).toBe(false)
+    expect(reusableSemanticFrameState([frame({ loaderId: "" })], cachedAt, cachedAt)).toBe(false)
+  })
+
+  test("sameSemanticFrameState compares frame identity and revision pairwise", () => {
+    expect(sameSemanticFrameState(frames, [frame(), frame({ frameId: "iframe-1", frameRevision: "3|1-0-5", loaderId: "loader-2" })])).toBe(true)
+    expect(sameSemanticFrameState(frames, [frame(), frame({ frameId: "iframe-1", frameRevision: "4|1-0-5", loaderId: "loader-2" })])).toBe(false)
+    expect(sameSemanticFrameState(frames, [frame(), frame({ frameId: "iframe-2", frameRevision: "3|1-0-5", loaderId: "loader-2" })])).toBe(false)
+    expect(sameSemanticFrameState(frames, [frame()])).toBe(false)
   })
 })
