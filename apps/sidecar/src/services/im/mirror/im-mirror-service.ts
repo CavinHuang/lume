@@ -165,6 +165,7 @@ async function startMirrorCarry(threadId: string): Promise<ImRunCardSession | nu
     const mirrorChatId = entry.chatId;
     return buildImRunCardSession({
       threadId,
+      accountId: entry.accountId,
       appId: account.accountKey ?? "",
       appSecret: account.token ?? "",
       chatId: mirrorChatId,

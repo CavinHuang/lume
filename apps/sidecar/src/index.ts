@@ -11,6 +11,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
+import { abortActiveFeishuRunCards, recoverInterruptedFeishuRunCards } from "./services/im/feishu/feishu-card-stream";
 import { AGENT_IPC_CHANNELS, IM_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -309,6 +310,24 @@ async function handleRpcLine(line: string): Promise<void> {
           message: error instanceof Error ? error.message : String(error)
         });
       });
+      void recoverInterruptedFeishuRunCards().then((result) => {
+        if (result.recovered + result.failed + result.discarded === 0) return;
+        writeLogRecord({
+          level: result.failed > 0 ? "warn" : "info",
+          context: "sidecar.im",
+          event: "im.feishu_cards_recovered",
+          message: "上次进程遗留的飞书运行卡片已完成启动补偿",
+          data: { ...result }
+        });
+      }).catch((error) => {
+        writeLogRecord({
+          level: "warn",
+          context: "sidecar.im",
+          event: "im.feishu_cards_recovery_failed",
+          message: "飞书运行卡片启动补偿失败",
+          error: { message: error instanceof Error ? error.message : String(error) }
+        });
+      });
       if (payload.id !== undefined) writeResponse({ id: payload.id, result: { ok: true } });
     } catch (error) {
       if (payload.id !== undefined) {
@@ -550,6 +569,8 @@ async function boot(): Promise<void> {
     seedDefaultSkills();
   }
   if (envAutostartEnabled("LUME_IM_AUTOSTART", true)) {
+    // #598：error 态账号指数退避自愈（随 IM 启动同生命周期）
+    imRuntimeManager.startAutoRecovery();
     void imRuntimeManager.startEnabledAccounts().catch((error) => {
       writeLogRecord({
         level: "error",
@@ -641,6 +662,11 @@ async function boot(): Promise<void> {
   // 否则信号被完全忽略，desktop 仅等 3s 无 SIGKILL 升级，sidecar 变僵尸进程
   const gracefulExit = async () => {
     try {
+      // #598：优雅关停即时收尾；无法捕获的强杀由下次启动的持久快照补偿。
+      await Promise.race([
+        abortActiveFeishuRunCards(),
+        new Promise((resolve) => setTimeout(resolve, 5_000))
+      ]);
       void getNodeReplRuntimeRegistry().shutdownAll?.();
       await Promise.race([
         stopWatcher(),

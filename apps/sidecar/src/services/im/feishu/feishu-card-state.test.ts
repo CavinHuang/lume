@@ -65,6 +65,28 @@ describe("reduceImRunCardEvent", () => {
     expect(state.blocks[1]).toMatchObject({ kind: "tool", toolName: "edit", status: "failed", error: "boom" });
   });
 
+  test("usage.updated 覆盖累计 token/成本，终态后迟到仍可补齐", () => {
+    const usage = baseEvent({
+      type: "usage.updated",
+      billing: {
+        cumulative: { totalTokens: 1234 },
+        totalCostUSD: 0.0123
+      }
+    } as never);
+    let state = reduceImRunCardEvent(initialImRunCardState(1000), usage);
+    expect(state.usage).toEqual({ totalTokens: 1234, totalCostUSD: 0.0123 });
+
+    state = reduceImRunCardEvent(state, baseEvent({ type: "run.completed" }), 5000);
+    const lateUsage = baseEvent({
+      type: "usage.updated",
+      billing: {
+        cumulative: { totalTokens: 2345 },
+        totalCostUSD: 0.0234
+      }
+    } as never);
+    expect(reduceImRunCardEvent(state, lateUsage).usage).toEqual({ totalTokens: 2345, totalCostUSD: 0.0234 });
+  });
+
   test("终态转换：completed/failed/cancelled/turn_limited 且幂等", () => {
     const started = initialImRunCardState(1000);
     const done = reduceImRunCardEvent(started, baseEvent({ type: "run.completed" }), 5000);

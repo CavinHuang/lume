@@ -32,6 +32,11 @@ export interface ImRuntimeManager {
   stopAccount(accountId: string): void;
   stopAll(): void;
   getRunningAccountIds(): string[];
+  /** #598：error 态账号自愈扫描一轮（enabled+error，指数退避）。返回本轮实际尝试的账号 id。 */
+  runRecoveryTick(now?: number): Promise<string[]>;
+  /** #598：按 interval 周期驱动 runRecoveryTick。 */
+  startAutoRecovery(options?: { intervalMs?: number; baseDelayMs?: number; maxDelayMs?: number }): void;
+  stopAutoRecovery(): void;
 }
 
 export interface CreateImRuntimeManagerInput {
@@ -68,6 +73,11 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
       },
     });
   });
+
+  // #598：error 态账号指数退避状态（attempts 从 1 起计；nextAt 为最早可重试时刻）
+  const recoveryBackoff = new Map<string, { attempts: number; nextAt: number }>();
+  let recoveryOptions = { intervalMs: 30_000, baseDelayMs: 30_000, maxDelayMs: 30 * 60_000 };
+  let recoveryTimer: ReturnType<typeof setInterval> | undefined;
 
   return {
     async startEnabledAccounts() {
@@ -154,6 +164,7 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     stopAccount(accountId: string) {
+      recoveryBackoff.delete(accountId);
       lifecycleVersions.set(accountId, (lifecycleVersions.get(accountId) ?? 0) + 1);
       const worker = workers.get(accountId);
       if (worker) stopWorker(accountId, worker, workers);
@@ -171,6 +182,53 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
 
     getRunningAccountIds() {
       return Array.from(workers.keys());
+    },
+
+    async runRecoveryTick(now = Date.now()) {
+      const { baseDelayMs, maxDelayMs } = recoveryOptions;
+      const candidates = listAccountsFn().filter((account) => account.enabled && account.status === "error");
+      const attempted: string[] = [];
+      const restarts: Array<Promise<void>> = [];
+      for (const account of candidates) {
+        const state = recoveryBackoff.get(account.id);
+        if (state && now < state.nextAt) continue;
+        attempted.push(account.id);
+        recoveryBackoff.set(account.id, { attempts: (state?.attempts ?? 0) + 1, nextAt: Number.MAX_SAFE_INTEGER });
+        restarts.push(
+          this.startAccount(account.id)
+            .then(() => {
+              recoveryBackoff.delete(account.id);
+            })
+            .catch(() => {
+              const attempts = recoveryBackoff.get(account.id)?.attempts ?? 1;
+              recoveryBackoff.set(account.id, {
+                attempts,
+                nextAt: now + Math.min(baseDelayMs * 2 ** (attempts - 1), maxDelayMs)
+              });
+            })
+        );
+      }
+      // 等本轮重启尘埃落定再返回：backoff 状态已定，interval 驱动与测试都可确定
+      await Promise.allSettled(restarts);
+      return attempted;
+    },
+
+    startAutoRecovery(options) {
+      recoveryOptions = { ...recoveryOptions, ...options };
+      this.stopAutoRecovery();
+      recoveryTimer = setInterval(() => {
+        void this.runRecoveryTick().catch((error: unknown) => {
+          log.warn("error 账号自愈扫描失败", { error: errorMessage(error) });
+        });
+      }, recoveryOptions.intervalMs);
+      recoveryTimer.unref?.();
+    },
+
+    stopAutoRecovery() {
+      if (recoveryTimer) {
+        clearInterval(recoveryTimer);
+        recoveryTimer = undefined;
+      }
     }
   };
 }

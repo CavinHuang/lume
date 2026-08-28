@@ -174,6 +174,79 @@ describe("im 会话命令路由", () => {
     expect(stoppedIds).toEqual(["thread-old"]);
   });
 
+  test("#598 /list 列出同 peer 历史线程（排除当前绑定与别的 peer）", async () => {
+    bind("thread-cur");
+    const sent: string[] = [];
+    await routeInboundImMessage(msg({ text: "/list" }), {
+      getThreadMeta: () => ({} as never),
+      sendBoundTextMessage: async (input) => {
+        sent.push(input.text);
+        return { ok: true };
+      },
+      listThreads: () => [
+        { id: "thread-cur", title: "当前", createdAt: 1, updatedAt: 100, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
+        { id: "thread-h1", title: "旧对话一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
+        { id: "thread-h2", title: "旧对话二", createdAt: 1, updatedAt: 200, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
+        { id: "thread-x", title: "别的 peer", createdAt: 1, updatedAt: 400, source: { type: "im", provider: "feishu", accountId, peerId: "other" } }
+      ]
+    });
+    expect(sent[0]).toContain("旧对话一");
+    expect(sent[0]).toContain("旧对话二");
+    expect(sent[0]).not.toContain("当前");
+    expect(sent[0]).not.toContain("别的 peer");
+    // 按最近更新排序
+    expect((sent[0] ?? "").indexOf("旧对话一")).toBeLessThan((sent[0] ?? "").indexOf("旧对话二"));
+  });
+
+  test("#598 /switch <n> 重绑到历史线程并停止旧线程运行", async () => {
+    bind("thread-cur");
+    const stoppedIds: string[] = [];
+    const sent: string[] = [];
+    const result = await routeInboundImMessage(msg({ text: "/switch 2" }), {
+      getThreadMeta: () => ({} as never),
+      sendBoundTextMessage: async (input) => {
+        sent.push(input.text);
+        return { ok: true };
+      },
+      stopThread: async (id) => {
+        stoppedIds.push(id);
+        return true;
+      },
+      listThreads: () => [
+        { id: "thread-h1", title: "旧一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
+        { id: "thread-h2", title: "旧二", createdAt: 1, updatedAt: 200, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } }
+      ]
+    });
+    expect(getImThreadBindingByPeer(msg())?.threadId).toBe("thread-h2");
+    expect(stoppedIds).toEqual(["thread-cur"]);
+    expect(sent[0]).toContain("旧二");
+    expect(result?.threadId).toBe("thread-h2");
+  });
+
+  test("#598 /switch 序号越界与缺参回复提示", async () => {
+    bind("thread-cur");
+    const sent: string[] = [];
+    await routeInboundImMessage(msg({ text: "/switch 9" }), {
+      getThreadMeta: () => ({} as never),
+      sendBoundTextMessage: async (input) => {
+        sent.push(input.text);
+        return { ok: true };
+      },
+      listThreads: () => [
+        { id: "thread-h1", title: "旧一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } }
+      ]
+    });
+    expect(sent[0]).toContain("序号超出范围");
+    await routeInboundImMessage(msg({ text: "/switch" }), {
+      getThreadMeta: () => ({} as never),
+      sendBoundTextMessage: async (input) => {
+        sent.push(input.text);
+        return { ok: true };
+      }
+    });
+    expect(sent[1] ?? "").toContain("命令格式不正确");
+  });
+
   test("命令成功后标记已见：同 messageId 重投不再执行", async () => {
     bind("thread-idem");
     const sent: string[] = [];

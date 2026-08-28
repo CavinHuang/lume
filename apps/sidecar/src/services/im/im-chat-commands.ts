@@ -3,7 +3,7 @@ import { normalizeProviderId } from "../infra/model-refs";
 import { getAgentWorkspace } from "../agent/agent-workspace-manager";
 
 /**
- * IM 会话内斜杠命令层：/help /new /stop /now /model /revert（含单字母别名）。
+ * IM 会话内斜杠命令层：/help /new /stop /now /model /revert /list /switch（含单字母别名）。
  *
  * 设计要点：
  * - 解析与呈现数据全部是纯函数（可测），路由器只做调度与发送；
@@ -20,6 +20,8 @@ export type ParsedImCommand =
   | { type: "new" }
   | { type: "stop" }
   | { type: "now" }
+  | { type: "list" }
+  | { type: "switch"; args: string[] }
   | { type: "revert"; args: string[] }
   | { type: "model"; args: string[] };
 
@@ -30,6 +32,8 @@ export const IM_CONTROL_COMMAND_NAMES = [
   "new",
   "stop", "s",
   "now", "n",
+  "list",
+  "switch",
   "revert",
   "model", "m"
 ] as const;
@@ -42,6 +46,8 @@ const COMMAND_ALIASES: Record<string, ParsedImCommand["type"]> = {
   s: "stop",
   now: "now",
   n: "now",
+  list: "list",
+  switch: "switch",
   revert: "revert",
   model: "model",
   m: "model"
@@ -60,10 +66,16 @@ export function parseImCommand(text: string): ParsedImCommand {
     return { type: "none" };
   }
   const args = parts.slice(1);
+  if (kind === "switch") {
+    if (args.length !== 1) {
+      return { type: "invalid", message: "命令格式不正确：/switch <序号>，序号见 /list。发送 /help 查看用法。" };
+    }
+    return { type: "switch", args };
+  }
   if (kind === "model" || kind === "revert") {
     return { type: kind, args };
   }
-  if (args.length > 0 && (kind === "help" || kind === "new" || kind === "stop" || kind === "now")) {
+  if (args.length > 0 && (kind === "help" || kind === "new" || kind === "stop" || kind === "now" || kind === "list")) {
     return {
       type: "invalid",
       message: `命令格式不正确：/${name} 不需要参数。发送 /help 查看用法。`
@@ -78,6 +90,8 @@ export function formatImHelpText(): string {
     "/new 开始新对话（重置当前会话上下文）",
     "/stop 停止正在进行的任务",
     "/now 查看当前会话信息",
+    "/list 查看本会话可切换的历史对话",
+    "/switch <序号> 切回历史对话（上下文保留）",
     "/model 查看可用渠道",
     "/model <渠道序号> 查看该渠道的模型",
     "/model <渠道序号> <模型序号> 切换模型（仅当前会话生效）",

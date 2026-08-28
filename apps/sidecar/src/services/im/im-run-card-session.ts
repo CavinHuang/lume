@@ -115,6 +115,7 @@ export function createImRunCardSession(threadId: string): ImRunCardSession | nul
 
 export interface BuildImRunCardSessionInput {
   threadId: string;
+  accountId: string;
   appId: string;
   appSecret: string;
   /** 卡片宿主会话 chat_id：DM=绑定 peer；#544 镜像=镜像群 chat */
@@ -131,6 +132,7 @@ export function buildImRunCardSession(input: BuildImRunCardSessionInput): ImRunC
   const threadId = input.threadId;
 
   const streamOptions: FeishuCardStreamOptions = {
+    accountId: input.accountId,
     appId: input.appId,
     appSecret: input.appSecret,
     chatId: input.chatId,
@@ -250,6 +252,7 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
 
   return buildImRunCardSession({
     threadId,
+    accountId: binding.accountId,
     appId,
     appSecret,
     chatId: binding.peerId,

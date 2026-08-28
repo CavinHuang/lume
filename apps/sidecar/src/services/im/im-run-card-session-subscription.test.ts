@@ -74,7 +74,8 @@ describe("im-run-card-session 压缩中间态订阅链路（#725 review S1/S3）
       get degraded() {
         return false;
       },
-      close: () => {}
+      close: () => {},
+      abortInterrupted: async () => undefined
     }));
   }
 

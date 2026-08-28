@@ -24,6 +24,7 @@ describe("renderImRunCard", () => {
     const card = renderImRunCard(initialImRunCardState(1000));
     expect(card.header).toMatchObject({ title: { content: "正在处理" }, template: "blue" });
     expect(card.config.streaming_mode).toBe(true);
+    expect(card.config.summary.content).toBe("正在处理");
     expect(card.body.elements).toEqual([{ tag: "markdown", content: "…" }]);
   });
 
@@ -58,9 +59,30 @@ describe("renderImRunCard", () => {
     );
     const card = renderImRunCard(stateWith(...events));
     const panels = card.body.elements.filter((e) => e.tag === "collapsible_panel");
-    expect(panels).toHaveLength(1);
+    expect(panels).toHaveLength(2);
     expect(panels[0]).toMatchObject({ expanded: false });
-    expect(JSON.stringify(panels[0])).toContain("工具调用（4）");
+    expect(JSON.stringify(panels[0])).toContain("工具调用（3）");
+    expect(panels[1]).toMatchObject({ expanded: true });
+    expect(JSON.stringify(panels[1])).toContain("最新工具 · tool_3");
+  });
+
+  test("摘要取最新正文并裁切，usage footer 在运行态也显示累计 token/成本", () => {
+    const long = `第一段\n${"内容".repeat(80)}`;
+    const state = stateWith(
+      baseEvent({ type: "assistant.delta", delta: long, messageId: "m1" }),
+      baseEvent({
+        type: "usage.updated",
+        billing: {
+          cumulative: { totalTokens: 12345 },
+          totalCostUSD: 0.0123
+        }
+      } as never)
+    );
+    const card = renderImRunCard(state);
+    expect(card.config.summary.content.startsWith("第一段 内容")).toBe(true);
+    expect(card.config.summary.content.length).toBeLessThanOrEqual(120);
+    const contents = card.body.elements.map((element) => element.tag === "markdown" ? element.content : "");
+    expect(contents.join("\n")).toContain("12,345 tokens · $0.0123");
   });
 
   test("失败态红色头部且脚注带错误信息", () => {
