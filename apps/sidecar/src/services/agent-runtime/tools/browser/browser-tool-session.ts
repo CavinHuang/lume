@@ -46,6 +46,13 @@ export class BrowserToolSessionRegistry {
     this.sessions.delete(threadId)
     return session
   }
+
+  /** #838②:desktop 推送 tab 生命周期事件(tab-closed/tab-changed)时清全部会话的
+   *  list_tabs 微缓存——外部关 tab 的失效窗口从 ≤1s(TTL)压到 0;TTL 与
+   *  tab_not_found 错误驱动防线保留为纵深。 */
+  invalidateTabsCaches(): void {
+    for (const session of this.sessions.values()) session.tabsCache = undefined
+  }
 }
 
 const registry = new BrowserToolSessionRegistry()

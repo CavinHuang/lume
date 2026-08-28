@@ -42,7 +42,10 @@ const MEDIUM_PATTERNS = [
 // 词表与 guardrail 正则层共享（../ps-dangerous-verbs），仅在实际以 PowerShell 为执行 shell 的环境套用
 // （POSIX bash 在场时 iex/ri 等撞名命令防误拦）
 const POWERSHELL_MEDIUM_PATTERNS = [
-  new RegExp(String.raw`\b${PS_FULL_NAME_VERBS}\b`, "i"),
+  // 尾边界用 (?![-\w]) 而非 \b：PS 动词的连字符是词内结构，\b 容忍连字符续接，
+  // vendor-cmd /c stop-computer-check.ps1 曾被 \bstop-computer\b 误命中弹审
+  // （#838① CI natives job 首跑暴露，此前 skipIf 门控下从未执行）
+  new RegExp(String.raw`\b${PS_FULL_NAME_VERBS}(?![-\w])`, "i"),
   new RegExp(PS_DELETE_COMMAND, "i"),
   // #713 review：Start-Process 参数列表间接拉起 shell（与 guardrail 确认档同源锚点）
   new RegExp(PS_START_PROCESS_SHELL_SPAWN, "i")

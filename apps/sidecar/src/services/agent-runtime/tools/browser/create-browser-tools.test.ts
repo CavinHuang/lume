@@ -766,6 +766,35 @@ describe("#604① list_tabs 会话级 TTL 缓存", () => {
   })
 })
 
+describe("#838② tab 生命周期推送失效", () => {
+  test("invalidateTabsCaches 清空全部会话的 list_tabs 微缓存", () => {
+    const registry = new BrowserToolSessionRegistry()
+    registry.getOrCreate("thread-a").tabsCache = { tabs: [], fetchedAt: Date.now() }
+    registry.getOrCreate("thread-b").tabsCache = { tabs: [], fetchedAt: Date.now() }
+    registry.invalidateTabsCaches()
+    expect(registry.getOrCreate("thread-a").tabsCache).toBeUndefined()
+    expect(registry.getOrCreate("thread-b").tabsCache).toBeUndefined()
+  })
+
+  test("推送失效后 list_tabs 不等 TTL 立刻重新拉取（0 延迟语义）", async () => {
+    const calls: Array<{ method: string }> = []
+    const broker = {
+      listBackends: () => [{ backend: "iab" }],
+      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
+        calls.push({ method: request.method })
+        if (request.method === "list_tabs") return { tabs: [agentTab("tab-1", "thread-838")] }
+        throw new Error("unsupported")
+      },
+    } as any
+    const registry = new BrowserToolSessionRegistry()
+    const tools = createBrowserMcpTools({ broker, sessionRegistry: registry, threadId: "thread-838" })
+    await rawCall(tools, "mcp__browser__list_tabs", {})
+    registry.invalidateTabsCaches()
+    await rawCall(tools, "mcp__browser__list_tabs", {})
+    expect(calls.filter((c) => c.method === "list_tabs")).toHaveLength(2)
+  })
+})
+
 describe("#604① 错误驱动失效", () => {
   test("broker 报 tab_not_found 即清 tabs 缓存，重试立刻见新列表", async () => {
     let expanded = false
