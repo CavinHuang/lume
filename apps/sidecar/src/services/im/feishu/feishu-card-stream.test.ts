@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { createFeishuCardStream, type FeishuCardStreamOptions } from "./feishu-card-stream";
+import { createFeishuCardStream, type FeishuCardStreamOptions, abortActiveFeishuRunCards } from "./feishu-card-stream";
 import type { FeishuRestClient } from "./feishu-api";
 import type { LumeRuntimeEvent } from "@lume/shared";
 
@@ -276,5 +276,33 @@ describe("createFeishuCardStream", () => {
       client: rejectedClient
     });
     expect(await stream.open()).toBe(false);
+  });
+});
+
+describe("abortActiveFeishuRunCards（#598 优雅关停卡片收尾）", () => {
+  test("把活跃 running 卡片置 interrupted 终态并强刷，随后从登记表移除", async () => {
+    const calls: FakeApiCalls = { cardCreates: [], messageCreates: [], updates: [] };
+    const stream = createFeishuCardStream({
+      appId: "cli_x",
+      appSecret: "sec",
+      chatId: "oc_chat",
+      client: fakeClient(calls)
+    });
+    expect(await stream.open()).toBe(true);
+    stream.apply({ type: "message.user.submitted", threadId: "t", messageId: "m1", text: "你好" } as never);
+    await settle();
+
+    await abortActiveFeishuRunCards("测试关停");
+    await settle();
+
+    // 中断终态落盘并强刷过（updates 至少多一条）
+    expect(stream.state.status).toBe("interrupted");
+    expect(stream.state.endedAtMs).toBeDefined();
+    expect(calls.updates.length).toBeGreaterThan(0);
+    // 收尾后登记表清空：再 abort 是空操作（不再产生新 update）
+    const countAfterAbort = calls.updates.length;
+    await abortActiveFeishuRunCards();
+    await settle();
+    expect(calls.updates.length).toBe(countAfterAbort);
   });
 });

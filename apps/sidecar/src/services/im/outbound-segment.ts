@@ -35,3 +35,32 @@ export function splitImMessage(text: string, limit: ImSegmentLimit): string[] {
   if (current) segments.push(current);
   return segments;
 }
+
+/** 单段发送结果；transient=true 表示瞬时失败（网络/超时），允许重发一次。 */
+export interface SegmentSendResult {
+  ok: boolean;
+  error?: string;
+  transient?: boolean;
+}
+
+/**
+ * #598：分段逐段发送 + 瞬时错误一次重发 + 中途失败的「已送达 N/M 段」归因。
+ * 确定性失败（业务拒绝/HTTP 4xx）不重发。
+ */
+export async function sendImSegments(
+  segments: string[],
+  sendOne: (segment: string) => Promise<SegmentSendResult>
+): Promise<{ ok: true } | { ok: false; error: string }> {
+  for (let index = 0; index < segments.length; index += 1) {
+    const segment = segments[index] as string;
+    let result = await sendOne(segment);
+    if (!result.ok && result.transient) {
+      result = await sendOne(segment);
+    }
+    if (!result.ok) {
+      const suffix = segments.length > 1 ? `已送达 ${index}/${segments.length} 段，后续未送达：` : "";
+      return { ok: false, error: `${suffix}${result.error ?? "发送失败"}` };
+    }
+  }
+  return { ok: true };
+}

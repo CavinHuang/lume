@@ -11,6 +11,7 @@ import {
 } from "./services/automation/automation-runner-service";
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
+import { abortActiveFeishuRunCards } from "./services/im/feishu/feishu-card-stream";
 import { AGENT_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
@@ -625,6 +626,11 @@ async function boot(): Promise<void> {
   // 否则信号被完全忽略，desktop 仅等 3s 无 SIGKILL 升级，sidecar 变僵尸进程
   const gracefulExit = async () => {
     try {
+      // #598：优雅关停先把活跃飞书运行卡片置中断终态（强杀场景仍为已知取舍）
+      await Promise.race([
+        abortActiveFeishuRunCards(),
+        new Promise((resolve) => setTimeout(resolve, 5_000))
+      ]);
       void getNodeReplRuntimeRegistry().shutdownAll?.();
       await Promise.race([
         stopWatcher(),

@@ -44,6 +44,16 @@ export interface FeishuCardStream {
   /** 卡片通道是否已降级（连续多轮推送失败）：true 时调用方应回退文本投递 */
   readonly degraded: boolean;
   close(): void;
+  /** #598：置中断终态并立即推送（优雅关停时不再把卡片留在「正在处理」）；完成后自关 */
+  abortInterrupted(reason?: string): Promise<void>;
+}
+
+/** #598：活跃卡片流登记表——优雅关停时统一收尾，避免卡片停留「正在处理」 */
+const activeCardStreams = new Set<FeishuCardStream>();
+
+/** #598：把全部活跃运行卡片置为中断终态（用于 sidecar 优雅退出）。 */
+export function abortActiveFeishuRunCards(reason?: string): Promise<void> {
+  return Promise.allSettled([...activeCardStreams].map((stream) => stream.abortInterrupted(reason))).then(() => undefined);
 }
 
 const UPDATE_RETRY_MAX = 2;
@@ -185,7 +195,7 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
     });
   };
 
-  return {
+  const stream: FeishuCardStream = {
     open: async (): Promise<boolean> => {
       try {
         const created = await withTimeout(
@@ -257,10 +267,36 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
     },
     close: () => {
       closed = true;
+      activeCardStreams.delete(stream);
       if (timer !== undefined) {
         clearTimer(timer);
         timer = undefined;
       }
+    },
+    abortInterrupted: (reason?: string): Promise<void> => {
+      if (closed || !cardId) {
+        closed = true;
+        activeCardStreams.delete(stream);
+        return Promise.resolve();
+      }
+      state = {
+        ...state,
+        status: "interrupted",
+        endedAtMs: Date.now(),
+        error: reason ?? "sidecar 关停，运行中断"
+      };
+      return requestFlush(true)
+        .catch(() => undefined)
+        .finally(() => {
+          closed = true;
+          activeCardStreams.delete(stream);
+          if (timer !== undefined) {
+            clearTimer(timer);
+            timer = undefined;
+          }
+        });
     }
   };
+  activeCardStreams.add(stream);
+  return stream;
 }
