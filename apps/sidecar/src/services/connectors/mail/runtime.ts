@@ -442,6 +442,10 @@ export async function executeMailAction(
       }
     }
   } catch (error) {
+    // 用户中断 run 的 AbortError 不进 mapProtocolError(#794④):塌缩成 502 会让
+    // 模型把中止误读为网络故障。原样上抛保留名目,上游 toProviderExecutionError
+    // 统一转 cancelled(providers/provider-runtime.ts gmail 同口径)
+    if (error instanceof Error && error.name === "AbortError") throw error;
     throw mapProtocolError(error, "execute", context.config);
   }
 }

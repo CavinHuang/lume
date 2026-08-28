@@ -1,4 +1,5 @@
 import type { ExecutionContext, ExecutionResult, ProviderExecutors, ResolvedCredential } from "../core/types";
+import { RPC_ERROR_CODES } from "@lume/shared";
 
 import { CastError, optionalRecord, optionalString } from "../core/cast";
 import { createGuardedFetch } from "../core/guarded-fetch";
@@ -128,7 +129,7 @@ function toProviderExecutionError(error: unknown, fallbackMessage: string): Exec
             : error.status === 429
               ? "rate_limited"
               : error.status < 500
-                ? "invalid_input"
+                ? RPC_ERROR_CODES.CONNECTOR_INVALID_INPUT
                 : "provider_error",
         message: error.message,
         details: {
@@ -142,7 +143,7 @@ function toProviderExecutionError(error: unknown, fallbackMessage: string): Exec
     return {
       ok: false,
       error: {
-        code: "invalid_input",
+        code: RPC_ERROR_CODES.CONNECTOR_INVALID_INPUT,
         message: error.message,
       },
     };
@@ -151,7 +152,7 @@ function toProviderExecutionError(error: unknown, fallbackMessage: string): Exec
   return {
     ok: false,
     error: {
-      code: "internal_error",
+      code: RPC_ERROR_CODES.CONNECTOR_INTERNAL_ERROR,
       message: fallbackMessage,
     },
   };

@@ -46,6 +46,28 @@ export const RPC_ERROR_CODES = {
   SECRET_ENCRYPTION_KEY_INVALID: "secret_encryption_key_invalid",
   /** desktop 浏览器主进程通道断开/不可用。与 shared browser-runtime.ts 的 BrowserErrorCode "browser_unavailable" 同字符串双域,改须核对彼侧白名单 */
   BROWSER_UNAVAILABLE: "browser_unavailable",
+
+  // ---- 业务码族(#793② 渐进收编,第二批):MCP/插件/连接器/通知域出站位点 ----
+  /** MCP 授权缺失,需用户重新完成 OAuth(workspace-mcp-manager) */
+  MCP_AUTH_NEEDED: "auth_needed",
+  /** MCP stdio 进程拉起失败(workspace-mcp-manager) */
+  MCP_SPAWN_FAILED: "spawn_failed",
+  /** MCP 远程传输连接失败(workspace-mcp-manager) */
+  MCP_CONNECTION_FAILED: "connection_failed",
+  /** MCP SDK 错误兜底(workspace-mcp-manager) */
+  MCP_ERROR: "mcp_error",
+  /** MCP server 资源不存在(PublicMcpError,workspace-mcp-manager) */
+  MCP_NOT_FOUND: "not_found",
+  /** 插件 manifest 校验失败(agent-runtime/plugins/capability-resolver) */
+  PLUGIN_INVALID_MANIFEST: "invalid_manifest",
+  /** 连接器动作未注册(connectors/service) */
+  CONNECTOR_ACTION_UNKNOWN: "action_unknown",
+  /** 连接器入参不合法(providers/provider-runtime) */
+  CONNECTOR_INVALID_INPUT: "invalid_input",
+  /** 连接器内部错误兜底(providers/provider-runtime) */
+  CONNECTOR_INTERNAL_ERROR: "internal_error",
+  /** 通知 run.failed 合成错误(agent-notification-service) */
+  NOTIFICATION_RUNTIME_ERROR: "runtime_error",
 } as const;
 
 /**

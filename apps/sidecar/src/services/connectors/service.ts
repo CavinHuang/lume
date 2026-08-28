@@ -7,7 +7,7 @@ import type {
   ProviderExecutors,
   ResolvedCredential,
 } from "./core/types";
-import type { ConnectorSetup } from "@lume/shared";
+import { RPC_ERROR_CODES, type ConnectorSetup } from "@lume/shared";
 import { executeAction } from "./core/execution";
 import { requestAuthorizationCodeToken, requestRefreshToken } from "./oauth/oauth-token";
 import { providerFetch } from "./providers/provider-runtime";
@@ -581,7 +581,7 @@ export async function executeConnectorAction(
   const provider = getConnector(service);
   const action = provider.definition.actions.find((entry) => entry.name === actionName);
   if (!action) {
-    return { ok: false, error: { code: "action_unknown", message: `${service} 不支持动作: ${actionName}` } };
+    return { ok: false, error: { code: RPC_ERROR_CODES.CONNECTOR_ACTION_UNKNOWN, message: `${service} 不支持动作: ${actionName}` } };
   }
   const context = {
     getCredential: async () => {

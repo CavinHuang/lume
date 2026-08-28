@@ -400,6 +400,15 @@ export function adaptLifecycleEvent(
   return []
 }
 
+// #778:isError 且无 result 时可上屏的 stopReason 全集(sdk-protocol SDKResultMessage
+// subtype 去掉前置拦截的 error_max_turns/error_completion_guard 与 success)。
+const RUN_ERROR_COPY: Record<string, string> = {
+  error_during_execution: '运行过程中发生错误，本次运行已停止。',
+  error_max_budget_usd: '已达到本次运行的费用上限，运行已停止。',
+  error_max_output_tokens: '输出长度达到上限，运行已停止。',
+  error_max_structured_output_retries: '结构化输出重试次数用尽，运行已停止。',
+}
+
 function adaptRunEnd(
   envelope: SdkEventEnvelope,
   detail: Extract<SdkLifecycleDetail, { type: 'run.end' }>,
@@ -443,11 +452,17 @@ function adaptRunEnd(
     }
   }
   if (detail.isError) {
+    // #778:legacy result 出错链无 result 字段,stopReason 是 endRun 兜底的内部
+    // subtype 原文(如 error_during_execution),不能直接上屏。result 优先不变
+    // (流抛错路径 projector 已人性化);已知 subtype 映射人话,未知值兜底固定文案。
+    const message = detail.result
+      ?? (detail.stopReason != null ? RUN_ERROR_COPY[detail.stopReason] : undefined)
+      ?? '运行失败，请稍后重试。'
     return {
       id: `lifecycle:${envelope.seq}:run.failed`,
       type: 'run.failed',
       ...base,
-      error: { code: 'runtime_error', message: detail.result ?? detail.stopReason ?? 'Run failed' },
+      error: { code: 'runtime_error', message },
     }
   }
   return {
