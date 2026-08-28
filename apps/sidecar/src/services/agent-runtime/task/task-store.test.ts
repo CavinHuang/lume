@@ -44,6 +44,39 @@ describe("FileBackedTaskStore", () => {
     });
   });
 
+  test("同一父 Run 最多认领同一 Task 三次，新 Run 可重新尝试", async () => {
+    await withStore(async (store) => {
+      const runContext = { ...context(), runId: "parent-run-1" };
+      let current = await store.create({ subject: "Retry bounded" }, runContext);
+
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const claimed = await store.update({
+          taskId: current.task.id,
+          status: "in_progress",
+          expectedRevision: current.revision,
+        }, runContext);
+        current = await store.update({
+          taskId: current.task.id,
+          status: "pending",
+          expectedRevision: claimed.revision,
+          claimToken: claimed.claimToken,
+        }, runContext);
+      }
+
+      await expect(store.update({
+        taskId: current.task.id,
+        status: "in_progress",
+        expectedRevision: current.revision,
+      }, runContext)).rejects.toThrow("最多认领同一 Task 3 次");
+
+      await expect(store.update({
+        taskId: current.task.id,
+        status: "in_progress",
+        expectedRevision: current.revision,
+      }, { ...context(), runId: "parent-run-2" })).resolves.toBeTruthy();
+    });
+  });
+
   test("updates both dependency directions and rejects cycles", async () => {
     await withStore(async (store) => {
       const first = await store.create({ subject: "First" }, context());

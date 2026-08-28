@@ -34,6 +34,7 @@ const LOCK_ABANDONED_MS = 300_000;
 const JOURNAL_COMPACT_BYTES = 256 * 1024;
 const CLAIM_FENCE_TIMEOUT_MS = 30_000;
 const MAX_METADATA_BYTES = 64 * 1024;
+const MAX_TASK_CLAIMS_PER_RUN = 3;
 
 interface LockPayload {
   pid: number;
@@ -624,6 +625,13 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     if (active && active.id !== task.id) throw new Error(`Task list already has active Task ${active.id}`);
     if (this.readTasks().some((item) => this.executorFence(item))) throw new Error("Task list is fenced until the previous executor terminates");
     const lume = serviceMetadata(task);
+    const parentRunId = context.runId?.trim();
+    const attemptsInRun = parentRunId
+      ? (lume.attemptRunId === parentRunId ? Number(lume.attemptsInRun ?? 0) : 0) + 1
+      : 1;
+    if (parentRunId && attemptsInRun > MAX_TASK_CLAIMS_PER_RUN) {
+      throw new Error(`同一父 Run 中最多认领同一 Task ${MAX_TASK_CLAIMS_PER_RUN} 次；请在新 Run 中改派或调整策略`);
+    }
     const token = randomUUID();
     task.status = "in_progress";
     task.owner = context.actorId;
@@ -634,6 +642,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
         claim: { actor: context.actorId, parentRun: context.runId, token, claimedAt: new Date().toISOString() },
         claimGeneration: Number(lume.claimGeneration ?? 0) + 1,
         attempts: Number(lume.attempts ?? 0) + 1,
+        ...(parentRunId ? { attemptRunId: parentRunId, attemptsInRun } : {}),
       },
     };
     void input;

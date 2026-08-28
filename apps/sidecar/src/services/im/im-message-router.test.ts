@@ -8,7 +8,8 @@ import { updateLumeConfigSection } from "../system/lume-config-service";
 import { createImAgentStreamEmitter, routeInboundImMessage } from "./im-message-router";
 import { createImAccount } from "./im-config-manager";
 import { hasSeenImMessage, resetImSeenMessageCacheForTest } from "./im-seen-message-store";
-import { getImThreadBindingByPeer, upsertImThreadBinding } from "./im-thread-binding-store";
+import { getImThreadBindingByPeer, getImThreadBindingByThreadId, upsertImThreadBinding } from "./im-thread-binding-store";
+import { upsertImMirrorEntry } from "./im-mirror-store";
 import { decryptSecret } from "../infra/secret-crypto";
 
 describe("im-message-router", () => {
@@ -993,5 +994,126 @@ describe("im-message-router", () => {
     }, baseDeps);
     expect(sent.at(-1)).toContain("用法");
     expect(revertCalls).toBe(1);
+  });
+});
+
+describe("im-message-router #544 镜像群反向续聊", () => {
+  let prevConfigDir: string | undefined;
+  let tempConfigDir = "";
+
+  beforeEach(() => {
+    prevConfigDir = process.env.LUME_CONFIG_DIR;
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-im-router-mirror-test-"));
+    process.env.LUME_CONFIG_DIR = tempConfigDir;
+  });
+
+  afterEach(() => {
+    if (prevConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = prevConfigDir;
+    }
+    if (tempConfigDir) {
+      rmSync(tempConfigDir, { recursive: true, force: true });
+      tempConfigDir = "";
+    }
+  });
+
+  const mirrorThreadId = "thr_desktop_origin";
+
+  function seedMirrorEntry(): void {
+    upsertImMirrorEntry({
+      threadId: mirrorThreadId,
+      accountId: "acc-mirror",
+      chatId: "oc_mirror",
+      carrier: "card"
+    });
+  }
+
+  function mirrorMessage(text: string, messageId?: string) {
+    return {
+      provider: "feishu" as const,
+      accountId: "acc-mirror",
+      accountLabel: "镜像承担",
+      peerKind: "group" as const,
+      peerId: "oc_mirror",
+      peerName: "镜像群",
+      text,
+      ...(messageId ? { messageId } : {})
+    };
+  }
+
+  function makeDeps() {
+    const sent: AgentSendInput[] = [];
+    const metaUpdates: unknown[] = [];
+    const mirrorTexts: string[] = [];
+    const stoppedThreads: string[] = [];
+    let createdThreads = 0;
+    return {
+      sent,
+      metaUpdates,
+      mirrorTexts,
+      stoppedThreads,
+      deps: {
+        getThreadMeta: () => undefined,
+        createThread: () => {
+          createdThreads += 1;
+          return { id: `thr_new_${createdThreads}` };
+        },
+        sendMessage: async (input: AgentSendInput) => {
+          sent.push(input);
+        },
+        updateThreadMeta: (threadId: string, patch: unknown) => {
+          metaUpdates.push({ threadId, patch });
+        },
+        stopThread: async (threadId: string) => {
+          stoppedThreads.push(threadId);
+          return true;
+        },
+        sendMirrorText: async (_entry: unknown, _message: unknown, text: string) => {
+          mirrorTexts.push(text);
+        }
+      }
+    };
+  }
+
+  test("镜像群文本路由回原桌面线程，且零绑定写入、零 source 污染", async () => {
+    seedMirrorEntry();
+    const { deps, sent, metaUpdates } = makeDeps();
+
+    const result = await routeInboundImMessage(mirrorMessage("继续这个任务"), deps);
+
+    expect(result.threadId).toBe(mirrorThreadId);
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.threadId).toBe(mirrorThreadId);
+    // 提交 origin 保持 im.*（防递归守卫的另一半证据链）
+    expect(sent[0]?.traceContext?.origin).toBe("im.feishu");
+    // 自环不变量三钉：不建绑定、不写 source meta、不建新线程
+    expect(getImThreadBindingByThreadId(mirrorThreadId)).toBeNull();
+    expect(metaUpdates).toHaveLength(0);
+  });
+
+  test("同一 messageId 重投只提交一次（去重语义延续）", async () => {
+    seedMirrorEntry();
+    const { deps, sent } = makeDeps();
+
+    await routeInboundImMessage(mirrorMessage("第一条", "mid-1"), deps);
+    await routeInboundImMessage(mirrorMessage("第一条", "mid-1"), deps);
+
+    expect(sent).toHaveLength(1);
+  });
+
+  test("/stop 停原线程并回执；其余斜杠命令回引导文案不建线程", async () => {
+    seedMirrorEntry();
+    const { deps, sent, stoppedThreads, mirrorTexts } = makeDeps();
+
+    await routeInboundImMessage(mirrorMessage("/stop"), deps);
+    expect(stoppedThreads).toEqual([mirrorThreadId]);
+    expect(mirrorTexts.at(-1)).toContain("已停止");
+    expect(sent).toHaveLength(0);
+
+    await routeInboundImMessage(mirrorMessage("/new"), deps);
+    expect(mirrorTexts.at(-1)).toContain("镜像群仅支持");
+    expect(sent).toHaveLength(0);
   });
 });

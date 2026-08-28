@@ -4,6 +4,7 @@ import type { ImWorker } from "../provider-registry";
 import type { ImRuntimeAccount } from "../im-config-manager";
 import type { InboundImRouteMessage } from "../im-message-router";
 import { routeInboundImMessage } from "../im-message-router";
+import { getImMirrorEntryByChat } from "../im-mirror-store";
 import { redactSensitiveText } from "../im-log-redaction";
 import { createLogger } from "../../infra/logger";
 
@@ -72,14 +73,18 @@ export function mentionsAtWord(text: string): boolean {
 export function parseDingtalkEvent(
   event: unknown,
   account: ImRuntimeAccount,
+  /** #544 镜像群谓词：命中即免 @ 放行（无公共上游，各 worker 各自插桩） */
+  isMirrorChat?: (peerId: string) => boolean,
 ): InboundImRouteMessage | null {
   const data = extractEventData(event);
   if (!data) return null;
   const rawText = data.text?.content?.trim();
   if (!rawText) return null;
+  const peerId = data.conversationId ?? data.senderStaffId ?? "unknown";
   // 群聊 @ 门控（#405）：atUsers 结构化字段优先（#598）——平台给定时以它为准，
-  // 空数组即确认无 at；字段缺失退回词边界启发式（词首 @，"a@b.com" 不触发）
-  if (data.conversationType !== "1") {
+  // 空数组即确认无 at；字段缺失退回词边界启发式（词首 @，"a@b.com" 不触发）。
+  // 镜像群豁免（#544）：命中注册表整段跳过门控
+  if (data.conversationType !== "1" && !(isMirrorChat?.(peerId) ?? false)) {
     if (Array.isArray(data.atUsers)) {
       if (data.atUsers.length === 0) return null;
     } else if (!mentionsAtWord(rawText)) {
@@ -94,7 +99,7 @@ export function parseDingtalkEvent(
     accountLabel: account.label,
     workspaceId: account.workspaceId,
     peerKind: data.conversationType === "1" ? "dm" : "group",
-    peerId: data.conversationId ?? data.senderStaffId ?? "unknown",
+    peerId,
     peerName: data.conversationName ?? data.senderNick,
     senderId: data.senderStaffId ?? data.senderId,
     senderName: data.senderNick,
@@ -132,7 +137,11 @@ export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInpu
       // SDK 回调签名同步返回 EventAckData;异步路由 fire-and-forget,立即 ack 避免服务端 60s 重试
       streamClient.registerAllEventListener((event) => {
         try {
-          const parsed = parseDingtalkEvent(event, input.account);
+          const parsed = parseDingtalkEvent(
+            event,
+            input.account,
+            (peerId) => getImMirrorEntryByChat(input.account.id, peerId) !== null
+          );
           if (parsed) {
             log.info("收到钉钉消息", { accountId: input.account.id, peerId: parsed.peerId });
             void routeMessage(parsed).catch((error: unknown) => {

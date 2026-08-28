@@ -552,6 +552,21 @@ export type AgentThreadMetaUpdates = Partial<
   modelId?: string | null;
 };
 
+type AgentThreadTitleListener = (threadId: string, title: string) => void;
+
+const threadTitleListeners = new Set<AgentThreadTitleListener>();
+
+/**
+ * 标题实际变化监听器（#544 镜像群名同步消费）。手动改名与 auto-title 的唯一
+ * 共同汇点就在本文件；核心层只暴露订阅位，不感知镜像等上层语义（依赖方向保持向下）。
+ */
+export function onAgentThreadTitleChanged(listener: AgentThreadTitleListener): () => void {
+  threadTitleListeners.add(listener);
+  return () => {
+    threadTitleListeners.delete(listener);
+  };
+}
+
 /**
  * 非致命版本：线程索引条目缺失时返回 null，而非抛出。
  *
@@ -596,6 +611,17 @@ export function tryUpdateAgentThreadMeta(
 
     index.threads[idx] = updated;
     writeIndex(index);
+
+    // #544：标题真变更才分发，避免 auto-title 空写触发镜像群改名风暴
+    if (typeof updates.title === "string" && updates.title !== existing.title) {
+      for (const listener of threadTitleListeners) {
+        try {
+          listener(updated.id, updates.title);
+        } catch (error) {
+          log.warn("thread title listener failed", { error });
+        }
+      }
+    }
 
     log.info("updated agent thread", { threadId: updated.id });
     return updated;

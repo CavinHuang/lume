@@ -17,6 +17,8 @@ export interface ImAccount {
   hasToken: boolean;
   cursor?: string;
   contextToken?: string;
+  /** #544 会话镜像：该账号最近一次 DM 互动的发送者 id，反向建镜像群的目标用户来源（sidecar 内部维护） */
+  lastInteractedSenderId?: string;
   lastError?: string;
   lastStartedAt?: number;
   lastStoppedAt?: number;
@@ -145,7 +147,16 @@ export const IM_IPC_CHANNELS = {
   POLL_WEIXIN_LOGIN: "im:poll-weixin-login",
   START_CLI_AUTH: "im:start-cli-auth",
   POLL_CLI_AUTH: "im:poll-cli-auth",
-  CANCEL_CLI_AUTH: "im:cancel-cli-auth"
+  CANCEL_CLI_AUTH: "im:cancel-cli-auth",
+  // #544 会话镜像
+  MIRROR_GET_SETTINGS: "im-mirror:get-settings",
+  MIRROR_SET_OWNER: "im-mirror:set-owner",
+  MIRROR_LIST: "im-mirror:list",
+  MIRROR_ATTACH_CANDIDATES: "im-mirror:attach-candidates",
+  MIRROR_ATTACH: "im-mirror:attach",
+  MIRROR_DETACH: "im-mirror:detach",
+  /** 保活通知（sidecar→desktop main 单向推送，NOTIFY_ONLY 显式登记） */
+  MIRROR_STREAM_ACTIVE: "im-mirror:stream-active"
 } as const;
 
 export const IM_PROVIDER_LABELS: Record<ImProvider, string> = {
@@ -215,4 +226,55 @@ export interface ImVideoContent {
   thumbnailUrl?: string;
   playLength?: number;
   fileSize?: number;
+}
+
+// ─── 会话镜像（#544）：桌面线程 ↔ IM 群双向同步 ───
+
+/** 运行进度落到 IM 群的载体形态：card=可编辑卡片（飞书 cardkit），text=两段式文本播报 */
+export type ImMirrorCarrier = "card" | "text";
+
+export type ImMirrorTier = "full" | "attach" | "unsupported";
+
+export interface ImMirrorTierInfo {
+  tier: ImMirrorTier;
+  /** unsupported 档的原因说明（设置页灰置文案） */
+  reason?: string;
+}
+
+/**
+ * 各渠道镜像能力分档（编译期事实，UI 直接消费不付 RPC）。
+ * full=建群/改名/退群+流式卡片全栈；attach=附着已有群+文本档；
+ * unsupported=transport 无法主动外发（钉钉出站依赖入站 event 附带的 sessionWebhook）。
+ */
+export const IM_MIRROR_TIERS: Record<ImProvider, ImMirrorTierInfo> = {
+  feishu: { tier: "full" },
+  weixin: { tier: "attach" },
+  dingtalk: { tier: "unsupported", reason: "钉钉机器人仅能回复收到的消息，无法主动向群推送运行过程" },
+  wecom: { tier: "unsupported", reason: "企业微信通道暂不支持主动向群推送运行过程" }
+};
+
+export interface ImMirrorEntryPublic {
+  threadId: string;
+  accountId: string;
+  chatId: string;
+  carrier: ImMirrorCarrier;
+  createdAt: number;
+}
+
+export interface ImMirrorSettingsPublic {
+  enabledMirrorAccountId: string | null;
+  lastError?: string;
+}
+
+/** 保活通知载荷（sidecar→desktop main）：按 threadId 引用计数 powerSaveBlocker */
+export interface ImMirrorStreamActivity {
+  threadId: string;
+  active: boolean;
+}
+
+/** attach 附着候选：机器人已在的群（来自该账号的 group binding） */
+export interface ImMirrorAttachCandidate {
+  peerId: string;
+  peerName?: string;
+  threadId: string;
 }

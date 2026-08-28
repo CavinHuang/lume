@@ -23,6 +23,32 @@ export interface FeishuRestClient {
           code?: number;
           data?: { user_count?: number; name?: string };
         }>;
+        // 以下形状对齐 @larksuiteoapi/node-sdk 实测签名（index.d.ts 265008/265061 行域）：
+        // create 无 path 段；update 为 path.chat_id + data；业务码非 0 时 data 缺省
+        create(req: {
+          data: { name?: string; user_id_list?: string[] };
+        }): Promise<{ code?: number; msg?: string; data?: { chat_id?: string } }>;
+        update(req: {
+          path: { chat_id: string };
+          data: { name?: string };
+        }): Promise<{ code?: number; msg?: string }>;
+      };
+      // SDK 中群成员接口命名为 chatMembers（REST 为 im/v1/chats/:chat_id/members）
+      chatMembers: {
+        create(req: {
+          path: { chat_id: string };
+          params?: { member_id_type?: "user_id" | "union_id" | "open_id" | "app_id" };
+          data: { id_list: string[] };
+        }): Promise<{
+          code?: number;
+          msg?: string;
+          data?: { invalid_id_list?: string[]; not_existed_id_list?: string[] };
+        }>;
+        delete(req: {
+          path: { chat_id: string };
+          params?: { member_id_type?: "user_id" | "union_id" | "open_id" | "app_id" };
+          data?: { id_list?: string[] };
+        }): Promise<{ code?: number; msg?: string }>;
       };
     };
   };
@@ -280,5 +306,108 @@ export async function getFeishuQuotedMessage(
   } catch (error) {
     log.warn("获取引用消息失败", { messageId: input.messageId, error: error instanceof Error ? error.message : String(error) });
     return null;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// #544 会话镜像群生命周期：建群 / 改名 / 退群（写操作失败返回 {ok:false,error} 不抛）
+// 错误串携带原始 code，供 describeImMirrorFailure 做权限文案映射。
+// ---------------------------------------------------------------------------
+
+function toFeishuApiError(result: { code?: number; msg?: string }): string {
+  const codeSuffix = result.code ? `(code ${result.code})` : "";
+  return [result.msg?.trim(), codeSuffix].filter(Boolean).join(" ") || "飞书接口调用失败";
+}
+
+/**
+ * 创建镜像群：目标用户随建群一并入群（chat.create 原生支持初始 user_id_list，
+ * 无需二次调用加人接口）。userOpenId 缺省时仅机器人自身入群（附着占位场景）。
+ */
+export async function createFeishuGroupChat(
+  input: { appId: string; appSecret: string; name: string; userOpenId?: string },
+  deps: FeishuApiDeps = {}
+): Promise<{ ok: boolean; chatId?: string; error?: string }> {
+  if (!input.appId || !input.appSecret) {
+    return { ok: false, error: "缺少 App ID/App Secret，无法创建镜像群" };
+  }
+  try {
+    const getClient = deps.createClient ?? getFeishuClient;
+    const client = getClient(input.appId, input.appSecret);
+    const result = await withSendTimeout(
+      client.im.v1.chat.create({
+        data: {
+          name: input.name,
+          ...(input.userOpenId ? { user_id_list: [input.userOpenId] } : {})
+        }
+      })
+    );
+    if ((result.code ?? 0) !== 0) {
+      return { ok: false, error: toFeishuApiError(result) };
+    }
+    const chatId = result.data?.chat_id;
+    if (!chatId) return { ok: false, error: "飞书建群成功但未返回 chat_id" };
+    return { ok: true, chatId };
+  } catch (error) {
+    log.warn("飞书建群失败", { name: input.name, error: error instanceof Error ? error.message : String(error) });
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/** 线程标题变更同步群名；失败静默降级（{ok:false,error}）。 */
+export async function updateFeishuChatName(
+  input: { appId: string; appSecret: string; chatId: string; name: string },
+  deps: FeishuApiDeps = {}
+): Promise<{ ok: boolean; error?: string }> {
+  if (!input.appId || !input.appSecret) {
+    return { ok: false, error: "缺少 App ID/App Secret，无法更新群名" };
+  }
+  try {
+    const getClient = deps.createClient ?? getFeishuClient;
+    const client = getClient(input.appId, input.appSecret);
+    const result = await withSendTimeout(
+      client.im.v1.chat.update({ path: { chat_id: input.chatId }, data: { name: input.name } })
+    );
+    if (result.code && result.code !== 0) {
+      return { ok: false, error: toFeishuApiError(result) };
+    }
+    return { ok: true };
+  } catch (error) {
+    log.warn("飞书改名失败", { chatId: input.chatId, error: error instanceof Error ? error.message : String(error) });
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
+  }
+}
+
+/**
+ * 机器人主动退群（#544 裁决：线程删除固定退群、不解散——解散不可逆）。
+ * SDK 文档：机器人在任何条件下均可将自己移出群组；先取缓存机器人身份再 members.delete。
+ */
+export async function leaveFeishuChat(
+  input: { appId: string; appSecret: string; chatId: string },
+  deps: FeishuApiDeps = {}
+): Promise<{ ok: boolean; error?: string }> {
+  if (!input.appId || !input.appSecret) {
+    return { ok: false, error: "缺少 App ID/App Secret，无法退群" };
+  }
+  const botOpenId = await getFeishuBotOpenId({ appId: input.appId, appSecret: input.appSecret }, deps);
+  if (!botOpenId) {
+    return { ok: false, error: "无法获取机器人身份，跳过退群" };
+  }
+  try {
+    const getClient = deps.createClient ?? getFeishuClient;
+    const client = getClient(input.appId, input.appSecret);
+    const result = await withSendTimeout(
+      client.im.v1.chatMembers.delete({
+        path: { chat_id: input.chatId },
+        params: { member_id_type: "open_id" },
+        data: { id_list: [botOpenId] }
+      })
+    );
+    if (result.code && result.code !== 0) {
+      return { ok: false, error: toFeishuApiError(result) };
+    }
+    return { ok: true };
+  } catch (error) {
+    log.warn("飞书退群失败", { chatId: input.chatId, error: error instanceof Error ? error.message : String(error) });
+    return { ok: false, error: error instanceof Error ? error.message : String(error) };
   }
 }

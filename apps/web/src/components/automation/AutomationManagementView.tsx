@@ -50,7 +50,7 @@ import {
   toggleAutomationJob,
   updateAutomationJob,
 } from '@/lib/desktop-api/automation'
-import type { AutomationJob, AutomationRun, AutomationSchedule, Channel } from '@lume/shared'
+import type { AutomationJob, AutomationRun, AutomationSchedule, Channel, LumeConfigThinkingLevel } from '@lume/shared'
 import { openAutomationRunReplay } from './automation-run-replay'
 
 import { Button } from '@/components/ui/button'
@@ -80,7 +80,7 @@ interface CreateDraft {
   customCronExpr: string
   workspaceId: string
   defaultModel: string
-  thinkingLevel: string
+  thinkingLevel: LumeConfigThinkingLevel
 }
 
 type AutomationListTab = 'manual' | 'system'
@@ -1074,7 +1074,7 @@ function AutomationJobDetail({
                   <span className="text-[14px] text-[var(--text-2)]">推理</span>
                   <ShadcnSelect
                     value={draft.thinkingLevel}
-                    onValueChange={(v) => setDraft({ ...draft, thinkingLevel: v })}
+                    onValueChange={(v) => setDraft({ ...draft, thinkingLevel: v as LumeConfigThinkingLevel })}
                   >
                     <ShadcnSelectTrigger className="h-7 w-auto gap-1 rounded-[6px] border-[var(--border)] bg-[var(--surface-1)] px-2 text-[14px] text-[var(--text-3)] shadow-none hover:bg-[var(--surface-2)] [&_svg:last-child]:size-3 [&_svg:last-child]:text-[var(--text-3)]">
                       <ShadcnSelectValue />
@@ -1414,7 +1414,7 @@ function CreateAutomationDialog({
             {/* 推理强度 */}
             <ShadcnSelect
               value={draft.thinkingLevel}
-              onValueChange={(v) => setDraft({ ...draft, thinkingLevel: v })}
+              onValueChange={(v) => setDraft({ ...draft, thinkingLevel: v as LumeConfigThinkingLevel })}
             >
               <ShadcnSelectTrigger className="h-7 w-auto gap-1 rounded-[6px] border-[var(--border)] bg-[var(--surface-1)] px-2 text-[12px] text-[var(--text-2)] shadow-none hover:bg-[var(--surface-2)] [&_svg:last-child]:size-3 [&_svg:last-child]:text-[var(--text-3)]">
                 <Brain size={12} className="shrink-0 text-[var(--text-3)]" />

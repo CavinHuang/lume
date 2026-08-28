@@ -120,6 +120,9 @@ export const weixinProvider: ImProviderDefinition = {
     }),
   sendText,
   sendMedia,
+  // #544 镜像附着档（tier=attach）：openclaw 逆向通道无建群/群管理 API，消息亦不可编辑，
+  // 仅声明文本档载体——附着已有群的入口（线程×群配对选择）在后续版本开放。
+  mirror: { carrier: "text" },
 };
 
 // 模块加载即注册：由 im-runtime-manager.ts 顶部 import 触发，
