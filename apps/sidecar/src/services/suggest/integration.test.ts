@@ -30,6 +30,11 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, mock, test } from "bun:test";
 
 // ===== 外部边界 spy =====
+const managerActual = await import("../automation/automation-manager");
+// 函数值快照：mock.module 注册后，模块命名空间上的属性访问会路由进 mock 工厂，
+// 闭包里再取 managerActual.createAutomationJob 会递归回 spy 自身（栈爆炸）
+const realCreateAutomationJob = managerActual.createAutomationJob;
+
 const spies = {
   /** adapter 调用计数（验证管线确实读取了会话消息） */
   extractCalls: mock((_input: unknown) => {}),
@@ -37,11 +42,10 @@ const spies = {
   remember: mock(async (_input: Record<string, unknown>) => ({
     action: "created" as const,
   })),
-  /** createAutomationJob 捕获（accepted open_automation_create 动作） */
-  createAutomationJob: mock((input: { name: string; prompt: string; schedule: unknown }) => ({
-    id: "job-1",
-    ...input,
-  })),
+  /** createAutomationJob 捕获（accepted open_automation_create 动作）——委托真实实现：
+   *  tmpdir 隔离下真实落盘，且不向后加载的文件泄漏假 spy（mock.module 进程级，#647 批次治理） */
+  createAutomationJob: mock((input: Parameters<typeof realCreateAutomationJob>[0]) =>
+    realCreateAutomationJob(input)),
   /** IPC 建议变更广播器捕获 */
   broadcaster: mock(() => {}),
 };
@@ -57,10 +61,8 @@ mock.module("./adapter", () => ({
 }));
 
 // automation-manager：listAutomationJobs→[]（dedup 空）+ createAutomationJob→spy
-const managerActual = await import("../automation/automation-manager");
 mock.module("../automation/automation-manager", () => ({
   ...managerActual,
-  listAutomationJobs: () => [],
   createAutomationJob: spies.createAutomationJob,
 }));
 

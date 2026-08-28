@@ -9,6 +9,7 @@ import type {
 import {
   createAutomationJob,
   deleteAutomationJob,
+  isSystemAutomationJob,
   listAutomationJobs,
   updateAutomationJob
 } from "../services/automation/automation-manager";
@@ -61,7 +62,7 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
       // system 任务（routine 映射等）的 prompt/schedule 可被整体换血后按无人值守
       // bypass 周期执行，渲染进程不得改写（#647 P2-23 劫持面）
       const current = listAutomationJobs().find((job) => job.id === input.id);
-      if (current?.source === "system") throw new Error("系统自动化任务不可在界面中修改");
+      if (isSystemAutomationJob(current)) throw new Error("系统自动化任务不可在界面中修改");
       const updated = updateAutomationJob(input);
       await refreshAutomationRunnerJobs();
       return updated;
@@ -75,7 +76,7 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
       ) as AutomationDeleteJobInput;
       // 同 UPDATE/TOGGLE：system 任务不可经渲染进程删除（#647 P2-23 劫持面）
       const current = listAutomationJobs().find((job) => job.id === input.id);
-      if (current?.source === "system") throw new Error("系统自动化任务不可在界面中删除");
+      if (isSystemAutomationJob(current)) throw new Error("系统自动化任务不可在界面中删除");
       const result = deleteAutomationJob(input);
       await refreshAutomationRunnerJobs();
       return result;
@@ -111,7 +112,7 @@ export function createAutomationHandlers(): Record<string, RpcHandler> {
         throw new Error(`自动化任务不存在: ${input.id}`);
       }
       // 同 UPDATE：system 任务不可经渲染进程启停（#647 P2-23 劫持面）
-      if (target.source === "system") {
+      if (isSystemAutomationJob(target)) {
         throw new Error("系统自动化任务不可在界面中启停");
       }
       const updated = updateAutomationJob({ id: target.id, enabled: !target.enabled });

@@ -146,6 +146,15 @@ export function listAutomationJobs(): AutomationJob[] {
     .sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
+/**
+ * system 任务判定（#647 follow-up8 谓词统一）：无人值守 bypass 通道的任务
+ * （routine 映射/记忆蒸馏等），渲染进程 RPC 与 agent 工具面均不得触碰。
+ * 此前 RPC 三处内联 `source === "system"` 与 agent 侧 isJobAccessible 各自为政。
+ */
+export function isSystemAutomationJob(job: Pick<AutomationJob, "source"> | undefined | null): boolean {
+  return job?.source === "system";
+}
+
 export function createAutomationJob(input: AutomationCreateJobInput): AutomationJob {
   return withIndexMutationLock(automationIndexLockPath(), () => {
     const index = readIndex();
