@@ -48,6 +48,50 @@ const MAX_PER_SESSION = 2;
 /** 所有建议类型（用于遍历检测类型静默） */
 const ALL_KINDS: SuggestionKind[] = ["correction", "followup", "automation", "todo", "skill"];
 
+export interface SuggestionServiceDependencies {
+  evaluateSuggestions: typeof evaluateSuggestions;
+  loadDedupContext: typeof loadDedupContext;
+  extractRecentConversation: typeof extractRecentConversation;
+  recordFeedback: typeof recordFeedback;
+  isTypeSilenced: typeof isTypeSilenced;
+  getNeverKeys: typeof getNeverKeys;
+  buildAnalysisInput: typeof buildAnalysisInput;
+  runAnalysis: typeof runAnalysis;
+  getEnabled: typeof getEnabled;
+  getTypeWeights: typeof getTypeWeights;
+  listSuggestions: typeof listSuggestions;
+  persistSuggestion: typeof persistSuggestion;
+  createAutomationJob: typeof createAutomationJob;
+  remember: (
+    input: Parameters<MemoryCommandService["remember"]>[0],
+  ) => ReturnType<MemoryCommandService["remember"]>;
+}
+
+export type SuggestionServiceOverrides = Partial<SuggestionServiceDependencies>;
+
+const defaultDependencies: SuggestionServiceDependencies = {
+  evaluateSuggestions,
+  loadDedupContext,
+  extractRecentConversation,
+  recordFeedback,
+  isTypeSilenced,
+  getNeverKeys,
+  buildAnalysisInput,
+  runAnalysis,
+  getEnabled,
+  getTypeWeights,
+  listSuggestions,
+  persistSuggestion,
+  createAutomationJob,
+  remember: (input) => new MemoryCommandService().remember(input),
+};
+
+function resolveDependencies(
+  overrides: SuggestionServiceOverrides,
+): SuggestionServiceDependencies {
+  return { ...defaultDependencies, ...overrides };
+}
+
 // ===== IPC 广播（Task 12 注入真实 channel） =====
 
 /**
@@ -95,15 +139,17 @@ export interface SessionSuggestContext {
  */
 export async function evaluateSessionSuggestions(
   ctx: SessionSuggestContext,
+  overrides: SuggestionServiceOverrides = {},
 ): Promise<void> {
+  const dependencies = resolveDependencies(overrides);
   try {
-    if (!getEnabled()) return;
+    if (!dependencies.getEnabled()) return;
 
     const sessionKey = pickSessionKey(ctx);
     const seenKeys = new Set<string>();
     let sessionSuggested = 0;
     if (sessionKey) {
-      for (const r of listSuggestions("suggested")) {
+      for (const r of dependencies.listSuggestions("suggested")) {
         if (pickSessionKey(r) === sessionKey) {
           sessionSuggested++;
           seenKeys.add(r.duplicateKey);
@@ -112,20 +158,23 @@ export async function evaluateSessionSuggestions(
     }
     if (sessionSuggested >= MAX_PER_SESSION) return;
 
-    const messages = await extractRecentConversation({
+    const messages = await dependencies.extractRecentConversation({
       threadId: ctx.threadId,
       workspaceSlug: ctx.workspaceSlug,
       limit: 30,
     });
 
-    const neverKeys = getNeverKeys();
+    const neverKeys = dependencies.getNeverKeys();
     const silencedKinds = new Set<SuggestionKind>(
-      ALL_KINDS.filter((kind) => isTypeSilenced(kind)),
+      ALL_KINDS.filter((kind) => dependencies.isTypeSilenced(kind)),
     );
-    const typeWeights: SuggestionTypeWeights = getTypeWeights();
-    const dedupContext: DedupContext = safeLoadDedupContext(ctx.workspaceSlug);
+    const typeWeights: SuggestionTypeWeights = dependencies.getTypeWeights();
+    const dedupContext: DedupContext = safeLoadDedupContext(
+      ctx.workspaceSlug,
+      dependencies,
+    );
 
-    const { candidates } = evaluateSuggestions(messages, {
+    const { candidates } = dependencies.evaluateSuggestions(messages, {
       typeWeights,
       seenKeys,
       neverKeys,
@@ -136,7 +185,7 @@ export async function evaluateSessionSuggestions(
     for (const candidate of candidates) {
       // 类型静默双保险（engine 已过滤，此处防御性兜底）
       if (silencedKinds.has(candidate.kind)) continue;
-      persistSuggestion(candidate, {
+      dependencies.persistSuggestion(candidate, {
         threadId: ctx.threadId,
         workspaceSlug: ctx.workspaceSlug,
         sessionId: ctx.sessionId,
@@ -162,27 +211,32 @@ export async function evaluateSessionSuggestions(
 export async function handleSuggestionFeedback(
   id: number,
   feedback: SuggestionFeedback,
+  overrides: SuggestionServiceOverrides = {},
 ): Promise<void> {
+  const dependencies = resolveDependencies(overrides);
   try {
-    recordFeedback(id, feedback);
+    dependencies.recordFeedback(id, feedback);
     notifySuggestionsChanged();
     if (feedback !== "accepted") return;
 
-    const record = listSuggestions().find((r) => r.id === id);
+    const record = dependencies.listSuggestions().find((r) => r.id === id);
     if (!record) return;
 
-    await dispatchAcceptedAction(record);
+    await dispatchAcceptedAction(record, dependencies);
   } catch (error) {
     log.warn("handleSuggestionFeedback failed (fail-open)", { error });
   }
 }
 
 /** 分发 accepted 动作（按 action.type 路由到对应子系统） */
-async function dispatchAcceptedAction(record: SuggestionRecord): Promise<void> {
+async function dispatchAcceptedAction(
+  record: SuggestionRecord,
+  dependencies: SuggestionServiceDependencies,
+): Promise<void> {
   const action = record.action;
   switch (action.type) {
     case "memory_correction": {
-      await new MemoryCommandService().remember({
+      await dependencies.remember({
         workspaceSlug: record.workspaceSlug ?? "global",
         content: action.rule,
         scope: "global",
@@ -200,7 +254,7 @@ async function dispatchAcceptedAction(record: SuggestionRecord): Promise<void> {
       return;
     }
     case "open_automation_create": {
-      createAutomationJob({
+      dependencies.createAutomationJob({
         name: action.automationTitle,
         schedule: { type: "manual" },
         prompt: action.suggestedPrompt,
@@ -230,18 +284,20 @@ export interface AnalysisContext {
  */
 export async function runAnalysisAndPersist(
   ctx: AnalysisContext = {},
+  overrides: SuggestionServiceOverrides = {},
 ): Promise<number> {
+  const dependencies = resolveDependencies(overrides);
   try {
-    const context = safeBuildAnalysisInput(ctx.workspaceSlug);
-    const candidates = await runAnalysis({
+    const context = safeBuildAnalysisInput(ctx.workspaceSlug, dependencies);
+    const candidates = await dependencies.runAnalysis({
       context,
       workspaceSlug: ctx.workspaceSlug,
     });
 
     // 分析期间可能有其它调用落库；在同步持久化前重新读取，关闭并发去重竞态。
-    const neverKeys = getNeverKeys();
+    const neverKeys = dependencies.getNeverKeys();
     const suggestedKeys = new Set(
-      listSuggestions("suggested").map((r) => r.duplicateKey),
+      dependencies.listSuggestions("suggested").map((r) => r.duplicateKey),
     );
     const filtered: SuggestionCandidate[] = [];
     for (const candidate of candidates) {
@@ -253,7 +309,7 @@ export async function runAnalysisAndPersist(
     }
 
     for (const candidate of filtered) {
-      persistSuggestion(candidate, { workspaceSlug: ctx.workspaceSlug });
+      dependencies.persistSuggestion(candidate, { workspaceSlug: ctx.workspaceSlug });
       notifySuggestionsChanged();
     }
     return filtered.length;
@@ -266,9 +322,12 @@ export async function runAnalysisAndPersist(
 // ===== 辅助（fail-open 包装） =====
 
 /** loadDedupContext 失败时回退到空上下文（不让一个子系统的故障阻断评估） */
-function safeLoadDedupContext(workspaceSlug?: string): DedupContext {
+function safeLoadDedupContext(
+  workspaceSlug: string | undefined,
+  dependencies: SuggestionServiceDependencies,
+): DedupContext {
   try {
-    return loadDedupContext({ workspaceSlug });
+    return dependencies.loadDedupContext({ workspaceSlug });
   } catch (error) {
     log.warn("loadDedupContext failed (fail-open to empty)", { error });
     return { automationTitles: [], correctionRules: [], sopCandidateCount: 0 };
@@ -276,9 +335,12 @@ function safeLoadDedupContext(workspaceSlug?: string): DedupContext {
 }
 
 /** buildAnalysisInput 失败时回退到空 context（runAnalysis 会因此返回 []） */
-function safeBuildAnalysisInput(workspaceSlug?: string): string {
+function safeBuildAnalysisInput(
+  workspaceSlug: string | undefined,
+  dependencies: SuggestionServiceDependencies,
+): string {
   try {
-    return buildAnalysisInput({ workspaceSlug });
+    return dependencies.buildAnalysisInput({ workspaceSlug });
   } catch (error) {
     log.warn("buildAnalysisInput failed (fail-open to empty)", { error });
     return "";
