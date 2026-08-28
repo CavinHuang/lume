@@ -184,6 +184,84 @@ function isRecursiveRmFlag(arg: string): boolean {
   return /^-(?!-)[^\s]*[rR]/.test(arg) || arg === "--recursive" || arg === "--recurse";
 }
 
+/*
+ * 执行原语结构扫描（#776）：natives 可用平台上 tree-sitter 把「逐段简单」的
+ * 命令判为 simple，以下执行原语以单命令形态绕过动词表、借 command 前缀档免审。
+ * 全部收确认档而非硬拒——原语均有合法用途，危害在于内联/间接执行内容不可静态
+ * 审计。守卫层在 gateway 中无条件复核（含 session_allow 翻回），一处判定即堵住
+ * command 档免审通道。
+ */
+
+/** 内联动态执行解释器及其取码标志（键小写，匹配时 executable 归一小写） */
+const INLINE_EVAL_INTERPRETERS: ReadonlyMap<string, readonly string[]> = new Map([
+  ["python", ["-c"]],
+  ["python3", ["-c"]],
+  ["pypy", ["-c"]],
+  ["pypy3", ["-c"]],
+  ["node", ["-e", "--eval"]],
+  ["bun", ["-e", "--eval"]],
+  ["perl", ["-e"]],
+  ["ruby", ["-e"]],
+  ["php", ["-r"]],
+  ["lua", ["-e"]],
+  ["luajit", ["-e"]],
+  ["r", ["-e"]],
+  ["rscript", ["-e"]],
+  ["bash", ["-c"]],
+  ["sh", ["-c"]],
+  ["zsh", ["-c"]],
+  ["dash", ["-c"]],
+  ["ksh", ["-c"]],
+  ["fish", ["-c"]],
+  ["pwsh", ["-c", "-command", "-encodedcommand"]],
+  ["powershell", ["-c", "-command", "-encodedcommand"]],
+  ["powershell.exe", ["-c", "-command", "-encodedcommand"]],
+  ["pwsh.exe", ["-c", "-command", "-encodedcommand"]]
+]);
+
+/**
+ * GNU sed 执行形态：独立 e 命令（`e cmd`、`3e cmd`）与 s///e 替换执行标志。
+ * s/// 侧锚定 pat/repl/flags 三段定界（三个 /），flags 用白名单字符类——
+ * 宽松 `[a-zA-Z]*e` 会把替换文本尾部字母（s/old/new/g 的 "new"）误判为标志。
+ */
+const SED_EVAL_SCRIPT =
+  /(?:^|;|[0-9])\s*e(?=\s|$)|s[^\n/]*\/[^\n/]*\/[^\n/]*\/[0-9gIimpMrRsSEw]*e[0-9gIimpMrRsSEw]*/;
+
+/** awk 执行形态：system() 调用、|& coprocess、"cmd" | getline 管道读 */
+const AWK_EXEC_SCRIPT = /\bsystem\s*\(|\|&|"[^"\n]*"\s*\|\s*getline/;
+
+/**
+ * 单段 argv 的执行原语判定（#776）。不依赖 tree-sitter 的纯函数——natives
+ * 缺席平台（parse-unavailable 走不到结构化段）与 CI 均可独立验证判定逻辑。
+ * 返回确认理由；undefined 表示本层不升级。
+ */
+export function evaluateSegmentExecutionPrimitive(executable: string, args: readonly string[]): string | undefined {
+  const name = executable.toLowerCase();
+  const evalFlags = INLINE_EVAL_INTERPRETERS.get(name);
+  if (evalFlags && args.some((arg) => evalFlags.includes(arg.toLowerCase()))) {
+    return "内联动态执行代码需要用户确认";
+  }
+  if (name === "deno" && args[0]?.toLowerCase() === "eval") {
+    return "内联动态执行代码需要用户确认";
+  }
+  if ((name === "find" || name === "fd") && args.some((arg) => ["-exec", "-execdir", "-ok", "-okdir"].includes(arg))) {
+    return "find -exec 间接执行命令需要用户确认";
+  }
+  if (name === "xargs") {
+    return "xargs 批量执行命令需要用户确认";
+  }
+  if (name === "tar" && args.some((arg) => arg.startsWith("--to-command=") || arg.startsWith("--compress-program="))) {
+    return "tar 外部命令挂载需要用户确认";
+  }
+  if (name === "sed" && args.some((arg) => SED_EVAL_SCRIPT.test(arg))) {
+    return "sed e 命令可执行外部命令需要用户确认";
+  }
+  if ((name === "awk" || name === "gawk" || name === "mawk") && args.some((arg) => AWK_EXEC_SCRIPT.test(arg))) {
+    return "awk system 调用可执行外部命令需要用户确认";
+  }
+  return undefined;
+}
+
 function evaluateStructuredBashSafety(analysis: ReturnType<typeof analyzeBashCommand>): RuntimeToolSafetyDecision | undefined {
   for (const segment of analysis.commands) {
     const [executable, ...args] = segment.argv;
@@ -196,6 +274,10 @@ function evaluateStructuredBashSafety(analysis: ReturnType<typeof analyzeBashCom
     }
     if (["sudo", "doas", "pkexec", "runas"].includes(segment.executable)) {
       return { behavior: "confirm", reason: "提权命令需要用户确认" };
+    }
+    const primitiveReason = evaluateSegmentExecutionPrimitive(segment.executable, args);
+    if (primitiveReason) {
+      return { behavior: "confirm", reason: primitiveReason };
     }
     if (segment.executable === "git") {
       if (args.includes("commit") || args.includes("push")) {

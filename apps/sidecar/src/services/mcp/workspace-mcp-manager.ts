@@ -18,7 +18,8 @@ import {
   type McpServerEntry,
   type McpServerStatus,
   type ReadMcpResourceResponse,
-  type WorkspaceMcpConfig
+  type WorkspaceMcpConfig,
+  RPC_ERROR_CODES
 } from "@lume/shared";
 import {
   createWorkspaceMcpConfigTool,
@@ -154,15 +155,15 @@ function mapPublicError(error: unknown, entry?: McpServerEntry): { code: string;
   const sdkCode = errorCodeFromUnknown(error);
   const message = redactMessage(errorMessageFromUnknown(error), entry);
   if (sdkCode === "auth_error" || /401|403|unauthorized|forbidden|auth|token|api key/i.test(message)) {
-    return { code: "auth_needed", message };
+    return { code: RPC_ERROR_CODES.MCP_AUTH_NEEDED, message };
   }
   if (sdkCode === "transport_error") {
     return {
-      code: normalizeMcpTransport(entry) === "stdio" ? "spawn_failed" : "connection_failed",
+      code: normalizeMcpTransport(entry) === "stdio" ? RPC_ERROR_CODES.MCP_SPAWN_FAILED : RPC_ERROR_CODES.MCP_CONNECTION_FAILED,
       message
     };
   }
-  return { code: sdkCode ?? "mcp_error", message };
+  return { code: sdkCode ?? RPC_ERROR_CODES.MCP_ERROR, message };
 }
 
 function isUnsupportedResourceListError(error: unknown): boolean {
@@ -250,7 +251,7 @@ function mapSdkStatus(serverId: string, entry: McpServerEntry, status?: McpClien
     );
     return {
       ...base,
-      status: publicError.code === "auth_needed" ? "auth_needed" : "error",
+      status: publicError.code === RPC_ERROR_CODES.MCP_AUTH_NEEDED ? "auth_needed" : "error",
       error: publicError,
       lastCheckedAt: status.lastCheckedAt
     };
@@ -398,7 +399,7 @@ export class WorkspaceMcpManager {
     const config = this.readConfig(workspaceSlug);
     const entry = config.servers[serverId];
     if (!entry) {
-      throw new PublicMcpError("not_found", `MCP server not found: ${serverId}`);
+      throw new PublicMcpError(RPC_ERROR_CODES.MCP_NOT_FOUND, `MCP server not found: ${serverId}`);
     }
     const state = this.ensureWorkspaceState(workspaceSlug);
     state.sdk.sync(this.normalizedConfigs(config));
@@ -414,7 +415,7 @@ export class WorkspaceMcpManager {
     }
     const status = this.getStatus(workspaceSlug).find((item) => item.serverId === serverId);
     if (!status) {
-      throw new PublicMcpError("not_found", `MCP server not found: ${serverId}`);
+      throw new PublicMcpError(RPC_ERROR_CODES.MCP_NOT_FOUND, `MCP server not found: ${serverId}`);
     }
     return status;
   }
@@ -439,7 +440,7 @@ export class WorkspaceMcpManager {
     for (const serverId of serverIds) {
       const entry = config.servers[serverId];
       if (!entry) {
-        errors.push({ serverId, code: "not_found", message: `MCP server not found: ${serverId}` });
+        errors.push({ serverId, code: RPC_ERROR_CODES.MCP_NOT_FOUND, message: `MCP server not found: ${serverId}` });
         continue;
       }
       try {
@@ -464,7 +465,7 @@ export class WorkspaceMcpManager {
     const config = this.readConfig(input.workspaceSlug);
     const entry = config.servers[input.serverId];
     if (!entry) {
-      throw new PublicMcpError("not_found", `MCP server not found: ${input.serverId}`);
+      throw new PublicMcpError(RPC_ERROR_CODES.MCP_NOT_FOUND, `MCP server not found: ${input.serverId}`);
     }
     try {
       const result = await this.ensureWorkspaceState(input.workspaceSlug).sdk.readResource(input.serverId, input.uri);
@@ -487,7 +488,7 @@ export class WorkspaceMcpManager {
       return {
         serverId: input.serverId,
         originalToolName: input.originalToolName,
-        error: { code: "not_found", message: `MCP server not found: ${input.serverId}` }
+        error: { code: RPC_ERROR_CODES.MCP_NOT_FOUND, message: `MCP server not found: ${input.serverId}` }
       };
     }
     const startedAt = Date.now();

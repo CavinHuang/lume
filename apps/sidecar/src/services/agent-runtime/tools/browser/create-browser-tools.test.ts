@@ -32,7 +32,8 @@ describe("createBrowserMcpTools", () => {
     expect(snapshot.observation.snapshot_id).toBe("snap-1")
     expect(scoped.observation.refs.e1).toMatchObject({ role: "textbox", name: "Search" })
     expect(calls.at(-1)).toMatchObject({ method: "browser_snapshot", params: { tabId: "tab-1", scope_ref: "@e1", snapshot_id: "snap-1" } })
-    expect(calls.map((request) => request.method)).toEqual(["create_tab", "list_tabs", "browser_snapshot", "list_tabs", "browser_snapshot"])
+    // #604:open 后 activeTabId 已锁,动作免前置 list_tabs 直达 desktop(内联校验兜底)
+    expect(calls.map((request) => request.method)).toEqual(["create_tab", "browser_snapshot", "browser_snapshot"])
     expect(new Set(calls.map((request) => request.browserSessionId))).toEqual(new Set(["browser-tools:thread-1"]))
     expect(new Set(calls.map((request) => request.browserTurnId))).toEqual(new Set(["browser-tools:thread-1"]))
   })
@@ -352,12 +353,22 @@ describe("createBrowserMcpTools", () => {
 
   test("rejects refs without a current snapshot or after the locked tab disappears", async () => {
     const tab = agentTab("locked-tab", "thread-1")
-    let tabs = [tab]
+    // #604 契约:动作免前置 list_tabs,tab 存活性由 desktop 内联校验并以结构化
+    // 码原样回传(此处以 broker 抛裸码 Error 模拟 desktop requireTab 的行为)
+    let tabClosed = false
+    let listTabsCalls = 0
     const broker = {
       listBackends: () => [{ backend: "iab" }],
       dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return tabs
+        if (request.method === "list_tabs") {
+          listTabsCalls += 1
+          return [tab]
+        }
         if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId)
+        if (request.method === "playwright_locator_click") {
+          if (tabClosed) throw new Error("tab_not_found")
+          return { ok: true }
+        }
         throw new Error("unexpected_action")
       },
     } as any
@@ -365,15 +376,19 @@ describe("createBrowserMcpTools", () => {
 
     const beforeSnapshot = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
     await call(tools, "mcp__browser__snapshot", {})
-    tabs = [agentTab("different-tab", "thread-1")]
+    tabClosed = true
     const afterClose = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
     const stillLocked = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
 
     expect(JSON.parse(String(beforeSnapshot.content)).code).toBe("stale_target")
     expect(JSON.parse(String(afterClose.content)).code).toBe("tab_not_found")
-    expect(JSON.parse(String(stillLocked.content)).code).toBe("tab_not_found")
+    // 首个 tab_not_found 已清 session.snapshot:后续 ref 动作走本地快速路径
+    // 报 stale_target(模型重取快照时 desktop 会对已关 tab 回 tab_not_found,链路自洽)
+    expect(JSON.parse(String(stillLocked.content)).code).toBe("stale_target")
     expect(beforeSnapshot.is_error).toBeTrue()
     expect(afterClose.is_error).toBeTrue()
+    // 首次初始化后动作零 list_tabs 往返:tab 关闭检测不靠重拉列表,靠 desktop 错误码
+    expect(listTabsCalls).toBe(1)
   })
 
   test("does not report a completed action as failed when its follow-up snapshot fails", async () => {
