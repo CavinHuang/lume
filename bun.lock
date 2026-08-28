@@ -54,7 +54,7 @@
         "mailparser": "^3.9.15",
         "nodemailer": "^9.0.5",
         "qrcode": "^1.5.4",
-        "undici": "^7",
+        "undici": "^7.16.0",
         "yaml": "^2.8.1",
         "zod": "^4.3.6",
       },

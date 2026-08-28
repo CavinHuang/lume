@@ -105,17 +105,17 @@ jobs:
   gate:
     name: PR gate
     if: always()
-    needs: [macos]
+    needs: [core, macos]
     runs-on: ubuntu-latest
     steps:
       - name: Require every PR verification job to pass
         env:
-          # CORE_RESULT: ${{ needs.core.result }}
+          CORE_RESULT: ${{ needs.core.result }}
           # WINDOWS_RESULT: ${{ needs.windows.result }}
           MACOS_RESULT: ${{ needs.macos.result }}
           # COMPUTER_USE_RESULT: ${{ needs.computer_use.result }}
         run: |
-          # test "$CORE_RESULT" = "success"
+          test "$CORE_RESULT" = "success"
           # test "$WINDOWS_RESULT" = "success"
           test "$MACOS_RESULT" = "success"
           # test "$COMPUTER_USE_RESULT" = "success"

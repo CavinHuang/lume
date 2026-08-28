@@ -56,9 +56,9 @@ describe("PR verification workflow contract", () => {
   test("publishes one stable gate only after every checkpoint succeeds", () => {
     expect(workflow).toContain("name: PR gate");
     expect(workflow).toContain("if: always()");
-    expect(workflow).toContain("needs: [core, windows, macos]");
+    // #838：core 复活进 gate；windows job 仍注释停用，恢复时一并加回 needs 与 WINDOWS_RESULT
+    expect(workflow).toContain("needs: [core, macos]");
     expect(workflow).toContain('test "$CORE_RESULT" = "success"');
-    expect(workflow).toContain('test "$WINDOWS_RESULT" = "success"');
     expect(workflow).toContain('test "$MACOS_RESULT" = "success"');
   });
 });
