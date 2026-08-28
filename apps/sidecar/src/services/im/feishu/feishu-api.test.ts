@@ -1,7 +1,22 @@
 import { describe, it, expect } from "bun:test";
-import { sendFeishuText, type FeishuRestClient } from "./feishu-api";
+import {
+  sendFeishuText,
+  createFeishuGroupChat,
+  updateFeishuChatName,
+  leaveFeishuChat,
+  resetFeishuBotOpenIdCacheForTest,
+  type FeishuRestClient,
+} from "./feishu-api";
 
-function makeFakeClient(captured: unknown[]): FeishuRestClient {
+/** 新增镜像群端点的行为旋钮；省略字段一律成功路径。 */
+interface MirrorFakeBehavior {
+  createChat?: { code: number; msg?: string; chatId?: string };
+  updateChat?: { code: number; msg?: string };
+  deleteMembers?: { code: number; msg?: string };
+  botThrows?: boolean;
+}
+
+function makeFakeClient(captured: unknown[], behavior: MirrorFakeBehavior = {}): FeishuRestClient {
   return {
     im: {
       v1: {
@@ -13,13 +28,38 @@ function makeFakeClient(captured: unknown[]): FeishuRestClient {
         },
         chat: {
           get: async () => ({ code: 0 }),
+          // 镜像端点捕获包一层 {kind} 便于按端点断言；message 保持裸形状兼容旧断言
+          create: async (req) => {
+            captured.push({ kind: "chat.create", req });
+            const b = behavior.createChat;
+            if (b && (b.code ?? 0) !== 0) return { code: b.code, msg: b.msg };
+            return { code: 0, data: { chat_id: b?.chatId ?? "oc_new_group" } };
+          },
+          update: async (req) => {
+            captured.push({ kind: "chat.update", req });
+            const b = behavior.updateChat;
+            if (b && (b.code ?? 0) !== 0) return { code: b.code, msg: b.msg };
+            return { code: 0 };
+          },
+        },
+        chatMembers: {
+          create: async () => ({ code: 0 }),
+          delete: async (req) => {
+            captured.push({ kind: "members.delete", req });
+            const b = behavior.deleteMembers;
+            if (b && (b.code ?? 0) !== 0) return { code: b.code, msg: b.msg };
+            return { code: 0 };
+          },
         },
       },
     },
     bot: {
       v3: {
         botInfo: {
-          get: async () => ({ code: 0 }),
+          get: async () => {
+            if (behavior.botThrows) throw new Error("down");
+            return { code: 0, bot: { open_id: "ou_bot" } };
+          },
         },
       },
     },
@@ -32,6 +72,10 @@ function makeFakeClient(captured: unknown[]): FeishuRestClient {
       },
     },
   };
+}
+
+function captureOf(captured: unknown[], kind: string): unknown {
+  return captured.find((item) => (item as { kind?: string }).kind === kind);
 }
 
 describe("sendFeishuText", () => {
@@ -59,29 +103,22 @@ describe("sendFeishuText", () => {
   });
 
   it("create 抛错时返回 ok:false 含错误信息", async () => {
+    const captured: unknown[] = [];
+    const fake = makeFakeClient(captured);
     const res = await sendFeishuText(
       { appId: "a", appSecret: "s", peerId: "c", text: "x" },
       {
         createClient: () => ({
+          ...fake,
           im: {
             v1: {
+              ...fake.im.v1,
               message: {
+                ...fake.im.v1.message,
                 create: async () => Promise.reject(new Error("boom")),
-                get: async () => ({ code: 0 }),
-              },
-              chat: {
-                get: async () => ({ code: 0 }),
               },
             },
           },
-          bot: {
-            v3: {
-              botInfo: {
-                get: async () => ({ code: 0 }),
-              },
-            },
-          },
-          cardkit: { v1: { card: { create: async () => ({ code: 0 }), update: async () => ({ code: 0 }) } } },
         }),
       },
     );
@@ -156,5 +193,93 @@ describe("入站增强读取面", () => {
     expect(cardQuote?.text).toContain('"elements"');
     expect(cardQuote?.text).toContain("详情正文");
     expect(await getFeishuQuotedMessage({ appId: "a", appSecret: "s", messageId: "missing" }, deps)).toBeNull();
+  });
+});
+
+describe("#544 镜像群生命周期", () => {
+  it("建群载荷携带群名与目标用户，回传 chat_id；无目标用户允许 bot 占位建群", async () => {
+    const captured: unknown[] = [];
+    const deps = { createClient: () => makeFakeClient(captured) };
+    const res = await createFeishuGroupChat(
+      { appId: "cli_x", appSecret: "sec", name: "镜像 · 任务线程", userOpenId: "ou_target" },
+      deps,
+    );
+    expect(res).toEqual({ ok: true, chatId: "oc_new_group" });
+    const entry = captureOf(captured, "chat.create") as {
+      req: { data: { name: string; user_id_list?: string[] } };
+    };
+    expect(entry.req.data.name).toBe("镜像 · 任务线程");
+    expect(entry.req.data.user_id_list).toEqual(["ou_target"]);
+
+    const captured2: unknown[] = [];
+    await createFeishuGroupChat(
+      { appId: "cli_x", appSecret: "sec", name: "占位群" },
+      { createClient: () => makeFakeClient(captured2) },
+    );
+    const entry2 = captureOf(captured2, "chat.create") as {
+      req: { data: { name: string; user_id_list?: string[] } };
+    };
+    expect(entry2.req.data.user_id_list).toBeUndefined();
+  });
+
+  it("建群业务码≠0 转 ok:false 且错误串保留原始 code（供权限文案映射）", async () => {
+    const res = await createFeishuGroupChat(
+      { appId: "cli_x", appSecret: "sec", name: "g" },
+      { createClient: () => makeFakeClient([], { createChat: { code: 99991672, msg: "forbidden" } }) },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.chatId).toBeUndefined();
+    expect(res.error).toContain("99991672");
+  });
+
+  it("改名走 path.chat_id + data.name；缺凭据快速失败", async () => {
+    const captured: unknown[] = [];
+    const res = await updateFeishuChatName(
+      { appId: "cli_x", appSecret: "sec", chatId: "oc_g1", name: "新群名" },
+      { createClient: () => makeFakeClient(captured) },
+    );
+    expect(res).toEqual({ ok: true });
+    const entry = captureOf(captured, "chat.update") as {
+      req: { path: { chat_id: string }; data: { name: string } };
+    };
+    expect(entry.req.path.chat_id).toBe("oc_g1");
+    expect(entry.req.data.name).toBe("新群名");
+
+    const noCreds = await updateFeishuChatName({ appId: "", appSecret: "", chatId: "c", name: "n" });
+    expect(noCreds.ok).toBe(false);
+    expect(noCreds.error).toContain("App ID");
+  });
+
+  it("退群先取缓存机器人身份，再按 open_id members.delete 自身", async () => {
+    resetFeishuBotOpenIdCacheForTest();
+    const captured: unknown[] = [];
+    const res = await leaveFeishuChat(
+      { appId: "cli_x", appSecret: "sec", chatId: "oc_g2" },
+      { createClient: () => makeFakeClient(captured) },
+    );
+    expect(res).toEqual({ ok: true });
+    const entry = captureOf(captured, "members.delete") as {
+      req: {
+        path: { chat_id: string };
+        params: { member_id_type: string };
+        data: { id_list: string[] };
+      };
+    };
+    expect(entry.req.path.chat_id).toBe("oc_g2");
+    expect(entry.req.params.member_id_type).toBe("open_id");
+    // Bot 身份走缓存后同一假 client 只会返回固定 open_id
+    expect(entry.req.data.id_list).toContain("ou_bot");
+  });
+
+  it("机器人身份不可得时跳过退群不发删除请求", async () => {
+    resetFeishuBotOpenIdCacheForTest();
+    const captured: unknown[] = [];
+    const res = await leaveFeishuChat(
+      { appId: "cli_x", appSecret: "sec", chatId: "oc_g3" },
+      { createClient: () => makeFakeClient(captured, { botThrows: true }) },
+    );
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("机器人身份");
+    expect(captureOf(captured, "members.delete")).toBeUndefined();
   });
 });

@@ -113,38 +113,40 @@ export function createImRunCardSession(threadId: string): ImRunCardSession | nul
   return createImRunCardSessionInternal(threadId);
 }
 
-function createImRunCardSessionInternal(threadId: string): ImRunCardSession | null {
-  const binding = getImThreadBindingByThreadId(threadId);
-  if (!binding || binding.provider !== "feishu") {
-    return null;
-  }
-  const account = getImRuntimeAccount(binding.accountId);
-  const appId = account.accountKey ?? "";
-  const appSecret = account.token ?? "";
-  if (!appId || !appSecret) {
-    log.warn("飞书账号缺少凭据，跳过流式卡片", { accountId: binding.accountId });
-    return null;
-  }
+export interface BuildImRunCardSessionInput {
+  threadId: string;
+  appId: string;
+  appSecret: string;
+  /** 卡片宿主会话 chat_id：DM=绑定 peer；#544 镜像=镜像群 chat */
+  chatId: string;
+  /** 终态强刷失败兜底（入参为卡内累计正文），缺省时仅落日志。 */
+  onTerminalFlushFailed?: (finalText: string) => void;
+}
+
+/**
+ * 参数化构造器：宿主会话由调用方决定——路由器绑定 peer（既有 DM 卡片）
+ * 与 #544 镜像服务（镜像群）复用同一压缩/开卡/终态全栈。
+ */
+export function buildImRunCardSession(input: BuildImRunCardSessionInput): ImRunCardSession {
+  const threadId = input.threadId;
 
   const streamOptions: FeishuCardStreamOptions = {
-    appId,
-    appSecret,
-    chatId: binding.peerId,
-    // 终态刷不出时回复内容只在卡上：兜底补发最终文本，回复不丢失
-    onTerminalFlushFailed: () => {
-      const finalText = stream.state.blocks
-        .filter((block) => block.kind === "text")
-        .map((block) => block.text)
-        .join("\n\n")
-        .trim();
-      if (!finalText) return;
-      sendBoundImTextMessage({ binding, text: finalText }).catch((error: unknown) => {
-        log.error("卡片终态兜底文本发送失败", {
-          threadId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-      });
-    }
+    appId: input.appId,
+    appSecret: input.appSecret,
+    chatId: input.chatId,
+    // 终态刷不出时回复内容只在卡上：兜底回调携带卡内累计正文，回复不丢失
+    ...(input.onTerminalFlushFailed
+      ? {
+          onTerminalFlushFailed: () => {
+            const finalText = stream.state.blocks
+              .filter((block) => block.kind === "text")
+              .map((block) => block.text)
+              .join("\n\n")
+              .trim();
+            input.onTerminalFlushFailed?.(finalText);
+          }
+        }
+      : {})
   };
   const stream: FeishuCardStream = streamFactoryForTest
     ? streamFactoryForTest(streamOptions)
@@ -231,4 +233,35 @@ function createImRunCardSessionInternal(threadId: string): ImRunCardSession | nu
       return (opening?.catch(() => false) ?? Promise.resolve(false)) as Promise<boolean>;
     }
   };
+}
+
+function createImRunCardSessionInternal(threadId: string): ImRunCardSession | null {
+  const binding = getImThreadBindingByThreadId(threadId);
+  if (!binding || binding.provider !== "feishu") {
+    return null;
+  }
+  const account = getImRuntimeAccount(binding.accountId);
+  const appId = account.accountKey ?? "";
+  const appSecret = account.token ?? "";
+  if (!appId || !appSecret) {
+    log.warn("飞书账号缺少凭据，跳过流式卡片", { accountId: binding.accountId });
+    return null;
+  }
+
+  return buildImRunCardSession({
+    threadId,
+    appId,
+    appSecret,
+    chatId: binding.peerId,
+    // 终态刷不出时兜底补发最终文本到原绑定会话，回复不丢失
+    onTerminalFlushFailed: (finalText) => {
+      if (!finalText) return;
+      sendBoundImTextMessage({ binding, text: finalText }).catch((error: unknown) => {
+        log.error("卡片终态兜底文本发送失败", {
+          threadId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+  });
 }

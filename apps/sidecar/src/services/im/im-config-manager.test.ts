@@ -6,6 +6,7 @@ import {
   createImAccount,
   deleteImAccount,
   listImAccounts,
+  recordImDmInteraction,
   updateImAccount
 } from "./im-config-manager";
 import { getImConfigPath } from "../infra/config-paths";
@@ -148,5 +149,69 @@ describe("im-config-manager", () => {
       enabled: false
     });
     expect(listImAccounts().map((account) => account.id)).toEqual([recreated.id]);
+  });
+});
+
+describe("im-config-manager #544 DM 互动发送者持久化", () => {
+  let prevConfigDir: string | undefined;
+  let tempConfigDir = "";
+
+  beforeEach(() => {
+    prevConfigDir = process.env.LUME_CONFIG_DIR;
+    tempConfigDir = mkdtempSync(join(tmpdir(), "lume-im-config-dm-test-"));
+    process.env.LUME_CONFIG_DIR = tempConfigDir;
+  });
+
+  afterEach(() => {
+    if (prevConfigDir === undefined) {
+      delete process.env.LUME_CONFIG_DIR;
+    } else {
+      process.env.LUME_CONFIG_DIR = prevConfigDir;
+    }
+    if (tempConfigDir) {
+      rmSync(tempConfigDir, { recursive: true, force: true });
+      tempConfigDir = "";
+    }
+  });
+
+  function createAccount(): { id: string } {
+    return createImAccount({
+      provider: "feishu",
+      label: "镜像承担",
+      token: "app-secret",
+      accountKey: "cli_app",
+      enabled: true
+    });
+  }
+
+  test("记录最近 DM 发送者并经 listImAccounts 透出；空值与未知账号为无操作", () => {
+    const account = createAccount();
+    recordImDmInteraction(account.id, " ou_sender ");
+    expect(listImAccounts().find((item) => item.id === account.id)?.lastInteractedSenderId).toBe(
+      "ou_sender"
+    );
+    expect(() => recordImDmInteraction(account.id, undefined)).not.toThrow();
+    expect(() => recordImDmInteraction(account.id, "  ")).not.toThrow();
+    expect(() => recordImDmInteraction("missing", "ou_x")).not.toThrow();
+    expect(
+      listImAccounts().find((item) => item.id === account.id)?.lastInteractedSenderId
+    ).toBe("ou_sender");
+  });
+
+  test("同值重复记录不重写落盘文件", () => {
+    const account = createAccount();
+    recordImDmInteraction(account.id, "ou_1");
+    const before = readFileSync(getImConfigPath(), "utf-8");
+    recordImDmInteraction(account.id, "ou_1");
+    expect(readFileSync(getImConfigPath(), "utf-8")).toBe(before);
+  });
+
+  test("updateImAccount 白名单不含该字段，RPC 路径无法篡改", () => {
+    const account = createAccount();
+    recordImDmInteraction(account.id, "ou_keep");
+    updateImAccount(account.id, { label: "改名后" });
+    const updated = listImAccounts().find((item) => item.id === account.id);
+    expect(updated?.label).toBe("改名后");
+    expect(updated?.lastInteractedSenderId).toBe("ou_keep");
   });
 });

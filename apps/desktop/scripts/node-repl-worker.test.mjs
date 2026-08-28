@@ -3,7 +3,7 @@
 // 或 desktop 的 test / test:smoke 链（已带正确 flag 与 runner）。
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { spawn } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
@@ -22,9 +22,10 @@ const WORKER_PATH = resolve(
 // 真实 Worker 起打包资源 worker.js，经消息协议执行一个 cell 并收集结果。
 // #545 的 builtin import gate 是五项核心修复中唯一没有行为测试的——manifest
 // 哈希校验只钉 manifest↔文件一致，改 worker 逻辑并同步哈希即可静默绕过 CI。
-function runCell(code) {
+function runCell(code, options = {}) {
   return new Promise((resolvePromise, rejectPromise) => {
     const dir = mkdtempSync(join(tmpdir(), 'lume-node-repl-worker-'))
+    options.setup?.(dir)
     let settled = false
     const finish = (fn) => {
       if (settled) return
@@ -50,6 +51,7 @@ function runCell(code) {
     const guard = setTimeout(() => finish(() => rejectPromise(new Error('worker timed out'))), 30_000)
     worker.on('message', (message) => {
       if (message.type === 'ready') {
+        options.beforeExec?.(worker, dir)
         worker.postMessage({ type: 'exec', id: 'cell-1', code })
         return
       }
@@ -143,4 +145,59 @@ test('kernel-process drops trusted-code-path entries that cover the working dire
     rmSync(dir, { recursive: true, force: true, maxRetries: 3 })
   }
   assert.match(stderr, /dropping NODE_REPL_TRUSTED_CODE_PATHS entry/)
+})
+
+// ─── #796 untrusted realm 加固三切片的行为钉（真进程）───
+
+test('untrusted realm hardening: Buffer facade and captured console deny realm-escape primitives (#796)', async () => {
+  const result = await runCell(`
+    const probes = {
+      bufferConstructor: typeof Buffer.constructor,
+      bufferPrototype: String(Object.getPrototypeOf(Buffer)),
+      bufferFrozen: Object.isFrozen(Buffer),
+      bufferAllocWorks: Buffer.from('ok').toString(),
+      consolePrototype: String(Object.getPrototypeOf(console)),
+      consoleTableRouted: typeof console.table,
+    };
+    nodeRepl.write(JSON.stringify(probes))
+  `)
+  assert.equal(result.ok, true)
+  const probes = JSON.parse(result.output)
+  // 全局 Buffer 标识符的 null 原型冻结门面：宿主 Function 不可达（探针失效）
+  assert.equal(probes.bufferConstructor, 'undefined')
+  assert.equal(probes.bufferPrototype, 'null')
+  assert.equal(probes.bufferFrozen, true)
+  assert.equal(probes.bufferAllocWorks, 'ok')
+  // 捕获 console 为 null 原型冻结对象——{...console} 展开会拷入宿主真方法
+  // 引用（table/dir/... 的 .constructor 即宿主 Function，同级逃逸）
+  assert.equal(probes.consolePrototype, 'null')
+  assert.equal(probes.consoleTableRouted, 'function')
+})
+
+test('bare package imports no longer resolve from cwd by default; the failure names the approval tool (#796)', async () => {
+  const result = await runCell('await import("mini-pkg")', {
+    setup(dir) {
+      mkdirSync(join(dir, 'node_modules', 'mini-pkg'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'mini-pkg', 'package.json'), JSON.stringify({ name: 'mini-pkg', version: '1.0.0', main: 'index.js' }))
+      writeFileSync(join(dir, 'node_modules', 'mini-pkg', 'index.js'), 'export const stamp = "mini-pkg-ok"\n')
+    },
+  })
+  assert.equal(result.ok, false)
+  assert.match(result.error, /js_add_node_module_dir/)
+})
+
+test('registering the project node_modules dir via add-module-dir restores bare imports (#796)', async () => {
+  const result = await runCell('const mod = await import("mini-pkg"); nodeRepl.write(mod.stamp)', {
+    setup(dir) {
+      mkdirSync(join(dir, 'node_modules', 'mini-pkg'), { recursive: true })
+      writeFileSync(join(dir, 'node_modules', 'mini-pkg', 'package.json'), JSON.stringify({ name: 'mini-pkg', version: '1.0.0', main: 'index.js' }))
+      writeFileSync(join(dir, 'node_modules', 'mini-pkg', 'index.js'), 'export const stamp = "mini-pkg-ok"\n')
+    },
+    // 审批面模拟：js_add_node_module_dir（high 审批）在协议层即 add-module-dir
+    beforeExec(worker, dir) {
+      worker.postMessage({ type: 'add-module-dir', path: join(dir, 'node_modules') })
+    },
+  })
+  assert.equal(result.ok, true)
+  assert.match(result.output, /mini-pkg-ok/)
 })
