@@ -22,6 +22,7 @@ import { IM_IPC_CHANNELS } from "./im"
 import { LUME_CONFIG_IPC_CHANNELS } from "./lume-config"
 import { MEMORY_IPC_CHANNELS } from "./memory"
 import { MODEL_META_IPC_CHANNELS } from "./model-meta"
+import { OBSIDIAN_VAULT_IPC_CHANNELS } from "./obsidian-vault"
 import { PERSONA_IPC_CHANNELS } from "./persona"
 import { PLANNING_TODO_IPC_CHANNELS } from "./planning-todo"
 import { READING_IPC_CHANNELS, WEREAD_IPC_CHANNELS } from "./reading"
@@ -68,6 +69,7 @@ const PUBLIC_CHANNEL_SOURCES = [
   LUME_CONFIG_IPC_CHANNELS,
   MEMORY_IPC_CHANNELS,
   MODEL_META_IPC_CHANNELS,
+  OBSIDIAN_VAULT_IPC_CHANNELS,
   PERSONA_IPC_CHANNELS,
   PLANNING_TODO_IPC_CHANNELS,
   READING_IPC_CHANNELS,

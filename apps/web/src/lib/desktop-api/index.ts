@@ -18,6 +18,7 @@ export * from './persona'
 export * from './browser'
 export * from './connector'
 export * from './suggestion'
+export * from './obsidian-vault'
 export { sidecarCall } from './system'
 export type {
   GeneralSettings,
