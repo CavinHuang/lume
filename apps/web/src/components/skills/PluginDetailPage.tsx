@@ -1,4 +1,5 @@
 import {
+  ArrowRight,
   ChevronRight,
   ExternalLink,
   Loader2,
@@ -231,6 +232,10 @@ export function PluginDetailPage({
 
             {marketplaceMedia && (
               <MarketplaceMedia media={marketplaceMedia} pluginName={pluginName} />
+            )}
+
+            {!marketplaceMedia && pluginSkills.length > 0 && (
+              <HeroPromptPanel pluginName={pluginName} skills={pluginSkills} onTry={onTryInChat} />
             )}
 
             {item.capabilities.mcpServerNames.length > 0 && (
@@ -489,8 +494,52 @@ function InfoRow({ label, value, mono = false }: { label: string; value: ReactNo
   )
 }
 
-function MarketplaceMedia({ media, pluginName }: { media: PluginMarketplaceAsset; pluginName: string }) {
+/** 推荐位：深色渐变面板 + 示例 prompt 胶囊（用插件技能描述生成，对齐参考稿） */
+function HeroPromptPanel({
+  pluginName,
+  skills,
+  onTry,
+}: {
+  pluginName: string
+  skills: Array<{ name: string; description?: string }>
+  onTry: () => void
+}) {
+  const prompts = skills
+    .slice(0, 4)
+    .map((skill) => ({ icon: <Sparkles size={15} />, label: pluginName, prompt: skill.description || skill.name }))
   return (
+    <div
+      className="relative overflow-hidden rounded-2xl"
+      style={{ background: 'linear-gradient(150deg, #0e1420 0%, #17233a 55%, #2c4666 100%)' }}
+      data-testid="plugin-detail-hero"
+    >
+      <div aria-hidden="true" className="pointer-events-none absolute left-[-12%] top-[18%] size-[36rem] rounded-full bg-cyan-300/20 blur-3xl" />
+      <div aria-hidden="true" className="pointer-events-none absolute right-[-18%] bottom-[-14%] size-[30rem] rounded-full bg-blue-400/20 blur-3xl" />
+      <div className="relative z-10 flex flex-col items-center gap-3 px-6 py-9">
+        {prompts.map((prompt) => (
+          <button
+            key={prompt.prompt}
+            type="button"
+            onClick={onTry}
+            title={prompt.prompt}
+            className="group flex w-full max-w-[560px] cursor-pointer items-center gap-2.5 rounded-full bg-[#0b1120]/85 py-2 pl-3 pr-2 text-left transition-colors hover:bg-[#0b1120]"
+          >
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)] text-[var(--text-2)]">
+              {prompt.icon}
+            </span>
+            <span className="shrink-0 text-[13px] text-white/55">{prompt.label}</span>
+            <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-white">{prompt.prompt}</span>
+            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors group-hover:bg-white/20">
+              <ArrowRight size={14} />
+            </span>
+          </button>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+function MarketplaceMedia({ media, pluginName }: { media: PluginMarketplaceAsset; pluginName: string }) {  return (
     <div
       data-plugin-marketplace-media="true"
       className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-2)]"

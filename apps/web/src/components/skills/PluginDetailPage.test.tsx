@@ -93,6 +93,7 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('插件市场')
     expect(html).toContain('Browser')
     expect(html).toContain('MCP 服务器')
+    expect(html).toContain('plugin-detail-hero')
     expect(html).toContain('browser-navigate')
     expect(html).toContain('Open URLs and navigate pages.')
     expect(html).toContain('开发者')
