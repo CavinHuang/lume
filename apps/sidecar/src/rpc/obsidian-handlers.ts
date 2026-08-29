@@ -16,6 +16,7 @@ import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/sys
 import {
   getObsidianVaultConfig,
   resolveAuthorizedVaultRoot,
+  createManagedVault,
 } from "../services/obsidian/vault-registry";
 import { createVaultFileSystem } from "../services/obsidian/vault-facade";
 import { clearObsidianVaultFocus, setObsidianVaultFocus } from "../services/obsidian/vault-focus";
@@ -95,6 +96,10 @@ export function createObsidianVaultHandlers(): Record<string, RpcHandler> {
       const input = validateInput(vaultPathSchema, params, OBSIDIAN_VAULT_IPC_CHANNELS.REMOVE_FOLDER_VAULT);
       updateExtraVaults((current) => current.filter((path) => path !== input.vaultPath));
       return { ok: true as const };
+    },
+    [OBSIDIAN_VAULT_IPC_CHANNELS.CREATE_MANAGED_VAULT]: async () => {
+      createManagedVault();
+      return getObsidianVaultConfig() satisfies ObsidianVaultConfig;
     },
     [OBSIDIAN_VAULT_IPC_CHANNELS.LIST_FILES]: async (params) => {
       const input = validateInput(vaultPathSchema, params, OBSIDIAN_VAULT_IPC_CHANNELS.LIST_FILES);

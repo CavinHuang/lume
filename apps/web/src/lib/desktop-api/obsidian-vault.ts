@@ -20,6 +20,9 @@ export const addObsidianFolderVault = (vaultPath: string) =>
 export const removeObsidianFolderVault = (vaultPath: string) =>
   sidecarCall<{ ok: true }>(OBSIDIAN_VAULT_IPC_CHANNELS.REMOVE_FOLDER_VAULT, { vaultPath })
 
+export const createObsidianManagedVault = () =>
+  sidecarCall<ObsidianVaultConfig>(OBSIDIAN_VAULT_IPC_CHANNELS.CREATE_MANAGED_VAULT)
+
 export const listObsidianVaultFiles = (vaultPath: string) =>
   sidecarCall<ObsidianVaultFileEntry[]>(OBSIDIAN_VAULT_IPC_CHANNELS.LIST_FILES, { vaultPath })
 

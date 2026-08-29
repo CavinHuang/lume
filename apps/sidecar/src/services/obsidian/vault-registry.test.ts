@@ -66,7 +66,7 @@ describe("vault-registry", () => {
     expect(discoverObsidianVaultCandidates([broken])).toEqual([]);
   });
 
-  test("getObsidianVaultConfig 合并发现与手动添加、enabled 门控 agent 目录", () => {
+  test("getObsidianVaultConfig 合并托管/发现/手动三层、enabled 门控 agent 目录", () => {
     const discovered = trackVault(true);
     const manual = trackVault(false);
     const registry = join(tempConfigDir, "obsidian.json");
@@ -74,12 +74,17 @@ describe("vault-registry", () => {
     const yamlPath = getLumeConfigYamlPath();
     writeFileSync(yamlPath, YAML.stringify({ version: 2, obsidian: { enabled: true, extraVaults: [manual] } }), "utf-8");
 
+    // 托管 Vault 目录存在即入列（isManaged 标记），与手动添加同路径时去重。
+    const managed = join(tempConfigDir, "vaults", "default");
+    mkdirSync(managed, { recursive: true });
+
     const merged = getObsidianVaultConfig([registry]);
     expect(merged.enabled).toBe(true);
-    expect(merged.candidates.map((candidate) => candidate.path).sort()).toEqual([discovered, manual].sort());
+    expect(merged.candidates.map((candidate) => candidate.path).sort()).toEqual([discovered, manual, managed].sort());
+    expect(merged.candidates.find((candidate) => candidate.path === managed)?.isManaged).toBe(true);
     expect(merged.candidates.find((candidate) => candidate.path === manual)?.isManual).toBe(true);
 
-    expect(resolveObsidianVaultDirectories([registry]).sort()).toEqual([discovered, manual].sort());
+    expect(resolveObsidianVaultDirectories([registry]).sort()).toEqual([discovered, manual, managed].sort());
 
     writeFileSync(yamlPath, YAML.stringify({ version: 2, obsidian: { enabled: false, extraVaults: [manual] } }), "utf-8");
     expect(resolveObsidianVaultDirectories([registry])).toEqual([]);

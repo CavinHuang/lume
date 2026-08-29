@@ -11,6 +11,8 @@ export interface ObsidianVaultCandidate {
   isObsidianVault: boolean
   /** extraVaults 中用户手动添加、非 Obsidian 注册表来源。 */
   isManual?: boolean
+  /** Lume 托管 Vault（<configDir>/vaults/default），未装 Obsidian 的内置笔记库。 */
+  isManaged?: boolean
 }
 
 export interface ObsidianVaultConfig {
@@ -64,11 +66,19 @@ export interface ObsidianVaultFocus {
   sequence: number
 }
 
+/** 回合开始时用户聚焦的 Vault 位置，用于渲染回复后的 Obsidian 上下文 chip。 */
+export interface ObsidianVaultFocusAttribution {
+  vaultPath: string
+  displayName: string
+  focus: ObsidianVaultFocus
+}
+
 export const OBSIDIAN_VAULT_IPC_CHANNELS = {
   GET_CONFIG: "obsidian:get-config",
   SET_ENABLED: "obsidian:set-enabled",
   ADD_FOLDER_VAULT: "obsidian:add-folder-vault",
   REMOVE_FOLDER_VAULT: "obsidian:remove-folder-vault",
+  CREATE_MANAGED_VAULT: "obsidian:create-managed-vault",
   LIST_FILES: "obsidian:list-files",
   READ_FILE: "obsidian:read-file",
   WRITE_FILE: "obsidian:write-file",

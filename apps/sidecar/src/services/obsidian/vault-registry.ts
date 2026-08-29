@@ -3,11 +3,14 @@
  * Obsidian 的全局注册表是候选来源；发现即授权，全部候选都是 agent 的
  * 环境目录权限。注册表条目过期只作建议，绝不阻塞调用方。
  */
-import { existsSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { homedir, platform } from "node:os";
 import { basename, join } from "node:path";
 import type { ObsidianVaultCandidate, ObsidianVaultConfig } from "@lume/shared";
 import { getEffectiveLumeConfig } from "../system/lume-config-service";
+import { getManagedVaultDir } from "../infra/config-paths";
+
+const MANAGED_VAULT_DISPLAY_NAME = "Lume Vault";
 
 export function defaultObsidianRegistryPaths(): string[] {
   if (platform() === "darwin") {
@@ -60,9 +63,38 @@ export function discoverObsidianVaultCandidates(registryPaths: string[] = defaul
   return [...candidates.values()].sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 
-/** 发现候选 + extraVaults 的合并视图（enabled=false 时也返回，UI 需要展示全貌）。 */
+/** 幂等创建 Lume 托管 Vault，返回其根路径。 */
+export function createManagedVault(): string {
+  const dir = getManagedVaultDir();
+  mkdirSync(dir, { recursive: true });
+  return realpathSync(dir);
+}
+
+/** 发现候选 + 托管 Vault + extraVaults 的合并视图（enabled=false 时也返回，UI 需要展示全貌）。 */
 export function getObsidianVaultConfig(registryPaths: string[] = defaultObsidianRegistryPaths()): ObsidianVaultConfig {
   const section = getEffectiveLumeConfig().obsidian;
+  const candidates: ObsidianVaultCandidate[] = [];
+  const seen = new Set<string>();
+  const pushCandidate = (candidate: ObsidianVaultCandidate): void => {
+    const key = comparablePath(candidate.path);
+    if (seen.has(key)) return;
+    seen.add(key);
+    candidates.push(candidate);
+  };
+  // 托管 Vault 目录存在即入列（与 Proma 的 discoverVaultCandidates 同语义）。
+  const managedDir = getManagedVaultDir();
+  if (existsSync(managedDir)) {
+    try {
+      pushCandidate({
+        path: assertVaultRoot(managedDir),
+        displayName: MANAGED_VAULT_DISPLAY_NAME,
+        isObsidianVault: existsSync(join(managedDir, ".obsidian")),
+        isManaged: true,
+      });
+    } catch {
+      // 托管目录异常不阻塞其余候选。
+    }
+  }
   const extra = new Set(
     (section?.extraVaults ?? []).map((path) => {
       try {
@@ -72,10 +104,9 @@ export function getObsidianVaultConfig(registryPaths: string[] = defaultObsidian
       }
     }),
   );
-  const candidates: ObsidianVaultCandidate[] = [];
   for (const candidate of discoverObsidianVaultCandidates(registryPaths)) {
+    pushCandidate(candidate);
     extra.delete(comparablePath(candidate.path));
-    candidates.push(candidate);
   }
   for (const path of section?.extraVaults ?? []) {
     try {
@@ -83,7 +114,7 @@ export function getObsidianVaultConfig(registryPaths: string[] = defaultObsidian
       const key = comparablePath(root);
       if (!extra.has(key)) continue;
       extra.delete(key);
-      candidates.push({ path: root, displayName: basename(root) || "Vault", isObsidianVault: existsSync(join(root, ".obsidian")), isManual: true });
+      pushCandidate({ path: root, displayName: basename(root) || "Vault", isObsidianVault: existsSync(join(root, ".obsidian")), isManual: true });
     } catch {
       // 手动添加的目录已失效：保留占位会让 agent 拿到坏根，直接跳过。
     }

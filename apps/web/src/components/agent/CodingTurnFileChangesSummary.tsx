@@ -1,9 +1,9 @@
 import { requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { FileDiff, Loader2, TriangleAlert } from 'lucide-react'
+import { BookMarked, FileDiff, Loader2, TriangleAlert } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type CodingDiffPayload, type RuntimeCodingFileChange, type RuntimeCodingReport } from '@lume/shared'
-import { codingReviewPanelActionAtom } from '@/atoms'
+import { codingReviewPanelActionAtom, obsidianVaultOpenRequestAtom, rightPanelWorkspaceActionAtom } from '@/atoms'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { PierreDiffView } from '@/components/diff/PierreDiffView'
 import { Button } from '@/components/ui/button'
@@ -61,6 +61,19 @@ export function CodingTurnFileChangesSummary({
   const visibleChanges = showAllChanges ? changes : changes.slice(0, INITIAL_FILE_LIMIT)
   const hiddenChangeCount = changes.length - visibleChanges.length
   const warning = codingReportWarning(report)
+  const openRightPanel = useSetAtom(rightPanelWorkspaceActionAtom)
+  const setVaultOpenRequest = useSetAtom(obsidianVaultOpenRequestAtom)
+
+  const openVaultFocus = (): void => {
+    const attribution = report.vaultFocus
+    if (!attribution) return
+    openRightPanel({ type: 'activate-function', threadId, function: 'vault' })
+    setVaultOpenRequest({
+      vaultPath: attribution.vaultPath,
+      ...(attribution.focus.kind === 'file' ? { filePath: attribution.focus.relativePath } : { folderPath: attribution.focus.relativePath }),
+      token: Date.now(),
+    })
+  }
 
   useEffect(() => {
     setShowAllChanges(false)
@@ -104,7 +117,7 @@ export function CodingTurnFileChangesSummary({
     })
   }, [codingReviewPanelAction, report.gitActions, report.phase, report.recommendedVerificationCommands, report.review, report.verificationRecords, threadId])
 
-  if (changes.length === 0 && !warning) return null
+  if (changes.length === 0 && !warning && !report.vaultFocus) return null
 
   const canReviewDiff = Boolean(report.runId || effectiveReport.changeSet || report.fileChanges)
   const openChange = async (change: RuntimeCodingFileChange) => {
@@ -129,7 +142,21 @@ export function CodingTurnFileChangesSummary({
     })
   }
 
+  const vaultFocus = report.vaultFocus
   return (
+    <div className="flex max-w-[640px] flex-col gap-1.5">
+      {vaultFocus && (
+        <button
+          type="button"
+          onClick={openVaultFocus}
+          title={`打开 ${vaultFocus.focus.relativePath || vaultFocus.displayName}`}
+          className="flex w-fit items-center gap-1.5 rounded-full border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_68%,transparent)] px-2.5 py-1 text-[11px] text-[var(--lume-text-secondary)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
+        >
+          <BookMarked size={12} className="shrink-0" />
+          <span className="font-medium">{vaultFocus.displayName}</span>
+          {vaultFocus.focus.relativePath && <span className="max-w-[280px] truncate">{vaultFocus.focus.relativePath}</span>}
+        </button>
+      )}
     <Card data-coding-file-changes-summary="true" size="sm" className="max-w-[640px] gap-0 py-0">
       {changes.length > 0 && <CardHeader className="flex min-h-9 flex-row items-center border-b px-3 py-1.5">
         <CardTitle className="flex min-w-0 items-center gap-2 text-[13px]">
@@ -175,6 +202,7 @@ export function CodingTurnFileChangesSummary({
         </div>
       )}
     </Card>
+    </div>
   )
 }
 

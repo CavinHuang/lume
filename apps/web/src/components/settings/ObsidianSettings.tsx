@@ -9,6 +9,7 @@ import { toast } from 'sonner'
 import type { ObsidianVaultConfig } from '@lume/shared'
 import {
   addObsidianFolderVault,
+  createObsidianManagedVault,
   getObsidianVaultConfig,
   openFolderDialog,
   removeObsidianFolderVault,
@@ -52,6 +53,17 @@ export function ObsidianSettings() {
         setBusy(false)
       }
     }).catch((cause) => toast.error(cause instanceof Error ? cause.message : String(cause)))
+  }
+
+  const createManaged = () => {
+    setBusy(true)
+    void createObsidianManagedVault()
+      .then((next) => {
+        setConfig(next)
+        toast.success('已创建 Lume Vault')
+      })
+      .catch((cause) => toast.error(cause instanceof Error ? cause.message : String(cause)))
+      .finally(() => setBusy(false))
   }
 
   const removeFolder = (vaultPath: string) => {
@@ -111,8 +123,10 @@ export function ObsidianSettings() {
             ))}
           </ul>
         )}
-        <div className="mt-3 flex items-center justify-between gap-2">
-          <p className="text-[11px] text-[var(--text-3)]">Vault 面板位于会话右侧「Obsidian」标签。</p>
+        <div className="mt-3 flex items-center justify-end gap-2">
+          <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[12px]" disabled={!enabled || busy} onClick={createManaged}>
+            <BookMarked size={13} />创建 Lume Vault
+          </Button>
           <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[12px]" disabled={!enabled || busy} onClick={addFolder}>
             <FolderOpen size={13} />添加文件夹
           </Button>

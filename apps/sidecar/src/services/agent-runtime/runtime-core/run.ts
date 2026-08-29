@@ -64,6 +64,7 @@ import {
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
 import { resolveObsidianVaultDirectories } from "../../obsidian/vault-registry";
+import { getObsidianVaultFocus } from "../../obsidian/vault-focus";
 import { resolveDesktopContextProjection } from "../../desktop-context/desktop-context-runtime";
 import { createKernelContextController } from "../context/context-controller";
 import { buildRuntimeUserMessageInput } from "./message-attachment-input";
@@ -825,6 +826,15 @@ async function createRuntimeCoreSessionImpl(
       runId,
       approvalRequestCount,
     };
+    // 回合级 Vault 归因：focus 在回合开始时已按 threadId 定格，芯片据此渲染。
+    const vaultFocusSnapshot = getObsidianVaultFocus(input.lumeSessionId);
+    if (vaultFocusSnapshot) {
+      report.vaultFocus = {
+        vaultPath: vaultFocusSnapshot.vaultPath,
+        displayName: vaultFocusSnapshot.displayName,
+        focus: vaultFocusSnapshot.focus,
+      };
+    }
     return report;
   };
   const publishCodingReport = (): void => {
@@ -832,7 +842,8 @@ async function createRuntimeCoreSessionImpl(
     if (
       !codingReport.workspaceChanged &&
       !codingReport.pendingBackground &&
-      (codingReport.gitActions?.length ?? 0) === 0
+      (codingReport.gitActions?.length ?? 0) === 0 &&
+      !codingReport.vaultFocus
     )
       return;
     input.persistCodingReport?.(codingReport);
