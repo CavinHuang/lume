@@ -64,13 +64,6 @@ export interface ObsidianVaultFocus {
   sequence: number
 }
 
-/** 用于渲染回复后 Obsidian 上下文 chip 的回合级归因。 */
-export interface ObsidianVaultFocusAttribution {
-  vaultPath: string
-  displayName: string
-  focus: ObsidianVaultFocus
-}
-
 export const OBSIDIAN_VAULT_IPC_CHANNELS = {
   GET_CONFIG: "obsidian:get-config",
   SET_ENABLED: "obsidian:set-enabled",
