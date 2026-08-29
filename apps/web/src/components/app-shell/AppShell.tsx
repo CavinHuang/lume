@@ -48,7 +48,7 @@ export function AppShell() {
       {/* 设置是整页视图：盖过工作区侧栏与右侧面板，仅保留顶栏 */}
       {activeTab?.type === 'settings' ? (
         <div className="flex min-h-0 flex-1 gap-1.5 pr-2">
-          <div className="min-w-0 flex-1 overflow-hidden rounded-[10px] bg-[var(--lume-bg-panel)]">
+          <div className="min-w-0 flex-1 overflow-hidden bg-[var(--lume-bg-panel)]">
             <SettingsView />
           </div>
         </div>

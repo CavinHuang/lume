@@ -84,7 +84,7 @@ export function SettingsView() {
           variant="ghost"
           type="button"
           onClick={backToWorkspace}
-          className="mb-2 mr-2 flex h-8 w-full shrink-0 items-center justify-start gap-2 text-[13px] font-medium text-[var(--text-2)]"
+          className="mb-2 mr-2 flex h-8 w-full shrink-0 items-center justify-start gap-2 rounded-[8px] text-[13px] font-medium text-[var(--text-2)]"
         >
           <ArrowLeft size={16} strokeWidth={1.9} className="shrink-0" />
           <span>返回工作区</span>
@@ -108,7 +108,7 @@ export function SettingsView() {
                         type="button"
                         onClick={() => setTab(id)}
                         className={cn(
-                          'flex h-9 w-full items-center justify-start gap-2.5 text-[13px] font-medium transition-colors',
+                          'flex h-9 w-full items-center justify-start gap-2.5 rounded-[8px] text-[13px] font-medium transition-colors',
                           selected
                             ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
                             : 'text-[var(--text-2)]'
