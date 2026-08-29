@@ -14,9 +14,9 @@ import { Button } from '@/components/ui/button'
 import { computeGitGraphLayout } from './git-graph-lanes'
 
 const INITIAL_LIMIT = 200
-const ROW_HEIGHT = 56
-const LANE_WIDTH = 18
-const GRAPH_PAD_X = 12
+const ROW_HEIGHT = 68
+const LANE_WIDTH = 22
+const GRAPH_PAD_X = 14
 /** 泳道配色（按泳道序循环，与参考稿的多彩曲线一致） */
 const LANE_COLORS = ['#f97316', '#3b82f6', '#10b981', '#a855f7', '#eab308', '#ec4899', '#06b6d4', '#84cc16']
 
@@ -81,17 +81,17 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
   }, [commits, layout])
 
   const hasMore = !loading && !error && commits.length >= limit
-  const gridTemplateColumns = `${graphWidth}px 1fr 104px 110px 72px`
+  const gridTemplateColumns = `${graphWidth}px 1fr 136px 110px 96px`
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent
         showCloseButton={false}
-        className="flex h-[82vh] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1080px]"
+        className="flex h-[82vh] w-[calc(100%-2rem)] flex-col gap-0 overflow-hidden p-0 sm:max-w-[1200px]"
       >
-        <div className="flex shrink-0 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-3">
-          <GitGraph size={15} className="shrink-0 text-[var(--text-2)]" />
-          <DialogTitle className="text-[14px] font-semibold text-[var(--text-1)]">Git 图谱</DialogTitle>
+        <div className="flex shrink-0 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-3.5">
+          <GitGraph size={16} className="shrink-0 text-[var(--text-2)]" />
+          <DialogTitle className="text-[15px] font-semibold text-[var(--text-1)]">Git 图谱</DialogTitle>
           <div className="ml-auto flex items-center gap-1">
             <Button
               variant="ghost"
@@ -110,7 +110,7 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
         </div>
 
         <div
-          className="grid shrink-0 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-1.5 text-[11.5px] font-medium text-[var(--text-3)]"
+          className="grid shrink-0 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-2.5 text-[12px] font-medium text-[var(--text-3)]"
           style={{ gridTemplateColumns }}
         >
           <span>图</span>
@@ -141,7 +141,7 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
                 {graphEdges.map((edge, index) => {
                   const stroke = laneColor(edge.colorIndex)
                   if (edge.x1 === edge.x2) {
-                    return <line key={`e${index}`} x1={edge.x1} y1={edge.y1} x2={edge.x2} y2={edge.y2} stroke={stroke} strokeWidth={2} strokeLinecap="round" />
+                    return <line key={`e${index}`} x1={edge.x1} y1={edge.y1} x2={edge.x2} y2={edge.y2} stroke={stroke} strokeWidth={2.5} strokeLinecap="round" />
                   }
                   const dy = edge.y2 - edge.y1
                   return (
@@ -150,7 +150,7 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
                       d={`M ${edge.x1} ${edge.y1} C ${edge.x1} ${edge.y1 + dy * 0.5}, ${edge.x2} ${edge.y2 - dy * 0.5}, ${edge.x2} ${edge.y2}`}
                       fill="none"
                       stroke={stroke}
-                      strokeWidth={2}
+                      strokeWidth={2.5}
                       strokeLinecap="round"
                     />
                   )
@@ -160,10 +160,10 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
                     key={commit.hash}
                     cx={xOf(layout.lanes[index])}
                     cy={yOf(index)}
-                    r={4}
+                    r={4.5}
                     fill={laneColor(layout.lanes[index])}
                     stroke="var(--surface-1)"
-                    strokeWidth={1.5}
+                    strokeWidth={2}
                   />
                 ))}
               </svg>
@@ -201,33 +201,33 @@ function GitGraphCommitRow({
 }) {
   return (
     <div
-      className="grid h-[56px] items-center gap-2 px-4 transition-colors hover:bg-[var(--surface-2)]"
+      className="grid h-[68px] items-center gap-2 px-4 transition-colors hover:bg-[var(--surface-2)]"
       style={{ gridTemplateColumns }}
     >
       <div style={{ width: graphWidth }} />
-      <div className="flex min-w-0 items-center gap-1.5">
+      <div className="flex min-w-0 items-center gap-2">
         {commit.refs.map((ref) => (
           <span
             key={ref}
             className={cnRefChip(ref)}
           >
-            {ref.startsWith("tag:") ? <Tag size={10} className="shrink-0" /> : <GitBranch size={10} className="shrink-0" />}
-            <span className="max-w-[140px] truncate">{ref}</span>
+            {ref.startsWith("tag:") ? <Tag size={12} className="shrink-0" /> : <GitBranch size={12} className="shrink-0" />}
+            <span className="max-w-[170px] truncate">{ref}</span>
           </span>
         ))}
-        <span className="min-w-0 truncate text-[13px] text-[var(--text-1)]" title={commit.subject}>
+        <span className="min-w-0 truncate text-[14px] text-[var(--text-1)]" title={commit.subject}>
           {commit.subject}
         </span>
       </div>
-      <span className="truncate text-[12px] text-[var(--text-2)]">{formatGitDate(commit.date)}</span>
-      <span className="truncate text-[12px] text-[var(--text-2)]" title={commit.author}>{commit.author}</span>
-      <span className="truncate text-right font-mono text-[12px] text-[var(--text-2)]">{commit.shortHash}</span>
+      <span className="truncate text-[13px] text-[var(--text-2)]">{formatGitDate(commit.date)}</span>
+      <span className="truncate text-[13px] text-[var(--text-2)]" title={commit.author}>{commit.author}</span>
+      <span className="truncate text-right font-mono text-[13px] text-[var(--text-2)]">{commit.shortHash}</span>
     </div>
   )
 }
 
 function cnRefChip(ref: string) {
-  const base = 'inline-flex h-[18px] max-w-[160px] shrink-0 items-center gap-1 rounded px-1.5 text-[10.5px] font-medium'
+  const base = 'inline-flex h-[24px] max-w-[190px] shrink-0 items-center gap-1.5 rounded-md px-2 text-[12px] font-medium'
   return ref === 'HEAD'
     ? `${base} border border-[#f97316]/50 text-[#f97316]`
     : `${base} border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] text-[var(--text-3)]`
