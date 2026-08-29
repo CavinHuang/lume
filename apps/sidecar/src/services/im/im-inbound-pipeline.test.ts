@@ -348,6 +348,33 @@ describe("createImInboundPipeline", () => {
     await waitFor(() => routed.length === 1 && routed[0]?.peerId === "u-ok");
   });
 
+  test("运行超时后同会话仍保持串行，底层晚成功后才处理新消息", async () => {
+    const gate = deferred<{ threadId: string }>();
+    const routed: string[] = [];
+    const pipeline = createImInboundPipeline({
+      quietWindowMs: 5,
+      runTimeoutMs: 20,
+      routeMessage: async (message) => {
+        routed.push(message.text);
+        if (routed.length === 1) return gate.promise;
+        return { threadId: "next-thread" };
+      },
+      hasSeen: () => false,
+      remember: () => undefined
+    });
+
+    const first = pipeline.enqueue(msg({ text: "首条", messageId: "serial-1" }));
+    await expect(first).resolves.toBeUndefined();
+
+    const second = pipeline.enqueue(msg({ text: "后续", messageId: "serial-2" }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(routed).toEqual(["首条"]);
+
+    gate.resolve({ threadId: "late-thread" });
+    await expect(second).resolves.toBeUndefined();
+    await waitFor(() => routed.length === 2);
+  });
+
   test("运行失败结束后，阻塞期累积的消息在重新静默窗口后重试", async () => {
     const routed: InboundImRouteMessage[] = [];
     const failGate = deferred<void>();

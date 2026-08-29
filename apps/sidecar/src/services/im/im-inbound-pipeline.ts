@@ -13,7 +13,7 @@ const log = createLogger("im-pipeline");
  * 1. ScopedQueue —— 同一会话(peer)在静默窗口内的连发消息合并为一个批量消息，
  *   只触发一次 agent 运行；运行期间新消息只累积不打断，结束后重新进入静默窗口。
  * 2. RunCoordinator —— 同一会话严格串行，全局并发上限防止多会话同时打满 runtime；
- *   单次路由超时（watchdog）防止挂死运行占满全局槽位。
+ *   单次路由超时（watchdog）释放全局槽位，但同会话仍等待底层运行结束以保持串行。
  *
  * 斜杠命令白名单不排队直通路由：控制面操作不能被长运行阻塞，但仍在入队时
  * 抢占 messageId，避免平台并发重投重复执行命令。
@@ -42,7 +42,7 @@ export interface ImInboundPipelineOptions {
   quietWindowMs?: number;
   /** 全局并发运行上限 */
   maxConcurrentRuns?: number;
-  /** 单次路由超时毫秒数；超时释放槽位并结算已见消息（底层运行不中断） */
+  /** 单次路由超时毫秒数；超时释放全局槽位并结算已见消息，同会话仍等待底层运行结束 */
   runTimeoutMs?: number;
   /** 路由函数（默认真实路由器，测试注入） */
   routeMessage?: (message: InboundImRouteMessage) => Promise<{ threadId: string }>;
@@ -236,14 +236,28 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
     const merged = mergeImMessageBatch(batch);
     state.blocked = true;
     let release: (() => void) | undefined;
+    let timedOut = false;
+    let trackedRoutePromise: Promise<{ threadId: string }> | undefined;
+    const finishScope = () => {
+      state.blocked = false;
+      // 运行期间到达的消息重新进入静默窗口，而不是立即再触发一次运行；
+      // 空闲 scope 释放条目，避免历史会话在进程生命周期内缓慢累积
+      if (state.buffer.length > 0) {
+        armQuietWindow(state);
+      } else if (state.timer === undefined) {
+        scopes.delete(scopeKeyOf(merged));
+      }
+    };
     try {
       release = await acquireSlot();
+      const activeRoutePromise = Promise.resolve().then(() => routeMessage(merged));
+      trackedRoutePromise = activeRoutePromise;
       await new Promise<{ threadId: string }>((resolve, reject) => {
         const watchdog =
           runTimeoutMs > 0
             ? setTimer(() => reject(new ImInboundRouteTimeoutError(runTimeoutMs)), runTimeoutMs)
             : undefined;
-        routeMessage(merged).then(
+        activeRoutePromise.then(
           (value) => {
             if (watchdog !== undefined) clearTimer(watchdog);
             resolve(value);
@@ -273,6 +287,7 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
         }
       }
       if (error instanceof ImInboundRouteTimeoutError) {
+        timedOut = true;
         // watchdog 只能放弃等待，无法取消底层 agent。若按普通失败回滚，微信不会
         // 推进 cursor 并会重投同一消息，与晚成功的原运行形成双跑。这里选择
         // at-most-once：标记已见并让 awaiter 成功落定，宁可丢失挂死运行也不双跑。
@@ -289,6 +304,9 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
           batchSize: batch.length,
           timeoutMs: runTimeoutMs
         });
+        // 释放全局槽位后仍保留当前 scope 的 blocked 状态，直到不可取消的底层
+        // 运行真正结束，避免同一会话在晚成功运行期间启动第二个 agent。
+        void trackedRoutePromise?.then(finishScope, finishScope);
       } else {
         // 普通失败未启动出不可取消的长期运行：回滚已见标记，允许平台重投重试。
         settleBatch(batch, error);
@@ -302,15 +320,9 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
       }
     } finally {
       release?.();
-      state.blocked = false;
+      if (!timedOut) state.blocked = false;
     }
-    // 运行期间到达的消息重新进入静默窗口，而不是立即再触发一次运行；
-    // 空闲 scope 释放条目，避免历史会话在进程生命周期内缓慢累积
-    if (state.buffer.length > 0) {
-      armQuietWindow(state);
-    } else if (state.timer === undefined) {
-      scopes.delete(scopeKeyOf(merged));
-    }
+    if (!timedOut) finishScope();
   };
 
   const scopeStateOf = (message: InboundImRouteMessage): ScopeState => {
