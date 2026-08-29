@@ -79,7 +79,7 @@ export function SettingsView() {
 
   return (
     <div className="flex h-full w-full min-w-0 gap-8 bg-[var(--background)]">
-      <aside className="flex h-full min-h-0 w-[286px] min-w-[286px] shrink-0 flex-col border-r border-sidebar-border bg-[var(--lume-bg-rail)] pl-2 pb-5 pt-3">
+      <aside className="flex h-full min-h-0 w-[286px] min-w-[286px] shrink-0 flex-col border-r border-sidebar-border bg-[var(--lume-bg-rail)] pb-5 pt-3">
         <Button
           variant="ghost"
           type="button"
