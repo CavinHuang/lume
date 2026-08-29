@@ -63,6 +63,7 @@ import {
 } from "./session-store";
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
+import { resolveObsidianVaultDirectories } from "../../obsidian/vault-registry";
 import { resolveDesktopContextProjection } from "../../desktop-context/desktop-context-runtime";
 import { createKernelContextController } from "../context/context-controller";
 import { buildRuntimeUserMessageInput } from "./message-attachment-input";
@@ -1330,6 +1331,9 @@ async function createRuntimeCoreSessionImpl(
           configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
         }),
         ...(input.additionalDirectories ?? []),
+        // Obsidian Vault 候选根：发现即授权（集成开关可整体关闭）。坏根由
+        // resolveObsidianVaultDirectories 内部剔除，绝不阻塞一次运行。
+        ...resolveObsidianVaultDirectories(),
         input.lumeWorkDir,
         // artifactsRoot 通常是 lumeWorkDir/artifacts：已被覆盖时跳过，免同树
         // 双扫进 checkpoint 快照（性能复审）
