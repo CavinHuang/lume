@@ -247,6 +247,12 @@ export function PluginDetailPage({
               </DetailSection>
             )}
 
+            {item.capabilities.skillCount > 0 && (
+              <DetailSection title="技能" count={item.capabilities.skillCount}>
+                <CapabilityRow icon={<Sparkles size={16} />} name={`共 ${item.capabilities.skillCount} 个技能`} />
+              </DetailSection>
+            )}
+
             {item.capabilities.commandToolNames.length > 0 && (
               <DetailSection title="命令与工具" count={item.capabilities.commandToolNames.length}>
                 <div className="space-y-1">
