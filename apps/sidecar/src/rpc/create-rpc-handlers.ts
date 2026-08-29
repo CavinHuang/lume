@@ -8,6 +8,7 @@ import { createConnectorHandlers } from "./connector-handlers";
 import { createImHandlers } from "./im-handlers";
 import { createMemoryHandlers } from "./memory-handlers";
 import { createModelMetaHandlers } from "./model-meta-handlers";
+import { createObsidianVaultHandlers } from "./obsidian-handlers";
 import { createReadingHandlers } from "./reading-handlers";
 import { createRoutineHandlers } from "./routine-handlers";
 import { createSuggestionHandlers } from "./suggestion-handlers";
@@ -135,7 +136,8 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       notifyPlanModePhaseChange
     }),
     createPlanningTodoHandlers({ writeNotification: context.writeNotification }),
-    createPersonaHandlers()
+    createPersonaHandlers(),
+    createObsidianVaultHandlers()
   );
   if (context.renderClient) {
     handlers["render:result"] = async (params: unknown) => {
