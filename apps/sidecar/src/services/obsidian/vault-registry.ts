@@ -61,7 +61,7 @@ export function discoverObsidianVaultCandidates(registryPaths: string[] = defaul
 }
 
 /** 发现候选 + extraVaults 的合并视图（enabled=false 时也返回，UI 需要展示全貌）。 */
-export function getObsidianVaultConfig(): ObsidianVaultConfig {
+export function getObsidianVaultConfig(registryPaths: string[] = defaultObsidianRegistryPaths()): ObsidianVaultConfig {
   const section = getEffectiveLumeConfig().obsidian;
   const extra = new Set(
     (section?.extraVaults ?? []).map((path) => {
@@ -73,7 +73,7 @@ export function getObsidianVaultConfig(): ObsidianVaultConfig {
     }),
   );
   const candidates: ObsidianVaultCandidate[] = [];
-  for (const candidate of discoverObsidianVaultCandidates()) {
+  for (const candidate of discoverObsidianVaultCandidates(registryPaths)) {
     extra.delete(comparablePath(candidate.path));
     candidates.push(candidate);
   }
@@ -95,8 +95,8 @@ export function getObsidianVaultConfig(): ObsidianVaultConfig {
  * enabled 时全部候选根都是 agent 的环境目录权限（additionalDirectories）。
  * Windows 路径大小写不敏感去重；坏根静默剔除，绝不阻塞一次 agent 运行。
  */
-export function resolveObsidianVaultDirectories(): string[] {
-  const config = getObsidianVaultConfig();
+export function resolveObsidianVaultDirectories(registryPaths: string[] = defaultObsidianRegistryPaths()): string[] {
+  const config = getObsidianVaultConfig(registryPaths);
   if (!config.enabled) return [];
   const roots = new Map<string, string>();
   for (const candidate of config.candidates) {
@@ -110,10 +110,10 @@ export function resolveObsidianVaultDirectories(): string[] {
 }
 
 /** renderer 传入的 vaultPath 必须命中当前候选集；根路径从不信任渲染层。 */
-export function resolveAuthorizedVaultRoot(vaultPath: string): string {
+export function resolveAuthorizedVaultRoot(vaultPath: string, registryPaths: string[] = defaultObsidianRegistryPaths()): string {
   const root = assertVaultRoot(vaultPath);
   const key = comparablePath(root);
-  const config = getObsidianVaultConfig();
+  const config = getObsidianVaultConfig(registryPaths);
   if (!config.enabled) {
     throw new Error("Obsidian Vault 集成已关闭");
   }
