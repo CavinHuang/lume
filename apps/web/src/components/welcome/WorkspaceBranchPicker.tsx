@@ -64,7 +64,15 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
   if (!workspaceId || !info?.isGitRepo) return null
 
   const currentBranch = info.branch
+  // 当前分支置顶（与参考稿一致），其余按字母序
   const branches = (info.branches ?? [])
+    .slice()
+    .sort((a, b) => {
+      const aCurrent = a === currentBranch ? 0 : 1
+      const bCurrent = b === currentBranch ? 0 : 1
+      if (aCurrent !== bCurrent) return aCurrent - bCurrent
+      return a.localeCompare(b)
+    })
     .filter((name) => !search.trim() || name.toLowerCase().includes(search.trim().toLowerCase()))
   const dirtyHint = (info.dirtyFiles ?? 0) > 0 ? `未提交的更改: ${info.dirtyFiles} 个文件` : undefined
 
@@ -115,7 +123,7 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
       )}
 
       {open && (
-        <div className="absolute bottom-full left-0 z-50 mb-2 w-[320px] overflow-hidden rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[var(--surface-1)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-[352px] overflow-hidden rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[var(--surface-1)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
           <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] p-2">
             <div className="flex items-center gap-2 rounded-lg bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-2.5 py-1.5">
               <Search size={13} className="shrink-0 text-[var(--text-3)]" />
@@ -148,13 +156,13 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
                     disabled={switching}
                     onClick={() => { if (!current) void handleCheckout(branch, false) }}
                     className={cn(
-                      'flex w-full items-start gap-2 rounded-lg px-2.5 py-2 text-left transition-colors',
+                      'flex w-full items-start gap-2 rounded-lg px-2.5 py-2.5 text-left transition-colors',
                       current && 'bg-[var(--surface-2)]',
                     )}
                   >
                     <GitBranch size={13} className="mt-0.5 shrink-0 text-[var(--text-3)]" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-[12.5px] text-[var(--text-1)]">{branch}</span>
+                      <span className="block truncate text-[13px] text-[var(--text-1)]">{branch}</span>
                       {current && dirtyHint && (
                         <span className="mt-0.5 block truncate text-[11px] text-[var(--text-3)]">{dirtyHint}</span>
                       )}
