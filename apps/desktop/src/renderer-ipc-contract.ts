@@ -52,6 +52,7 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'create_file_preview_scope',
   'create_guarded_file_preview_scope',
   'revoke_file_preview_scope',
+  'render_office_preview',
   'open_weread_key_webview',
   'quick_input_hide', // Alt+L 快速输入子窗口：隐藏子窗口
   'quick_input_get_context',

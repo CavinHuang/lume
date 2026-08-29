@@ -1,5 +1,5 @@
-import { Braces, Camera, CircleAlert, FileDiff, FolderOpen, Globe, Handshake, List, LoaderCircle, MessageSquare, Mic, Package, Plus, Volume2, X, type LucideIcon } from 'lucide-react'
-import { useEffect, useMemo, useRef } from 'react'
+import { Braces, Camera, CircleAlert, FileDiff, FolderOpen, Globe, Handshake, List, LoaderCircle, MessageSquare, Mic, Package, Plus, Volume2, X } from 'lucide-react'
+import { useEffect, useMemo, useRef, type ComponentType } from 'react'
 import { Button } from '@/components/ui/button'
 import {
   ContextMenu,
@@ -33,6 +33,7 @@ import {
   type RightPanelFunction,
   type ThreadRightPanelWorkspace,
 } from './right-panel-state'
+import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 
 export type RightPanelTabItem =
   | { kind: 'review'; id: string; label: string }
@@ -40,11 +41,15 @@ export type RightPanelTabItem =
   | { kind: 'browser'; id: string; tab: RightPanelBrowserTab; label: string }
   | { kind: 'file'; id: string; tab: RightPanelFileTab; label: string }
 
-const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: LucideIcon; shortcut?: string }> = {
+/** Lucide 图标与品牌 SVG 组件的公共渲染契约（size/className）。 */
+type PanelIcon = ComponentType<{ size?: number | string; className?: string }>
+
+const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: PanelIcon; shortcut?: string }> = {
   browser: { label: '浏览器', Icon: Globe, shortcut: '⌘T' },
   files: { label: '文件', Icon: FolderOpen, shortcut: '⌘P' },
   // chat 仅作类型完备；side-chat 不在 tab 栏主动添加，由划线引用「打开右侧问答」触发（见 #18）
   chat: { label: '问答', Icon: MessageSquare },
+  vault: { label: 'Obsidian', Icon: ObsidianIcon },
 }
 
 export function buildRightPanelTabItems(

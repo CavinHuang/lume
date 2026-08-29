@@ -96,6 +96,15 @@ export async function prepareRuntimeCoreAttempt(
       ? runtime.deliveryThreadId
       : runtime.sessionId;
     resolvedWorkdir = getRuntimeHostPorts().resolveThreadWorkdir(workdirThreadId);
+    // 活动 worktree 失效自愈：绑定的 worktree 被删或主仓库根漂移时清除绑定，
+    // 按默认 cwd 继续本轮运行（对齐 Proma run 入口校验；resolveThreadWorkdir
+    // 是同步热路径，深度校验只放在这里）。
+    if (getRuntimeHostPorts().getThreadMeta(workdirThreadId)?.activeWorktree) {
+      const cleared = await getRuntimeHostPorts().clearInvalidThreadWorktree(workdirThreadId);
+      if (cleared) {
+        resolvedWorkdir = getRuntimeHostPorts().resolveThreadWorkdir(workdirThreadId);
+      }
+    }
     agentCwd = resolvedWorkdir.agentCwd;
   } catch (error) {
     return {

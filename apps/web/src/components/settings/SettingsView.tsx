@@ -15,6 +15,7 @@ import { AgentsSettings } from './AgentsSettings'
 import { ConnectorSettings } from './ConnectorSettings'
 import { McpSettings } from './McpSettings'
 import { ImSettings } from './ImSettings'
+import { ObsidianSettings } from './ObsidianSettings'
 import { PermissionSettings } from './PermissionSettings'
 import { DesktopAssistantSettings } from './DesktopAssistantSettings'
 import { WorkspacesSettings } from './WorkspacesSettings'
@@ -152,6 +153,7 @@ export function SettingsView() {
           {tab === 'integrations' && <McpSettings />}
           {tab === 'im-integrations' && (
             <div className="space-y-4">
+              <ObsidianSettings />
               <ConnectorSettings />
               <ImSettings />
             </div>

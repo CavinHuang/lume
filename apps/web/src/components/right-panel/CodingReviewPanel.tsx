@@ -51,7 +51,7 @@ import {
   requestSessionCodingDiff,
   type CodingDiffPayload,
 } from '@/components/right-panel/coding-diff-cache'
-import { agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentRuntimeEventsFamily } from '@/atoms'
+import { agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentRuntimeEventsFamily, agentThreadsAtom } from '@/atoms'
 import {
   codingReviewFileKey,
   codingReviewPreferencesAtom,
@@ -62,6 +62,8 @@ import {
 } from '@/atoms/right-panel-atoms'
 import { openExternal, openInSystem, revealPathInSystem, sidecarCall, writeClipboardText } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
+import { ThreadWorktreeSelector } from './ThreadWorktreeSelector'
+import { pickWorktreeBaseBranch, worktreeBaseReviewSource } from './worktree-base-branch'
 
 interface DiffFileTreeFile {
   type: 'file'
@@ -284,6 +286,14 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
   const [scrollPositions, setScrollPositions] = useAtom(codingReviewScrollPositionsAtom)
   const reviewStatus = useAtomValue(codingReviewStatusAtom)[threadId]
   const reviewStatusAction = useSetAtom(codingReviewStatusActionAtom)
+  // 线程绑定的活动 worktree：sidecar 侧按线程 cwd 解析变更根，绑定变化即
+  // 切换 diff 根（THREAD_WORKTREE_UPDATED 推送会更新 atom，联动重拉）。
+  const activeWorktreePath = useAtomValue(agentThreadsAtom)
+    .find((thread) => thread.id === threadId)?.activeWorktree?.path
+  // 「Worktree vs 主分支」入口的基线（origin/main 优先），对齐 Proma 默认。
+  const worktreeBaseBranch = activeWorktreePath && availableSources
+    ? pickWorktreeBaseBranch(availableSources.branches)
+    : null
   const workspaceReviewSource: WorkspaceCodingReviewSource = activeSource.kind === 'last-turn' ? UNCOMMITTED_SOURCE : activeSource
   const workspaceStageFilter = activeSource.kind === 'uncommitted'
     || activeSource.kind === 'unstaged'
@@ -400,7 +410,14 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
     return () => {
       cancelled = true
     }
-  }, [refreshKey, state.runId, threadId, workspaceReviewSource])
+  }, [refreshKey, state.runId, threadId, workspaceReviewSource, activeWorktreePath])
+
+  // 绑定 worktree 切换后，旧根的 diff 缓存与展开状态不再可信，全部作废重拉。
+  useEffect(() => {
+    setReviews({})
+    setDiffErrors({})
+    setLoadingDiffs(new Set())
+  }, [activeWorktreePath])
 
   useEffect(() => {
     let cancelled = false
@@ -416,7 +433,7 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
     return () => {
       cancelled = true
     }
-  }, [refreshKey, state.runId, state.selectedRootId, threadId])
+  }, [refreshKey, state.runId, state.selectedRootId, threadId, activeWorktreePath])
 
   useEffect(() => {
     if (!availableSources || activeSource.kind === 'last-turn' || activeSource.kind === 'uncommitted') return
@@ -970,6 +987,16 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
               <ChevronDown className="size-3.5 text-[var(--lume-text-muted)]" />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="min-w-52">
+              {activeWorktreePath && worktreeBaseBranch && (
+                <>
+                  <DropdownMenuItem onSelect={() => switchChangeSource(worktreeBaseReviewSource(worktreeBaseBranch))}>
+                    Worktree vs 主分支
+                    <span className="ml-1 max-w-24 truncate text-[11px] font-normal text-[var(--lume-text-muted)]">{worktreeBaseBranch}</span>
+                    {activeSource.kind === 'branch' && activeSource.baseRef === worktreeBaseBranch && <Check className="ml-auto size-3.5" />}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onSelect={() => switchChangeSource(LAST_TURN_SOURCE)}>
                 最新轮次
                 {activeSource.kind === 'last-turn' && <Check className="ml-auto size-3.5" />}
@@ -1030,6 +1057,7 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          <ThreadWorktreeSelector threadId={threadId} onChanged={refreshDiffs} />
           <span className="text-[12px] tabular-nums text-[var(--lume-success)]">+{totalAdded}</span>
           <span className="text-[12px] tabular-nums text-[var(--lume-danger)]">-{totalRemoved}</span>
           <div className="ml-auto flex min-w-0 items-center gap-0.5">

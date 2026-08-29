@@ -47,6 +47,7 @@ import { AgentInput } from '../agent/AgentInput'
 import { ThreadFileEnvProvider } from '../agent/thread-file-env'
 import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { BrowserRightPanelTab } from './BrowserRightPanelTab'
+import { VaultRightPanelWorkspace } from './VaultRightPanelWorkspace'
 import {
   activateBrowserTab,
   browserTabFromDescriptor,
@@ -61,7 +62,7 @@ import { CodingReviewPanel } from './CodingReviewPanel'
 import { type CodingReviewPanelState } from '@/atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
-  browser: '浏览器', files: '文件', chat: '问答',
+  browser: '浏览器', files: '文件', chat: '问答', vault: 'Obsidian Vault',
 }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
@@ -731,6 +732,9 @@ function RightPanelActiveContent({ runtime, browserWorkspace, workspaceSlug, wor
   }
   if (active.kind === 'function' && active.type === 'chat') {
     return <RightPanelSideChat threadId={threadId} workspaceSlug={workspaceSlug} fileContextId={fileContextId} />
+  }
+  if (active.kind === 'function' && active.type === 'vault') {
+    return <VaultRightPanelWorkspace threadId={threadId} />
   }
   return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[active.type]} />
 }

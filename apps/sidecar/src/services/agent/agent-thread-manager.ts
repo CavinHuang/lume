@@ -49,6 +49,7 @@ import { readAgentMessageVersionStore, resetAgentMessageVersionStore } from "./a
 import { resolveAgentDefaultStrategy } from "../channel/model-selection";
 import { clearRuntimeFileAccessLedger } from "../agent-runtime/tools/file-access-ledger";
 import { clearThreadFileStateCache } from "../agent-runtime/tools/thread-file-state-cache";
+import { clearObsidianVaultFocus } from "../obsidian/vault-focus";
 import { clearToolPermissionSession } from "../agent-runtime/interruption/tool-permission-session";
 import { cancelPendingAskUserQuestionBySession } from "../agent-runtime/interruption/ask-user-question-session";
 import { clearPermissionDenials } from "../agent-runtime/permissions/permission-denials";
@@ -559,7 +560,7 @@ export function appendAgentTranscriptMessage(
 export type AgentThreadMetaUpdates = Partial<
   Pick<
     AgentThreadMeta,
-    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
+    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt" | "activeWorktree"
   >
 > & {
   modelRef?: string | null;
@@ -677,6 +678,8 @@ export function deleteAgentThread(id: string): void {
   // ledger=完整读门控，thread fileStateCache=mtime 新鲜度。
   clearRuntimeFileAccessLedger(id);
   clearThreadFileStateCache(id);
+  // Vault 面板焦点快照随线程删除回收（per-thread Map 只增不减的清理入口）。
+  clearObsidianVaultFocus(id);
   // 审批会话状态随线程删除回收（#519）：grants/bypassed/denials 三 Map 只增不减的清理入口；
   // pending 审批与 ask-user 等待一并取消，避免悬挂至超时。
   clearToolPermissionSession(id);
@@ -1024,6 +1027,12 @@ export function forkAgentThread(
   );
 
   replaceAgentThreadTranscript(newThread.id, forkedMessages);
+
+  // 分叉继承源线程的活动 worktree（对齐 Proma fork 语义）：目录已失效则
+  // 不继承，避免分叉件指向一个即将被 run 入口自愈清除的绑定。
+  if (sourceMeta?.activeWorktree?.path && existsSync(sourceMeta.activeWorktree.path)) {
+    updateAgentThreadMeta(newThread.id, { activeWorktree: sourceMeta.activeWorktree });
+  }
 
   log.info("forked agent thread", { sourceThreadId, threadId: newThread.id, messageCount: forkedMessages.length });
   return { newThreadId: newThread.id };

@@ -63,6 +63,8 @@ import {
 } from "./session-store";
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
+import { resolveObsidianVaultDirectories } from "../../obsidian/vault-registry";
+import { getObsidianVaultFocus } from "../../obsidian/vault-focus";
 import { resolveDesktopContextProjection } from "../../desktop-context/desktop-context-runtime";
 import { createKernelContextController } from "../context/context-controller";
 import { buildRuntimeUserMessageInput } from "./message-attachment-input";
@@ -817,6 +819,9 @@ async function createRuntimeCoreSessionImpl(
   pendingCleanup.push(() => codingRunTracker.dispose());
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
+  // 回合级 Vault 归因在会话创建时定格（对齐 Proma：消息派发时读取），
+  // run 中途用户切换面板焦点不会错标到本回合。
+  const vaultFocusAtStart = getObsidianVaultFocus(input.lumeSessionId);
   const getCodingReport = (): CodingVerificationReport &
     RuntimeCodingReport => {
     const report: CodingVerificationReport & RuntimeCodingReport = {
@@ -824,6 +829,13 @@ async function createRuntimeCoreSessionImpl(
       runId,
       approvalRequestCount,
     };
+    if (vaultFocusAtStart) {
+      report.vaultFocus = {
+        vaultPath: vaultFocusAtStart.vaultPath,
+        displayName: vaultFocusAtStart.displayName,
+        focus: vaultFocusAtStart.focus,
+      };
+    }
     return report;
   };
   const publishCodingReport = (): void => {
@@ -831,7 +843,8 @@ async function createRuntimeCoreSessionImpl(
     if (
       !codingReport.workspaceChanged &&
       !codingReport.pendingBackground &&
-      (codingReport.gitActions?.length ?? 0) === 0
+      (codingReport.gitActions?.length ?? 0) === 0 &&
+      !codingReport.vaultFocus
     )
       return;
     input.persistCodingReport?.(codingReport);
@@ -852,6 +865,37 @@ async function createRuntimeCoreSessionImpl(
       { id?: string; status?: string } | undefined;
     if (task?.id && task.status === "running") {
       backgroundProcessJobIds.add(task.id);
+    }
+    // EnterWorktree/ExitWorktree 的持久语义在此落地：把创建/退出落到线程绑定
+    // （SDK setWorkingDirectory 只影响当轮引擎内存，下一轮 run 会重建）。
+    // 绑定失败不回滚工具结果——本轮 cwd 已切到 worktree，下一轮保持原 cwd。
+    const toolNameLower = toolInput.toolName.toLowerCase();
+    if (toolNameLower === "enterworktree" || toolNameLower === "exitworktree") {
+      const worktreeMeta = toolInput.result._meta?.worktree as
+        | { path?: string; retained?: boolean }
+        | undefined;
+      let ports: ReturnType<typeof getRuntimeHostPorts>;
+      try {
+        ports = getRuntimeHostPorts();
+      } catch {
+        return; // RuntimeHostPorts 未注入（部分单测）时跳过持久绑定
+      }
+      if (toolNameLower === "exitworktree") {
+        ports.bindThreadWorktree(input.lumeSessionId, null).catch((error) => {
+          log.warn("exit worktree unbind failed", {
+            error: error instanceof Error ? error.message : String(error),
+            threadId: input.lumeSessionId
+          });
+        });
+      } else if (typeof worktreeMeta?.path === "string" && worktreeMeta.path) {
+        ports.bindThreadWorktree(input.lumeSessionId, worktreeMeta.path).catch((error) => {
+          log.warn("enter worktree bind failed", {
+            error: error instanceof Error ? error.message : String(error),
+            threadId: input.lumeSessionId,
+            path: worktreeMeta.path
+          });
+        });
+      }
     }
     if (toolInput.toolName.toLowerCase() === "waitfordelegations") {
       for (const run of getSubagentRunRegistry().listByParentSession(
@@ -1330,6 +1374,9 @@ async function createRuntimeCoreSessionImpl(
           configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
         }),
         ...(input.additionalDirectories ?? []),
+        // Obsidian Vault 候选根：发现即授权（集成开关可整体关闭）。坏根由
+        // resolveObsidianVaultDirectories 内部剔除，绝不阻塞一次运行。
+        ...resolveObsidianVaultDirectories(),
         input.lumeWorkDir,
         // artifactsRoot 通常是 lumeWorkDir/artifacts：已被覆盖时跳过，免同树
         // 双扫进 checkpoint 快照（性能复审）

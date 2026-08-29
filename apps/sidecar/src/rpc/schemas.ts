@@ -1116,6 +1116,16 @@ export const agentUpdateThreadTitleInputSchema = z.object({
   title: z.string().min(1),
 });
 
+export const agentListThreadWorktreesInputSchema = z.object({
+  threadId: idSchema,
+});
+
+export const agentSetThreadWorktreeInputSchema = z.object({
+  threadId: idSchema,
+  /** null = 解绑并回到默认 cwd */
+  worktreePath: z.string().min(1).nullable(),
+});
+
 export const agentUpdateThreadModelSelectionInputSchema = z.object({
   threadId: idSchema,
   modelRef: z.string().nullable().optional(),
@@ -1400,6 +1410,14 @@ export const lumeConfigUpdateInputSchema = z.union([
   lumeConfigUpdateBaseSchema.extend({
     path: z.literal("webSearch"),
     value: lumeConfigWebSearchSchema,
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("obsidian.enabled"),
+    value: z.boolean(),
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("obsidian.extraVaults"),
+    value: z.array(z.string().trim().min(1)),
   }),
 ]);
 

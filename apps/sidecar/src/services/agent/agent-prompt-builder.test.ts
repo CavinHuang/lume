@@ -12,6 +12,7 @@ import {
   shouldLoadLongTermMemory
 } from "./agent-prompt-builder";
 import { getAgentWorkspacePath, getUserSkillsDir } from "../infra/config-paths";
+import { setObsidianVaultFocus } from "../obsidian/vault-focus";
 
 describe("agent-prompt-builder", () => {
   let prevConfigDir: string | undefined;
@@ -627,6 +628,35 @@ describe("agent-prompt-builder", () => {
       expect(buildSystemPromptAppend({ ...ctx, workspaceSlug: "other" })).not.toContain("# Toggle Proj Marker");
     } finally {
       rmSync(projectDir, { recursive: true, force: true });
+    }
+  });
+
+  test("Obsidian Vault 段按集成状态注入，focus 随动态上下文出现", () => {
+    const vault = mkdtempSync(join(tmpdir(), "lume-prompt-builder-vault-"));
+    try {
+      mkdirSync(join(vault, "notes"), { recursive: true });
+      writeFileSync(join(vault, "notes", "a.md"), "# A", "utf-8");
+      const yamlPath = join(tempConfigDir, "lume.yaml");
+      writeFileSync(
+        yamlPath,
+        ["obsidian:", "  enabled: true", "  extraVaults:", `    - ${JSON.stringify(vault)}`].join("\n"),
+        "utf-8",
+      );
+
+      expect(buildSystemPromptAppend({ sessionId: "s-vault", availableTools: [] })).toContain("## Obsidian Vault");
+      expect(buildDynamicContext({ sessionId: "s-vault" })).not.toContain("<user_vault_context>");
+
+      setObsidianVaultFocus("s-vault", vault, { kind: "file", relativePath: "notes/a.md", sequence: 1 });
+      const withFocus = buildDynamicContext({ sessionId: "s-vault" });
+      expect(withFocus).toContain("<user_vault_context>");
+      expect(withFocus).toContain("notes/a.md");
+
+      // 集成整体关闭：稳定段与 focus 一并消失
+      writeFileSync(yamlPath, "obsidian:\n  enabled: false\n", "utf-8");
+      expect(buildSystemPromptAppend({ sessionId: "s-vault", availableTools: [] })).not.toContain("## Obsidian Vault");
+      expect(buildDynamicContext({ sessionId: "s-vault" })).not.toContain("<user_vault_context>");
+    } finally {
+      rmSync(vault, { recursive: true, force: true });
     }
   });
 });
