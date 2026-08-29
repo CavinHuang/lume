@@ -15,6 +15,8 @@ import {
   isDesktopRuntime,
   openGuardedFileRefInSystem,
   openFileRefInSystem,
+  renderGuardedOfficePreview,
+  renderOfficePreview,
   revealGuardedFileRefInSystem,
   revealFileRefInSystem,
   revokeFilePreviewScope,
@@ -27,6 +29,7 @@ import { isDocumentViewerKind } from './document-viewer/document-viewer-kinds'
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
 import { cn } from '@/lib/utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
+import { RightPanelOfficePreview } from './RightPanelOfficePreview'
 import { RightPanelSourcePreview } from './RightPanelSourcePreview'
 import { RightPanelPdbPreview } from './RightPanelPdbPreview'
 import { deleteFileEditorDraft, readFileEditorDraft, writeFileEditorDraft } from './file-editor-draft-store'
@@ -37,6 +40,30 @@ import { rightPanelBlameEnabledAtom, rightPanelFileEditorStatesAtom } from '@/at
 
 type TextPayload = Extract<FileRefReadResult, { kind: 'text' }>
 type ConflictState = { disk: TextPayload; local: string }
+
+// 对齐 Proma：同一文件的高保真预览渲染一次后按 tab 复用，避免每次打开都重跑
+// OfficeCLI。scope TTL 5 分钟，命中须留 60s 余量；手动刷新（refreshKey 进 key）
+// 绕过缓存强制重渲。office 作用域因此不在卸载时 revoke，交给 TTL 过期与
+// 主进程 1 小时临时文件清理兜底。
+const OFFICE_PREVIEW_CACHE_LIMIT = 20
+const officePreviewCache = new Map<string, { token: string; url: string; expiresAt: number }>()
+
+function getFreshOfficePreview(key: string) {
+  const cached = officePreviewCache.get(key)
+  if (cached && cached.expiresAt - Date.now() > 60_000) return cached
+  officePreviewCache.delete(key)
+  return null
+}
+
+function cacheOfficePreview(key: string, entry: { token: string; url: string; expiresAt: number }) {
+  officePreviewCache.delete(key)
+  officePreviewCache.set(key, entry)
+  while (officePreviewCache.size > OFFICE_PREVIEW_CACHE_LIMIT) {
+    const oldest = officePreviewCache.keys().next().value
+    if (oldest === undefined) break
+    officePreviewCache.delete(oldest)
+  }
+}
 
 export function RightPanelFilePreview({
   threadId,
@@ -68,6 +95,8 @@ export function RightPanelFilePreview({
   const requestId = useRef(0)
   const [payload, setPayload] = useState<FileRefReadResult | null>(null)
   const [mediaScope, setMediaScope] = useState<{ token: string; url: string } | null>(null)
+  const [officeScope, setOfficeScope] = useState<{ token: string; url: string } | null>(null)
+  const [officePending, setOfficePending] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sourceMode, setSourceMode] = useState(false)
@@ -114,6 +143,8 @@ export function RightPanelFilePreview({
     editStartedRef.current = ''
     setPayload(null)
     setMediaScope(null)
+    setOfficeScope(null)
+    setOfficePending(false)
     setError(null)
     setSourceMode(editorStateKey
       ? editorStatesRef.current[editorStateKey]?.sourceMode ?? Boolean(lineSelection && kind === 'markdown')
@@ -170,6 +201,33 @@ export function RightPanelFilePreview({
           }
         })
         .finally(() => { if (!disposed && current === requestId.current) setLoading(false) })
+      // Office 高保真渲染与 media scope 并行：对齐 Proma，渲染就绪前不挂载降级
+      // 查看器（避免先显示 Extend 视图再闪切成 iframe），确认失败后再回退；
+      // 命中 tab 缓存则直接复用，不重跑 OfficeCLI。
+      if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        const officeKey = `office:${guardedRef
+          ? `${guardedRef.ref.source}:${guardedRef.ref.scopeId}:${guardedRef.ref.relativePath}`
+          : `${fileRef.source}:${fileRef.scopeId}:${fileRef.relativePath}`}:${refreshKey}`
+        const cachedScope = getFreshOfficePreview(officeKey)
+        if (cachedScope) {
+          setOfficeScope(cachedScope)
+        } else {
+          setOfficePending(true)
+          const officeRender = guardedRef
+            ? renderGuardedOfficePreview({ guardedRef, generation: current })
+            : renderOfficePreview({ ref: fileRef, generation: current })
+          void officeRender
+            .then((scope) => {
+              if (!scope) return
+              // 过期响应也写入缓存：渲染结果与文件绑定，下次打开同文件可复用
+              cacheOfficePreview(officeKey, scope)
+              if (disposed || current !== requestId.current) return
+              setOfficeScope(scope)
+            })
+            .catch(() => { /* 渲染失败静默回退内置查看器 */ })
+            .finally(() => { if (!disposed && current === requestId.current) setOfficePending(false) })
+        }
+      }
       return () => {
         disposed = true
         if (token) {
@@ -476,13 +534,19 @@ export function RightPanelFilePreview({
             </FileLinkContextMenu>
           ) : null
         ) : isDocumentViewerKind(kind) && mediaScope ? (
-          <DocumentViewerHost
-            kind={kind}
-            fileRef={fileRef}
-            guardedRef={guardedRef}
-            mediaScope={mediaScope}
-            onOpenFile={onOpenFile}
-          />
+          officeScope ? (
+            <RightPanelOfficePreview url={officeScope.url} title={`${basename(fileRef.relativePath)} 高保真预览`} />
+          ) : officePending ? (
+            <PreviewStatus>正在加载 Office 预览…</PreviewStatus>
+          ) : (
+            <DocumentViewerHost
+              kind={kind}
+              fileRef={fileRef}
+              guardedRef={guardedRef}
+              mediaScope={mediaScope}
+              onOpenFile={onOpenFile}
+            />
+          )
         ) : kind === 'video' && mediaScope ? (
           <div className="flex h-full items-center justify-center bg-black/90 p-4">
             <video src={mediaScope.url} controls className="max-h-full max-w-full" />
