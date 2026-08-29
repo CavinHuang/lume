@@ -122,6 +122,12 @@ const MEDIA_EXTENSIONS = new Set([
   '.csv', '.docx', '.xlsx', '.pptx',
 ])
 
+export function previewScopeKindForPath(path: string): PreviewScopeKind | null {
+  const extension = extname(path).toLowerCase()
+  if (extension === '.html' || extension === '.htm') return 'html-directory'
+  return MEDIA_EXTENSIONS.has(extension) ? 'media-file' : null
+}
+
 export type PreviewProtocolResolution =
   | { kind: 'forbidden' }
   | { kind: 'notfound' }

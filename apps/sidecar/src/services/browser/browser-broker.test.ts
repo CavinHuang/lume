@@ -1,7 +1,13 @@
 import { strict as assert } from "node:assert";
+import { mkdtempSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
+import { pathToFileURL } from "node:url";
 import { BrowserBroker } from "./browser-broker";
 import { BrowserRpcError } from "../../rpc/browser-rpc-sequence";
+import { createAgentThread } from "../agent/agent-thread-manager";
+import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 
 test("per-tab queue slot is reclaimed after settle (#615)", async () => {
   const broker = new BrowserBroker({ request: async () => ({ ok: true }) });
@@ -174,6 +180,41 @@ test("agent-created in-app tabs are bound to the owning thread workspace", async
 
   assert.equal(calls.at(-1).method, "ensure");
   assert.equal(calls.at(-1).params.ownerThreadId, "thread-1");
+});
+
+test("in-app file navigation carries only a task-authorized local preview path", async (t) => {
+  const previousConfigDir = process.env.LUME_CONFIG_DIR;
+  const configDir = mkdtempSync(join(tmpdir(), "lume-browser-preview-broker-"));
+  process.env.LUME_CONFIG_DIR = configDir;
+  t.after(() => {
+    process.env.LUME_CONFIG_DIR = previousConfigDir;
+    rmSync(configDir, { recursive: true, force: true });
+  });
+  const projectPath = join(configDir, "project");
+  mkdirSync(projectPath);
+  const workspace = createAgentWorkspace("browser preview broker", { projectPath });
+  const thread = createAgentThread("browser preview broker", undefined, workspace.id);
+  const previewPath = join(projectPath, "preview.html");
+  writeFileSync(previewPath, "<h1>preview</h1>");
+  const calls: any[] = [];
+  const broker = new BrowserBroker({ request: async (request) => {
+    calls.push(request);
+    if (request.method === "policy:confirm") return { approved: true, token: "preview-token" };
+    return { tabId: "preview-tab" };
+  } });
+  broker.setPluginState({ browserEnabled: true });
+
+  await broker.dispatch({
+    method: "create_tab",
+    params: { options: { url: pathToFileURL(previewPath).toString() } },
+    threadId: thread.id,
+    browserSessionId: "preview-session",
+    browserTurnId: "preview-turn",
+  });
+
+  const ensure = calls.slice().reverse().find((request: any) => request.method === "ensure");
+  assert.equal(ensure.params.__authorizedFilePreviewPath, realpathSync(previewPath));
+  assert.equal(ensure.context.threadId, thread.id);
 });
 
 test("canonical BrowserClient commands select and normalize the requested backend", async () => {

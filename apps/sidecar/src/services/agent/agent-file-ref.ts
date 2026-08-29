@@ -17,6 +17,7 @@ import {
 } from "node:fs";
 import { randomUUID } from "node:crypto";
 import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 import {
   basename,
   dirname,
@@ -441,6 +442,25 @@ export function resolveAuthorizedBrowserUploadPaths(
       );
     return resolved.absolutePath;
   });
+}
+
+/** Resolve a file:// browser preview URL through the same task boundary as uploads. */
+export function resolveAuthorizedBrowserPreviewPath(
+  threadId: string,
+  url: string,
+): string {
+  let path: string;
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "file:") throw new Error("not a file URL");
+    path = fileURLToPath(parsed);
+  } catch {
+    throw new AuthorizedFileRefError(
+      "OUT_OF_SCOPE",
+      "浏览器本地预览地址非法",
+    );
+  }
+  return resolveAuthorizedBrowserUploadPaths(threadId, [path])[0]!;
 }
 
 function mapAuthorizedFileSystemError(
