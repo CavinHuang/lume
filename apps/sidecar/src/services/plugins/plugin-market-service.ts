@@ -1035,7 +1035,16 @@ export class PluginMarketService {
     return {
       kind: "plugin",
       normalized,
-      skills: this.readPluginSkillSummaries(normalized),
+      // GitHub 源 inspect 无磁盘文件（pluginRoot 为虚拟路径），技能明细须走 raw 拉取
+      skills:
+        source.type === "github"
+          ? await this.github
+              .readGitHubSkillSummaries(
+                source,
+                normalized.capabilities.skills,
+              )
+              .catch(() => [])
+          : this.readPluginSkillSummaries(normalized),
       permissionSummary: summarizePermissions(normalized.permissions),
       permissionsHash,
       installState: state

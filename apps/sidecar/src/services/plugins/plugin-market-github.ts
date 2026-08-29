@@ -11,8 +11,13 @@ import {
   normalizePluginManifests,
   type NormalizedPlugin,
 } from "@lume/agent-sdk";
-import type { PluginReadmePreview, PluginSourceRef } from "@lume/shared";
+import type {
+  PluginReadmePreview,
+  PluginSkillSummary,
+  PluginSourceRef,
+} from "@lume/shared";
 import { PluginMarketError } from "./plugin-market-errors";
+import { parseSkillFrontmatter } from "../skills/skill-frontmatter";
 
 const execFileAsync = promisify(execFile);
 const GITHUB_ARCHIVE_MAX_BYTES = 512 * 1024 * 1024;
@@ -458,11 +463,68 @@ export function createPluginMarketGitHubAdapter(deps: PluginMarketGitHubDeps) {
     }
   }
 
+  /**
+   * 读取 GitHub 源插件内的技能摘要（SKILL.md frontmatter）。
+   * inspect 时 pluginRoot 是虚拟路径，磁盘无文件，必须经 raw URL 拉取；
+   * 技能目录语义与本地一致：root 自身或其直接子目录含 SKILL.md。
+   */
+  async function readGitHubSkillSummaries(
+    source: Extract<PluginSourceRef, { type: "github" }>,
+    skills: NormalizedPlugin["capabilities"]["skills"],
+  ): Promise<PluginSkillSummary[]> {
+    if (skills.length === 0) return [];
+    const prefix = source.subdir ? `${source.subdir.replace(/\/$/, "")}/` : "";
+    const roots = skills.map(
+      (skill) => `${prefix}${skill.root.replace(/^\.\//, "").replace(/\/$/, "")}`,
+    );
+    const summaries: PluginSkillSummary[] = [];
+    const seen = new Set<string>();
+    const skillMdPaths: string[] = [];
+    try {
+      const tree = await fetchGitHubTree(source);
+      for (const entry of tree) {
+        if (entry.type !== "blob") continue;
+        if (!entry.path.toLowerCase().endsWith("/skill.md")) continue;
+        const dir = entry.path.slice(0, -"/SKILL.md".length);
+        const matchedRoot = roots.find(
+          (root) => dir === root || dir.startsWith(`${root}/`),
+        );
+        if (!matchedRoot) continue;
+        // 仅取技能根自身或其直接子目录，避免深层嵌套误收
+        const relative = dir.slice(matchedRoot.length).replace(/^\//, "");
+        if (relative !== "" && relative.includes("/")) continue;
+        skillMdPaths.push(entry.path);
+      }
+    } catch {
+      // 树不可用时退回按声明路径直取（root 自身为技能目录）
+      for (const root of roots) skillMdPaths.push(`${root}/SKILL.md`);
+    }
+    for (const path of skillMdPaths) {
+      if (summaries.length >= 50) return summaries;
+      try {
+        const meta = parseSkillFrontmatter(
+          await deps.fetchText(rawGitHubUrl(source, path)),
+          path.split("/").slice(-2, -1)[0] ?? path,
+        );
+        if (seen.has(meta.name)) continue;
+        seen.add(meta.name);
+        summaries.push({
+          name: meta.name,
+          ...(meta.description ? { description: meta.description } : {}),
+        });
+      } catch {
+        // 单个 SKILL.md 拉取/解析失败不影响其余技能
+      }
+    }
+    return summaries;
+  }
+
   return {
     inspectGitHubPlugin,
     fetchGitHubManifest,
     fetchGitHubManifestFromRaw,
     readGitHubReadme,
+    readGitHubSkillSummaries,
     fetchGitHubTree,
     resolveGitHubRoot,
     resolveGitHubCommitSha,
