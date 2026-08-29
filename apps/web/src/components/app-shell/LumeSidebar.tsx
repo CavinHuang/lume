@@ -71,7 +71,7 @@ export function LumeSidebar({
     const footerItems = model.collapsedItems.filter((item) => item.kind === 'footer-action')
 
     return (
-      <aside className="flex h-full w-[72px] -ml-2 flex-col bg-[var(--lume-bg-rail)] text-[var(--lume-text-primary)]">
+      <aside className="flex h-full w-[72px] flex-col bg-[var(--lume-bg-rail)] text-[var(--lume-text-primary)]">
         <div className="flex flex-col gap-2 px-3 pb-3 pt-4">
           {topItems.map((item) => (
             <Button
@@ -151,7 +151,7 @@ export function LumeSidebar({
   }
 
   return (
-    <aside className="flex h-full w-[286px] min-w-[286px] -ml-2 flex-col bg-[var(--lume-bg-rail)] text-[var(--lume-text-primary)]">
+    <aside className="flex h-full w-[286px] min-w-[286px] flex-col bg-[var(--lume-bg-rail)] text-[var(--lume-text-primary)]">
       <div className="flex flex-col gap-1 px-3 pb-4 pt-4">
         {model.topActions.map((action) => {
           if (action.id === 'new-chat') {

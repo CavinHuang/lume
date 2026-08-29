@@ -54,7 +54,12 @@ export function AppShell() {
         </div>
       ) : (
         <div className={cn('flex min-h-0 flex-1 gap-1.5 pl-2', rightPanelExpanded ? 'pr-0' : 'pr-2')}>
-          {!sidebarCollapsed && <LeftSidebar forceCollapsed={forceCompactSidebar} />}
+          <div
+            className="h-full -ml-2 shrink-0 overflow-hidden transition-[width] duration-200 ease-out"
+            style={{ width: sidebarCollapsed ? 0 : forceCompactSidebar ? 72 : 286 }}
+          >
+            <LeftSidebar forceCollapsed={forceCompactSidebar} />
+          </div>
           <div className={cn(
             'min-w-0 flex-1 -ml-1.5 overflow-hidden rounded-r-[16px] bg-[var(--lume-bg-rail)]',
             rightPanelVisible && 'mr-[-6px] rounded-r-none',
