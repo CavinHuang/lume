@@ -6,6 +6,7 @@ import {
   Code2,
   Copy,
   Database,
+  Download,
   FileText,
   FolderSync,
   Globe2,
@@ -16,11 +17,14 @@ import {
   MoreVertical,
   PenTool,
   Plus,
+  Power,
   Puzzle,
   RefreshCw,
   Search,
   ShieldCheck,
+  SlidersHorizontal,
   Sparkles,
+  Trash2,
   X,
   type LucideIcon,
 } from 'lucide-react'
@@ -65,10 +69,7 @@ import {
   buildMarketCards,
   buildMarketSummary,
   filterMarketCards,
-  MARKET_CATEGORY_OPTIONS,
-  MARKET_SOURCE_OPTIONS,
   SKILL_SOURCE_LABELS,
-  type MarketCardKind,
   type MarketCardView,
 } from './plugin-market-ui-state'
 import { formatRiskLabel } from './plugin-detail-state'
@@ -78,7 +79,14 @@ import { installPluginSetupPackages } from './plugin-setup-installer'
 import { upsertWelcomeTab } from '@/components/app-shell/LeftSidebar'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { PluginDetailPage } from './PluginDetailPage'
 import { BridgeInstallWizard } from './BridgeInstallWizard'
 import { PluginLogo } from './PluginLogo'
@@ -108,6 +116,9 @@ const SKILL_VISUALS: Record<string, Pick<MarketDisplayCard, 'category' | 'action
   'knowledge-qa': { category: '外部市场源', actionLabel: '添加', icon: MessageCircle, tone: 'blue' },
 }
 
+/** 分类分区展示顺序 */
+const MARKET_SECTION_ORDER = ['插件', '内置', '外部市场源', '本地发现'] as const
+
 export function SkillsMarketView() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -121,7 +132,7 @@ export function SkillsMarketView() {
   const setBridgeWizardPlugin = useSetAtom(bridgeWizardPluginAtom)
   const workspace = workspaces.find((item) => item.id === currentWorkspaceId) ?? workspaces[0] ?? null
   const workspaceSlug = workspace?.slug ?? null
-  const [activeKind, setActiveKind] = useState<MarketCardKind>('plugin')
+  const [marketTab, setMarketTab] = useState<'public' | 'personal'>('public')
   const [skills, setSkills] = useState<SkillCatalogItem[]>([])
   const [plugins, setPlugins] = useState<PluginMarketItem[]>([])
   const [loading, setLoading] = useState(true)
@@ -129,8 +140,7 @@ export function SkillsMarketView() {
   const [error, setError] = useState<string | null>(null)
   const [syncNotice, setSyncNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
-  const [category, setCategory] = useState('全部分类')
-  const [source, setSource] = useState('全部来源')
+  const [sourcePanelOpen, setSourcePanelOpen] = useState(false)
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
   const [busyItemId, setBusyItemId] = useState<string | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
@@ -186,10 +196,24 @@ export function SkillsMarketView() {
     void loadCatalog()
   }, [loadCatalog])
 
+  const allCards = useMemo(() => buildMarketCards({ plugins, skills }).map(toMarketDisplayCard), [plugins, skills])
   const cards = useMemo(() => {
-    const marketCards = buildMarketCards({ plugins, skills }).map(toMarketDisplayCard)
-    return filterMarketCards(marketCards, { query, category, source, kind: activeKind })
-  }, [activeKind, category, plugins, query, skills, source])
+    const base = filterMarketCards(allCards, { query, category: '全部分类', source: '全部来源' })
+    // 公开 = 市场来源（内置/外部市场源/插件市场），个人 = 本地发现
+    return marketTab === 'personal'
+      ? base.filter((card) => card.sourceLabel === '本地发现')
+      : base.filter((card) => card.sourceLabel !== '本地发现')
+  }, [allCards, marketTab, query])
+  const installedCards = useMemo(
+    () => allCards.filter((card) => card.installState === 'installed' || card.installState === 'update-available'),
+    [allCards],
+  )
+  const sections = useMemo(
+    () =>
+      MARKET_SECTION_ORDER.map((category) => ({ category, cards: cards.filter((card) => card.category === category) }))
+        .filter((section) => section.cards.length > 0),
+    [cards],
+  )
   const summary = useMemo(() => buildMarketSummary({ plugins, skills }), [plugins, skills])
   const sourceViews = useMemo(() => buildMarketSourceViews(skills, plugins), [plugins, skills])
 
@@ -208,6 +232,21 @@ export function SkillsMarketView() {
         await installSkillMarketItemToWorkspace(buildSkillInstallRequest(workspaceSlug, item))
         await loadCatalog()
       }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setBusyItemId(null)
+    }
+  }
+
+  const handleUninstallPlugin = async (item: PluginMarketItem) => {
+    if (!workspaceSlug) return
+    setBusyItemId(`plugin:${item.id}`)
+    setError(null)
+    try {
+      await uninstallPlugin({ pluginId: item.pluginId, force: true })
+      toast.success('插件已卸载')
+      await loadCatalog()
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
@@ -542,76 +581,161 @@ export function SkillsMarketView() {
   }
 
   return (
-    <div className="min-h-0 flex-1 overflow-hidden bg-[var(--background)] px-7 pb-8 pt-8 text-[var(--text-1)]">
-      <div className="mx-auto flex h-full max-w-[1230px] flex-col">
-        <header className="mb-6 flex items-start justify-between gap-5">
+    <div className="min-h-0 flex-1 overflow-y-auto bg-[var(--background)] px-7 pb-12 pt-8 text-[var(--text-1)]">
+      <div className="mx-auto w-full max-w-[1100px]">
+        <header className="flex items-start justify-between gap-5">
           <div className="min-w-0">
-            <h1 className="text-[25px] font-semibold leading-tight text-[var(--text-1)]">插件市场</h1>
-            <p className="mt-2 text-[14px] leading-6 text-[var(--text-2)]">
-              市场用于发现、审核和安装插件与技能，可在插件和技能视图之间快速切换。
-            </p>
+            <h1 className="text-[26px] font-bold leading-tight text-[var(--text-1)]">插件市场</h1>
+            <p className="mt-2 text-[14px] text-[var(--text-2)]">用插件为 Lume 扩展技能、命令与 MCP 能力</p>
           </div>
-          <div className="lume-segmented inline-flex shrink-0">
-            {([
-              { id: 'plugin', label: `插件 ${summary.totalPlugins}` },
-              { id: 'skill', label: `技能 ${summary.totalSkills}` },
-            ] as const).map((section) => (
-              <Button
-                variant="ghost"
-                key={section.id}
-                type="button"
-                onClick={() => setActiveKind(section.id)}
-                className={cn(
-                  'lume-segmented-item px-4 font-semibold',
-                  activeKind === section.id
-                    ? 'lume-segmented-item-active'
-                    : '',
-                )}
-              >
-                {section.label}
-              </Button>
-            ))}
+          <div className="flex shrink-0 items-center gap-1.5">
+            <Button
+              variant="ghost"
+              type="button"
+              size="icon"
+              disabled={syncing}
+              onClick={() => void loadCatalog('force-refresh', true)}
+              title="同步市场"
+            >
+              <RefreshCw size={16} className={cn(syncing && 'animate-spin')} />
+            </Button>
+            <Button
+              variant="ghost"
+              type="button"
+              size="icon"
+              onClick={() => setSourcePanelOpen(true)}
+              title="市场源设置"
+            >
+              <SlidersHorizontal size={16} />
+            </Button>
+            <Button
+              type="button"
+              onClick={() => setSourceDialogOpen(true)}
+              className="ml-1 h-8 gap-1 rounded-lg px-3 text-[13px] font-semibold"
+            >
+              <Plus size={15} />
+              新建
+            </Button>
           </div>
         </header>
 
-        <div className="grid min-h-0 flex-1 grid-cols-[minmax(0,1fr)_292px] gap-4">
-          <main className="grid min-h-0 min-w-0 grid-rows-[auto_minmax(0,1fr)]">
-            <SkillFilterBar
-              query={query}
-              category={category}
-              source={source}
-              onQueryChange={setQuery}
-              onCategoryChange={setCategory}
-              onSourceChange={setSource}
-            />
+        <label className="mt-5 flex h-10 items-center gap-2.5 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] px-3.5 text-[var(--text-3)] transition-colors focus-within:border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))]">
+          <Search size={16} />
+          <Input
+            value={query}
+            onChange={(event) => setQuery(event.target.value)}
+            placeholder="搜索插件"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13.5px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
+          />
+        </label>
 
-            {loading ? (
-              <div className="lume-subpanel mt-6 flex h-[180px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
-                <Loader2 size={16} className="animate-spin" />
-                正在同步市场...
+        {installedCards.length > 0 && (
+          <section className="mt-8">
+            <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5">
+              <h2 className="text-[15px] font-semibold text-[var(--text-1)]">已安装</h2>
+              <Button
+                variant="ghost"
+                type="button"
+                size="icon-sm"
+                onClick={() => setSourcePanelOpen(true)}
+                title="管理市场源"
+              >
+                <SlidersHorizontal size={15} />
+              </Button>
+            </div>
+            <div className="mt-4 flex flex-wrap items-center gap-3">
+              {installedCards.map((card) => (
+                <InstalledCardIcon
+                  key={`${card.kind}:${card.id}`}
+                  card={card}
+                  onOpenDetail={() => {
+                    if (card.kind === 'skill') void handleOpenSkillDetail(card.item as SkillCatalogItem)
+                    else void handleOpenPluginDetail(card.item as PluginMarketItem)
+                  }}
+                />
+              ))}
+            </div>
+          </section>
+        )}
+
+        <div className="mt-7 flex items-center justify-between">
+          <div className="lume-segmented inline-flex">
+            {([
+              { id: 'public', label: '公开' },
+              { id: 'personal', label: '个人' },
+            ] as const).map((tab) => (
+              <Button
+                variant="ghost"
+                key={tab.id}
+                type="button"
+                onClick={() => setMarketTab(tab.id)}
+                className={cn(
+                  'lume-segmented-item px-4 text-[13px]',
+                  marketTab === tab.id ? 'lume-segmented-item-active' : '',
+                )}
+              >
+                {tab.label}
+              </Button>
+            ))}
+          </div>
+        </div>
+
+        {loading ? (
+          <div className="mt-8 flex h-[180px] items-center justify-center gap-2 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_36%,transparent)] text-[13px] text-[var(--text-3)]">
+            <Loader2 size={16} className="animate-spin" />
+            正在同步市场...
+          </div>
+        ) : error ? (
+          <div className="mt-8 rounded-lg border border-[color:color-mix(in_oklab,var(--lume-danger)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-4 text-[13px] text-[var(--lume-danger)]">
+            {error}
+          </div>
+        ) : sections.length === 0 ? (
+          <div className="mt-8 rounded-lg border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-[var(--text-3)]">
+            {marketTab === 'personal'
+              ? '还没有本地插件或技能。可通过右上角「新建」添加本地来源。'
+              : '没有匹配的插件或技能，换个关键词试试。'}
+          </div>
+        ) : (
+          <div className="min-w-0">
+            {syncNotice && (
+              <div className="mt-6 rounded-lg border border-[color:color-mix(in_oklab,var(--lume-warning)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_7%,var(--surface-1))] px-3 py-2 text-[12px] text-[var(--text-2)]">
+                {syncNotice}
               </div>
-            ) : error ? (
-              <div className="mt-6 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-4 text-[13px] text-[var(--lume-danger)]">
-                {error}
-              </div>
-            ) : (
-              <MarketCardGrid
-                cards={cards}
-                notice={syncNotice}
-                activeKind={activeKind}
-                busyItemId={busyItemId}
-                onAction={(card) => {
-                  if (card.kind === 'skill') void handleSkillAction(card.item as SkillCatalogItem)
-                  else void handlePluginAction(card.item as PluginMarketItem)
-                }}
-                onOpenDetail={(card) => {
-                  if (card.kind === 'skill') void handleOpenSkillDetail(card.item as SkillCatalogItem)
-                  else void handleOpenPluginDetail(card.item as PluginMarketItem)
-                }}
-              />
             )}
-          </main>
+            {sections.map((section) => (
+              <section key={section.category} className="mt-7">
+                <h2 className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5 text-[15px] font-semibold text-[var(--text-1)]">
+                  {section.category}
+                </h2>
+                <div className="mt-1.5 grid grid-cols-2 gap-x-10">
+                  {section.cards.map((card) => (
+                    <MarketItemRow
+                      key={`${card.kind}:${card.id}`}
+                      card={card}
+                      busy={busyItemId === `${card.kind}:${card.id}`}
+                      onOpenDetail={() => {
+                        if (card.kind === 'skill') void handleOpenSkillDetail(card.item as SkillCatalogItem)
+                        else void handleOpenPluginDetail(card.item as PluginMarketItem)
+                      }}
+                      onAction={() => {
+                        if (card.kind === 'skill') void handleSkillAction(card.item as SkillCatalogItem)
+                        else void handlePluginAction(card.item as PluginMarketItem)
+                      }}
+                      onUninstall={() => {
+                        if (card.kind === 'plugin') void handleUninstallPlugin(card.item as PluginMarketItem)
+                      }}
+                    />
+                  ))}
+                </div>
+              </section>
+            ))}
+          </div>
+        )}
+      </div>
 
+      <Dialog open={sourcePanelOpen} onOpenChange={setSourcePanelOpen}>
+        <DialogContent showCloseButton className="w-[calc(100%-2rem)] sm:max-w-[400px]">
+          <DialogTitle className="sr-only">市场源设置</DialogTitle>
           <SkillSourcePanel
             loading={loading || syncing}
             sources={sourceViews}
@@ -620,8 +744,8 @@ export function SkillsMarketView() {
             onAddSource={() => setSourceDialogOpen(true)}
             onSync={() => void loadCatalog('force-refresh', true)}
           />
-        </div>
-      </div>
+        </DialogContent>
+      </Dialog>
 
       <AddSkillSourceDialog
         open={sourceDialogOpen}
@@ -642,127 +766,47 @@ export function SkillsMarketView() {
   )
 }
 
-function SkillFilterBar({
-  query,
-  category,
-  source,
-  onQueryChange,
-  onCategoryChange,
-  onSourceChange,
-}: {
-  query: string
-  category: string
-  source: string
-  onQueryChange: (value: string) => void
-  onCategoryChange: (value: string) => void
-  onSourceChange: (value: string) => void
-}) {
+function InstalledCardIcon({ card, onOpenDetail }: { card: MarketDisplayCard; onOpenDetail: () => void }) {
+  const Icon = card.icon
+  const plugin = card.kind === 'plugin' ? card.item as PluginMarketItem : null
   return (
-    <section className="lume-subpanel px-4 py-2">
-      <div className="grid grid-cols-[minmax(210px,1fr)_minmax(190px,255px)_minmax(190px,255px)] gap-5">
-        <label className="flex h-9 items-center gap-2.5 rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_70%,transparent)] bg-[var(--surface-1)] px-3 text-[var(--text-3)]">
-          <Search size={16} />
-          <Input
-            value={query}
-            onChange={(event) => onQueryChange(event.target.value)}
-            placeholder="搜索插件或技能"
-            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13px] font-medium text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
-          />
-        </label>
-        <MarketSelect value={category} options={[...MARKET_CATEGORY_OPTIONS]} onChange={onCategoryChange} />
-        <MarketSelect value={source} options={[...MARKET_SOURCE_OPTIONS]} onChange={onSourceChange} />
-      </div>
-    </section>
-  )
-}
-
-function MarketSelect({
-  value,
-  options,
-  onChange,
-}: {
-  value: string
-  options: string[]
-  onChange: (value: string) => void
-}) {
-  return (
-    <Select value={value} onValueChange={(nextValue) => { if (nextValue) onChange(nextValue) }}>
-      <SelectTrigger className="h-9 w-full rounded-[8px] border-[color:color-mix(in_oklab,var(--border)_70%,transparent)] bg-[var(--surface-1)] px-3 text-[13px] font-medium text-[var(--text-2)] shadow-none focus-visible:ring-0">
-        <SelectValue />
-      </SelectTrigger>
-      <SelectContent>
-        {options.map((option) => (
-          <SelectItem key={option} value={option}>
-            {option}
-          </SelectItem>
-        ))}
-      </SelectContent>
-    </Select>
-  )
-}
-
-function MarketCardGrid({
-  cards,
-  notice,
-  activeKind,
-  busyItemId,
-  onAction,
-  onOpenDetail,
-}: {
-  cards: MarketDisplayCard[]
-  notice: string | null
-  activeKind: MarketCardKind
-  busyItemId: string | null
-  onAction: (card: MarketDisplayCard) => void
-  onOpenDetail: (card: MarketDisplayCard) => void
-}) {
-  return (
-    <section className="mt-6 grid min-h-0 content-start grid-cols-3 gap-5 overflow-y-auto pr-2 pb-2">
-      {notice && (
-        <div className="col-span-3 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-warning)_24%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-warning)_7%,var(--surface-1))] px-3 py-2 text-[12px] text-[var(--text-2)]">
-          {notice}
-        </div>
+    <button
+      type="button"
+      onClick={onOpenDetail}
+      title={card.name}
+      className={cn(
+        'flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-[10px] transition-transform hover:scale-105',
+        iconToneClass(card.tone),
       )}
-      {cards.map((card) => (
-        <MarketCard
-          key={`${card.kind}:${card.id}`}
-          card={card}
-          busy={busyItemId === `${card.kind}:${card.id}`}
-          onAction={() => onAction(card)}
-          onOpenDetail={() => onOpenDetail(card)}
-        />
-      ))}
-      {cards.length === 0 && (
-        <div className="col-span-3 rounded-[8px] border border-dashed border-[var(--border)] p-10 text-center text-[13px] text-[var(--text-3)]">
-          {activeKind === 'plugin'
-            ? '当前工作区还没有可展示的插件。可添加本地或 GitHub marketplace root 进行同步。'
-            : '当前工作区还没有可展示的 Agent 技能。可添加市场源或同步已有来源。'}
-        </div>
-      )}
-    </section>
+    >
+      {plugin
+        ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-6" />
+        : <Icon size={20} strokeWidth={2.2} />}
+    </button>
   )
 }
 
-function MarketCard({
+function MarketItemRow({
   card,
   busy,
-  onAction,
   onOpenDetail,
+  onAction,
+  onUninstall,
 }: {
   card: MarketDisplayCard
   busy: boolean
-  onAction: () => void
   onOpenDetail: () => void
+  onAction: () => void
+  onUninstall: () => void
 }) {
   const Icon = card.icon
   const plugin = card.kind === 'plugin' ? card.item as PluginMarketItem : null
   const installed = card.installState === 'installed'
-  const skillActionable = card.kind === 'skill' && (installed || isInstallableSkillMarketItem(card.item as SkillCatalogItem))
-  const pluginActionable = card.kind === 'plugin'
-  const actionable = skillActionable || pluginActionable
+  const canUninstall = card.kind === 'plugin' && (installed || card.installState === 'update-available')
+  const toggleLabel = card.enabled ? '禁用' : '启用'
 
   return (
-    <article
+    <div
       role="button"
       tabIndex={0}
       onClick={onOpenDetail}
@@ -772,51 +816,62 @@ function MarketCard({
           onOpenDetail()
         }
       }}
-      className="flex h-[216px] min-w-0 cursor-pointer flex-col overflow-hidden rounded-[8px] border border-[color:color-mix(in_oklab,var(--border)_58%,transparent)] bg-[var(--surface-1)] p-4 shadow-[0_2px_8px_-5px_hsl(var(--lume-shadow-panel)/0.24)] [overflow-wrap:anywhere] transition-colors hover:border-[color:color-mix(in_oklab,var(--brand)_18%,var(--border))] hover:bg-[var(--surface-2)]"
+      className="group flex min-w-0 cursor-pointer items-center gap-3.5 rounded-lg px-2 py-3 transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]"
     >
-      <div className="flex min-w-0 items-center gap-3">
-        <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-[8px]', iconToneClass(card.tone))}>
-          {plugin ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-6" /> : <Icon size={21} strokeWidth={2.2} />}
-        </div>
-        <h2 className="min-w-0 flex-1 truncate text-[16px] font-semibold leading-6 text-[var(--text-1)]" title={card.name}>
-          {card.name}
-        </h2>
-        {card.enabled && (
-          <span className="flex size-6 shrink-0 items-center justify-center rounded-full bg-[color:color-mix(in_oklab,var(--lume-success)_15%,var(--surface-1))] text-[var(--lume-success)]">
-            <Check size={16} strokeWidth={2.5} />
-          </span>
-        )}
+      <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-[10px]', iconToneClass(card.tone))}>
+        {plugin
+          ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-6" />
+          : <Icon size={20} strokeWidth={2.2} />}
       </div>
-      <div className="mt-4 min-w-0 flex-1 overflow-hidden">
-        <p className="line-clamp-4 break-all text-[13px] leading-[20px] text-[var(--text-2)]">
+      <div className="min-w-0 flex-1">
+        <h3 className="truncate text-[15px] font-semibold leading-5 text-[var(--text-1)]" title={card.name}>
+          {card.name}
+        </h3>
+        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-[var(--text-2)]" title={card.description ?? undefined}>
           {card.description ?? '暂无描述。'}
         </p>
       </div>
-      <div className="flex min-w-0 shrink-0 flex-wrap items-center justify-between gap-3 pt-3">
-        <div className="flex min-w-0 items-center gap-2 flex-wrap">
-          <span className={cn('min-w-0 break-all rounded-[5px] px-2 py-1 text-[12px] font-medium', badgeToneClass(card.category))}>
-            {card.category}
-          </span>
-          {card.needsBridge && (
-            <span className="min-w-0 break-all rounded-[5px] bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] px-2 py-1 text-[12px] font-medium text-[var(--lume-warning)]">
-              🔌 需桥接
-            </span>
-          )}
-        </div>
-        <Button
-                variant="ghost"
-          type="button"
-          disabled={!actionable || busy}
-          onClick={(event) => {
-            event.stopPropagation()
-            onAction()
-          }}
-          className="min-h-8 max-w-full shrink-0 whitespace-nowrap rounded-[6px] border border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border))] px-4 py-1 text-[13px] font-semibold text-[var(--brand)] transition-colors hover:bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] disabled:cursor-not-allowed disabled:opacity-50"
+      {busy && <Loader2 size={15} className="mr-1 shrink-0 animate-spin text-[var(--text-3)]" />}
+      <DropdownMenu>
+        <DropdownMenuTrigger
+          render={
+            <Button
+              variant="ghost"
+              type="button"
+              size="icon-sm"
+              disabled={busy}
+              className="shrink-0 text-[var(--text-3)] hover:text-[var(--text-1)]"
+              onClick={(event) => event.stopPropagation()}
+              title="更多操作"
+            />
+          }
         >
-          {busy ? '处理中' : card.actionLabel}
-        </Button>
-      </div>
-    </article>
+          <MoreVertical size={16} />
+        </DropdownMenuTrigger>
+        <DropdownMenuContent align="end" className="min-w-[128px]">
+          {plugin && card.installState === 'update-available' ? (
+            <DropdownMenuItem onSelect={onAction}>
+              <Download size={14} />
+              更新
+            </DropdownMenuItem>
+          ) : (
+            <DropdownMenuItem onSelect={onAction}>
+              {card.kind === 'plugin' && installed ? <Power size={14} /> : <Download size={14} />}
+              {card.kind === 'plugin' && installed ? toggleLabel : card.actionLabel}
+            </DropdownMenuItem>
+          )}
+          {canUninstall && (
+            <>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem destructive onSelect={onUninstall}>
+                <Trash2 size={14} />
+                卸载
+              </DropdownMenuItem>
+            </>
+          )}
+        </DropdownMenuContent>
+      </DropdownMenu>
+    </div>
   )
 }
 
