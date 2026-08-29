@@ -17,8 +17,36 @@ function pruneOfficeCliResources(context) {
   }
 }
 
+// 对齐 Proma 的 mac.binaries：officecli 是外部未签名二进制，Developer ID 公证前
+// 必须以同身份先行签名（electron-builder 的静态 binaries 列表与按 arch 修剪冲突，
+// 故在此按当前 arch 手动签名，时序上 afterPack 先于签名钩子）。无身份环境
+// （本地/CI ad-hoc 路径）交给既有 --deep 深度签名覆盖。
+function signOfficeCliBinary(context) {
+  if (context.electronPlatformName !== 'darwin') return
+  const identity = process.env.LUME_COMPUTER_USE_CODESIGN_IDENTITY
+  if (!identity) return
+  const binaryPath = join(
+    context.appOutDir,
+    `${context.packager.appInfo.productFilename}.app`,
+    'Contents', 'Resources', 'officecli',
+    `${context.electronPlatformName}-${context.arch}`,
+    'officecli',
+  )
+  if (!existsSync(binaryPath)) return
+  execFileSync('/usr/bin/codesign', [
+    '--force',
+    '--options',
+    'runtime',
+    '--timestamp',
+    '--sign',
+    identity,
+    binaryPath,
+  ], { stdio: 'inherit' })
+}
+
 module.exports = async function afterPack(context) {
   pruneOfficeCliResources(context)
+  signOfficeCliBinary(context)
   if (context.electronPlatformName !== 'darwin') return
   if (process.env.LUME_RELEASE_SIGNING_REQUIRED === '1') return
 
