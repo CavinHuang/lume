@@ -89,7 +89,7 @@ export function SettingsView() {
           <ArrowLeft size={16} strokeWidth={1.9} className="shrink-0" />
           <span>返回工作区</span>
         </Button>
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1 scrollbar-none">
+        <div className="min-h-0 flex-1 overflow-y-auto scrollbar-none">
           <nav className="space-y-4">
             {SETTINGS_NAV_GROUPS.map((group) => (
               <div key={group.label}>
