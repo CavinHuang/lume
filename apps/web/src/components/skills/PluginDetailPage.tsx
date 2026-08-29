@@ -250,14 +250,14 @@ export function PluginDetailPage({
                 {pluginSkills.length > 0 ? (
                   <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
                     {pluginSkills.map((skill) => (
-                      <div key={skill.name} className="flex items-start gap-3 py-2.5">
-                        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-2)] text-[var(--text-2)]">
-                          <Sparkles size={15} />
+                      <div key={skill.name} className="flex items-start gap-3.5 py-4">
+                        <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-2)] text-[var(--text-2)]">
+                          <Sparkles size={16} />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] text-[var(--text-1)]">{skill.name}</span>
+                          <span className="block truncate text-[15px] text-[var(--text-1)]">{skill.name}</span>
                           {skill.description && (
-                            <span className="mt-0.5 block truncate text-[13px] leading-[18px] text-[var(--text-2)]" title={skill.description}>
+                            <span className="mt-1 block truncate text-[13.5px] leading-5 text-[var(--text-2)]" title={skill.description}>
                               {skill.description}
                             </span>
                           )}
@@ -302,11 +302,11 @@ export function PluginDetailPage({
                   {setupItems.map((setup) => (
                     <div
                       key={setup.title}
-                      className="flex gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-4"
+                      className="flex gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-5"
                     >
                       <div className="min-w-0 flex-1">
-                        <div className="text-[13.5px] font-semibold text-[var(--text-1)]">{setup.title}</div>
-                        <div className="mt-1 text-[12.5px] leading-5 text-[var(--text-3)]">{setup.description}</div>
+                        <div className="text-[14px] font-semibold text-[var(--text-1)]">{setup.title}</div>
+                        <div className="mt-1.5 text-[13px] leading-5 text-[var(--text-3)]">{setup.description}</div>
                       </div>
                       {setup.installer && onInstallPackage && setup.id ? (
                         <Button type="button" disabled={busy} className="h-8 shrink-0 text-[12px]" onClick={() => onInstallPackage(setup.id!)}>
@@ -335,22 +335,22 @@ export function PluginDetailPage({
                     <div className="mt-0.5 break-all font-mono text-[var(--text-2)]">{inspected.normalized.root}</div>
                   </div>
                 )}
-                <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)] text-[12.5px]">
-                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)] text-[13px]">
+                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
                     <span className="text-[var(--text-3)]">安装状态</span>
                     <span className="text-[var(--text-2)]">{formatPluginInstallState(installState)}</span>
                   </div>
-                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
                     <span className="text-[var(--text-3)]">启用状态</span>
                     <span className="text-[var(--text-2)]">{formatPluginEnableState(enableState)}</span>
                   </div>
                   {updateAvailable && (
                     <>
-                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
                         <span className="text-[var(--text-3)]">当前版本</span>
                         <span className="font-mono text-[var(--text-2)]">v{currentVersion}</span>
                       </div>
-                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
                         <span className="text-[var(--text-3)]">可更新版本</span>
                         <span className="font-mono text-[var(--text-2)]">v{item.version}</span>
                       </div>
@@ -460,32 +460,32 @@ function DetailSection({
   children: ReactNode
 }) {
   return (
-    <section className="mt-9">
-      <div className="flex items-baseline gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5">
-        <h2 className="text-[16px] font-semibold text-[var(--text-1)]">{title}</h2>
-        {typeof count === 'number' && <span className="text-[13px] text-[var(--text-3)]">{count}</span>}
+    <section className="mt-10">
+      <div className="flex items-baseline gap-2.5 border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-3">
+        <h2 className="text-[17px] font-semibold text-[var(--text-1)]">{title}</h2>
+        {typeof count === 'number' && <span className="text-[13.5px] text-[var(--text-3)]">{count}</span>}
       </div>
-      <div className="mt-3">{children}</div>
+      <div className="mt-4">{children}</div>
     </section>
   )
 }
 
 function CapabilityRow({ icon, name }: { icon: ReactNode; name: string }) {
   return (
-    <div className="flex items-center gap-3 rounded-lg px-1 py-2">
-      <span className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-2)] text-[var(--text-2)]">
+    <div className="flex items-center gap-3.5 rounded-lg px-1 py-3.5">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-2)] text-[var(--text-2)]">
         {icon}
       </span>
-      <span className="min-w-0 truncate text-[14px] text-[var(--text-1)]">{name}</span>
+      <span className="min-w-0 truncate text-[15px] text-[var(--text-1)]">{name}</span>
     </div>
   )
 }
 
 function InfoRow({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 text-[13.5px] leading-5">
+    <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-3.5 text-[14px] leading-5">
       <span className="text-[var(--text-3)]">{label}</span>
-      <span className={cn('min-w-0 break-all text-[var(--text-1)]', mono && 'font-mono text-[12.5px]')}>{value}</span>
+      <span className={cn('min-w-0 break-all text-[var(--text-1)]', mono && 'font-mono text-[13px]')}>{value}</span>
     </div>
   )
 }
