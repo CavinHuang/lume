@@ -26,7 +26,7 @@ function plugin(input: Partial<PluginMarketItem> = {}): PluginMarketItem {
     capabilities: {
       skillCount: 1,
       hookEvents: [],
-      mcpServerNames: [],
+      mcpServerNames: ['image_search'],
       commandToolNames: ['browser'],
     },
     permissions: {
@@ -69,7 +69,7 @@ function detail(item = plugin()): GetMarketDetailResult {
 }
 
 describe('PluginDetailPage', () => {
-  test('renders independent detail page with horizontal tabs and README', () => {
+  test('renders single-scroll detail page with breadcrumb and README', () => {
     const html = renderToStaticMarkup(
       <PluginDetailPage
         detail={detail()}
@@ -84,17 +84,18 @@ describe('PluginDetailPage', () => {
       />,
     )
 
-    expect(html).toContain('插件')
+    expect(html).toContain('插件市场')
     expect(html).toContain('Browser')
-    expect(html).toContain('概览')
+    expect(html).toContain('MCP 服务器')
+    expect(html).toContain('命令与工具')
     expect(html).toContain('README')
-    expect(html).toContain('设置')
+    expect(html).toContain('高级信息')
     expect(html).not.toContain('Setup')
     expect(html).toContain('data-plugin-detail-shell="full-width"')
     expect(html).toContain('flex-1')
-    expect(html).toContain('data-plugin-detail-tabs="horizontal"')
+    expect(html).not.toContain('data-plugin-detail-tabs')
     expect(html).toContain('data-x-markdown="true"')
-    expect(html).toContain('在对话中试用')
+    expect(html).toContain('立即试用')
   })
 
   test('renders README empty state when README is missing', () => {
@@ -256,7 +257,7 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('v26.623.101651')
     expect(html).toContain('可更新版本')
     expect(html).toContain('回滚到 v26.623.101650')
-    expect(html).toContain('卸载')
+    expect(html).toContain('title="更多操作"')
   })
 
   test('uses inspected update state for setup copy when market item is stale', () => {
@@ -282,7 +283,7 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('当前已安装，发现可更新版本')
     expect(html).not.toContain('安装后才能启用和配置连接。')
     expect(html).toContain('确认权限并更新')
-    expect(html).toContain('卸载')
+    expect(html).toContain('title="更多操作"')
   })
 
   test('shows enable action instead of try-in-chat for installed disabled plugins', () => {
