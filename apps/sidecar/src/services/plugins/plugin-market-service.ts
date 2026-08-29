@@ -2063,6 +2063,7 @@ export class PluginMarketService {
       displayName: plugin.displayName,
       description: plugin.description,
       version: plugin.version,
+      ...(plugin.category ? { category: plugin.category } : {}),
       sourceType,
       trustLevel:
         sourceType === "local" || sourceType === "legacy"

@@ -116,8 +116,8 @@ const SKILL_VISUALS: Record<string, Pick<MarketDisplayCard, 'category' | 'action
   'knowledge-qa': { category: '外部市场源', actionLabel: '添加', icon: MessageCircle, tone: 'blue' },
 }
 
-/** 分类分区展示顺序 */
-const MARKET_SECTION_ORDER = ['插件', '内置', '外部市场源', '本地发现'] as const
+/** 分类分区展示顺序：参考稿的分类体系在前，来源分组在后 */
+const MARKET_SECTION_ORDER = ['生产力', '开发者工具', '实用工具', '指南', '插件', '内置', '外部市场源', '本地发现', '其他'] as const
 
 export function SkillsMarketView() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
@@ -208,12 +208,26 @@ export function SkillsMarketView() {
     () => allCards.filter((card) => card.installState === 'installed' || card.installState === 'update-available'),
     [allCards],
   )
-  const sections = useMemo(
-    () =>
-      MARKET_SECTION_ORDER.map((category) => ({ category, cards: cards.filter((card) => card.category === category) }))
-        .filter((section) => section.cards.length > 0),
-    [cards],
-  )
+  const sections = useMemo(() => {
+    const groups = new Map<string, MarketDisplayCard[]>()
+    for (const card of cards) {
+      // 插件按 manifest 声明的分类分组（未声明归「其他」）；技能按来源分组
+      const key = card.pluginCategory ?? (card.kind === 'plugin' ? '其他' : card.category)
+      const bucket = groups.get(key)
+      if (bucket) bucket.push(card)
+      else groups.set(key, [card])
+    }
+    return [...groups.entries()]
+      .map(([category, sectionCards]) => ({ category, cards: sectionCards }))
+      .sort((left, right) => {
+        const leftIndex = MARKET_SECTION_ORDER.indexOf(left.category as (typeof MARKET_SECTION_ORDER)[number])
+        const rightIndex = MARKET_SECTION_ORDER.indexOf(right.category as (typeof MARKET_SECTION_ORDER)[number])
+        if (leftIndex !== -1 && rightIndex !== -1) return leftIndex - rightIndex
+        if (leftIndex !== -1) return -1
+        if (rightIndex !== -1) return 1
+        return left.category.localeCompare(right.category)
+      })
+  }, [cards])
   const summary = useMemo(() => buildMarketSummary({ plugins, skills }), [plugins, skills])
   const sourceViews = useMemo(() => buildMarketSourceViews(skills, plugins), [plugins, skills])
 
@@ -835,7 +849,22 @@ function MarketItemRow({
         </div>
       </div>
       {busy && <Loader2 size={15} className="mr-1 shrink-0 animate-spin text-[var(--text-3)]" />}
-      <DropdownMenu>
+      {plugin && plugin.installState === 'not-installed' ? (
+        // 未安装插件按参考稿直接展示行内安装按钮（点击进入权限确认详情）
+        <Button
+          variant="outline"
+          type="button"
+          disabled={busy}
+          onClick={(event) => {
+            event.stopPropagation()
+            onAction()
+          }}
+          className="h-7 shrink-0 rounded-lg border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] px-2.5 text-[12px] font-medium text-[var(--text-2)] hover:text-[var(--text-1)]"
+        >
+          安装
+        </Button>
+      ) : (
+        <DropdownMenu>
         <DropdownMenuTrigger
           render={
             <Button
@@ -873,7 +902,8 @@ function MarketItemRow({
             </>
           )}
         </DropdownMenuContent>
-      </DropdownMenu>
+        </DropdownMenu>
+      )}
     </div>
   )
 }

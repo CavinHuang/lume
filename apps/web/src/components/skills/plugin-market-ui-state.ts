@@ -9,6 +9,8 @@ export interface MarketCardView {
   name: string
   description?: string
   category: string
+  /** 插件 manifest 声明的市场分类（生产力/开发者工具等）；技能无此字段 */
+  pluginCategory?: string
   sourceLabel: string
   actionLabel: string
   installState: PluginMarketItem['installState'] | SkillCatalogItem['installState']
@@ -63,6 +65,7 @@ export function buildMarketCards(input: MarketCatalogInput): MarketCardView[] {
       name: plugin.displayName ?? plugin.name,
       description: plugin.description,
       category: '插件',
+      pluginCategory: plugin.category,
       sourceLabel: PLUGIN_SOURCE_LABELS[plugin.sourceType],
       actionLabel: buildPluginActionLabel(plugin),
       installState: plugin.installState,

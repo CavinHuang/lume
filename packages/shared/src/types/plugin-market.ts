@@ -208,6 +208,8 @@ export interface PluginMarketItem {
   displayName?: string
   description?: string
   version: string
+  /** 市场分类（manifest 声明，如 生产力/开发者工具；未声明时缺省） */
+  category?: string
   sourceType: PluginSourceType
   trustLevel: MarketTrustLevel
   installState: MarketInstallState

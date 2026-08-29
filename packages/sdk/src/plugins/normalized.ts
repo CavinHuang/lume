@@ -63,6 +63,8 @@ export interface NormalizedPlugin {
   displayName?: string;
   description?: string;
   author?: string;
+  /** 市场分类（manifest 声明，如 生产力/开发者工具） */
+  category?: string;
   capabilities: PluginManifestCapabilities;
   permissions: PluginPermissions;
   marketplace?: PluginMarketplaceManifest;
