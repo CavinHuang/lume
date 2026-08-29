@@ -57,6 +57,7 @@ export function TitleBar({ variant = resolveVariant() }: { variant?: TitleBarVar
           type="button"
           title={collapsed ? '展开侧栏' : '收起侧栏'}
           onClick={() => setCollapsed(!collapsed)}
+          onDoubleClick={(e) => e.stopPropagation()}
           className="flex size-8 items-center justify-center rounded-[8px] text-[var(--lume-text-muted)] transition-colors duration-150 ease-out hover:bg-[var(--lume-bg-elevated)] hover:text-[var(--lume-text-primary)] active:bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_78%,black)]"
         >
           <PanelLeft size={16} />

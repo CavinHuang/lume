@@ -97,7 +97,7 @@ export async function confirmTrayThreadNavigation({
 
 export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boolean } = {}) {
   const [threads, setThreads] = useAtom(agentThreadsAtom)
-  const [collapsed, setCollapsed] = useAtom(sidebarCollapsedAtom)
+  const setCollapsed = useSetAtom(sidebarCollapsedAtom)
   const [tabs, setTabs] = useAtom(tabsAtom)
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom)
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
@@ -511,7 +511,7 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
   return (
     <>
       <LumeSidebar
-        collapsed={collapsed || forceCollapsed}
+        collapsed={forceCollapsed}
         allExpanded={allExpanded}
         model={model}
         onSetCollapsed={setCollapsed}

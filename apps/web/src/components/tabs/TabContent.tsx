@@ -5,7 +5,6 @@ import { AutomationManagementView } from '@/components/automation/AutomationMana
 import { LumeView } from '@/components/lume/LumeView'
 import { ProactiveHub } from '@/components/proactive/ProactiveHub'
 import { ReadingView } from '@/components/reading/ReadingView'
-import { SettingsView } from '@/components/settings/SettingsView'
 import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
 import { BrowserTabView } from './BrowserTabView'
@@ -43,10 +42,6 @@ export function TabContent() {
         }}
       />
     )
-  }
-
-  if (activeTab.type === 'settings') {
-    return <SettingsView />
   }
 
   if (activeTab.type === 'automation') {
