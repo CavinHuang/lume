@@ -1420,14 +1420,23 @@ export class BrowserRuntime {
         if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
       })
     })
-    wc.on("will-navigate", (event, url) => {
-      if (!this.isAllowedLocalPreviewNavigation(tab, url, wc.id) && !isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
+    const handleGuestNavigation = (event: Electron.Event, url: string): void => {
+      const localPreviewNavigation = this.isAllowedLocalPreviewNavigation(tab, url, wc.id)
+      const allowed = localPreviewNavigation || isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)
+      if (!localPreviewNavigation && allowed) this.revokeActiveLocalFilePreview(tab)
+      if (!allowed) event.preventDefault()
+    }
+    wc.on("will-navigate", handleGuestNavigation)
+    wc.on("will-redirect", (event, url, _isInPlace, isMainFrame) => {
+      if (isMainFrame === false) return
+      handleGuestNavigation(event, url)
     })
     wc.on("did-navigate", (_event, url) => {
       if (guestMountTokenFromUrl(url)) return
       this.referenceGrants.invalidateTab(tab.tabId)
       this.hideAgentCursor()
       const displayUrl = this.displayUrlForNavigation(tab, url)
+      if (!this.isOwnedLocalPreviewRequest(tab, url, wc.id)) this.revokeActiveLocalFilePreview(tab)
       this.closeAuthSessionsForTab(tab.tabId, safeOrigin(displayUrl) === safeOrigin(tab.url) ? "page_changed" : "origin_changed")
       tab.url = displayUrl
       tab.securityState = securityStateForUrl(tab.url)
@@ -1709,7 +1718,13 @@ export class BrowserRuntime {
       const requestTab = [...this.tabs.values()].find((tab) => tab.webContents?.id === details.webContentsId)
       const guarded = policy.agent || Boolean(requestTab?.agentLease)
       const localPreviewRequest = requestTab ? this.isOwnedLocalPreviewRequest(requestTab, details.url, details.webContentsId) : false
-      callback({ cancel: policy.disposed || (guarded && !localPreviewRequest && !isAllowedNavigation(details.url, true, this.settings, requestTab?.approvedPrivateOrigins)) })
+      const isPreviewRequest = details.url.startsWith("lume-file://preview/")
+      callback({
+        cancel: policy.disposed
+          || (isPreviewRequest
+            ? !localPreviewRequest
+            : guarded && !isAllowedNavigation(details.url, true, this.settings, requestTab?.approvedPrivateOrigins)),
+      })
     })
     if (!agent) return
     const guard = new BrowserNetworkGuard({
