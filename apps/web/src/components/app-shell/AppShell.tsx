@@ -56,7 +56,7 @@ export function AppShell() {
         <div className={cn('flex min-h-0 flex-1 gap-1.5 pl-2', rightPanelExpanded ? 'pr-0' : 'pr-2')}>
           <LeftSidebar forceCollapsed={forceCompactSidebar} />
           <div className={cn(
-            'min-w-0 flex-1 overflow-hidden rounded-[10px] bg-[var(--lume-bg-panel)]',
+            'min-w-0 flex-1 overflow-hidden rounded-r-[10px] bg-[var(--lume-bg-rail)]',
             rightPanelVisible && 'mr-[-6px] rounded-r-none',
           )}>
             <MainArea />
