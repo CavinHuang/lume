@@ -126,6 +126,13 @@ export interface LumeConfigPermissionsSection {
 
 export type LumeConfigSubagentApprovalMode = "inherit" | "ask-parent" | "deny-high-risk"
 
+/** Obsidian Vault 集成：发现即授权，enabled 关闭时全部候选退出 agent 权限面。 */
+export interface LumeConfigObsidianSection {
+  enabled?: boolean
+  /** 非 Obsidian 注册表来源、用户手动添加的 Markdown 文件夹。 */
+  extraVaults?: string[]
+}
+
 export type LumeConfigApprovalAllowAlwaysPolicy = "disabled" | "desktop-only" | "dm-only" | "parent-only"
 
 export type LumeConfigImGroupApprovalPolicy = "disabled" | "desktop-only"
@@ -226,6 +233,7 @@ export interface LumeConfigSectionSet {
   skills?: LumeConfigSkillsSection
   plugins?: LumeConfigPluginsSection
   permissions?: LumeConfigPermissionsSection
+  obsidian?: LumeConfigObsidianSection
   hooks?: LumeConfigHooksSection
   webSearch?: LumeConfigWebSearchSection
 }
