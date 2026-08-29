@@ -13,9 +13,9 @@ import { Button } from '@/components/ui/button'
 import { computeGitGraphLayout } from './git-graph-lanes'
 
 const INITIAL_LIMIT = 200
-const ROW_HEIGHT = 44
-const LANE_WIDTH = 14
-const GRAPH_PAD_X = 10
+const ROW_HEIGHT = 56
+const LANE_WIDTH = 18
+const GRAPH_PAD_X = 12
 /** 泳道配色（按泳道序循环，与参考稿的多彩曲线一致） */
 const LANE_COLORS = ['#f97316', '#3b82f6', '#10b981', '#a855f7', '#eab308', '#ec4899', '#06b6d4', '#84cc16']
 
@@ -82,7 +82,7 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
           </div>
         </div>
 
-        <div className="grid shrink-0 grid-cols-[96px_1fr_110px_120px_72px] items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-1.5 text-[11.5px] font-medium text-[var(--text-3)]">
+        <div className="grid shrink-0 grid-cols-[72px_1fr_104px_110px_72px] items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-1.5 text-[11.5px] font-medium text-[var(--text-3)]">
           <span>图</span>
           <span>描述</span>
           <span>日期</span>
@@ -147,10 +147,10 @@ function GitGraphCommitRow({
   const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length]
 
   return (
-    <div className="grid grid-cols-[96px_1fr_110px_120px_72px] items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)] px-4 py-0 transition-colors hover:bg-[var(--surface-2)]">
+    <div className="grid grid-cols-[72px_1fr_104px_110px_72px] items-center gap-2 px-4 transition-colors hover:bg-[var(--surface-2)]">
       <div className="h-full">
         {row && (
-          <svg width={Math.max(graphWidth, 84)} height={ROW_HEIGHT} className="overflow-visible">
+          <svg width={graphWidth} height={ROW_HEIGHT}>
             {row.transit.map((lane) => (
               <line
                 key={`t${lane}`}
@@ -160,13 +160,14 @@ function GitGraphCommitRow({
                 y2={ROW_HEIGHT}
                 stroke={laneColor(lane)}
                 strokeWidth={2}
+                strokeLinecap="round"
               />
             ))}
             {row.outEdges.map((edge, index) => {
               const x1 = GRAPH_PAD_X + edge.from * LANE_WIDTH
               const x2 = GRAPH_PAD_X + edge.to * LANE_WIDTH
               return edge.from === edge.to ? (
-                <line key={`e${index}`} x1={x1} y1={ROW_HEIGHT / 2} x2={x2} y2={ROW_HEIGHT} stroke={laneColor(edge.from)} strokeWidth={2} />
+                <line key={`e${index}`} x1={x1} y1={ROW_HEIGHT / 2} x2={x2} y2={ROW_HEIGHT} stroke={laneColor(edge.from)} strokeWidth={2} strokeLinecap="round" />
               ) : (
                 <path
                   key={`e${index}`}
@@ -174,6 +175,7 @@ function GitGraphCommitRow({
                   fill="none"
                   stroke={laneColor(edge.from)}
                   strokeWidth={2}
+                  strokeLinecap="round"
                 />
               )
             })}
@@ -188,7 +190,7 @@ function GitGraphCommitRow({
           </svg>
         )}
       </div>
-      <div className="flex min-w-0 items-center gap-1.5 py-2">
+      <div className="flex min-w-0 items-center gap-1.5">
         {commit.refs.map((ref) => (
           <span
             key={ref}
@@ -198,7 +200,7 @@ function GitGraphCommitRow({
             <span className="max-w-[140px] truncate">{ref}</span>
           </span>
         ))}
-        <span className="min-w-0 truncate text-[12.5px] text-[var(--text-1)]" title={commit.subject}>
+        <span className="min-w-0 truncate text-[13px] text-[var(--text-1)]" title={commit.subject}>
           {commit.subject}
         </span>
       </div>
