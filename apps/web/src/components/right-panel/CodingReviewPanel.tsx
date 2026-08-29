@@ -63,6 +63,7 @@ import {
 import { openExternal, openInSystem, revealPathInSystem, sidecarCall, writeClipboardText } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import { ThreadWorktreeSelector } from './ThreadWorktreeSelector'
+import { pickWorktreeBaseBranch, worktreeBaseReviewSource } from './worktree-base-branch'
 
 interface DiffFileTreeFile {
   type: 'file'
@@ -289,6 +290,10 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
   // 切换 diff 根（THREAD_WORKTREE_UPDATED 推送会更新 atom，联动重拉）。
   const activeWorktreePath = useAtomValue(agentThreadsAtom)
     .find((thread) => thread.id === threadId)?.activeWorktree?.path
+  // 「Worktree vs 主分支」入口的基线（origin/main 优先），对齐 Proma 默认。
+  const worktreeBaseBranch = activeWorktreePath && availableSources
+    ? pickWorktreeBaseBranch(availableSources.branches)
+    : null
   const workspaceReviewSource: WorkspaceCodingReviewSource = activeSource.kind === 'last-turn' ? UNCOMMITTED_SOURCE : activeSource
   const workspaceStageFilter = activeSource.kind === 'uncommitted'
     || activeSource.kind === 'unstaged'
@@ -982,6 +987,16 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
               <ChevronDown className="size-3.5 text-[var(--lume-text-muted)]" />
             </DropdownMenuTrigger>
             <DropdownMenuContent className="min-w-52">
+              {activeWorktreePath && worktreeBaseBranch && (
+                <>
+                  <DropdownMenuItem onSelect={() => switchChangeSource(worktreeBaseReviewSource(worktreeBaseBranch))}>
+                    Worktree vs 主分支
+                    <span className="ml-1 max-w-24 truncate text-[11px] font-normal text-[var(--lume-text-muted)]">{worktreeBaseBranch}</span>
+                    {activeSource.kind === 'branch' && activeSource.baseRef === worktreeBaseBranch && <Check className="ml-auto size-3.5" />}
+                  </DropdownMenuItem>
+                  <DropdownMenuSeparator />
+                </>
+              )}
               <DropdownMenuItem onSelect={() => switchChangeSource(LAST_TURN_SOURCE)}>
                 最新轮次
                 {activeSource.kind === 'last-turn' && <Check className="ml-auto size-3.5" />}
