@@ -47,6 +47,10 @@ export interface RuntimeHostPorts {
   getThreadSDKMessages(id: string): SDKMessage[];
   getWorkspace(id: string): AgentWorkspace | undefined;
   resolveThreadWorkdir(threadId: string): ResolvedAgentWorkdir;
+  /** 线程绑定的 worktree 已失效时清除并广播，返回更新后的 meta；无绑定/仍有效返回 null。 */
+  clearInvalidThreadWorktree(threadId: string): Promise<AgentThreadMeta | null>;
+  /** 绑定/解绑线程活动 worktree（校验 linked + 主仓库根，成功即广播）。 */
+  bindThreadWorktree(threadId: string, worktreePath: string | null): Promise<AgentThreadMeta>;
   resolveThreadAttachmentPath(
     workspaceSlug: string | undefined,
     sessionId: string,

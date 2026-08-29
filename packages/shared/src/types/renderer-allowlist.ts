@@ -45,6 +45,7 @@ export const NOTIFY_ONLY_CHANNEL_VALUES: ReadonlySet<string> = new Set([
   "agent:plan-mode-phase-changed",
   "agent:skill-improvement-suggested",
   "agent:subagent-completed",
+  "agent:thread-worktree-updated",
   "agent:tool-permission-request",
   "agent:workspace-files-changed",
   "desktop-context:proposal-updated",

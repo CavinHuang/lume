@@ -559,7 +559,7 @@ export function appendAgentTranscriptMessage(
 export type AgentThreadMetaUpdates = Partial<
   Pick<
     AgentThreadMeta,
-    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
+    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt" | "activeWorktree"
   >
 > & {
   modelRef?: string | null;
