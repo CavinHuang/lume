@@ -29,6 +29,7 @@ import { ArchiveSettings } from './ArchiveSettings'
 import { SkillsSettings } from './SkillsSettings'
 import { BrowserSettings } from './BrowserSettings'
 import {
+  SETTINGS_NAV_GROUPS,
   SETTINGS_NAV_ITEMS,
   SETTINGS_PAGE_SUBTITLES,
   SETTINGS_PAGE_TITLES,
@@ -62,6 +63,7 @@ export function SettingsView() {
   }, [initialTab, clearInitialTab, archiveInitialView, clearArchiveInitialView])
   const title = SETTINGS_PAGE_TITLES[tab]
   const subtitle = SETTINGS_PAGE_SUBTITLES[tab]
+  const itemsById = new Map(SETTINGS_NAV_ITEMS.map((item) => [item.id, item]))
 
   const backToWorkspace = () => {
     const previous = tabs.filter((item) => item.type !== 'settings')
@@ -88,29 +90,38 @@ export function SettingsView() {
           <span>返回工作区</span>
         </Button>
         <ScrollArea className="min-h-0 flex-1 pr-1">
-          <nav className="space-y-1.5">
-            {SETTINGS_NAV_ITEMS.map((item) => {
-              const Icon = item.icon
-              const selected = tab === item.id
+          <nav className="space-y-4">
+            {SETTINGS_NAV_GROUPS.map((group) => (
+              <div key={group.label}>
+                <div className="mb-1 px-2.5 text-[11px] font-medium leading-4 text-[var(--text-3)]">{group.label}</div>
+                <div className="space-y-1">
+                  {group.items.map((id) => {
+                    const item = itemsById.get(id)
+                    if (!item) return null
+                    const Icon = item.icon
+                    const selected = tab === id
 
-              return (
-                <Button
-                  variant="ghost"
-                  key={item.id}
-                  type="button"
-                  onClick={() => setTab(item.id)}
-                  className={cn(
-                    'flex h-9 w-full items-center justify-start gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors',
-                    selected
-                      ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                      : 'text-[var(--text-2)]'
-                  )}
-                >
-                  <Icon size={16} strokeWidth={1.9} className="shrink-0" />
-                  <span>{item.label}</span>
-                </Button>
-              )
-            })}
+                    return (
+                      <Button
+                        variant="ghost"
+                        key={id}
+                        type="button"
+                        onClick={() => setTab(id)}
+                        className={cn(
+                          'flex h-9 w-full items-center justify-start gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors',
+                          selected
+                            ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
+                            : 'text-[var(--text-2)]'
+                        )}
+                      >
+                        <Icon size={16} strokeWidth={1.9} className="shrink-0" />
+                        <span>{item.label}</span>
+                      </Button>
+                    )
+                  })}
+                </div>
+              </div>
+            ))}
           </nav>
         </ScrollArea>
       </aside>

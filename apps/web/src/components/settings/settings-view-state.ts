@@ -70,6 +70,16 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'updates', label: '版本与更新', icon: RefreshCw },
 ]
 
+export const SETTINGS_NAV_GROUPS: Array<{
+  label: string
+  items: SettingsViewTab[]
+}> = [
+  { label: '基础设置', items: ['general', 'appearance', 'models', 'workspaces', 'shortcuts'] },
+  { label: 'Agent 能力', items: ['agents', 'skills', 'browser', 'desktop-assistant', 'memory', 'reading', 'permissions'] },
+  { label: '网络与连接', items: ['integrations', 'im-integrations', 'web-search', 'voice-input'] },
+  { label: '数据与维护', items: ['data', 'logs', 'archive', 'updates'] },
+]
+
 export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   general: '通用设置',
   appearance: '外观',
