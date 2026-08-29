@@ -131,6 +131,7 @@ import {
   getNodeReplRootPath,
   getSidecarScriptPath,
 } from './sidecar-process'
+import { getBundledOfficeCliPath, renderOfficeFileToHtml } from './office-preview'
 import * as trayManager from './tray-manager'
 import { PageRenderer } from './page-renderer'
 import { createDesktopHostSupervisor, type DesktopHostState } from './desktop-host-supervisor'
@@ -2771,6 +2772,32 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
     case 'revoke_file_preview_scope':
       previewScopes.revoke(String(payload.token ?? ''))
       return null
+    case 'render_office_preview': {
+      // docx/xlsx/pptx 高保真预览：sidecar 解析出绝对路径后交给 OfficeCLI 渲染成
+      // 临时 HTML，注册为 html-directory 作用域供沙箱 iframe 加载。
+      // 返回 null（二进制缺失/渲染失败）时渲染层回退内置 Office 查看器。
+      if (!context.ownerWebContentsId) throw new Error('preview scope owner is missing')
+      const resolved = payload.guardedRef
+        ? await sidecarHost.call('agent:resolve-guarded-file-ref', { guardedRef: payload.guardedRef }) as { path: string }
+        : await sidecarHost.call('agent:resolve-file-ref', { ref: payload.ref }) as { path: string }
+      ensureFile(resolved.path, '源文件不存在')
+      const rendered = await renderOfficeFileToHtml({
+        officeCliPath: getBundledOfficeCliPath({
+          appIsPackaged: app.isPackaged,
+          resourcesPath: process.resourcesPath,
+          desktopRoot: DESKTOP_ROOT,
+        }),
+        sourcePath: resolved.path,
+      })
+      if (!rendered) return null
+      const officeScope = previewScopes.create({
+        kind: 'html-directory',
+        ownerWebContentsId: context.ownerWebContentsId,
+        absolutePath: rendered.htmlPath,
+        generation: payload.generation,
+      })
+      return { token: officeScope.token, url: previewScopeUrl(officeScope), expiresAt: officeScope.expiresAt }
+    }
     case 'open_weread_key_webview': {
       const targetUrl = validateWereadUrl(payload.url)
       if (wereadWindow && !wereadWindow.isDestroyed()) {

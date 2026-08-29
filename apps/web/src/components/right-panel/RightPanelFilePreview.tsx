@@ -15,6 +15,8 @@ import {
   isDesktopRuntime,
   openGuardedFileRefInSystem,
   openFileRefInSystem,
+  renderGuardedOfficePreview,
+  renderOfficePreview,
   revealGuardedFileRefInSystem,
   revealFileRefInSystem,
   revokeFilePreviewScope,
@@ -27,6 +29,7 @@ import { isDocumentViewerKind } from './document-viewer/document-viewer-kinds'
 import { classifyFilePreview, isMissingFileError } from './file-preview-utils'
 import { cn } from '@/lib/utils'
 import { RightPanelHtmlPreview } from './RightPanelHtmlPreview'
+import { RightPanelOfficePreview } from './RightPanelOfficePreview'
 import { RightPanelSourcePreview } from './RightPanelSourcePreview'
 import { RightPanelPdbPreview } from './RightPanelPdbPreview'
 import { deleteFileEditorDraft, readFileEditorDraft, writeFileEditorDraft } from './file-editor-draft-store'
@@ -68,6 +71,7 @@ export function RightPanelFilePreview({
   const requestId = useRef(0)
   const [payload, setPayload] = useState<FileRefReadResult | null>(null)
   const [mediaScope, setMediaScope] = useState<{ token: string; url: string } | null>(null)
+  const [officeScope, setOfficeScope] = useState<{ token: string; url: string } | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sourceMode, setSourceMode] = useState(false)
@@ -114,6 +118,7 @@ export function RightPanelFilePreview({
     editStartedRef.current = ''
     setPayload(null)
     setMediaScope(null)
+    setOfficeScope(null)
     setError(null)
     setSourceMode(editorStateKey
       ? editorStatesRef.current[editorStateKey]?.sourceMode ?? Boolean(lineSelection && kind === 'markdown')
@@ -148,6 +153,7 @@ export function RightPanelFilePreview({
       }
       setLoading(true)
       let token: string | null = null
+      let officeToken: string | null = null
       let disposed = false
       const previewScopeChange = onPreviewScopeChangeRef.current
       const createScope = guardedRef
@@ -170,12 +176,30 @@ export function RightPanelFilePreview({
           }
         })
         .finally(() => { if (!disposed && current === requestId.current) setLoading(false) })
+      // Office 高保真渲染与 media scope 并行：成功切 iframe，失败/不可用留在内置查看器，回退零等待
+      if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        const officeRender = guardedRef
+          ? renderGuardedOfficePreview({ guardedRef, generation: current })
+          : renderOfficePreview({ ref: fileRef, generation: current })
+        void officeRender
+          .then((scope) => {
+            if (disposed || current !== requestId.current) {
+              if (scope) void revokeFilePreviewScope(scope.token)
+              return
+            }
+            if (!scope) return
+            officeToken = scope.token
+            setOfficeScope(scope)
+          })
+          .catch(() => { /* 渲染失败静默回退内置查看器 */ })
+      }
       return () => {
         disposed = true
         if (token) {
           void revokeFilePreviewScope(token)
           previewScopeChange?.(null)
         }
+        if (officeToken) void revokeFilePreviewScope(officeToken)
       }
     }
     setLoading(true)
@@ -476,13 +500,17 @@ export function RightPanelFilePreview({
             </FileLinkContextMenu>
           ) : null
         ) : isDocumentViewerKind(kind) && mediaScope ? (
-          <DocumentViewerHost
-            kind={kind}
-            fileRef={fileRef}
-            guardedRef={guardedRef}
-            mediaScope={mediaScope}
-            onOpenFile={onOpenFile}
-          />
+          officeScope ? (
+            <RightPanelOfficePreview url={officeScope.url} title={`${basename(fileRef.relativePath)} 高保真预览`} />
+          ) : (
+            <DocumentViewerHost
+              kind={kind}
+              fileRef={fileRef}
+              guardedRef={guardedRef}
+              mediaScope={mediaScope}
+              onOpenFile={onOpenFile}
+            />
+          )
         ) : kind === 'video' && mediaScope ? (
           <div className="flex h-full items-center justify-center bg-black/90 p-4">
             <video src={mediaScope.url} controls className="max-h-full max-w-full" />
