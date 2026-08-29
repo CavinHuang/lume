@@ -2,14 +2,14 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { memo, useEffect, useMemo, useRef, useState, type ClipboardEvent } from 'react'
 import type { ImProvider } from '@lume/shared'
 import { IM_PROVIDER_LABELS } from '@lume/shared'
-import { BookOpen, Check, ChevronDown, ChevronRight, Clock, Database, Edit3, History, Loader2, MessageSquareText, Package, Quote, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
+import { BookOpen, Check, ChevronDown, ChevronRight, Database, Edit3, History, Loader2, MessageSquareText, Package, Quote, Sparkles, Terminal, TriangleAlert, Wrench, X } from 'lucide-react'
 import { parseQuotedSelectionRefs } from '@/lib/quoted-selection'
 import { ToolResultRenderer } from './tool-result-renderers'
 import { AgentLoadingIndicator } from './AgentLoadingIndicator'
 import { cn } from '@/lib/utils'
 import { formatDurationLabel } from '@/lib/format-duration'
 import { activeTabIdAtom, capabilityDetailTargetAtom, generalSettingsAtom, memoryCenterDeepLinkAtom, tabsAtom } from '@/atoms'
-import type { RuntimeAssistantBlock, RuntimeMessageView, RuntimeToolCallView, TaskProgressViewEvent } from './runtime-message-view'
+import type { RuntimeAssistantBlock, RuntimeMessageView, RuntimeToolCallView } from './runtime-message-view'
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
@@ -192,9 +192,6 @@ export const RuntimeEventContentBlock = memo(function RuntimeEventContentBlock({
             onOpenThreadFile={onOpenThreadFile}
             onUserResizeStart={onUserResizeStart}
           />
-        )}
-        {latestTaskProgressBlock && (
-          <TaskProgressStatusLine event={latestTaskProgressBlock.event} />
         )}
         {message.retry && (
           <ShimmerStatusLine text={`正在重新连接 ${message.retry.attempt}/${message.retry.maxRetries}`} />
@@ -1094,132 +1091,6 @@ function findLatestTaskProgressBlock(blocks: RuntimeAssistantBlock[]): Extract<R
     if (block?.type === 'task_progress') return block
   }
   return undefined
-}
-
-export function getTaskProgressStatusText(event: TaskProgressViewEvent): string {
-  const current = event.currentTaskId
-    ? event.tasks.find((task) => task.id === event.currentTaskId)
-    : event.tasks.find((task) => task.status === 'running')
-  const title = current?.title || current?.description || current?.id
-  if (event.status === 'completed') return '任务已完成'
-  if (event.status === 'failed') return title ? `执行失败：${title}` : '任务执行失败'
-  if (event.status === 'cancelled') return '任务已取消'
-  if (event.status === 'waiting_for_user') return title ? `等待你的确认：${title}` : event.message?.trim() || '等待你的确认'
-  if (event.status === 'waiting_for_permission') return title ? `等待授权：${title}` : event.message?.trim() || '等待授权'
-  if (event.status === 'pending') return title ? `准备执行：${title}` : event.message?.trim() || '准备执行任务'
-  if (title) return `正在执行：${title}`
-  return event.message?.trim() || '正在执行任务'
-}
-
-function TaskProgressStatusLine({ event }: { event: TaskProgressViewEvent }) {
-  const [expanded, setExpanded] = useState(event.status !== 'completed')
-  const shouldRenderTasks = useDeferredUnmount(expanded)
-  const completedCount = event.tasks.filter((task) => task.status === 'completed' || task.status === 'skipped').length
-  const failedCount = event.tasks.filter((task) => task.status === 'failed').length
-  const isRunning = event.status === 'pending' || event.status === 'in_progress' || event.status === 'running'
-  const isWaiting = event.status === 'waiting_for_user' || event.status === 'waiting_for_permission'
-
-  useEffect(() => {
-    if (event.status === 'failed') {
-      setExpanded(true)
-      return undefined
-    }
-    if (event.status !== 'completed' && event.status !== 'cancelled') return undefined
-    const timeoutId = window.setTimeout(() => setExpanded(false), 650)
-    return () => window.clearTimeout(timeoutId)
-  }, [event.status])
-
-  if (event.tasks.length === 0) {
-    return isRunning
-      ? <ShimmerStatusLine text={getTaskProgressStatusText(event)} />
-      : <div className="text-[12px] text-[var(--lume-text-muted)]">{getTaskProgressStatusText(event)}</div>
-  }
-
-  return (
-    <div data-task-progress={event.status} className="max-w-[560px] overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)]/60">
-      <Button
-        type="button"
-        variant="ghost"
-        aria-expanded={expanded}
-        onClick={() => setExpanded((value) => !value)}
-        className="flex h-auto w-full items-center gap-2 rounded-xl px-2.5 py-2 text-left hover:bg-[var(--lume-bg-elevated)]"
-      >
-        <span className={cn(
-          'flex size-6 shrink-0 items-center justify-center rounded-full border transition-colors duration-300',
-          failedCount > 0
-            ? 'border-destructive/25 bg-destructive/8 text-destructive'
-            : isWaiting
-              ? 'border-[color:color-mix(in_oklab,var(--lume-warning)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-warning)_10%,transparent)] text-[var(--lume-warning)]'
-            : isRunning
-              ? 'border-[color:color-mix(in_oklab,var(--lume-accent)_28%,var(--lume-border-subtle))] bg-[var(--lume-accent-soft)] text-[var(--lume-accent)]'
-              : event.status === 'cancelled'
-                ? 'border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] text-[var(--lume-text-muted)]'
-              : 'border-[color:color-mix(in_oklab,var(--lume-success)_28%,var(--lume-border-subtle))] bg-[color:color-mix(in_oklab,var(--lume-success)_10%,transparent)] text-[var(--lume-success)]',
-        )}>
-          {failedCount > 0
-            ? <TriangleAlert size={13} />
-            : isWaiting
-              ? <Clock size={13} />
-            : isRunning
-              ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
-              : event.status === 'cancelled'
-                ? <X size={13} />
-              : <Check size={13} />}
-        </span>
-        <span className="min-w-0 flex-1">
-          <span className={cn(
-            'block truncate text-[12.5px] font-medium text-[var(--lume-text-secondary)]',
-            isRunning && 'lume-shimmer-text',
-          )}>
-            {getTaskProgressStatusText(event)}
-          </span>
-          <span className="block text-[10.5px] tabular-nums text-[var(--lume-text-muted)]">
-            已完成 {completedCount}/{event.tasks.length}{failedCount > 0 ? ` · ${failedCount} 失败` : ''}
-          </span>
-        </span>
-        <ChevronRight size={13} className={cn('shrink-0 text-[var(--lume-text-muted)] transition-transform duration-300', expanded && 'rotate-90')} />
-      </Button>
-      {shouldRenderTasks && (
-        <AnimatedCollapsiblePanel open={expanded}>
-          <div className="border-t border-[var(--lume-border-subtle)] px-2 py-1.5">
-            {event.tasks.map((task, index) => {
-              const running = task.status === 'running' || task.status === 'in_progress'
-              const detail = task.error || task.blockedReason || (running ? task.description : undefined)
-              const title = task.title || task.subject || task.description || task.id
-              return (
-                <div
-                  key={task.id}
-                  className="animate-in fade-in slide-in-from-top-1 fill-mode-both rounded-lg px-1.5 py-1.5 duration-300 motion-reduce:animate-none"
-                  style={{ animationDelay: `${index * 80}ms` }}
-                >
-                  <div className="flex items-center gap-2 text-[11.5px] text-[var(--lume-text-secondary)]">
-                    <span className="flex size-4 shrink-0 items-center justify-center">
-                      {task.status === 'completed'
-                        ? <Check size={12} className="text-[var(--lume-success)]" />
-                        : task.status === 'failed'
-                          ? <TriangleAlert size={12} className="text-destructive" />
-                          : running
-                            ? <Loader2 size={12} className="animate-spin text-[var(--lume-accent)] motion-reduce:animate-none" />
-                            : <Clock size={11} className="text-[var(--lume-text-muted)]" />}
-                    </span>
-                    <span className={cn('min-w-0 flex-1 truncate', task.status === 'completed' && 'text-[var(--lume-text-muted)]')}>{title}</span>
-                    {task.attemptCount && task.attemptCount > 1 ? (
-                      <span className="shrink-0 text-[10px] tabular-nums text-[var(--lume-text-muted)]">第 {task.attemptCount} 次</span>
-                    ) : null}
-                  </div>
-                  {detail && detail !== title ? (
-                    <p className={cn('ml-6 mt-0.5 line-clamp-2 text-[10.5px] leading-4 text-[var(--lume-text-muted)]', task.status === 'failed' && 'text-destructive/80')}>
-                      {detail}
-                    </p>
-                  ) : null}
-                </div>
-              )
-            })}
-          </div>
-        </AnimatedCollapsiblePanel>
-      )}
-    </div>
-  )
 }
 
 function ShimmerStatusLine({ text }: { text: string }) {
