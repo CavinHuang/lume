@@ -585,10 +585,10 @@ export function SkillsMarketView() {
       <div className="mx-auto w-full max-w-[1100px]">
         <header className="flex items-start justify-between gap-5">
           <div className="min-w-0">
-            <h1 className="text-[26px] font-bold leading-tight text-[var(--text-1)]">插件市场</h1>
-            <p className="mt-2 text-[14px] text-[var(--text-2)]">用插件为 Lume 扩展技能、命令与 MCP 能力</p>
+            <h1 className="text-[28px] font-bold leading-tight text-[var(--text-1)]">插件市场</h1>
+            <p className="mt-2 text-[15px] text-[var(--text-2)]">用插件为 Lume 扩展技能、命令与 MCP 能力</p>
           </div>
-          <div className="flex shrink-0 items-center gap-1.5">
+          <div className="flex shrink-0 items-center gap-2">
             <Button
               variant="ghost"
               type="button"
@@ -596,8 +596,9 @@ export function SkillsMarketView() {
               disabled={syncing}
               onClick={() => void loadCatalog('force-refresh', true)}
               title="同步市场"
+              className="size-9 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] text-[var(--text-2)] hover:text-[var(--text-1)]"
             >
-              <RefreshCw size={16} className={cn(syncing && 'animate-spin')} />
+              <RefreshCw size={15} className={cn(syncing && 'animate-spin')} />
             </Button>
             <Button
               variant="ghost"
@@ -605,13 +606,14 @@ export function SkillsMarketView() {
               size="icon"
               onClick={() => setSourcePanelOpen(true)}
               title="市场源设置"
+              className="size-9 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] text-[var(--text-2)] hover:text-[var(--text-1)]"
             >
-              <SlidersHorizontal size={16} />
+              <SlidersHorizontal size={15} />
             </Button>
             <Button
               type="button"
               onClick={() => setSourceDialogOpen(true)}
-              className="ml-1 h-8 gap-1 rounded-lg px-3 text-[13px] font-semibold"
+              className="ml-1 h-9 gap-1 rounded-lg px-3.5 text-[13.5px] font-semibold"
             >
               <Plus size={15} />
               新建
@@ -619,20 +621,20 @@ export function SkillsMarketView() {
           </div>
         </header>
 
-        <label className="mt-5 flex h-10 items-center gap-2.5 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] px-3.5 text-[var(--text-3)] transition-colors focus-within:border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))]">
+        <label className="mt-6 flex h-11 items-center gap-2.5 rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] px-4 text-[var(--text-3)] transition-colors focus-within:border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))]">
           <Search size={16} />
           <Input
             value={query}
             onChange={(event) => setQuery(event.target.value)}
             placeholder="搜索插件"
-            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[13.5px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
+            className="h-full min-w-0 flex-1 border-0 bg-transparent px-0 text-[14px] text-[var(--text-1)] shadow-none outline-none placeholder:text-[var(--text-3)] focus-visible:ring-0"
           />
         </label>
 
         {installedCards.length > 0 && (
           <section className="mt-8">
             <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5">
-              <h2 className="text-[15px] font-semibold text-[var(--text-1)]">已安装</h2>
+              <h2 className="text-[16px] font-semibold text-[var(--text-1)]">已安装</h2>
               <Button
                 variant="ghost"
                 type="button"
@@ -703,11 +705,11 @@ export function SkillsMarketView() {
               </div>
             )}
             {sections.map((section) => (
-              <section key={section.category} className="mt-7">
-                <h2 className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5 text-[15px] font-semibold text-[var(--text-1)]">
+              <section key={section.category} className="mt-8">
+                <h2 className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5 text-[16px] font-semibold text-[var(--text-1)]">
                   {section.category}
                 </h2>
-                <div className="mt-1.5 grid grid-cols-2 gap-x-10">
+                <div className="mt-2 grid grid-cols-2 gap-x-12">
                   {section.cards.map((card) => (
                     <MarketItemRow
                       key={`${card.kind}:${card.id}`}
@@ -775,13 +777,13 @@ function InstalledCardIcon({ card, onOpenDetail }: { card: MarketDisplayCard; on
       onClick={onOpenDetail}
       title={card.name}
       className={cn(
-        'flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-[10px] transition-transform hover:scale-105',
+        'flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[11px] transition-transform hover:scale-105',
         iconToneClass(card.tone),
       )}
     >
       {plugin
-        ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-6" />
-        : <Icon size={20} strokeWidth={2.2} />}
+        ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-7" />
+        : <Icon size={22} strokeWidth={2.2} />}
     </button>
   )
 }
@@ -816,7 +818,7 @@ function MarketItemRow({
           onOpenDetail()
         }
       }}
-      className="group flex min-w-0 cursor-pointer items-center gap-3.5 rounded-lg px-2 py-3 transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]"
+      className="group flex min-w-0 cursor-pointer items-center gap-3.5 rounded-lg px-2 py-3.5 transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]"
     >
       <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-[10px]', iconToneClass(card.tone))}>
         {plugin
