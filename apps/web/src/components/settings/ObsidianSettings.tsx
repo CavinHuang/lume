@@ -4,7 +4,8 @@
  */
 
 import { useCallback, useEffect, useState } from 'react'
-import { BookMarked, FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { FolderOpen, Loader2, Trash2 } from 'lucide-react'
+import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import { toast } from 'sonner'
 import type { ObsidianVaultConfig } from '@lume/shared'
 import {
@@ -80,7 +81,7 @@ export function ObsidianSettings() {
     <section className="lume-panel">
       <div className="flex items-center gap-2.5 border-b border-[var(--border)] px-4 py-3">
         <div className="flex size-8 items-center justify-center rounded-[8px] bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-2))] text-[var(--brand)]">
-          <BookMarked size={16} />
+          <ObsidianIcon size={16} />
         </div>
         <div className="min-w-0 flex-1">
           <h3 className="text-[14px] font-semibold text-[var(--text-1)]">Obsidian Vault</h3>
@@ -101,7 +102,7 @@ export function ObsidianSettings() {
           <ul className="flex flex-col gap-1.5">
             {config.candidates.map((vault) => (
               <li key={vault.path} className="flex items-center gap-2 rounded-[6px] border border-[var(--border)] px-2.5 py-1.5">
-                <BookMarked size={14} className="shrink-0 text-[var(--text-3)]" />
+                <ObsidianIcon size={14} className="shrink-0 text-[var(--text-3)]" />
                 <div className="min-w-0 flex-1">
                   <p className="truncate text-[12.5px] font-medium text-[var(--text-1)]">{vault.displayName}</p>
                   <p className="truncate text-[11px] text-[var(--text-3)]" title={vault.path}>{vault.path}</p>
@@ -125,7 +126,7 @@ export function ObsidianSettings() {
         )}
         <div className="mt-3 flex items-center justify-end gap-2">
           <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[12px]" disabled={!enabled || busy} onClick={createManaged}>
-            <BookMarked size={13} />创建 Lume Vault
+            <ObsidianIcon size={13} />创建 Lume Vault
           </Button>
           <Button variant="outline" size="sm" className="h-7 gap-1.5 text-[12px]" disabled={!enabled || busy} onClick={addFolder}>
             <FolderOpen size={13} />添加文件夹

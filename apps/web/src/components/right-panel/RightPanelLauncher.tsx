@@ -1,5 +1,7 @@
-import { BookMarked, FileDiff, FolderOpen, Globe, type LucideIcon } from 'lucide-react'
+import { FileDiff, FolderOpen, Globe } from 'lucide-react'
+import type { ComponentType } from 'react'
 import type { RightPanelFunction } from './right-panel-state'
+import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 
 import { Button } from '@/components/ui/button'
 interface RightPanelLauncherProps {
@@ -15,11 +17,11 @@ const LAUNCHER_ITEMS: Array<{
   type: RightPanelFunction
   label: string
   shortcut?: string
-  Icon: LucideIcon
+  Icon: ComponentType<{ size?: number | string; className?: string }>
 }> = [
   { type: 'browser', label: '浏览器', shortcut: '⌘T', Icon: Globe },
   { type: 'files', label: '文件', shortcut: '⌘P', Icon: FolderOpen },
-  { type: 'vault', label: 'Obsidian Vault', Icon: BookMarked },
+  { type: 'vault', label: 'Obsidian Vault', Icon: ObsidianIcon },
 ]
 
 export function RightPanelLauncher({ onOpen, review, onOpenReview }: RightPanelLauncherProps) {

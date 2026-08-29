@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
 import { useAtomValue, useSetAtom } from 'jotai'
-import { BookMarked, ChevronsUpDown, CircleHelp, FilePlus, Folder, FolderOpen, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { ChevronsUpDown, CircleHelp, FilePlus, Folder, FolderOpen, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react'
+import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import { toast } from 'sonner'
 import type { ObsidianVaultConfig, ObsidianVaultFileEntry, ObsidianVaultReadResult } from '@lume/shared'
 import {
@@ -288,6 +289,16 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
     await openFileIn(vaultPath, relativePath)
   }, [flushPendingSave, openFileIn, vaultPath])
 
+  // 编辑区滚轮转发：落在标题栏/留白上的滚动交给 CodeMirror 内容区（Proma 同款）。
+  const editorPaneRef = useRef<HTMLDivElement | null>(null)
+  const handleEditorPageWheel = useCallback((event: ReactWheelEvent<HTMLDivElement>): void => {
+    if ((event.target as HTMLElement).closest('.vault-ink-mde')) return
+    const scroller = editorPaneRef.current?.querySelector<HTMLElement>('.vault-ink-mde .cm-scroller')
+    if (!scroller) return
+    scroller.scrollTop += event.deltaY
+    scroller.scrollLeft += event.deltaX
+  }, [])
+
   // 首次进入面板：拉配置并选中第一个 vault。
   useEffect(() => {
     let cancelled = false
@@ -439,8 +450,7 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
     }
   }, [connectVault])
 
-  const startTreeResize = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {
-    if (event.button !== 0) return
+  const startTreeResize = useCallback((event: ReactPointerEvent<HTMLDivElement>): void => {    if (event.button !== 0) return
     event.preventDefault()
     const startX = event.clientX
     const startWidth = treeWidthRef.current
@@ -512,10 +522,11 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
                         type="button"
                         aria-expanded={visibleFolders.has(node.path)}
                         onClick={() => toggleFolder(node.path)}
-                        className="flex w-full items-center gap-1 rounded px-1.5 py-[3px] text-left text-[12px] text-foreground/75 hover:bg-[var(--lume-bg-elevated)]"
+                        className="relative flex w-full items-center gap-1 rounded py-[3px] pr-1.5 text-left text-[12px] text-foreground/75 hover:bg-[var(--lume-bg-elevated)]"
                         style={{ paddingLeft: 6 + depth * 12 }}
                         title={node.path}
                       >
+                        <IndentationGuides depth={depth} />
                         <ChevronGlyph expanded={visibleFolders.has(node.path)} />
                         {visibleFolders.has(node.path) ? <FolderOpen size={13} className="shrink-0 text-foreground/50" /> : <Folder size={13} className="shrink-0 text-foreground/50" />}
                         <span className="min-w-0 flex-1 truncate">{node.name}</span>
@@ -531,16 +542,17 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
                 <div
                   key={node.path}
                   className={cn(
-                    'group flex w-full items-center gap-1 rounded pr-1 text-[12px] hover:bg-[var(--lume-bg-elevated)]',
+                    'group relative flex w-full items-center gap-1 rounded py-[3px] pr-1 text-[12px] hover:bg-[var(--lume-bg-elevated)]',
                     selectedFile?.path === node.path ? 'bg-[var(--lume-bg-elevated)] text-foreground' : 'text-foreground/75',
                   )}
                   style={{ paddingLeft: 6 + depth * 12 }}
                 >
+                  <IndentationGuides depth={depth} />
                   <button
                     type="button"
                     title={node.path}
                     onClick={() => void openFile(node.path)}
-                    className="flex min-w-0 flex-1 items-center gap-1 py-[3px] text-left"
+                    className="flex min-w-0 flex-1 items-center gap-1 text-left"
                   >
                     <span className="w-3 shrink-0" />
                     <FileTypeIcon filename={node.name} size={13} />
@@ -583,7 +595,7 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
                     vault.path === vaultPath && 'bg-[var(--lume-bg-elevated)]',
                   )}
                 >
-                  <BookMarked size={13} className="shrink-0 text-foreground/50" />
+                  <ObsidianIcon size={13} className="shrink-0 text-foreground/50" />
                   <span className="min-w-0 flex-1 truncate">{vault.displayName}</span>
                   {vault.isManaged && <span className="shrink-0 text-[10px] text-foreground/45">Lume 自建</span>}
                 </button>
@@ -609,7 +621,11 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
       </aside>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col">
         {selectedFile ? (
-          <div className="vault-note-editor flex min-h-0 flex-1 flex-col overflow-hidden">
+          <div
+            ref={editorPaneRef}
+            onWheel={handleEditorPageWheel}
+            className="vault-note-editor flex min-h-0 flex-1 flex-col overflow-hidden"
+          >
             <div className="vault-note-editor-titlebar flex min-w-0 items-center gap-2 pt-3">
               <input
                 aria-label="重命名笔记"
@@ -724,5 +740,21 @@ function ChevronGlyph({ expanded }: { expanded: boolean }): React.ReactElement {
     >
       <path d="M3 1.5 L7 5 L3 8.5" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
+  )
+}
+
+/** 缩进参考线：与各级父文件夹的箭头中心对齐（Proma 树的同款装饰）。 */
+function IndentationGuides({ depth }: { depth: number }): React.ReactElement {
+  return (
+    <>
+      {Array.from({ length: depth }, (_, level) => (
+        <span
+          key={level}
+          aria-hidden="true"
+          className="absolute top-0 bottom-0 w-px bg-border/50"
+          style={{ left: 11 + level * 12 }}
+        />
+      ))}
+    </>
   )
 }

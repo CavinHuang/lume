@@ -144,6 +144,10 @@ export function CodingTurnFileChangesSummary({
   }
 
   const vaultFocus = report.vaultFocus
+  // Proma 同款标签：只显示末段名称（文件夹带 /），完整路径放 Tooltip。
+  const vaultFocusLabel = vaultFocus
+    ? `${vaultFocus.focus.relativePath.split('/').filter(Boolean).pop() || vaultFocus.displayName}${vaultFocus.focus.kind === 'folder' ? '/' : ''}`
+    : ''
   return (
     <div className="flex max-w-[640px] flex-col gap-1.5">
       {vaultFocus && (
@@ -153,12 +157,11 @@ export function CodingTurnFileChangesSummary({
               <button
                 type="button"
                 onClick={openVaultFocus}
-                aria-label="打开本轮 Obsidian 上下文"
+                aria-label={`打开本轮 Obsidian 上下文 ${vaultFocusLabel}`}
                 className="flex w-fit items-center gap-1.5 rounded-full border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_68%,transparent)] px-2.5 py-1 text-[11px] text-[var(--lume-text-secondary)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
               >
                 <ObsidianIcon size={12} className="shrink-0" />
-                <span className="font-medium">{vaultFocus.displayName}</span>
-                {vaultFocus.focus.relativePath && <span className="max-w-[280px] truncate">{vaultFocus.focus.relativePath}</span>}
+                <span className="max-w-[240px] truncate">{vaultFocusLabel}</span>
               </button>
             }
           />
