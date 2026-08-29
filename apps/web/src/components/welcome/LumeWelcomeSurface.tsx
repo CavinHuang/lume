@@ -1,10 +1,10 @@
 import type { Editor } from '@tiptap/react'
 import { EditorContent } from '@tiptap/react'
-import { Loader2, LoaderCircle, FileText, MonitorOff, Plus, Send } from 'lucide-react'
+import { ArrowUp, Loader2, LoaderCircle, FileText, MonitorOff, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
-import { getLumeComposerPrimaryActionClassName, LumeComposer } from '@/components/composer/LumeComposer'
+import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import { PendingAttachmentList } from '@/components/agent/PendingAttachmentList'
 import { type AgentWelcomeSuggestion, type DesktopContextTarget } from '@lume/shared'
@@ -172,7 +172,7 @@ export function LumeWelcomeSurface({
                       title="添加"
                       onClick={handleToggleAttachMenu}
                       disabled={sending}
-                      className="inline-flex size-8 items-center justify-center rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_88%,transparent)] text-[var(--text-2)] transition-colors hover:border-[color:color-mix(in_oklab,var(--lume-accent)_18%,transparent)] hover:text-[var(--text-1)]"
+                      className="inline-flex size-8 items-center justify-center rounded-lg text-[var(--text-2)] transition-colors hover:bg-[var(--surface-3)] hover:text-[var(--text-1)]"
                     >
                       <Plus size={15} />
                     </Button>
@@ -240,16 +240,20 @@ export function LumeWelcomeSurface({
                       </>
                     )}
                   </div>
-                  {composerModelPicker}
                   {permissionModePicker}
+                </>
+              }
+              trailingTools={
+                <>
+                  {composerModelPicker}
                   {thinkingLevelPicker}
                 </>
               }
+              footerClassName="border-t-0"
               actionSlot={
                 composerState.showBusy ? (
-                  <div className="inline-flex h-8 min-w-[76px] items-center justify-center gap-2 rounded-full bg-[var(--lume-accent)] px-3 text-[12px] font-medium text-[var(--lume-accent-foreground)]">
-                    <Loader2 size={15} className="animate-spin" />
-                    发送中
+                  <div className="inline-flex size-8 items-center justify-center rounded-lg bg-[var(--lume-accent)] text-[var(--lume-accent-foreground)]">
+                    <Loader2 size={16} className="animate-spin" />
                   </div>
                 ) : (
                   <Button
@@ -258,10 +262,14 @@ export function LumeWelcomeSurface({
                     title="发送"
                     onClick={onSend}
                     disabled={!composerState.canSend}
-                    className={getLumeComposerPrimaryActionClassName({ enabled: composerState.canSend })}
+                    className={cn(
+                      'inline-flex size-8 items-center justify-center rounded-lg transition-colors duration-150 ease-out',
+                      composerState.canSend
+                        ? 'bg-[var(--lume-accent)] text-[var(--lume-accent-foreground)] hover:bg-[color:color-mix(in_oklab,var(--lume-accent)_88%,var(--lume-accent-2))]'
+                        : 'cursor-not-allowed bg-[color:color-mix(in_oklab,var(--lume-accent)_40%,var(--lume-bg-elevated))] text-[var(--lume-accent-foreground)] opacity-55',
+                    )}
                   >
-                    发送
-                    <Send size={15} />
+                    <ArrowUp size={16} />
                   </Button>
                 )
               }

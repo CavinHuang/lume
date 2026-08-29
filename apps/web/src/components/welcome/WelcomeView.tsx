@@ -674,7 +674,7 @@ export function WelcomeView({
           />
         }
         thinkingLevelPicker={
-          <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
+          <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} menuAlign="right" />
         }
         permissionModePicker={
           <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />

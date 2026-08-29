@@ -29,9 +29,11 @@ export interface ThinkingLevelPickerProps {
   onChange: (value: LumeConfigThinkingLevel) => void
   /** 内嵌模式，不使用 popover 包装 */
   inline?: boolean
+  /** 弹层对齐侧；控件位于工具栏右侧时用 right 避免溢出 */
+  menuAlign?: 'left' | 'right'
 }
 
-export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPickerProps) {
+export function ThinkingLevelPicker({ value, onChange, inline, menuAlign = 'left' }: ThinkingLevelPickerProps) {
   const [open, setOpen] = useState(false)
   const menuRef = useRef<HTMLDivElement>(null)
 
@@ -66,14 +68,15 @@ export function ThinkingLevelPicker({ value, onChange, inline }: ThinkingLevelPi
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={composerControlTriggerClassName}
+        title={`思考等级: ${current.label}`}
       >
         <Brain size={14} />
-        <span className="lume-composer-control-label">思考: {current.label}</span>
+        <span className="lume-composer-control-label">{current.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
       </Button>
 
       {open && (
-        <div className={cn(composerControlMenuClassName, 'min-w-[240px] p-1.5')}>
+        <div className={cn(composerControlMenuClassName, menuAlign === 'right' && 'left-auto right-0', 'min-w-[240px] p-1.5')}>
           <ThinkingLevelCards value={value} onSelect={handleSelect} />
         </div>
       )}

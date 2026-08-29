@@ -26,6 +26,14 @@ export const TONE_CLASS: Record<PermissionModeTone, string> = {
     'bg-violet-500/10 text-violet-600 border-violet-500/15 dark:text-violet-400',
 }
 
+/** 输入框工具栏触发器用的纯文本色调；sky 是默认受控档，保持中性灰 */
+export const TONE_TEXT_CLASS: Record<PermissionModeTone, string> = {
+  sky: '',
+  emerald: 'text-emerald-600 dark:text-emerald-400',
+  amber: 'text-amber-700 dark:text-amber-300',
+  violet: 'text-violet-600 dark:text-violet-400',
+}
+
 export interface ThinkingLevelOption {
   value: LumeConfigThinkingLevel
   label: string
