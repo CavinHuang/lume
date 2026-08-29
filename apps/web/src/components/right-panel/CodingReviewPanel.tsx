@@ -51,7 +51,7 @@ import {
   requestSessionCodingDiff,
   type CodingDiffPayload,
 } from '@/components/right-panel/coding-diff-cache'
-import { agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentRuntimeEventsFamily } from '@/atoms'
+import { agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentRuntimeEventsFamily, agentThreadsAtom } from '@/atoms'
 import {
   codingReviewFileKey,
   codingReviewPreferencesAtom,
@@ -62,6 +62,7 @@ import {
 } from '@/atoms/right-panel-atoms'
 import { openExternal, openInSystem, revealPathInSystem, sidecarCall, writeClipboardText } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
+import { ThreadWorktreeSelector } from './ThreadWorktreeSelector'
 
 interface DiffFileTreeFile {
   type: 'file'
@@ -284,6 +285,10 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
   const [scrollPositions, setScrollPositions] = useAtom(codingReviewScrollPositionsAtom)
   const reviewStatus = useAtomValue(codingReviewStatusAtom)[threadId]
   const reviewStatusAction = useSetAtom(codingReviewStatusActionAtom)
+  // 线程绑定的活动 worktree：sidecar 侧按线程 cwd 解析变更根，绑定变化即
+  // 切换 diff 根（THREAD_WORKTREE_UPDATED 推送会更新 atom，联动重拉）。
+  const activeWorktreePath = useAtomValue(agentThreadsAtom)
+    .find((thread) => thread.id === threadId)?.activeWorktree?.path
   const workspaceReviewSource: WorkspaceCodingReviewSource = activeSource.kind === 'last-turn' ? UNCOMMITTED_SOURCE : activeSource
   const workspaceStageFilter = activeSource.kind === 'uncommitted'
     || activeSource.kind === 'unstaged'
@@ -400,7 +405,14 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
     return () => {
       cancelled = true
     }
-  }, [refreshKey, state.runId, threadId, workspaceReviewSource])
+  }, [refreshKey, state.runId, threadId, workspaceReviewSource, activeWorktreePath])
+
+  // 绑定 worktree 切换后，旧根的 diff 缓存与展开状态不再可信，全部作废重拉。
+  useEffect(() => {
+    setReviews({})
+    setDiffErrors({})
+    setLoadingDiffs(new Set())
+  }, [activeWorktreePath])
 
   useEffect(() => {
     let cancelled = false
@@ -416,7 +428,7 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
     return () => {
       cancelled = true
     }
-  }, [refreshKey, state.runId, state.selectedRootId, threadId])
+  }, [refreshKey, state.runId, state.selectedRootId, threadId, activeWorktreePath])
 
   useEffect(() => {
     if (!availableSources || activeSource.kind === 'last-turn' || activeSource.kind === 'uncommitted') return
@@ -1030,6 +1042,7 @@ export function CodingReviewPanel({ threadId, state, onOpenFile }: {
               )}
             </DropdownMenuContent>
           </DropdownMenu>
+          <ThreadWorktreeSelector threadId={threadId} onChanged={refreshDiffs} />
           <span className="text-[12px] tabular-nums text-[var(--lume-success)]">+{totalAdded}</span>
           <span className="text-[12px] tabular-nums text-[var(--lume-danger)]">-{totalRemoved}</span>
           <div className="ml-auto flex min-w-0 items-center gap-0.5">
