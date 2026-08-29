@@ -102,7 +102,7 @@ export function PluginDetailPage({
           disabled={!canUpdate || busy}
           onClick={() => setInstallDialogOpen(true)}
           data-plugin-detail-install-action={canUpdate && !busy ? 'enabled' : 'disabled'}
-          className="h-9 gap-1.5 rounded-lg px-4 text-[13px] font-semibold"
+          className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
         >
           {busy ? <Loader2 size={15} className="animate-spin" /> : null}
           {updateAction?.label ?? '确认权限并更新'}
@@ -116,9 +116,9 @@ export function PluginDetailPage({
           disabled={busy}
           onClick={onTryInChat}
           data-plugin-detail-header-action="try"
-          className="h-9 gap-1.5 rounded-lg px-4 text-[13px] font-semibold"
+          className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
         >
-          <Sparkles size={15} />
+          <Sparkles size={14} />
           立即试用
         </Button>
       )
@@ -130,7 +130,7 @@ export function PluginDetailPage({
           disabled={busy}
           onClick={onToggleEnable}
           data-plugin-detail-header-action="enable"
-          className="h-9 gap-1.5 rounded-lg px-4 text-[13px] font-semibold"
+          className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
         >
           <Power size={15} />
           启用
@@ -143,7 +143,7 @@ export function PluginDetailPage({
         disabled={!canInstall || busy}
         onClick={() => setInstallDialogOpen(true)}
         data-plugin-detail-install-action={canInstall && !busy ? 'enabled' : 'disabled'}
-        className="h-9 gap-1.5 rounded-lg px-4 text-[13px] font-semibold"
+        className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
       >
         {busy ? <Loader2 size={15} className="animate-spin" /> : null}
         确认权限并安装
