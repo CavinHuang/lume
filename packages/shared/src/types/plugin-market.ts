@@ -258,6 +258,12 @@ export interface InspectMarketSourceInput {
   source: InspectMarketSourceRef
 }
 
+/** 插件内包含的技能摘要（详情页技能分区展示） */
+export interface PluginSkillSummary {
+  name: string
+  description?: string
+}
+
 export interface InspectPluginResult {
   kind: "plugin"
   normalized: {
@@ -267,7 +273,13 @@ export interface InspectPluginResult {
     manifestFormat?: "lume" | "codex" | "legacy"
     displayName?: string
     description?: string
+    /** 插件清单声明的作者 */
+    author?: string
+    /** inspect 时的插件根目录 */
+    root?: string
   }
+  /** 插件内包含的技能明细（读各技能 SKILL.md frontmatter） */
+  skills?: PluginSkillSummary[]
   permissionSummary: PluginPermissionSummary
   permissionsHash: string
   installState: MarketInstallState

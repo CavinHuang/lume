@@ -59,6 +59,7 @@ import type {
   PluginMarketplaceSetupStep,
   PluginPermissionSummary,
   PluginReadmePreview,
+  PluginSkillSummary,
   PluginSourceRef,
   PluginSetupArch,
   PluginSetupArtifact,
@@ -77,6 +78,7 @@ import type {
   UpdatePluginResult,
 } from "@lume/shared";
 import { parseMcpImportPayload } from "@lume/shared";
+import { parseSkillFrontmatter } from "../skills/skill-frontmatter";
 import {
   getGitHubSkillReview,
   installGitHubSkillToWorkspace,
@@ -1033,6 +1035,7 @@ export class PluginMarketService {
     return {
       kind: "plugin",
       normalized,
+      skills: this.readPluginSkillSummaries(normalized),
       permissionSummary: summarizePermissions(normalized.permissions),
       permissionsHash,
       installState: state
@@ -1041,6 +1044,45 @@ export class PluginMarketService {
       enableState: this.resolveEnableState(normalized.pluginId, workspaceSlug),
       diagnostics: normalized.diagnostics as AgentPluginDiagnostic[],
     };
+  }
+
+  /**
+   * 读插件内各技能 SKILL.md 的 frontmatter（名称/描述）供详情页展示。
+   * manifest.skills 每项可能指向技能目录集合或单个技能目录；单个解析失败跳过。
+   */
+  private readPluginSkillSummaries(
+    plugin: NormalizedPlugin,
+  ): PluginSkillSummary[] {
+    const summaries: PluginSkillSummary[] = [];
+    for (const contribution of plugin.capabilities.skills) {
+      const root = resolve(plugin.root, contribution.root);
+      if (!existsSync(root)) continue;
+      const skillDirs = existsSync(join(root, "SKILL.md"))
+        ? [{ name: basename(root), path: root }]
+        : readdirSync(root, { withFileTypes: true })
+            .filter(
+              (entry) =>
+                entry.isDirectory() &&
+                existsSync(join(root, entry.name, "SKILL.md")),
+            )
+            .map((entry) => ({ name: entry.name, path: join(root, entry.name) }));
+      for (const dir of skillDirs) {
+        if (summaries.length >= 50) return summaries;
+        try {
+          const meta = parseSkillFrontmatter(
+            readFileSync(join(dir.path, "SKILL.md"), "utf-8"),
+            dir.name,
+          );
+          summaries.push({
+            name: meta.name || dir.name,
+            ...(meta.description ? { description: meta.description } : {}),
+          });
+        } catch {
+          // 单个 SKILL.md 解析失败不影响其余技能展示
+        }
+      }
+    }
+    return summaries;
   }
 
   private readLocalPlugin(pluginRoot: string): NormalizedPlugin {

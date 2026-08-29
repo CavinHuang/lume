@@ -56,7 +56,13 @@ function detail(item = plugin()): GetMarketDetailResult {
         version: item.version,
         displayName: item.displayName,
         description: item.description,
+        author: 'Z.ai',
+        root: 'C:/plugins/cache/browser/26.623.101652',
       },
+      skills: [
+        { name: 'browser-navigate', description: 'Open URLs and navigate pages.' },
+        { name: 'browser-snapshot', description: 'Capture an accessibility snapshot.' },
+      ],
       permissionSummary: item.permissions,
       permissionsHash: 'hash-1',
       installState: item.installState,
@@ -87,6 +93,12 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('插件市场')
     expect(html).toContain('Browser')
     expect(html).toContain('MCP 服务器')
+    expect(html).toContain('browser-navigate')
+    expect(html).toContain('Open URLs and navigate pages.')
+    expect(html).toContain('开发者')
+    expect(html).toContain('Z.ai')
+    expect(html).toContain('根路径')
+    expect(html).toContain('C:/plugins/cache/browser/26.623.101652')
     expect(html).toContain('命令与工具')
     expect(html).toContain('README')
     expect(html).toContain('高级信息')

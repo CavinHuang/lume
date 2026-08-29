@@ -70,6 +70,7 @@ export function PluginDetailPage({
 }: PluginDetailPageProps) {
   const item = detail?.item.kind === 'plugin' ? detail.item.plugin : null
   const inspected = detail?.inspect?.kind === 'plugin' ? detail.inspect : null
+  const pluginSkills = inspected?.skills ?? []
   const readme = detail?.readme
   const pluginName = item?.displayName ?? item?.name ?? '插件详情'
   const permissionRows = item ? buildPermissionRows(item) : []
@@ -249,7 +250,27 @@ export function PluginDetailPage({
 
             {item.capabilities.skillCount > 0 && (
               <DetailSection title="技能" count={item.capabilities.skillCount}>
-                <CapabilityRow icon={<Sparkles size={16} />} name={`共 ${item.capabilities.skillCount} 个技能`} />
+                {pluginSkills.length > 0 ? (
+                  <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
+                    {pluginSkills.map((skill) => (
+                      <div key={skill.name} className="flex items-start gap-3 py-2.5">
+                        <span className="mt-0.5 flex size-9 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-2)] text-[var(--text-2)]">
+                          <Sparkles size={15} />
+                        </span>
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[14px] text-[var(--text-1)]">{skill.name}</span>
+                          {skill.description && (
+                            <span className="mt-0.5 block truncate text-[13px] leading-[18px] text-[var(--text-2)]" title={skill.description}>
+                              {skill.description}
+                            </span>
+                          )}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <CapabilityRow icon={<Sparkles size={16} />} name={`共 ${item.capabilities.skillCount} 个技能`} />
+                )}
               </DetailSection>
             )}
 
@@ -308,6 +329,7 @@ export function PluginDetailPage({
 
             <DetailSection title="信息">
               <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
+                {inspected?.normalized.author && <InfoRow label="开发者" value={inspected.normalized.author} />}
                 <InfoRow label="类别" value={PLUGIN_SOURCE_LABELS[item.sourceType]} />
                 {updateAvailable ? (
                   <>
@@ -387,6 +409,12 @@ export function PluginDetailPage({
                 高级信息
               </summary>
               <div className="mt-3 space-y-3">
+                {inspected?.normalized.root && (
+                  <div className="rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_36%,transparent)] px-3.5 py-3 text-[12.5px] leading-5">
+                    <div className="text-[var(--text-3)]">根路径</div>
+                    <div className="mt-0.5 break-all font-mono text-[var(--text-2)]">{inspected.normalized.root}</div>
+                  </div>
+                )}
                 {inspected && (
                   <div className="rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_36%,transparent)] px-3.5 py-3 text-[12.5px] leading-5">
                     <div className="text-[var(--text-3)]">权限 hash</div>
