@@ -77,12 +77,12 @@ export function SettingsView() {
 
   return (
     <div className="flex h-full w-full min-w-0 gap-8 bg-[var(--background)]">
-      <aside className="flex h-full min-h-0 w-[174px] shrink-0 flex-col bg-[var(--surface-1)] px-3 py-5 shadow-[6px_0_18px_-14px_hsl(var(--lume-shadow-panel)_/_0.32)]">
+      <aside className="flex h-full min-h-0 w-[174px] shrink-0 flex-col bg-[var(--surface-1)] px-3 pb-5 pt-3 shadow-[6px_0_18px_-14px_hsl(var(--lume-shadow-panel)_/_0.32)]">
         <Button
           variant="ghost"
           type="button"
           onClick={backToWorkspace}
-          className="mb-3 flex h-9 w-full shrink-0 items-center justify-start gap-2 rounded-[8px] px-2.5 text-[13px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+          className="mb-2 flex h-8 w-full shrink-0 items-center justify-start gap-2 rounded-[8px] px-2.5 text-[13px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
         >
           <ArrowLeft size={16} strokeWidth={1.9} className="shrink-0" />
           <span>返回工作区</span>
