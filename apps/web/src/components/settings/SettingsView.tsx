@@ -84,12 +84,12 @@ export function SettingsView() {
           variant="ghost"
           type="button"
           onClick={backToWorkspace}
-          className="mb-2 flex h-8 w-full shrink-0 items-center justify-start gap-2 rounded-[8px] text-[13px] font-medium text-[var(--text-2)]"
+          className="mb-2 mr-2 flex h-8 w-full shrink-0 items-center justify-start gap-2 rounded-[8px] text-[13px] font-medium text-[var(--text-2)]"
         >
           <ArrowLeft size={16} strokeWidth={1.9} className="shrink-0" />
           <span>返回工作区</span>
         </Button>
-        <div className="min-h-0 flex-1 overflow-y-auto pr-1 scrollbar-none">
+        <div className="min-h-0 flex-1 overflow-y-auto pr-2 scrollbar-none">
           <nav className="space-y-4">
             {SETTINGS_NAV_GROUPS.map((group) => (
               <div key={group.label}>
