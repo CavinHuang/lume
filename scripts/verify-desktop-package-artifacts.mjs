@@ -29,6 +29,7 @@ if (targetSpecific && !files.some((file) => targetSpecific.every((pattern) => pa
 verifyPackagedApplications(files);
 verifyNativeResources(files, target);
 verifyRipgrepResources(files, target);
+verifyOfficeCliResources(files, target);
 verifySidecarResources(files, target);
 
 writeSummary(`Local Electron package artifacts for ${target}`, files);
@@ -129,6 +130,17 @@ function verifyRipgrepResources(files, desktopTarget) {
   const pattern = new RegExp(`/resources/ripgrep/${nativeTarget}/${binary}$`, "i");
   if (!files.some((file) => pattern.test(file))) {
     fail(`missing bundled ripgrep resource for ${nativeTarget}`);
+  }
+}
+
+// officecli 目录 id 是平台-arch（win32-x64 而非 win32-x64-msvc），与 after-pack
+// 的按 arch 修剪对应：每个安装包只含自身 arch 的二进制。
+function verifyOfficeCliResources(files, desktopTarget) {
+  const target = desktopTarget === "x86_64-pc-windows-msvc" ? "win32-x64" : nativeResourceTarget(desktopTarget);
+  const binary = desktopTarget === "x86_64-pc-windows-msvc" ? "officecli\\.exe" : "officecli";
+  const pattern = new RegExp(`/resources/officecli/${target}/${binary}$`, "i");
+  if (!files.some((file) => pattern.test(file))) {
+    fail(`missing bundled officecli resource for ${target}`);
   }
 }
 

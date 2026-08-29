@@ -115,6 +115,13 @@ export const saveGuardedFileRefAs = (guardedRef: GuardedFileRef, filename: strin
   invoke<{ path: string | null }>('save_guarded_file_ref_as', { guardedRef, filename, filters })
 export const revokeFilePreviewScope = (token: string) =>
   invoke<void>('revoke_file_preview_scope', { token })
+// Office 高保真预览：主进程用内置 OfficeCLI 渲染 docx/xlsx/pptx 为临时 HTML 并注册
+// html-directory 作用域；返回 null 表示不可用（二进制缺失/渲染失败），调用方回退内置查看器。
+export type OfficePreviewScope = { token: string; url: string; expiresAt: number }
+export const renderOfficePreview = (input: { ref: FileRef; generation?: number }) =>
+  invoke<OfficePreviewScope | null>('render_office_preview', input)
+export const renderGuardedOfficePreview = (input: { guardedRef: GuardedFileRef; generation?: number }) =>
+  invoke<OfficePreviewScope | null>('render_office_preview', input)
 export { isDesktopRuntime }
 export const writeClipboardText = (text: string) =>
   invoke<void>('write_clipboard_text', { text })
