@@ -1461,8 +1461,47 @@ export async function discoverCodingRoots(
 export async function getWorkspaceGitSummary(workspaceRoot: string): Promise<AgentWorkspaceGitInfo> {
   const [root] = await discoverCodingRoots([workspaceRoot]);
   if (!root || root.repository.kind !== "git") return { isGitRepo: false };
-  const branch = root.repository.branch?.name;
-  return { isGitRepo: true, ...(branch ? { branch } : {}) };
+  const [branch, branches, dirtyStatus] = await Promise.all([
+    Promise.resolve(root.repository.branch?.name),
+    listLocalBranches(root.path),
+    runGitCommand(["status", "--porcelain", "-z"], root.path),
+  ]);
+  const dirtyFiles = dirtyStatus ? dirtyStatus.split("\0").filter(Boolean).length : 0;
+  return {
+    isGitRepo: true,
+    ...(branch ? { branch } : {}),
+    ...(branches ? { branches } : {}),
+    dirtyFiles,
+  };
+}
+
+async function listLocalBranches(gitRoot: string): Promise<string[] | undefined> {
+  const output = await runGitCommand(["branch", "--format=%(refname:short)"], gitRoot);
+  return output?.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+const GIT_BRANCH_NAME_PATTERN = /^[^\s~^:?*\[\\]+$/;
+
+/** 检出分支（create=true 时新建）；失败返回 ok=false 与原因，不抛错 */
+export async function checkoutWorkspaceBranch(
+  workspaceRoot: string,
+  branchName: string,
+  create: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const name = branchName.trim();
+  if (!name || name.startsWith("-") || name.includes("..") || !GIT_BRANCH_NAME_PATTERN.test(name)) {
+    return { ok: false, error: "无效的分支名" };
+  }
+  const [root] = await discoverCodingRoots([workspaceRoot]);
+  if (!root || root.repository.kind !== "git") return { ok: false, error: "当前项目不是 Git 仓库" };
+  if (!create) {
+    const branches = await listLocalBranches(root.path);
+    if (!branches?.includes(name)) return { ok: false, error: "分支不存在" };
+  }
+  const output = await runGitCommand(create ? ["checkout", "-b", name] : ["checkout", name], root.path);
+  return output === null
+    ? { ok: false, error: "切换失败：可能存在未提交的冲突更改" }
+    : { ok: true };
 }
 
 function rootIdForPath(path: string): string {

@@ -98,6 +98,10 @@ export interface AgentWorkspaceGitInfo {
   isGitRepo: boolean
   /** 当前分支名；detached HEAD 或读取失败时缺省 */
   branch?: string
+  /** 本地分支名列表（分支切换下拉用） */
+  branches?: string[]
+  /** 当前分支未提交更改的文件数 */
+  dirtyFiles?: number
 }
 
 export type AgentWorkspaceRemoveMode = 'keepHistory' | 'deleteLumeData'
@@ -1749,6 +1753,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_WORKSPACE_STATUS: 'agent:get-workspace-status',
   /** 获取项目目录 Git 概要（是否 Git 仓库与当前分支） */
   GET_WORKSPACE_GIT_INFO: 'agent:get-workspace-git-info',
+  /** 检出项目分支（切换已有分支或新建分支） */
+  CHECKOUT_WORKSPACE_BRANCH: 'agent:checkout-workspace-branch',
   /** 为未绑定的旧项目绑定本地目录 */
   BIND_WORKSPACE_DIRECTORY: 'agent:bind-workspace-directory',
   /** 为目录不可用的项目重新定位 */

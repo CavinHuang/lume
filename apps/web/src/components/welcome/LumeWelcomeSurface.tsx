@@ -1,13 +1,13 @@
 import type { Editor } from '@tiptap/react'
 import { EditorContent } from '@tiptap/react'
-import { ArrowUp, GitBranch, Loader2, LoaderCircle, FileText, MonitorOff, Plus } from 'lucide-react'
+import { ArrowUp, Loader2, LoaderCircle, FileText, MonitorOff, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import { PendingAttachmentList } from '@/components/agent/PendingAttachmentList'
-import { type AgentWelcomeSuggestion, type AgentWorkspaceGitInfo, type DesktopContextTarget } from '@lume/shared'
+import { type AgentWelcomeSuggestion, type DesktopContextTarget } from '@lume/shared'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
 import { DesktopContextPlusItem } from '@/components/agent/DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from '@/components/agent/DesktopContextSelectionChip'
@@ -26,8 +26,8 @@ interface LumeWelcomeSurfaceProps {
   compact?: boolean
   model: WelcomeSurfaceViewModel
   workspaceSelector: ReactNode
-  /** 当前项目的 Git 概要；仅用于在项目条展示分支 */
-  workspaceGitInfo?: AgentWorkspaceGitInfo | null
+  /** 项目条上的分支选择器（含 Git 分支展示与切换） */
+  workspaceBranchPicker?: ReactNode
   composerModelPicker: ReactNode
   permissionModePicker: ReactNode
   thinkingLevelPicker: ReactNode
@@ -57,7 +57,7 @@ export function LumeWelcomeSurface({
   compact = false,
   model,
   workspaceSelector,
-  workspaceGitInfo,
+  workspaceBranchPicker,
   composerModelPicker,
   permissionModePicker,
   thinkingLevelPicker,
@@ -130,15 +130,7 @@ export function LumeWelcomeSurface({
                 className="mb-2 flex flex-wrap items-center gap-2"
               >
                 {workspaceSelector}
-                {workspaceGitInfo?.branch ? (
-                  <div
-                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] px-3 text-[13px] text-[var(--text-2)]"
-                    title="当前分支"
-                  >
-                    <GitBranch size={14} className="shrink-0 text-[var(--text-3)]" />
-                    <span className="max-w-[220px] truncate text-[var(--text-1)]">{workspaceGitInfo.branch}</span>
-                  </div>
-                ) : null}
+                {workspaceBranchPicker}
               </div>
             )}
             <LumeComposer

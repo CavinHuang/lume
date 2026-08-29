@@ -1417,6 +1417,13 @@ export const workspaceIdInputSchema = z.object({
   id: idSchema,
 });
 
+export const workspaceBranchCheckoutInputSchema = z.object({
+  id: idSchema,
+  branch: z.string().trim().min(1).max(200),
+  /** true = 创建并检出新分支；缺省 = 切换到已有本地分支 */
+  create: z.boolean().optional(),
+});
+
 export const workspaceDirectoryInputSchema = z.object({
   id: idSchema,
   projectPath: z.string().trim().min(1),

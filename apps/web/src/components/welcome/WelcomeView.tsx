@@ -22,6 +22,7 @@ import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
+import { WorkspaceBranchPicker } from './WorkspaceBranchPicker'
 import {
   AGENT_IPC_CHANNELS,
   DESKTOP_CONTEXT_IPC_CHANNELS,
@@ -30,7 +31,6 @@ import {
   type AgentThreadMeta,
   type AgentWelcomeSuggestion,
   type AgentWelcomeSuggestionsResult,
-  type AgentWorkspaceGitInfo,
   type DesktopContextTarget,
   type LumeConfigThinkingLevel,
 } from '@lume/shared'
@@ -133,22 +133,6 @@ export function WelcomeView({
     () => workspaces.find((ws) => ws.id === selectedWorkspaceId),
     [workspaces, selectedWorkspaceId]
   )
-
-  // 项目条展示用 Git 概要：切项目即拉取；非 Git/目录不可用按无分支展示
-  const [workspaceGitInfo, setWorkspaceGitInfo] = useState<AgentWorkspaceGitInfo | null>(null)
-  useEffect(() => {
-    let cancelled = false
-    setWorkspaceGitInfo(null)
-    if (!selectedWorkspaceId) return
-    sidecarCall<AgentWorkspaceGitInfo>(AGENT_IPC_CHANNELS.GET_WORKSPACE_GIT_INFO, { id: selectedWorkspaceId })
-      .then((info) => {
-        if (!cancelled && info?.isGitRepo) setWorkspaceGitInfo(info)
-      })
-      .catch(() => {})
-    return () => {
-      cancelled = true
-    }
-  }, [selectedWorkspaceId])
 
   const workspaceSlug = selectedWorkspace?.slug ?? null
   const configWorkspaceSlug = workspaceSlug ?? undefined
@@ -677,7 +661,7 @@ export function WelcomeView({
             onCreateWorkspaceClick={() => setCreateWorkspaceOpen(true)}
           />
         }
-        workspaceGitInfo={workspaceGitInfo}
+        workspaceBranchPicker={<WorkspaceBranchPicker workspaceId={selectedWorkspaceId} />}
         composerModelPicker={
           <WelcomeModelPicker
             variant="composer"

@@ -87,7 +87,7 @@ import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, writeLogRecord } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runner/attempt";
-import { getWorkspaceGitSummary } from "../services/agent-runtime/runtime-core/coding-change-service";
+import { checkoutWorkspaceBranch, getWorkspaceGitSummary } from "../services/agent-runtime/runtime-core/coding-change-service";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
@@ -156,6 +156,7 @@ import {
   revokeToolPermissionGrantInputSchema,
   threadRunEventsInputSchema,
   workspaceCreateInputSchema,
+  workspaceBranchCheckoutInputSchema,
   workspaceDeleteInputSchema,
   workspaceDirectoryInputSchema,
   workspaceIdInputSchema,
@@ -982,6 +983,16 @@ export function createAgentHandlers(
       const status = getProjectAvailability(input.id);
       if (status.availability !== "available") return { isGitRepo: false };
       return getWorkspaceGitSummary(status.realpath ?? status.projectPath ?? "");
+    },
+    [AGENT_IPC_CHANNELS.CHECKOUT_WORKSPACE_BRANCH]: async (params) => {
+      const input = validateInput(
+        workspaceBranchCheckoutInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.CHECKOUT_WORKSPACE_BRANCH,
+      );
+      const status = getProjectAvailability(input.id);
+      if (status.availability !== "available") return { ok: false, error: "项目目录不可用" };
+      return checkoutWorkspaceBranch(status.realpath ?? status.projectPath ?? "", input.branch, input.create === true);
     },
     [AGENT_IPC_CHANNELS.BIND_WORKSPACE_DIRECTORY]: async (params) => {
       const input = validateInput(
