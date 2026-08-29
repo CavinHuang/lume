@@ -802,7 +802,7 @@ describe("#649 round3: 剥键白名单与 normalize 实际处理集一致", () =
     // KNOWN 清单时,此处显式失败提醒同步(否则合法键被误报「未识别」刷屏)
     const allSections: Required<Pick<LumeConfigSectionSet, keyof LumeConfigSectionSet>> = {
       models: {}, agent: {}, providers: {}, mcp: {}, memory: {},
-      skills: {}, plugins: {}, permissions: {}, hooks: {}, webSearch: {}
+      skills: {}, plugins: {}, permissions: {}, hooks: {}, webSearch: {}, obsidian: {}
     };
     for (const key of Object.keys(allSections)) {
       expect(KNOWN_LUME_SECTION_KEYS).toContain(key);
