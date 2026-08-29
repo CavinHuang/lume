@@ -178,24 +178,24 @@ export function PluginDetailPage({
             {error}
           </section>
         ) : item ? (
-          <div>
-            <header>
-              <div className="flex size-[72px] items-center justify-center overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface-2)]">
-                <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-full" />
+          <div className="space-y-8">
+            <header className="space-y-3">
+              <div className="flex size-16 items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-2)]">
+                <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-6" />
               </div>
-              <div className="mt-4 flex items-start justify-between gap-4">
-                <h1 className="min-w-0 text-[28px] font-bold leading-9 text-[var(--text-1)]">{pluginName}</h1>
-                <div className="flex shrink-0 items-center gap-2">
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-[var(--text-1)]">{pluginName}</h1>
+                <div className="flex shrink-0 items-center gap-1.5">
                   {installedLike && (
                     <DropdownMenu>
                       <DropdownMenuTrigger
                         render={
                           <Button
-                            variant="ghost"
+                            variant="outline"
                             type="button"
                             size="icon"
                             disabled={busy}
-                            className="size-9 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] text-[var(--text-2)] hover:text-[var(--text-1)]"
+                            className="size-8 rounded-lg text-[var(--text-2)] hover:text-[var(--text-1)]"
                             title="更多操作"
                           />
                         }
@@ -218,21 +218,19 @@ export function PluginDetailPage({
                   {renderPrimaryAction()}
                 </div>
               </div>
-              <p className="mt-2 max-w-[760px] text-[15px] leading-6 text-[var(--text-2)]">
+              <p className="max-w-[760px] text-[14px] leading-6 text-[var(--text-3)]">
                 {item.description ?? '暂无描述。'}
               </p>
             </header>
 
             {error && (
-              <section className="mt-5 rounded-lg bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4 text-[13px] leading-6 text-[var(--lume-warning)]">
+              <section className="rounded-lg bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4 text-[13px] leading-6 text-[var(--lume-warning)]">
                 {error}
               </section>
             )}
 
             {marketplaceMedia && (
-              <div className="mt-6">
-                <MarketplaceMedia media={marketplaceMedia} pluginName={pluginName} />
-              </div>
+              <MarketplaceMedia media={marketplaceMedia} pluginName={pluginName} />
             )}
 
             {item.capabilities.mcpServerNames.length > 0 && (
@@ -250,14 +248,14 @@ export function PluginDetailPage({
                 {pluginSkills.length > 0 ? (
                   <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
                     {pluginSkills.map((skill) => (
-                      <div key={skill.name} className="flex items-start gap-3.5 py-4">
-                        <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-2)] text-[var(--text-2)]">
+                      <div key={skill.name} className="flex items-start gap-3 py-2.5">
+                        <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-2)]">
                           <Sparkles size={16} />
                         </span>
                         <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[15px] text-[var(--text-1)]">{skill.name}</span>
+                          <span className="block truncate text-[14px] text-[var(--text-1)]">{skill.name}</span>
                           {skill.description && (
-                            <span className="mt-1 block truncate text-[13.5px] leading-5 text-[var(--text-2)]" title={skill.description}>
+                            <span className="mt-0.5 block truncate text-[12px] text-[var(--text-3)]" title={skill.description}>
                               {skill.description}
                             </span>
                           )}
@@ -323,7 +321,7 @@ export function PluginDetailPage({
               </DetailSection>
             )}
 
-            <details className="group mt-9 border-t border-[color:color-mix(in_oklab,var(--border-strong)_22%,transparent)] pt-4">
+            <details className="group border-t border-[color:color-mix(in_oklab,var(--border-strong)_22%,transparent)] pt-4">
               <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] [&::-webkit-details-marker]:hidden">
                 <ChevronRight size={14} className="transition-transform group-open:rotate-90" />
                 高级信息
@@ -460,30 +458,31 @@ function DetailSection({
   children: ReactNode
 }) {
   return (
-    <section className="mt-10">
-      <div className="flex items-baseline gap-2.5 border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-3">
-        <h2 className="text-[17px] font-semibold text-[var(--text-1)]">{title}</h2>
-        {typeof count === 'number' && <span className="text-[13.5px] text-[var(--text-3)]">{count}</span>}
+    <section>
+      <div className="flex items-baseline gap-2">
+        <h2 className="pb-2 text-[16px] font-semibold text-[var(--text-1)]">{title}</h2>
+        {typeof count === 'number' && <span className="text-[13px] text-[var(--text-3)]">{count}</span>}
       </div>
-      <div className="mt-4">{children}</div>
+      <div aria-hidden="true" className="h-px bg-[color:color-mix(in_oklab,var(--border-strong)_24%,transparent)]" />
+      <div className="mt-2">{children}</div>
     </section>
   )
 }
 
 function CapabilityRow({ icon, name }: { icon: ReactNode; name: string }) {
   return (
-    <div className="flex items-center gap-3.5 rounded-lg px-1 py-3.5">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-lg bg-[var(--surface-2)] text-[var(--text-2)]">
+    <div className="flex items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-[var(--surface-2)]">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-2)]">
         {icon}
       </span>
-      <span className="min-w-0 truncate text-[15px] text-[var(--text-1)]">{name}</span>
+      <span className="min-w-0 truncate text-[14px] text-[var(--text-1)]">{name}</span>
     </div>
   )
 }
 
 function InfoRow({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
   return (
-    <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-3.5 text-[14px] leading-5">
+    <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-3 text-[14px] leading-5">
       <span className="text-[var(--text-3)]">{label}</span>
       <span className={cn('min-w-0 break-all text-[var(--text-1)]', mono && 'font-mono text-[13px]')}>{value}</span>
     </div>

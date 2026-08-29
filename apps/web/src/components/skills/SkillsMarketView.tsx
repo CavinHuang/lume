@@ -585,8 +585,8 @@ export function SkillsMarketView() {
       <div className="mx-auto w-full max-w-[1100px]">
         <header className="flex items-start justify-between gap-5">
           <div className="min-w-0">
-            <h1 className="text-[28px] font-bold leading-tight text-[var(--text-1)]">插件市场</h1>
-            <p className="mt-2 text-[15px] text-[var(--text-2)]">用插件为 Lume 扩展技能、命令与 MCP 能力</p>
+            <h1 className="text-2xl font-semibold tracking-tight text-[var(--text-1)]">插件市场</h1>
+            <p className="mt-2 text-[14px] text-[var(--text-3)]">用插件为 Lume 扩展技能、命令与 MCP 能力</p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
             <Button
@@ -621,7 +621,7 @@ export function SkillsMarketView() {
           </div>
         </header>
 
-        <label className="mt-6 flex h-11 items-center gap-2.5 rounded-[10px] border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] px-4 text-[var(--text-3)] transition-colors focus-within:border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))]">
+        <label className="mt-8 flex h-9 items-center gap-2.5 rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_58%,var(--surface-1))] pl-3 pr-3 text-[var(--text-3)] transition-colors focus-within:border-[color:color-mix(in_oklab,var(--brand)_28%,var(--border-strong))]">
           <Search size={16} />
           <Input
             value={query}
@@ -633,7 +633,7 @@ export function SkillsMarketView() {
 
         {installedCards.length > 0 && (
           <section className="mt-8">
-            <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5">
+            <div className="flex items-center justify-between border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2">
               <h2 className="text-[16px] font-semibold text-[var(--text-1)]">已安装</h2>
               <Button
                 variant="ghost"
@@ -645,7 +645,7 @@ export function SkillsMarketView() {
                 <SlidersHorizontal size={15} />
               </Button>
             </div>
-            <div className="mt-4 flex flex-wrap items-center gap-3">
+            <div className="mt-3 flex items-center gap-3 overflow-x-auto pb-1">
               {installedCards.map((card) => (
                 <InstalledCardIcon
                   key={`${card.kind}:${card.id}`}
@@ -660,26 +660,26 @@ export function SkillsMarketView() {
           </section>
         )}
 
-        <div className="mt-7 flex items-center justify-between">
-          <div className="lume-segmented inline-flex">
-            {([
-              { id: 'public', label: '公开' },
-              { id: 'personal', label: '个人' },
-            ] as const).map((tab) => (
-              <Button
-                variant="ghost"
-                key={tab.id}
-                type="button"
-                onClick={() => setMarketTab(tab.id)}
-                className={cn(
-                  'lume-segmented-item px-4 text-[13px]',
-                  marketTab === tab.id ? 'lume-segmented-item-active' : '',
-                )}
-              >
-                {tab.label}
-              </Button>
-            ))}
-          </div>
+        <div className="mt-8 flex items-center gap-1.5">
+          {([
+            { id: 'public', label: '公开' },
+            { id: 'personal', label: '个人' },
+          ] as const).map((tab) => (
+            <button
+              key={tab.id}
+              type="button"
+              aria-pressed={marketTab === tab.id}
+              onClick={() => setMarketTab(tab.id)}
+              className={cn(
+                'rounded-full px-3 py-1 text-[14px] font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]',
+                marketTab === tab.id
+                  ? 'bg-[color:color-mix(in_oklab,var(--text-1)_10%,transparent)] text-[var(--text-1)]'
+                  : 'text-[var(--text-3)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
+              )}
+            >
+              {tab.label}
+            </button>
+          ))}
         </div>
 
         {loading ? (
@@ -706,10 +706,9 @@ export function SkillsMarketView() {
             )}
             {sections.map((section) => (
               <section key={section.category} className="mt-8">
-                <h2 className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_30%,transparent)] pb-2.5 text-[16px] font-semibold text-[var(--text-1)]">
-                  {section.category}
-                </h2>
-                <div className="mt-2 grid grid-cols-2 gap-x-12">
+                <h2 className="pb-2 text-[16px] font-semibold text-[var(--text-1)]">{section.category}</h2>
+                <div aria-hidden="true" className="h-px bg-[color:color-mix(in_oklab,var(--border-strong)_24%,transparent)]" />
+                <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
                   {section.cards.map((card) => (
                     <MarketItemRow
                       key={`${card.kind}:${card.id}`}
@@ -777,13 +776,13 @@ function InstalledCardIcon({ card, onOpenDetail }: { card: MarketDisplayCard; on
       onClick={onOpenDetail}
       title={card.name}
       className={cn(
-        'flex size-11 shrink-0 items-center justify-center overflow-hidden rounded-[11px] transition-transform hover:scale-105',
+        'flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl transition-transform hover:scale-105',
         iconToneClass(card.tone),
       )}
     >
       {plugin
-        ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-7" />
-        : <Icon size={22} strokeWidth={2.2} />}
+        ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-6" />
+        : <Icon size={24} strokeWidth={2.2} />}
     </button>
   )
 }
@@ -818,20 +817,22 @@ function MarketItemRow({
           onOpenDetail()
         }
       }}
-      className="group flex min-w-0 cursor-pointer items-center gap-3.5 rounded-lg px-2 py-3.5 transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]"
+      className="group flex min-w-0 cursor-pointer items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-[var(--surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]"
     >
-      <div className={cn('flex size-10 shrink-0 items-center justify-center rounded-[10px]', iconToneClass(card.tone))}>
+      <div className={cn('flex size-10 shrink-0 items-center justify-center overflow-hidden rounded-xl', iconToneClass(card.tone))}>
         {plugin
           ? <PluginLogo src={plugin.marketplace?.icon?.url} alt={`${card.name} 图标`} className="size-6" />
-          : <Icon size={20} strokeWidth={2.2} />}
+          : <Icon size={24} strokeWidth={2.2} />}
       </div>
       <div className="min-w-0 flex-1">
-        <h3 className="truncate text-[15px] font-semibold leading-5 text-[var(--text-1)]" title={card.name}>
-          {card.name}
-        </h3>
-        <p className="mt-0.5 truncate text-[13px] leading-[18px] text-[var(--text-2)]" title={card.description ?? undefined}>
+        <div className="flex min-w-0 items-center gap-1.5">
+          <span className="min-w-0 truncate text-[14px] font-semibold text-[var(--text-1)]" title={card.name}>
+            {card.name}
+          </span>
+        </div>
+        <div className="mt-0.5 truncate text-[12px] text-[var(--text-3)]" title={card.description ?? undefined}>
           {card.description ?? '暂无描述。'}
-        </p>
+        </div>
       </div>
       {busy && <Loader2 size={15} className="mr-1 shrink-0 animate-spin text-[var(--text-3)]" />}
       <DropdownMenu>
