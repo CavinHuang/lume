@@ -1,10 +1,11 @@
 /**
  * WorkspaceGitGraphDialog - 项目 Git 图谱
  *
- * 大对话框：左列 SVG 泳道图，右侧描述（含 HEAD/分支引用标签）、日期、作者、
+ * 大对话框：左侧一张覆盖全部行的 SVG 泳道图（边从子提交节点直连父提交
+ * 节点，跨行完整曲线），右侧描述（含 HEAD/分支引用标签）、日期、作者、
  * 提交哈希。顶部刷新，底部加载更多（按 limit 递增重取）。
  */
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { GitBranch, GitGraph, Loader2, RefreshCw, Tag, X } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type AgentWorkspaceGitLogCommit } from '@lume/shared'
 import { sidecarCall } from '@/lib/desktop-api'
@@ -54,7 +55,33 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
   }, [open, fetchLog])
 
   const layout = computeGitGraphLayout(commits)
+  const graphWidth = GRAPH_PAD_X * 2 + Math.max(layout.laneCount, 1) * LANE_WIDTH
+  const xOf = (lane: number) => GRAPH_PAD_X + lane * LANE_WIDTH
+  const yOf = (row: number) => row * ROW_HEIGHT + ROW_HEIGHT / 2
+  const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length]
+
+  // 边从子提交节点直连父提交节点（git log 保证父提交在子提交之后出现）；
+  // 父提交被截断在列表外时，垂线画到列表底部。
+  const graphEdges = useMemo(() => {
+    const rowIndexByHash = new Map(commits.map((commit, index) => [commit.hash, index]))
+    const edges: Array<{ x1: number; y1: number; x2: number; y2: number; colorIndex: number }> = []
+    commits.forEach((commit, index) => {
+      const lane = layout.lanes[index]
+      for (const parent of commit.parents) {
+        const parentRow = rowIndexByHash.get(parent)
+        if (parentRow === undefined) {
+          edges.push({ x1: xOf(lane), y1: yOf(index), x2: xOf(lane), y2: commits.length * ROW_HEIGHT, colorIndex: lane })
+        } else {
+          edges.push({ x1: xOf(lane), y1: yOf(index), x2: xOf(layout.lanes[parentRow]), y2: yOf(parentRow), colorIndex: lane })
+        }
+      }
+    })
+    return edges
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [commits, layout])
+
   const hasMore = !loading && !error && commits.length >= limit
+  const gridTemplateColumns = `${graphWidth}px 1fr 104px 110px 72px`
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -74,7 +101,7 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
               onClick={() => void fetchLog(limit, false)}
               title="刷新"
             >
-              <RefreshCw size={14} className={cnSpin(loading)} />
+              <RefreshCw size={14} className={loading ? 'animate-spin' : undefined} />
             </Button>
             <Button variant="ghost" type="button" size="icon-sm" onClick={() => onOpenChange(false)} title="关闭">
               <X size={14} />
@@ -82,7 +109,10 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
           </div>
         </div>
 
-        <div className="grid shrink-0 grid-cols-[72px_1fr_104px_110px_72px] items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-1.5 text-[11.5px] font-medium text-[var(--text-3)]">
+        <div
+          className="grid shrink-0 items-center gap-2 border-b border-[color:color-mix(in_oklab,var(--border-strong)_42%,transparent)] px-4 py-1.5 text-[11.5px] font-medium text-[var(--text-3)]"
+          style={{ gridTemplateColumns }}
+        >
           <span>图</span>
           <span>描述</span>
           <span>日期</span>
@@ -101,14 +131,44 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
           ) : commits.length === 0 ? (
             <div className="px-4 py-8 text-center text-[13px] text-[var(--text-3)]">暂无提交</div>
           ) : (
-            <div>
-              {commits.map((commit, index) => (
-                <GitGraphCommitRow
-                  key={commit.hash}
-                  commit={commit}
-                  row={layout.rows[index]}
-                  laneCount={layout.laneCount}
-                />
+            <div className="relative">
+              <svg
+                aria-hidden="true"
+                width={graphWidth}
+                height={commits.length * ROW_HEIGHT}
+                className="absolute left-4 top-0"
+              >
+                {graphEdges.map((edge, index) => {
+                  const stroke = laneColor(edge.colorIndex)
+                  if (edge.x1 === edge.x2) {
+                    return <line key={`e${index}`} x1={edge.x1} y1={edge.y1} x2={edge.x2} y2={edge.y2} stroke={stroke} strokeWidth={2} strokeLinecap="round" />
+                  }
+                  const dy = edge.y2 - edge.y1
+                  return (
+                    <path
+                      key={`e${index}`}
+                      d={`M ${edge.x1} ${edge.y1} C ${edge.x1} ${edge.y1 + dy * 0.5}, ${edge.x2} ${edge.y2 - dy * 0.5}, ${edge.x2} ${edge.y2}`}
+                      fill="none"
+                      stroke={stroke}
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                    />
+                  )
+                })}
+                {commits.map((commit, index) => (
+                  <circle
+                    key={commit.hash}
+                    cx={xOf(layout.lanes[index])}
+                    cy={yOf(index)}
+                    r={4}
+                    fill={laneColor(layout.lanes[index])}
+                    stroke="var(--surface-1)"
+                    strokeWidth={1.5}
+                  />
+                ))}
+              </svg>
+              {commits.map((commit) => (
+                <GitGraphCommitRow key={commit.hash} commit={commit} graphWidth={graphWidth} gridTemplateColumns={gridTemplateColumns} />
               ))}
               {hasMore && (
                 <div className="flex justify-center py-3">
@@ -130,66 +190,21 @@ export function WorkspaceGitGraphDialog({ workspaceId, open, onOpenChange }: Wor
   )
 }
 
-function cnSpin(loading: boolean) {
-  return loading ? 'animate-spin' : undefined
-}
-
 function GitGraphCommitRow({
   commit,
-  row,
-  laneCount,
+  graphWidth,
+  gridTemplateColumns,
 }: {
   commit: AgentWorkspaceGitLogCommit
-  row: ReturnType<typeof computeGitGraphLayout>['rows'][number] | undefined
-  laneCount: number
+  graphWidth: number
+  gridTemplateColumns: string
 }) {
-  const graphWidth = Math.max(2, laneCount) * LANE_WIDTH + GRAPH_PAD_X * 2
-  const laneColor = (lane: number) => LANE_COLORS[lane % LANE_COLORS.length]
-
   return (
-    <div className="grid grid-cols-[72px_1fr_104px_110px_72px] items-center gap-2 px-4 transition-colors hover:bg-[var(--surface-2)]">
-      <div className="h-full">
-        {row && (
-          <svg width={graphWidth} height={ROW_HEIGHT}>
-            {row.transit.map((lane) => (
-              <line
-                key={`t${lane}`}
-                x1={GRAPH_PAD_X + lane * LANE_WIDTH}
-                y1={0}
-                x2={GRAPH_PAD_X + lane * LANE_WIDTH}
-                y2={ROW_HEIGHT}
-                stroke={laneColor(lane)}
-                strokeWidth={2}
-                strokeLinecap="round"
-              />
-            ))}
-            {row.outEdges.map((edge, index) => {
-              const x1 = GRAPH_PAD_X + edge.from * LANE_WIDTH
-              const x2 = GRAPH_PAD_X + edge.to * LANE_WIDTH
-              return edge.from === edge.to ? (
-                <line key={`e${index}`} x1={x1} y1={ROW_HEIGHT / 2} x2={x2} y2={ROW_HEIGHT} stroke={laneColor(edge.from)} strokeWidth={2} strokeLinecap="round" />
-              ) : (
-                <path
-                  key={`e${index}`}
-                  d={`M ${x1} ${ROW_HEIGHT / 2} C ${x1} ${ROW_HEIGHT * 0.78}, ${x2} ${ROW_HEIGHT * 0.78}, ${x2} ${ROW_HEIGHT}`}
-                  fill="none"
-                  stroke={laneColor(edge.from)}
-                  strokeWidth={2}
-                  strokeLinecap="round"
-                />
-              )
-            })}
-            <circle
-              cx={GRAPH_PAD_X + row.lane * LANE_WIDTH}
-              cy={ROW_HEIGHT / 2}
-              r={4}
-              fill={laneColor(row.lane)}
-              stroke="var(--surface-1)"
-              strokeWidth={1.5}
-            />
-          </svg>
-        )}
-      </div>
+    <div
+      className="grid h-[56px] items-center gap-2 px-4 transition-colors hover:bg-[var(--surface-2)]"
+      style={{ gridTemplateColumns }}
+    >
+      <div style={{ width: graphWidth }} />
       <div className="flex min-w-0 items-center gap-1.5">
         {commit.refs.map((ref) => (
           <span
