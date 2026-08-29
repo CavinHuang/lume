@@ -1,9 +1,10 @@
 import { requestSessionCodingDiff } from '@/components/right-panel/coding-diff-cache'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSetAtom } from 'jotai'
-import { BookMarked, FileDiff, Loader2, TriangleAlert } from 'lucide-react'
+import { FileDiff, Loader2, TriangleAlert } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type CodingDiffPayload, type RuntimeCodingFileChange, type RuntimeCodingReport } from '@lume/shared'
 import { codingReviewPanelActionAtom, obsidianVaultOpenRequestAtom, rightPanelWorkspaceActionAtom } from '@/atoms'
+import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { PierreDiffView } from '@/components/diff/PierreDiffView'
 import { Button } from '@/components/ui/button'
@@ -146,16 +147,26 @@ export function CodingTurnFileChangesSummary({
   return (
     <div className="flex max-w-[640px] flex-col gap-1.5">
       {vaultFocus && (
-        <button
-          type="button"
-          onClick={openVaultFocus}
-          title={`打开 ${vaultFocus.focus.relativePath || vaultFocus.displayName}`}
-          className="flex w-fit items-center gap-1.5 rounded-full border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_68%,transparent)] px-2.5 py-1 text-[11px] text-[var(--lume-text-secondary)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
-        >
-          <BookMarked size={12} className="shrink-0" />
-          <span className="font-medium">{vaultFocus.displayName}</span>
-          {vaultFocus.focus.relativePath && <span className="max-w-[280px] truncate">{vaultFocus.focus.relativePath}</span>}
-        </button>
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={openVaultFocus}
+                aria-label="打开本轮 Obsidian 上下文"
+                className="flex w-fit items-center gap-1.5 rounded-full border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_68%,transparent)] px-2.5 py-1 text-[11px] text-[var(--lume-text-secondary)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
+              >
+                <ObsidianIcon size={12} className="shrink-0" />
+                <span className="font-medium">{vaultFocus.displayName}</span>
+                {vaultFocus.focus.relativePath && <span className="max-w-[280px] truncate">{vaultFocus.focus.relativePath}</span>}
+              </button>
+            }
+          />
+          <TooltipContent side="top">
+            <p>本轮获得的 Obsidian {vaultFocus.focus.kind === 'file' ? '文件' : '文件夹'}线索；不代表 Agent 已读取或编辑</p>
+            <p className="max-w-80 break-all text-[11px] opacity-70">{vaultFocus.vaultPath}/{vaultFocus.focus.relativePath}</p>
+          </TooltipContent>
+        </Tooltip>
       )}
     <Card data-coding-file-changes-summary="true" size="sm" className="max-w-[640px] gap-0 py-0">
       {changes.length > 0 && <CardHeader className="flex min-h-9 flex-row items-center border-b px-3 py-1.5">

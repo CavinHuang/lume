@@ -234,17 +234,13 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
   const createUntitledNote = async (folderPath = "", content = "", now = new Date()): Promise<ObsidianVaultWriteResult> => {
     assertContentSize(content);
     const folder = getSafeVaultFolderTarget(root, folderPath);
-    if (folder.relativePath) {
-      if (!existsSync(folder.absolutePath) || !lstatSync(folder.absolutePath).isDirectory()) {
-        throw new Error("目标 Vault 文件夹不存在");
-      }
-    }
 
     for (let sequence = 1; sequence <= Number.MAX_SAFE_INTEGER; sequence++) {
       const relativePath = folder.relativePath
         ? `${folder.relativePath}/${untitledNoteFilename(now, sequence)}`
         : untitledNoteFilename(now, sequence);
       const target = getSafeVaultTarget(root, relativePath);
+      // 收件夹等父目录随创建自动补齐（Proma 的 inbox 语义）。
       mkdirSync(dirname(target.absolutePath), { recursive: true });
       const revalidated = getSafeVaultTarget(root, target.relativePath);
       if (!createFileExclusively(revalidated.absolutePath, content)) continue;

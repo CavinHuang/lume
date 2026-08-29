@@ -147,6 +147,18 @@ describe("vault-facade", () => {
     }
   });
 
+  test("createUntitledNote 自动补齐收件夹父目录（inbox 语义）", async () => {
+    const root = makeVault();
+    try {
+      const fs = createVaultFileSystem(root);
+      const result = await fs.createUntitledNote("Lume Inbox");
+      expect(result.ok).toBe(true);
+      expect(readFileSync(join(root, "Lume Inbox", result.relativePath.split("/").pop()!), "utf-8")).toBe("");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
   test("renameFile 同目录重命名、自动补 .md、拒绝同名冲突", async () => {
     const root = makeVault();
     try {

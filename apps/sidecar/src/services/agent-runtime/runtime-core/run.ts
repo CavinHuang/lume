@@ -819,6 +819,9 @@ async function createRuntimeCoreSessionImpl(
   pendingCleanup.push(() => codingRunTracker.dispose());
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
+  // 回合级 Vault 归因在会话创建时定格（对齐 Proma：消息派发时读取），
+  // run 中途用户切换面板焦点不会错标到本回合。
+  const vaultFocusAtStart = getObsidianVaultFocus(input.lumeSessionId);
   const getCodingReport = (): CodingVerificationReport &
     RuntimeCodingReport => {
     const report: CodingVerificationReport & RuntimeCodingReport = {
@@ -826,13 +829,11 @@ async function createRuntimeCoreSessionImpl(
       runId,
       approvalRequestCount,
     };
-    // 回合级 Vault 归因：focus 在回合开始时已按 threadId 定格，芯片据此渲染。
-    const vaultFocusSnapshot = getObsidianVaultFocus(input.lumeSessionId);
-    if (vaultFocusSnapshot) {
+    if (vaultFocusAtStart) {
       report.vaultFocus = {
-        vaultPath: vaultFocusSnapshot.vaultPath,
-        displayName: vaultFocusSnapshot.displayName,
-        focus: vaultFocusSnapshot.focus,
+        vaultPath: vaultFocusAtStart.vaultPath,
+        displayName: vaultFocusAtStart.displayName,
+        focus: vaultFocusAtStart.focus,
       };
     }
     return report;

@@ -189,6 +189,19 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
         setDraft('')
         reportFocus(null)
         toast.message('已打开的笔记不存在')
+        return list
+      }
+      // 外部修改采纳：草稿未动时静默同步磁盘最新内容（shouldAdoptVaultReadContent 语义）。
+      if (selected && draftRef.current === selected.read.content) {
+        try {
+          const fresh = await readObsidianVaultFile(path, selected.path)
+          if (selectedFileRef.current?.path === selected.path && fresh.sha256 !== selected.read.sha256) {
+            setSelectedFile({ path: selected.path, read: fresh })
+            setDraft(fresh.content)
+          }
+        } catch {
+          // 读取失败保持现状；保存时会走 sha256 冲突路径兜底。
+        }
       }
       return list
     } catch (cause) {
