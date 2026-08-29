@@ -76,9 +76,6 @@ function updateExtraVaults(mutate: (current: string[]) => string[]): void {
 
 export function createObsidianVaultHandlers(): Record<string, RpcHandler> {
   return {
-    [OBSIDIAN_VAULT_IPC_CHANNELS.LIST_CANDIDATES]: async () => {
-      return getObsidianVaultConfig() satisfies ObsidianVaultConfig;
-    },
     [OBSIDIAN_VAULT_IPC_CHANNELS.GET_CONFIG]: async () => {
       return getObsidianVaultConfig() satisfies ObsidianVaultConfig;
     },

@@ -72,7 +72,6 @@ export interface ObsidianVaultFocusAttribution {
 }
 
 export const OBSIDIAN_VAULT_IPC_CHANNELS = {
-  LIST_CANDIDATES: "obsidian:list-candidates",
   GET_CONFIG: "obsidian:get-config",
   SET_ENABLED: "obsidian:set-enabled",
   ADD_FOLDER_VAULT: "obsidian:add-folder-vault",
