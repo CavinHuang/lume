@@ -63,6 +63,8 @@ import {
 } from "./session-store";
 import { ContextAssembler } from "../context/context-assembler";
 import type { ContextAssemblyInput } from "../context/context-assembler";
+import { resolveObsidianVaultDirectories } from "../../obsidian/vault-registry";
+import { getObsidianVaultFocus } from "../../obsidian/vault-focus";
 import { resolveDesktopContextProjection } from "../../desktop-context/desktop-context-runtime";
 import { createKernelContextController } from "../context/context-controller";
 import { buildRuntimeUserMessageInput } from "./message-attachment-input";
@@ -817,6 +819,9 @@ async function createRuntimeCoreSessionImpl(
   pendingCleanup.push(() => codingRunTracker.dispose());
   await codingRunTracker.initialize();
   let approvalRequestCount = 0;
+  // 回合级 Vault 归因在会话创建时定格（对齐 Proma：消息派发时读取），
+  // run 中途用户切换面板焦点不会错标到本回合。
+  const vaultFocusAtStart = getObsidianVaultFocus(input.lumeSessionId);
   const getCodingReport = (): CodingVerificationReport &
     RuntimeCodingReport => {
     const report: CodingVerificationReport & RuntimeCodingReport = {
@@ -824,6 +829,13 @@ async function createRuntimeCoreSessionImpl(
       runId,
       approvalRequestCount,
     };
+    if (vaultFocusAtStart) {
+      report.vaultFocus = {
+        vaultPath: vaultFocusAtStart.vaultPath,
+        displayName: vaultFocusAtStart.displayName,
+        focus: vaultFocusAtStart.focus,
+      };
+    }
     return report;
   };
   const publishCodingReport = (): void => {
@@ -831,7 +843,8 @@ async function createRuntimeCoreSessionImpl(
     if (
       !codingReport.workspaceChanged &&
       !codingReport.pendingBackground &&
-      (codingReport.gitActions?.length ?? 0) === 0
+      (codingReport.gitActions?.length ?? 0) === 0 &&
+      !codingReport.vaultFocus
     )
       return;
     input.persistCodingReport?.(codingReport);
@@ -1361,6 +1374,9 @@ async function createRuntimeCoreSessionImpl(
           configuredRoots: getEffectiveLumeConfig(input.workspaceSlug).permissions?.privateWriteRoots,
         }),
         ...(input.additionalDirectories ?? []),
+        // Obsidian Vault 候选根：发现即授权（集成开关可整体关闭）。坏根由
+        // resolveObsidianVaultDirectories 内部剔除，绝不阻塞一次运行。
+        ...resolveObsidianVaultDirectories(),
         input.lumeWorkDir,
         // artifactsRoot 通常是 lumeWorkDir/artifacts：已被覆盖时跳过，免同树
         // 双扫进 checkpoint 快照（性能复审）

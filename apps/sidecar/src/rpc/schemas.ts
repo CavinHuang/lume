@@ -1411,6 +1411,14 @@ export const lumeConfigUpdateInputSchema = z.union([
     path: z.literal("webSearch"),
     value: lumeConfigWebSearchSchema,
   }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("obsidian.enabled"),
+    value: z.boolean(),
+  }),
+  lumeConfigUpdateBaseSchema.extend({
+    path: z.literal("obsidian.extraVaults"),
+    value: z.array(z.string().trim().min(1)),
+  }),
 ]);
 
 export const workspaceCreateInputSchema = z.object({
