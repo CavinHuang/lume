@@ -103,7 +103,7 @@ export function SettingsView() {
                     'flex h-9 w-full items-center justify-start gap-2.5 rounded-[8px] px-2.5 text-[13px] font-medium transition-colors',
                     selected
                       ? 'bg-[color-mix(in_oklab,var(--brand)_10%,var(--surface-1))] text-[var(--brand)]'
-                      : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]'
+                      : 'text-[var(--text-2)]'
                   )}
                 >
                   <Icon size={16} strokeWidth={1.9} className="shrink-0" />
