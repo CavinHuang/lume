@@ -2,6 +2,7 @@ import type { AgentBrowserAttachment, AgentCapabilityReferenceView, AgentDiffCom
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
+import type { ObsidianVaultFocusAttribution } from "./obsidian-vault";
 
 export type RuntimeEventType =
   | "run.started"
@@ -351,6 +352,8 @@ export interface RuntimeCodingReport {
   recommendedVerificationCommands?: string[];
   gitActions?: CodingGitAction[];
   review?: CodingReviewSummary;
+  /** 回合开始时用户在 Vault 面板聚焦的位置；驱动回复后的 Obsidian 上下文 chip。 */
+  vaultFocus?: ObsidianVaultFocusAttribution;
 }
 
 export type CodingTurnPhase =

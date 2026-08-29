@@ -153,6 +153,11 @@ export function getLumeJsonPath(): string {
   return join(getConfigDir(), "lume.json");
 }
 
+/** Lume 托管 Vault 根（<configDir>/vaults/default）：未安装 Obsidian 的用户的内置笔记库。 */
+export function getManagedVaultDir(): string {
+  return join(getConfigDir(), "vaults", "default");
+}
+
 export function getAgentSessionsIndexPath(): string {
   return join(getConfigDir(), "agent-sessions.json");
 }
