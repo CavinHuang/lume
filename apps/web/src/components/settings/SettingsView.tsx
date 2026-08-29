@@ -78,8 +78,8 @@ export function SettingsView() {
   }
 
   return (
-    <div className="flex h-full w-full min-w-0 gap-8 bg-[var(--background)]">
-      <aside className="flex h-full min-h-0 w-[286px] min-w-[286px] shrink-0 flex-col border-r border-sidebar-border bg-[var(--lume-bg-rail)] pl-2 pb-5 pt-3">
+    <div className="flex h-full w-full min-w-0 gap-8 bg-[var(--lume-bg-rail)]">
+      <aside className="flex h-full min-h-0 w-[286px] min-w-[286px] shrink-0 flex-col bg-[var(--lume-bg-rail)] pl-2 pb-5 pt-3">
         <Button
           variant="ghost"
           type="button"
@@ -126,7 +126,7 @@ export function SettingsView() {
         </div>
       </aside>
 
-      <ScrollArea className="flex-1 min-w-0 min-h-0 pt-4 pb-0">
+      <ScrollArea className="min-h-0 flex-1 overflow-hidden rounded-l-[10px] bg-[var(--background)] pt-4 pb-0">
         <main className="mx-auto w-full max-w-4xl px-6 py-5">
           <div className="mb-4">
             <h2 className="text-[22px] font-semibold leading-7 text-[var(--text-1)]">{title}</h2>
