@@ -87,6 +87,7 @@ import { getAgentWorkspacePath } from "../services/infra/config-paths";
 import { createLogger, writeLogRecord } from "../services/infra/logger";
 import type { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { isAgentRuntimeSessionActive } from "../services/agent-runtime/runner/attempt";
+import { getWorkspaceGitSummary } from "../services/agent-runtime/runtime-core/coding-change-service";
 import {
   createOrResumeRuntimeCoreSessionManager,
   getRuntimeCoreSessionDir,
@@ -971,6 +972,16 @@ export function createAgentHandlers(
         AGENT_IPC_CHANNELS.GET_WORKSPACE_STATUS,
       );
       return getProjectAvailability(input.id);
+    },
+    [AGENT_IPC_CHANNELS.GET_WORKSPACE_GIT_INFO]: async (params) => {
+      const input = validateInput(
+        workspaceIdInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.GET_WORKSPACE_GIT_INFO,
+      );
+      const status = getProjectAvailability(input.id);
+      if (status.availability !== "available") return { isGitRepo: false };
+      return getWorkspaceGitSummary(status.realpath ?? status.projectPath ?? "");
     },
     [AGENT_IPC_CHANNELS.BIND_WORKSPACE_DIRECTORY]: async (params) => {
       const input = validateInput(

@@ -93,6 +93,13 @@ export interface AgentWorkspaceStatus {
   message?: string
 }
 
+/** 项目目录 Git 概要（输入框项目条展示；非 Git/目录不可用时 isGitRepo=false） */
+export interface AgentWorkspaceGitInfo {
+  isGitRepo: boolean
+  /** 当前分支名；detached HEAD 或读取失败时缺省 */
+  branch?: string
+}
+
 export type AgentWorkspaceRemoveMode = 'keepHistory' | 'deleteLumeData'
 
 export interface AgentWorkspaceRemovalImpact {
@@ -1740,6 +1747,8 @@ export const AGENT_IPC_CHANNELS = {
   UPDATE_WORKSPACE: 'agent:update-workspace',
   /** 获取项目目录可用状态 */
   GET_WORKSPACE_STATUS: 'agent:get-workspace-status',
+  /** 获取项目目录 Git 概要（是否 Git 仓库与当前分支） */
+  GET_WORKSPACE_GIT_INFO: 'agent:get-workspace-git-info',
   /** 为未绑定的旧项目绑定本地目录 */
   BIND_WORKSPACE_DIRECTORY: 'agent:bind-workspace-directory',
   /** 为目录不可用的项目重新定位 */

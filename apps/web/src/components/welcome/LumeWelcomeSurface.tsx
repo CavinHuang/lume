@@ -1,13 +1,13 @@
 import type { Editor } from '@tiptap/react'
 import { EditorContent } from '@tiptap/react'
-import { ArrowUp, Loader2, LoaderCircle, FileText, MonitorOff, Plus } from 'lucide-react'
+import { ArrowUp, GitBranch, Loader2, LoaderCircle, FileText, MonitorOff, Plus } from 'lucide-react'
 import { useState } from 'react'
 import type { ReactNode } from 'react'
 import { cn } from '@/lib/utils'
 import { LumeComposer } from '@/components/composer/LumeComposer'
 import { deriveLumeComposerState } from '@/components/composer/lume-composer-state'
 import { PendingAttachmentList } from '@/components/agent/PendingAttachmentList'
-import { type AgentWelcomeSuggestion, type DesktopContextTarget } from '@lume/shared'
+import { type AgentWelcomeSuggestion, type AgentWorkspaceGitInfo, type DesktopContextTarget } from '@lume/shared'
 import type { WelcomeSurfaceViewModel } from './welcome-surface-view-model'
 import { DesktopContextPlusItem } from '@/components/agent/DesktopContextPlusItem'
 import { DesktopContextSelectionChip } from '@/components/agent/DesktopContextSelectionChip'
@@ -26,6 +26,8 @@ interface LumeWelcomeSurfaceProps {
   compact?: boolean
   model: WelcomeSurfaceViewModel
   workspaceSelector: ReactNode
+  /** 当前项目的 Git 概要；仅用于在项目条展示分支 */
+  workspaceGitInfo?: AgentWorkspaceGitInfo | null
   composerModelPicker: ReactNode
   permissionModePicker: ReactNode
   thinkingLevelPicker: ReactNode
@@ -55,6 +57,7 @@ export function LumeWelcomeSurface({
   compact = false,
   model,
   workspaceSelector,
+  workspaceGitInfo,
   composerModelPicker,
   permissionModePicker,
   thinkingLevelPicker,
@@ -111,15 +114,6 @@ export function LumeWelcomeSurface({
             <p className="mt-3 max-w-[480px] text-[14px] leading-6 text-[var(--text-2)]">
               {model.hero.subtitle}
             </p>
-
-            <div
-              {...interactionLockProps}
-              data-welcome-lock="hero-controls"
-              aria-disabled={sending}
-              className="mt-5 flex flex-wrap items-center justify-center gap-3"
-            >
-              {workspaceSelector}
-            </div>
           </section>}
 
           <div
@@ -128,6 +122,25 @@ export function LumeWelcomeSurface({
             aria-disabled={sending}
             className={cn('w-full', compact ? 'max-w-none' : 'mt-8 max-w-[840px]')}
           >
+            {!compact && (
+              <div
+                {...interactionLockProps}
+                data-welcome-lock="hero-controls"
+                aria-disabled={sending}
+                className="mb-2 flex flex-wrap items-center gap-2"
+              >
+                {workspaceSelector}
+                {workspaceGitInfo?.branch ? (
+                  <div
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] px-3 text-[13px] text-[var(--text-2)]"
+                    title="当前分支"
+                  >
+                    <GitBranch size={14} className="shrink-0 text-[var(--text-3)]" />
+                    <span className="max-w-[220px] truncate text-[var(--text-1)]">{workspaceGitInfo.branch}</span>
+                  </div>
+                ) : null}
+              </div>
+            )}
             <LumeComposer
               tone={composerState.tone}
               className={cn('w-full overflow-visible', sending && 'opacity-90')}

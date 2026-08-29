@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Box, ChevronDown, FolderOpen, MessageCircle, Plus, Search } from 'lucide-react'
+import { ChevronDown, FolderOpen, MessageCircle, Plus, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { AgentWorkspace } from '@lume/shared'
 
@@ -51,8 +51,7 @@ export function WorkspaceSelector({
         )}
         title="选择项目或普通会话"
       >
-        <Box size={15} className="shrink-0 text-[var(--text-2)]" />
-        <span className="shrink-0 text-[var(--text-2)]">项目：</span>
+        {selected ? <FolderOpen size={15} className="shrink-0 text-[var(--text-2)]" /> : <MessageCircle size={15} className="shrink-0 text-[var(--text-2)]" />}
         <span className="min-w-0 flex-1 truncate font-semibold text-[var(--text-1)]">{selected?.name ?? '普通会话'}</span>
         <ChevronDown size={13} className="shrink-0 text-[var(--text-3)]" />
       </Button>

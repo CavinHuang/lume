@@ -5,6 +5,7 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { Worker } from "node:worker_threads";
 import { createLogger } from "../../infra/logger";
 import type {
+  AgentWorkspaceGitInfo,
   CodingBinaryDiffPayload,
   CodingBlameResult,
   CodingDiffActionInput,
@@ -1454,6 +1455,14 @@ export async function discoverCodingRoots(
     });
   }
   return [...discovered.values()];
+}
+
+/** 项目目录 Git 概要（输入框项目条展示）：目录不存在/非 Git 仓库返回 isGitRepo=false */
+export async function getWorkspaceGitSummary(workspaceRoot: string): Promise<AgentWorkspaceGitInfo> {
+  const [root] = await discoverCodingRoots([workspaceRoot]);
+  if (!root || root.repository.kind !== "git") return { isGitRepo: false };
+  const branch = root.repository.branch?.name;
+  return { isGitRepo: true, ...(branch ? { branch } : {}) };
 }
 
 function rootIdForPath(path: string): string {
