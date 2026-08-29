@@ -316,10 +316,11 @@ export function buildRuntimeCoreTools(input: {
   const isMainTaskThread =
     input.threadType === "main" || input.threadType === undefined;
   // SelectWorktree 仅主任务线程 + 交互执行注入：后台自动任务与子 Agent 不得
-  // 重定向交互会话的开发目录（对齐 Proma 对 automation/delegation 的排除）。
+  // 重定向交互会话的开发目录（对齐 Proma 对 automation/delegation 的排除）；
+  // plan 模式与 Enter/ExitWorktree 一致排除（绑定是会话状态变更）。
   const selectWorktreeTool = createSelectWorktreeTool({
     threadId: input.sessionId,
-    enabled: isMainTaskThread && automationExecution !== true,
+    enabled: isMainTaskThread && automationExecution !== true && permissionMode !== "plan",
   });
   const mainTaskRuntime = isMainTaskThread
     ? createMainTaskTools({
