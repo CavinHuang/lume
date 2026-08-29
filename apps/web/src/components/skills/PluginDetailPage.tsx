@@ -181,8 +181,8 @@ export function PluginDetailPage({
         ) : item ? (
           <div className="space-y-8">
             <header className="space-y-3">
-              <div className="flex size-16 items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-2)]">
-                <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-6" />
+              <div className="flex size-16 items-center justify-center overflow-hidden rounded-2xl bg-[color:color-mix(in_oklab,var(--text-1)_6%,transparent)]">
+                <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-10" />
               </div>
               <div className="flex min-w-0 items-center justify-between gap-3">
                 <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-[var(--text-1)]">{pluginName}</h1>
@@ -253,9 +253,9 @@ export function PluginDetailPage({
                 {pluginSkills.length > 0 ? (
                   <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
                     {pluginSkills.map((skill) => (
-                      <div key={skill.name} className="flex items-start gap-3 py-2.5">
-                        <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-2)]">
-                          <Sparkles size={16} />
+                      <div key={skill.name} className="flex items-start gap-3 py-3">
+                        <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-[color:color-mix(in_oklab,var(--text-1)_6%,transparent)] text-[var(--text-2)]">
+                          <Sparkles size={18} />
                         </span>
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-[14px] text-[var(--text-1)]">{skill.name}</span>
@@ -269,7 +269,10 @@ export function PluginDetailPage({
                     ))}
                   </div>
                 ) : (
-                  <CapabilityRow icon={<Sparkles size={16} />} name={`共 ${item.capabilities.skillCount} 个技能`} />
+                  <p className="flex items-center gap-2 px-2 py-2 text-[14px] text-[var(--text-2)]">
+                    <Sparkles size={15} className="text-[var(--text-3)]" />
+                    该插件包含 {item.capabilities.skillCount} 个技能
+                  </p>
                 )}
               </DetailSection>
             )}
@@ -477,7 +480,7 @@ function DetailSection({
 function CapabilityRow({ icon, name }: { icon: ReactNode; name: string }) {
   return (
     <div className="flex items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-[var(--surface-2)]">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[var(--surface-2)] text-[var(--text-2)]">
+      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[color:color-mix(in_oklab,var(--text-1)_6%,transparent)] text-[var(--text-2)]">
         {icon}
       </span>
       <span className="min-w-0 truncate text-[14px] text-[var(--text-1)]">{name}</span>
@@ -539,22 +542,21 @@ function HeroPromptPanel({
   )
 }
 
-function MarketplaceMedia({ media, pluginName }: { media: PluginMarketplaceAsset; pluginName: string }) {  return (
+function MarketplaceMedia({ media, pluginName }: { media: PluginMarketplaceAsset; pluginName: string }) {
+  // 无可展示的图片 URL（或加载失败）时直接不渲染，避免空占位盒
+  const [failed, setFailed] = useState(false)
+  if (!media.url || failed) return null
+  return (
     <div
       data-plugin-marketplace-media="true"
-      className="overflow-hidden rounded-xl border border-[var(--border)] bg-[var(--surface-2)]"
+      className="overflow-hidden rounded-2xl border border-[color:color-mix(in_oklab,var(--border-strong)_24%,transparent)] bg-[var(--surface-2)]"
     >
-      {media.url ? (
-        <img
-          src={media.url}
-          alt={`${pluginName} thumbnail`}
-          className="h-auto max-h-[380px] w-full object-cover"
-        />
-      ) : (
-        <div className="px-4 py-8 text-center text-[12px] text-[var(--text-3)]">
-          {media.path}
-        </div>
-      )}
+      <img
+        src={media.url}
+        alt={`${pluginName} thumbnail`}
+        className="h-auto max-h-[380px] w-full object-cover"
+        onError={() => setFailed(true)}
+      />
     </div>
   )
 }
