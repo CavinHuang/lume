@@ -158,19 +158,19 @@ export function PluginDetailPage({
       data-plugin-detail-shell="full-width"
       className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--background)]"
     >
-      <main className="mx-auto w-full max-w-[1060px] px-6 py-6">
-        <nav className="flex items-center gap-1.5 text-[13px] text-[var(--text-3)]">
-          <button
-            type="button"
-            onClick={onBack}
-            className="rounded px-0.5 transition-colors hover:text-[var(--text-1)]"
-          >
-            插件市场
-          </button>
-          <ChevronRight size={14} />
-          <span className="min-w-0 truncate text-[var(--text-1)]">{pluginName}</span>
-        </nav>
+      <nav className="flex items-center gap-1.5 px-5 pt-5 text-[13px] text-[var(--text-3)]">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded px-0.5 transition-colors hover:text-[var(--text-1)]"
+        >
+          插件市场
+        </button>
+        <ChevronRight size={14} />
+        <span className="min-w-0 truncate text-[var(--text-1)]">{pluginName}</span>
+      </nav>
 
+      <main className="mx-auto w-full max-w-[850px] px-6 pb-12 pt-6">
         {loading ? (
           <div role="status" className="flex min-h-[320px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
             <Loader2 size={16} className="animate-spin" />
@@ -182,8 +182,8 @@ export function PluginDetailPage({
           </section>
         ) : item ? (
           <div>
-            <header className="mt-7">
-              <div className="flex size-16 items-center justify-center overflow-hidden rounded-2xl border border-[var(--border)] bg-[var(--surface-2)]">
+            <header>
+              <div className="flex size-[72px] items-center justify-center overflow-hidden rounded-[20px] border border-[var(--border)] bg-[var(--surface-2)]">
                 <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-full" />
               </div>
               <div className="mt-4 flex items-start justify-between gap-4">
@@ -331,16 +331,7 @@ export function PluginDetailPage({
               <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
                 {inspected?.normalized.author && <InfoRow label="开发者" value={inspected.normalized.author} />}
                 <InfoRow label="类别" value={PLUGIN_SOURCE_LABELS[item.sourceType]} />
-                {updateAvailable ? (
-                  <>
-                    <InfoRow label="当前版本" value={`v${currentVersion}`} />
-                    <InfoRow label="可更新版本" value={`v${item.version}`} />
-                  </>
-                ) : (
-                  <InfoRow label="版本" value={`v${item.version}`} />
-                )}
-                <InfoRow label="安装状态" value={formatPluginInstallState(installState)} />
-                <InfoRow label="启用状态" value={formatPluginEnableState(enableState)} />
+                <InfoRow label="版本" value={`v${item.version}`} />
                 {marketplaceWebsite && (
                   <InfoRow
                     label="网站"
@@ -415,12 +406,28 @@ export function PluginDetailPage({
                     <div className="mt-0.5 break-all font-mono text-[var(--text-2)]">{inspected.normalized.root}</div>
                   </div>
                 )}
-                {inspected && (
-                  <div className="rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_36%,transparent)] px-3.5 py-3 text-[12.5px] leading-5">
-                    <div className="text-[var(--text-3)]">权限 hash</div>
-                    <div className="mt-0.5 break-all font-mono text-[var(--text-2)]">{inspected.permissionsHash}</div>
+                <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)] text-[12.5px]">
+                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                    <span className="text-[var(--text-3)]">安装状态</span>
+                    <span className="text-[var(--text-2)]">{formatPluginInstallState(installState)}</span>
                   </div>
-                )}
+                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                    <span className="text-[var(--text-3)]">启用状态</span>
+                    <span className="text-[var(--text-2)]">{formatPluginEnableState(enableState)}</span>
+                  </div>
+                  {updateAvailable && (
+                    <>
+                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                        <span className="text-[var(--text-3)]">当前版本</span>
+                        <span className="font-mono text-[var(--text-2)]">v{currentVersion}</span>
+                      </div>
+                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 leading-5">
+                        <span className="text-[var(--text-3)]">可更新版本</span>
+                        <span className="font-mono text-[var(--text-2)]">v{item.version}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
                 {rollbackVersion && onRollback && (
                   <Button
                     variant="ghost"
