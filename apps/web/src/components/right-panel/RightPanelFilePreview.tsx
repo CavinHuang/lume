@@ -72,6 +72,7 @@ export function RightPanelFilePreview({
   const [payload, setPayload] = useState<FileRefReadResult | null>(null)
   const [mediaScope, setMediaScope] = useState<{ token: string; url: string } | null>(null)
   const [officeScope, setOfficeScope] = useState<{ token: string; url: string } | null>(null)
+  const [officePending, setOfficePending] = useState(false)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [sourceMode, setSourceMode] = useState(false)
@@ -119,6 +120,7 @@ export function RightPanelFilePreview({
     setPayload(null)
     setMediaScope(null)
     setOfficeScope(null)
+    setOfficePending(false)
     setError(null)
     setSourceMode(editorStateKey
       ? editorStatesRef.current[editorStateKey]?.sourceMode ?? Boolean(lineSelection && kind === 'markdown')
@@ -176,8 +178,10 @@ export function RightPanelFilePreview({
           }
         })
         .finally(() => { if (!disposed && current === requestId.current) setLoading(false) })
-      // Office 高保真渲染与 media scope 并行：成功切 iframe，失败/不可用留在内置查看器，回退零等待
+      // Office 高保真渲染与 media scope 并行：对齐 Proma，渲染就绪前不挂载降级
+      // 查看器（避免先显示 Extend 视图再闪切成 iframe），确认失败后再回退。
       if (kind === 'docx' || kind === 'xlsx' || kind === 'pptx') {
+        setOfficePending(true)
         const officeRender = guardedRef
           ? renderGuardedOfficePreview({ guardedRef, generation: current })
           : renderOfficePreview({ ref: fileRef, generation: current })
@@ -187,11 +191,13 @@ export function RightPanelFilePreview({
               if (scope) void revokeFilePreviewScope(scope.token)
               return
             }
-            if (!scope) return
-            officeToken = scope.token
-            setOfficeScope(scope)
+            if (scope) {
+              officeToken = scope.token
+              setOfficeScope(scope)
+            }
           })
           .catch(() => { /* 渲染失败静默回退内置查看器 */ })
+          .finally(() => { if (!disposed && current === requestId.current) setOfficePending(false) })
       }
       return () => {
         disposed = true
@@ -502,6 +508,8 @@ export function RightPanelFilePreview({
         ) : isDocumentViewerKind(kind) && mediaScope ? (
           officeScope ? (
             <RightPanelOfficePreview url={officeScope.url} title={`${basename(fileRef.relativePath)} 高保真预览`} />
+          ) : officePending ? (
+            <PreviewStatus>正在加载 Office 预览…</PreviewStatus>
           ) : (
             <DocumentViewerHost
               kind={kind}
