@@ -142,7 +142,6 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('data-plugin-marketplace-icon="true"')
     expect(html).toContain('data-plugin-marketplace-media="true"')
     expect(html).toContain('https://example.com/browser')
-    expect(html).toContain('./README.md')
     expect(html).toContain('确认浏览器授权')
     expect(html).toContain('在 Lume 授权弹窗里确认 Chrome 请求。')
   })

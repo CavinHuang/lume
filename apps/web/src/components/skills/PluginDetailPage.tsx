@@ -10,7 +10,7 @@ import {
   Sparkles,
   Trash2,
 } from 'lucide-react'
-import type { GetMarketDetailResult, PluginMarketplaceAsset } from '@lume/shared'
+import type { GetMarketDetailResult } from '@lume/shared'
 import type { ReactNode } from 'react'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
@@ -22,7 +22,6 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
-import { cn } from '@/lib/utils'
 import { PLUGIN_SOURCE_LABELS } from './plugin-market-ui-state'
 import { PluginLogo } from './PluginLogo'
 import {
@@ -230,47 +229,41 @@ export function PluginDetailPage({
               </section>
             )}
 
-            {marketplaceMedia && (
-              <MarketplaceMedia media={marketplaceMedia} pluginName={pluginName} />
-            )}
-
-            {!marketplaceMedia && pluginSkills.length > 0 && (
-              <HeroPromptPanel pluginName={pluginName} skills={pluginSkills} onTry={onTryInChat} />
+            {(marketplaceMedia || pluginSkills.length > 0) && (
+              <HeroPanel
+                pluginName={pluginName}
+                skills={pluginSkills}
+                heroImage={marketplaceMedia?.url}
+                onTry={onTryInChat}
+              />
             )}
 
             {item.capabilities.mcpServerNames.length > 0 && (
               <DetailSection title="MCP 服务器" count={item.capabilities.mcpServerNames.length}>
-                <div className="space-y-1">
+                <ul className="mt-1 divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_35%,transparent)]">
                   {item.capabilities.mcpServerNames.map((serverName) => (
                     <CapabilityRow key={serverName} icon={<Server size={16} />} name={serverName} />
                   ))}
-                </div>
+                </ul>
               </DetailSection>
             )}
 
             {item.capabilities.skillCount > 0 && (
               <DetailSection title="技能" count={item.capabilities.skillCount}>
                 {pluginSkills.length > 0 ? (
-                  <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
+                  <ul className="mt-1 divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_35%,transparent)]">
                     {pluginSkills.map((skill) => (
-                      <div key={skill.name} className="flex items-start gap-3 py-3">
-                        <span className="mt-0.5 flex size-10 shrink-0 items-center justify-center rounded-xl bg-[color:color-mix(in_oklab,var(--text-1)_6%,transparent)] text-[var(--text-2)]">
-                          <Sparkles size={18} />
-                        </span>
-                        <span className="min-w-0 flex-1">
-                          <span className="block truncate text-[14px] text-[var(--text-1)]">{skill.name}</span>
-                          {skill.description && (
-                            <span className="mt-0.5 block truncate text-[12px] text-[var(--text-3)]" title={skill.description}>
-                              {skill.description}
-                            </span>
-                          )}
-                        </span>
-                      </div>
+                      <CapabilityRow
+                        key={skill.name}
+                        icon={<Sparkles size={16} />}
+                        name={skill.name}
+                        description={skill.description}
+                      />
                     ))}
-                  </div>
+                  </ul>
                 ) : (
-                  <p className="flex items-center gap-2 px-2 py-2 text-[14px] text-[var(--text-2)]">
-                    <Sparkles size={15} className="text-[var(--text-3)]" />
+                  <p className="flex items-center gap-2 px-2 py-2.5 text-[14px] text-[var(--text-3)]">
+                    <Sparkles size={16} />
                     该插件包含 {item.capabilities.skillCount} 个技能
                   </p>
                 )}
@@ -278,10 +271,10 @@ export function PluginDetailPage({
             )}
 
             <DetailSection title="信息">
-              <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
+              <dl className="mt-3 space-y-2.5">
                 {inspected?.normalized.author && <InfoRow label="开发者" value={inspected.normalized.author} />}
                 <InfoRow label="类别" value={PLUGIN_SOURCE_LABELS[item.sourceType]} />
-                <InfoRow label="版本" value={`v${item.version}`} />
+                <InfoRow label="版本" value={item.version} />
                 {marketplaceWebsite && (
                   <InfoRow
                     label="网站"
@@ -290,16 +283,16 @@ export function PluginDetailPage({
                         href={marketplaceWebsite}
                         target="_blank"
                         rel="noreferrer"
-                        className="inline-flex items-center gap-1 text-[var(--text-2)] hover:text-[var(--text-1)]"
+                        title={`网站: ${marketplaceWebsite}`}
+                        aria-label={`网站: ${marketplaceWebsite}`}
+                        className="inline-flex items-center gap-1 rounded-md text-[14px] text-[var(--text-1)] transition-colors hover:text-[var(--lume-accent)]"
                       >
-                        {marketplaceWebsite}
-                        <ExternalLink size={12} />
+                        <ExternalLink size={14} />
                       </a>
                     )}
                   />
                 )}
-                {marketplace?.docs && <InfoRow label="文档" value={marketplace.docs} mono />}
-              </div>
+              </dl>
             </DetailSection>
 
             {setupItems.length > 0 && (
@@ -467,96 +460,114 @@ function DetailSection({
 }) {
   return (
     <section>
-      <div className="flex items-baseline gap-2">
-        <h2 className="pb-2 text-[16px] font-semibold text-[var(--text-1)]">{title}</h2>
-        {typeof count === 'number' && <span className="text-[13px] text-[var(--text-3)]">{count}</span>}
+      <div className="flex items-baseline gap-2 border-b border-[var(--border)] pb-2">
+        <h2 className="text-[16px] font-semibold text-[var(--text-1)]">{title}</h2>
+        {typeof count === 'number' && <span className="text-[14px] text-[var(--text-3)]">{count}</span>}
       </div>
-      <div aria-hidden="true" className="h-px bg-[color:color-mix(in_oklab,var(--border-strong)_24%,transparent)]" />
-      <div className="mt-2">{children}</div>
+      <div className="mt-1">{children}</div>
     </section>
   )
 }
 
-function CapabilityRow({ icon, name }: { icon: ReactNode; name: string }) {
+function CapabilityRow({
+  icon,
+  name,
+  description,
+}: {
+  icon: ReactNode
+  name: string
+  description?: string
+}) {
   return (
-    <div className="flex items-center gap-3 rounded-xl px-2 py-2.5 transition-colors hover:bg-[var(--surface-2)]">
-      <span className="flex size-10 shrink-0 items-center justify-center rounded-xl bg-[color:color-mix(in_oklab,var(--text-1)_6%,transparent)] text-[var(--text-2)]">
+    <li className="flex min-w-0 items-center gap-3 py-2.5">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[color:color-mix(in_oklab,var(--text-1)_5%,transparent)] text-[var(--text-3)]">
         {icon}
       </span>
-      <span className="min-w-0 truncate text-[14px] text-[var(--text-1)]">{name}</span>
-    </div>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[14px] font-medium text-[var(--text-1)]">{name}</div>
+        {description ? (
+          <div className="mt-0.5 line-clamp-1 text-[14px] text-[var(--text-3)]">{description}</div>
+        ) : null}
+      </div>
+    </li>
   )
 }
 
-function InfoRow({ label, value, mono = false }: { label: string; value: ReactNode; mono?: boolean }) {
+function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   return (
-    <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-3 text-[14px] leading-5">
-      <span className="text-[var(--text-3)]">{label}</span>
-      <span className={cn('min-w-0 break-all text-[var(--text-1)]', mono && 'font-mono text-[13px]')}>{value}</span>
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] items-baseline gap-3">
+      <dt className="text-[14px] text-[var(--text-3)]">{label}</dt>
+      <dd className="min-w-0 truncate text-[14px] text-[var(--text-1)]">{value}</dd>
     </div>
   )
 }
 
-/** 推荐位：深色渐变面板 + 示例 prompt 胶囊（用插件技能描述生成，对齐参考稿） */
-function HeroPromptPanel({
+/** 推荐位：渐变面板（可叠 hero 图）+ 技能生成的示例 prompt 胶囊，规格取自 ZCode `_mt`/`I4` */
+function HeroPanel({
   pluginName,
   skills,
+  heroImage,
   onTry,
 }: {
   pluginName: string
   skills: Array<{ name: string; description?: string }>
+  heroImage?: string
   onTry: () => void
 }) {
-  const prompts = skills
-    .slice(0, 4)
-    .map((skill) => ({ icon: <Sparkles size={15} />, label: pluginName, prompt: skill.description || skill.name }))
+  const [imageFailed, setImageFailed] = useState(false)
+  const showImage = Boolean(heroImage) && !imageFailed
+  const prompts = skills.slice(0, 4).map((skill) => ({
+    icon: <Sparkles size={16} />,
+    label: pluginName,
+    prompt: skill.description || skill.name,
+  }))
   return (
     <div
-      className="relative overflow-hidden rounded-2xl"
+      className="relative min-h-72 overflow-hidden rounded-3xl sm:aspect-[3/1] sm:min-h-0"
       style={{ background: 'linear-gradient(150deg, #0e1420 0%, #17233a 55%, #2c4666 100%)' }}
       data-testid="plugin-detail-hero"
     >
-      <div aria-hidden="true" className="pointer-events-none absolute left-[-12%] top-[18%] size-[36rem] rounded-full bg-cyan-300/20 blur-3xl" />
-      <div aria-hidden="true" className="pointer-events-none absolute right-[-18%] bottom-[-14%] size-[30rem] rounded-full bg-blue-400/20 blur-3xl" />
-      <div className="relative z-10 flex flex-col items-center gap-3 px-6 py-9">
-        {prompts.map((prompt) => (
-          <button
-            key={prompt.prompt}
-            type="button"
-            onClick={onTry}
-            title={prompt.prompt}
-            className="group flex w-full max-w-[560px] cursor-pointer items-center gap-2.5 rounded-full bg-[#0b1120]/85 py-2 pl-3 pr-2 text-left transition-colors hover:bg-[#0b1120]"
-          >
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-[var(--surface-2)] text-[var(--text-2)]">
-              {prompt.icon}
-            </span>
-            <span className="shrink-0 text-[13px] text-white/55">{prompt.label}</span>
-            <span className="min-w-0 flex-1 truncate text-[14px] font-semibold text-white">{prompt.prompt}</span>
-            <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-white/10 text-white/80 transition-colors group-hover:bg-white/20">
-              <ArrowRight size={14} />
-            </span>
-          </button>
-        ))}
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <div className="absolute left-[-12%] top-[18%] size-[42rem] rounded-full bg-cyan-300/20 blur-3xl" />
+        <div className="absolute right-[-18%] bottom-[-14%] size-[36rem] rounded-full bg-blue-400/20 blur-3xl" />
       </div>
-    </div>
-  )
-}
-
-function MarketplaceMedia({ media, pluginName }: { media: PluginMarketplaceAsset; pluginName: string }) {
-  // 无可展示的图片 URL（或加载失败）时直接不渲染，避免空占位盒
-  const [failed, setFailed] = useState(false)
-  if (!media.url || failed) return null
-  return (
-    <div
-      data-plugin-marketplace-media="true"
-      className="overflow-hidden rounded-2xl border border-[color:color-mix(in_oklab,var(--border-strong)_24%,transparent)] bg-[var(--surface-2)]"
-    >
-      <img
-        src={media.url}
-        alt={`${pluginName} thumbnail`}
-        className="h-auto max-h-[380px] w-full object-cover"
-        onError={() => setFailed(true)}
-      />
+      {showImage && (
+        <img
+          src={heroImage}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          data-plugin-marketplace-media="true"
+          className="absolute inset-0 size-full select-none object-cover opacity-80"
+          onError={() => setImageFailed(true)}
+        />
+      )}
+      <div aria-hidden="true" className="absolute inset-0 bg-black/15" />
+      {prompts.length > 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-5 sm:p-8">
+          {prompts.map((prompt) => (
+            <button
+              key={prompt.prompt}
+              type="button"
+              onClick={onTry}
+              title={prompt.prompt}
+              className="group/prompt flex w-fit max-w-2xl cursor-pointer items-center gap-2.5 rounded-3xl bg-black/75 px-3.5 py-2.5 text-left text-[14px] text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            >
+              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-white/15 text-white/80">
+                {prompt.icon}
+              </span>
+              <span className="shrink-0 font-medium text-white/70">{prompt.label}</span>
+              <span className="min-w-0 whitespace-normal">{prompt.prompt}</span>
+              <span
+                aria-hidden="true"
+                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/15 transition-colors group-hover/prompt:bg-white/25"
+              >
+                <ArrowRight size={16} />
+              </span>
+            </button>
+          ))}
+        </div>
+      )}
     </div>
   )
 }
