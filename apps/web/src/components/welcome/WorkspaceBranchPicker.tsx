@@ -6,13 +6,14 @@
  * 切换分支与「创建并检出新分支」。非 Git 项目不渲染。
  */
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Check, ChevronDown, GitBranch, Loader2, Plus, Search } from 'lucide-react'
+import { Check, ChevronDown, GitBranch, GitGraph, Loader2, Plus, Search } from 'lucide-react'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { AGENT_IPC_CHANNELS, type AgentWorkspaceGitInfo } from '@lume/shared'
 import { sidecarCall } from '@/lib/desktop-api'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { WorkspaceGitGraphDialog } from './WorkspaceGitGraphDialog'
 
 interface WorkspaceBranchPickerProps {
   /** 目标项目 id；null（普通会话）时不渲染 */
@@ -27,6 +28,7 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
   const [search, setSearch] = useState('')
   const [creating, setCreating] = useState(false)
   const [newBranchName, setNewBranchName] = useState('')
+  const [graphOpen, setGraphOpen] = useState(false)
   const containerRef = useRef<HTMLDivElement>(null)
 
   const fetchInfo = useCallback(() => {
@@ -107,6 +109,10 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
         <span className="max-w-[200px] truncate text-[var(--text-1)]">{currentBranch ?? 'HEAD'}</span>
         <ChevronDown size={12} className="shrink-0 text-[var(--text-3)]" />
       </Button>
+
+      {workspaceId && (
+        <WorkspaceGitGraphDialog workspaceId={workspaceId} open={graphOpen} onOpenChange={setGraphOpen} />
+      )}
 
       {open && (
         <div className="absolute bottom-full left-0 z-50 mb-2 w-[320px] overflow-hidden rounded-xl border border-[color:color-mix(in_oklab,var(--border-strong)_56%,transparent)] bg-[var(--surface-1)] shadow-[0_18px_42px_-28px_hsl(var(--lume-shadow-panel)/0.62)]">
@@ -195,6 +201,15 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
                 创建并检出新分支…
               </Button>
             )}
+            <Button
+              variant="ghost"
+              type="button"
+              onClick={() => { closeAndReset(); setGraphOpen(true) }}
+              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+            >
+              <GitGraph size={13} className="shrink-0 text-[var(--text-3)]" />
+              Git 图谱
+            </Button>
           </div>
         </div>
       )}

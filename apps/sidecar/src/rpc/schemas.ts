@@ -1424,6 +1424,11 @@ export const workspaceBranchCheckoutInputSchema = z.object({
   create: z.boolean().optional(),
 });
 
+export const workspaceGitLogInputSchema = z.object({
+  id: idSchema,
+  limit: z.number().int().min(1).max(1000).optional(),
+});
+
 export const workspaceDirectoryInputSchema = z.object({
   id: idSchema,
   projectPath: z.string().trim().min(1),

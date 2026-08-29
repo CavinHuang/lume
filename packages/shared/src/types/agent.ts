@@ -104,6 +104,19 @@ export interface AgentWorkspaceGitInfo {
   dirtyFiles?: number
 }
 
+/** 单条提交（Git 图谱用） */
+export interface AgentWorkspaceGitLogCommit {
+  hash: string
+  shortHash: string
+  subject: string
+  author: string
+  /** ISO 8601 提交日期 */
+  date: string
+  /** 指向该提交的引用名（HEAD、本地/远程分支、标签） */
+  refs: string[]
+  parents: string[]
+}
+
 export type AgentWorkspaceRemoveMode = 'keepHistory' | 'deleteLumeData'
 
 export interface AgentWorkspaceRemovalImpact {
@@ -1755,6 +1768,8 @@ export const AGENT_IPC_CHANNELS = {
   GET_WORKSPACE_GIT_INFO: 'agent:get-workspace-git-info',
   /** 检出项目分支（切换已有分支或新建分支） */
   CHECKOUT_WORKSPACE_BRANCH: 'agent:checkout-workspace-branch',
+  /** 获取项目提交历史（Git 图谱用） */
+  GET_WORKSPACE_GIT_LOG: 'agent:get-workspace-git-log',
   /** 为未绑定的旧项目绑定本地目录 */
   BIND_WORKSPACE_DIRECTORY: 'agent:bind-workspace-directory',
   /** 为目录不可用的项目重新定位 */

@@ -6,6 +6,7 @@ import { Worker } from "node:worker_threads";
 import { createLogger } from "../../infra/logger";
 import type {
   AgentWorkspaceGitInfo,
+  AgentWorkspaceGitLogCommit,
   CodingBinaryDiffPayload,
   CodingBlameResult,
   CodingDiffActionInput,
@@ -1478,6 +1479,45 @@ export async function getWorkspaceGitSummary(workspaceRoot: string): Promise<Age
 async function listLocalBranches(gitRoot: string): Promise<string[] | undefined> {
   const output = await runGitCommand(["branch", "--format=%(refname:short)"], gitRoot);
   return output?.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+/** 提交历史（Git 图谱用）：按日期序取最近 limit 条，含引用装饰与父提交 */
+export async function getWorkspaceGitLog(workspaceRoot: string, limit: number): Promise<AgentWorkspaceGitLogCommit[]> {
+  const [root] = await discoverCodingRoots([workspaceRoot]);
+  if (!root || root.repository.kind !== "git") return [];
+  // 记录内用 NUL 分隔字段、记录间用 0x01，避免提交主题里的任意字符破坏解析
+  const output = await runGitCommand([
+    "log",
+    "-n",
+    String(limit),
+    "--date-order",
+    "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D%x00%P%x01",
+  ], root.path);
+  if (!output) return [];
+  return output
+    .split("\x01")
+    .map((record) => record.replace(/^\n/, ""))
+    .filter(Boolean)
+    .map(parseGitLogRecord)
+    .filter((commit): commit is AgentWorkspaceGitLogCommit => commit !== null);
+}
+
+function parseGitLogRecord(record: string): AgentWorkspaceGitLogCommit | null {
+  const [hash, shortHash, subject, author, date, refs, parents] = record.split("\0");
+  if (!hash || !shortHash || !subject) return null;
+  return {
+    hash,
+    shortHash,
+    subject,
+    author: author ?? "",
+    date: date ?? "",
+    refs: (refs ?? "")
+      .split(",")
+      .map((ref) => ref.trim())
+      .filter(Boolean)
+      .map((ref) => (ref.startsWith("HEAD -> ") ? "HEAD" : ref)),
+    parents: (parents ?? "").split(" ").filter(Boolean),
+  };
 }
 
 const GIT_BRANCH_NAME_PATTERN = /^[^\s~^:?*\[\\]+$/;
