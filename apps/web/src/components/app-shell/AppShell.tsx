@@ -22,7 +22,7 @@ export function AppShell() {
   const rightPanelVisible = rightPanelLayout.open && activeAgent
   const rightPanelExpanded = rightPanelVisible && rightPanelLayout.mode === 'expanded'
   const forceCompactSidebar = rightPanelVisible && rightPanelLayout.mode !== 'compact' && viewportWidth < 1120
-  const effectiveSidebarWidth = sidebarCollapsed || forceCompactSidebar ? 72 : 286
+  const effectiveSidebarWidth = sidebarCollapsed ? 0 : forceCompactSidebar ? 72 : 286
   const rightPanelMaxWidth = Math.max(360, viewportWidth - effectiveSidebarWidth - 420 - 28)
 
   useEffect(() => {
@@ -54,7 +54,7 @@ export function AppShell() {
         </div>
       ) : (
         <div className={cn('flex min-h-0 flex-1 gap-1.5 pl-2', rightPanelExpanded ? 'pr-0' : 'pr-2')}>
-          <LeftSidebar forceCollapsed={forceCompactSidebar} />
+          {!sidebarCollapsed && <LeftSidebar forceCollapsed={forceCompactSidebar} />}
           <div className={cn(
             'min-w-0 flex-1 -ml-1.5 overflow-hidden rounded-r-[16px] bg-[var(--lume-bg-rail)]',
             rightPanelVisible && 'mr-[-6px] rounded-r-none',
