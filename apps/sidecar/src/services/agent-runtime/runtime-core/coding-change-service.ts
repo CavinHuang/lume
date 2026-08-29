@@ -1486,8 +1486,10 @@ export async function getWorkspaceGitLog(workspaceRoot: string, limit: number): 
   const [root] = await discoverCodingRoots([workspaceRoot]);
   if (!root || root.repository.kind !== "git") return [];
   // 记录内用 NUL 分隔字段、记录间用 0x01，避免提交主题里的任意字符破坏解析
+  // --all：展示全部分支（含远程）的提交，否则只画 HEAD 可达历史，看不到分支分叉
   const output = await runGitCommand([
     "log",
+    "--all",
     "-n",
     String(limit),
     "--date-order",
@@ -1515,7 +1517,14 @@ function parseGitLogRecord(record: string): AgentWorkspaceGitLogCommit | null {
       .split(",")
       .map((ref) => ref.trim())
       .filter(Boolean)
-      .map((ref) => (ref.startsWith("HEAD -> ") ? "HEAD" : ref)),
+      // "HEAD -> main" 需拆成 HEAD 与 main 两个引用（参考稿同时展示二者）
+      .flatMap((ref) => {
+        if (ref.startsWith("HEAD -> ")) {
+          const target = ref.slice("HEAD -> ".length);
+          return target ? ["HEAD", target] : ["HEAD"];
+        }
+        return [ref];
+      }),
     parents: (parents ?? "").split(" ").filter(Boolean),
   };
 }

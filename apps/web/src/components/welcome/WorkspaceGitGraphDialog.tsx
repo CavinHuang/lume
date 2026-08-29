@@ -5,7 +5,7 @@
  * 提交哈希。顶部刷新，底部加载更多（按 limit 递增重取）。
  */
 import { useCallback, useEffect, useState } from 'react'
-import { GitGraph, Loader2, RefreshCw, X } from 'lucide-react'
+import { GitBranch, GitGraph, Loader2, RefreshCw, Tag, X } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type AgentWorkspaceGitLogCommit } from '@lume/shared'
 import { sidecarCall } from '@/lib/desktop-api'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
@@ -194,7 +194,7 @@ function GitGraphCommitRow({
             key={ref}
             className={cnRefChip(ref)}
           >
-            <span className="size-1.5 shrink-0 rounded-full bg-current opacity-70" aria-hidden="true" />
+            {ref.startsWith("tag:") ? <Tag size={10} className="shrink-0" /> : <GitBranch size={10} className="shrink-0" />}
             <span className="max-w-[140px] truncate">{ref}</span>
           </span>
         ))}
