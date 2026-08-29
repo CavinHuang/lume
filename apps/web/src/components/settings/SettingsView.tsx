@@ -1,12 +1,13 @@
 import { useEffect, useState } from 'react'
 import type * as React from 'react'
 import {
+  ArrowLeft,
   Settings,
 } from 'lucide-react'
 import { useSetAtom, useAtomValue } from 'jotai'
 import { cn } from '@/lib/utils'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import { settingsInitialTabAtom, archiveInitialViewAtom } from '@/atoms'
+import { settingsInitialTabAtom, archiveInitialViewAtom, tabsAtom, activeTabIdAtom } from '@/atoms'
 import { GeneralSettings } from './GeneralSettings'
 import { AppearanceSettings } from './AppearanceSettings'
 import { AgentSettings } from './AgentSettings'
@@ -40,6 +41,9 @@ export function SettingsView() {
   const clearInitialTab = useSetAtom(settingsInitialTabAtom)
   const archiveInitialView = useAtomValue(archiveInitialViewAtom)
   const clearArchiveInitialView = useSetAtom(archiveInitialViewAtom)
+  const tabs = useAtomValue(tabsAtom)
+  const setTabs = useSetAtom(tabsAtom)
+  const setActiveTabId = useSetAtom(activeTabIdAtom)
   const [tab, setTab] = useState<SettingsViewTab>(() => {
     if (initialTab && SETTINGS_NAV_ITEMS.some((item) => item.id === initialTab)) {
       return initialTab as SettingsViewTab
@@ -59,10 +63,30 @@ export function SettingsView() {
   const title = SETTINGS_PAGE_TITLES[tab]
   const subtitle = SETTINGS_PAGE_SUBTITLES[tab]
 
+  const backToWorkspace = () => {
+    const previous = tabs.filter((item) => item.type !== 'settings')
+    const target = previous.at(-1)
+    if (target) {
+      setActiveTabId(target.id)
+      return
+    }
+    // 没有任何工作区 tab 时，回到「新会话」首页
+    setTabs((prev) => [{ id: '__welcome__', type: 'welcome' as const, title: '新会话' }, ...prev])
+    setActiveTabId('__welcome__')
+  }
+
   return (
-    <div className="flex flex-1 min-w-0 min-h-0 gap-8 bg-[var(--background)]">
+    <div className="flex h-full w-full min-w-0 gap-8 bg-[var(--background)]">
       <aside className="flex h-full min-h-0 w-[174px] shrink-0 flex-col bg-[var(--surface-1)] px-3 py-5 shadow-[6px_0_18px_-14px_hsl(var(--lume-shadow-panel)_/_0.32)]">
-        <h1 className="mb-3 shrink-0 px-2.5 text-[22px] font-semibold leading-7 text-[var(--text-1)]">设置</h1>
+        <Button
+          variant="ghost"
+          type="button"
+          onClick={backToWorkspace}
+          className="mb-3 flex h-9 w-full shrink-0 items-center justify-start gap-2 rounded-[8px] px-2.5 text-[13px] font-medium text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+        >
+          <ArrowLeft size={16} strokeWidth={1.9} className="shrink-0" />
+          <span>返回工作区</span>
+        </Button>
         <ScrollArea className="min-h-0 flex-1 pr-1">
           <nav className="space-y-1.5">
             {SETTINGS_NAV_ITEMS.map((item) => {
