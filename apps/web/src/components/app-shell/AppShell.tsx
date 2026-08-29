@@ -48,7 +48,7 @@ export function AppShell() {
       {/* 设置是整页视图：盖过工作区侧栏与右侧面板，仅保留顶栏 */}
       {activeTab?.type === 'settings' ? (
         <div className="flex min-h-0 flex-1 gap-1.5 pr-2">
-          <div className="min-w-0 flex-1 overflow-hidden rounded-r-[10px] bg-[var(--lume-bg-panel)]">
+          <div className="min-w-0 flex-1 overflow-hidden rounded-r-[16px] bg-[var(--lume-bg-panel)]">
             <SettingsView />
           </div>
         </div>
@@ -56,7 +56,7 @@ export function AppShell() {
         <div className={cn('flex min-h-0 flex-1 gap-1.5 pl-2', rightPanelExpanded ? 'pr-0' : 'pr-2')}>
           <LeftSidebar forceCollapsed={forceCompactSidebar} />
           <div className={cn(
-            'min-w-0 flex-1 -ml-1.5 overflow-hidden rounded-r-[10px] bg-[var(--lume-bg-rail)]',
+            'min-w-0 flex-1 -ml-1.5 overflow-hidden rounded-r-[16px] bg-[var(--lume-bg-rail)]',
             rightPanelVisible && 'mr-[-6px] rounded-r-none',
           )}>
             <MainArea />

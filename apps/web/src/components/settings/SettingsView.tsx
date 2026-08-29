@@ -126,7 +126,7 @@ export function SettingsView() {
         </div>
       </aside>
 
-      <ScrollArea className="min-h-0 flex-1 overflow-hidden rounded-l-[10px] bg-[var(--background)] pt-4 pb-0">
+      <ScrollArea className="min-h-0 flex-1 overflow-hidden rounded-l-[16px] bg-[var(--background)] pt-4 pb-0">
         <main className="mx-auto w-full max-w-4xl px-6 py-5">
           <div className="mb-4">
             <h2 className="text-[22px] font-semibold leading-7 text-[var(--text-1)]">{title}</h2>
