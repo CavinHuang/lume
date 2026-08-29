@@ -866,6 +866,37 @@ async function createRuntimeCoreSessionImpl(
     if (task?.id && task.status === "running") {
       backgroundProcessJobIds.add(task.id);
     }
+    // EnterWorktree/ExitWorktree 的持久语义在此落地：把创建/退出落到线程绑定
+    // （SDK setWorkingDirectory 只影响当轮引擎内存，下一轮 run 会重建）。
+    // 绑定失败不回滚工具结果——本轮 cwd 已切到 worktree，下一轮保持原 cwd。
+    const toolNameLower = toolInput.toolName.toLowerCase();
+    if (toolNameLower === "enterworktree" || toolNameLower === "exitworktree") {
+      const worktreeMeta = toolInput.result._meta?.worktree as
+        | { path?: string; retained?: boolean }
+        | undefined;
+      let ports: ReturnType<typeof getRuntimeHostPorts>;
+      try {
+        ports = getRuntimeHostPorts();
+      } catch {
+        return; // RuntimeHostPorts 未注入（部分单测）时跳过持久绑定
+      }
+      if (toolNameLower === "exitworktree") {
+        ports.bindThreadWorktree(input.lumeSessionId, null).catch((error) => {
+          log.warn("exit worktree unbind failed", {
+            error: error instanceof Error ? error.message : String(error),
+            threadId: input.lumeSessionId
+          });
+        });
+      } else if (typeof worktreeMeta?.path === "string" && worktreeMeta.path) {
+        ports.bindThreadWorktree(input.lumeSessionId, worktreeMeta.path).catch((error) => {
+          log.warn("enter worktree bind failed", {
+            error: error instanceof Error ? error.message : String(error),
+            threadId: input.lumeSessionId,
+            path: worktreeMeta.path
+          });
+        });
+      }
+    }
     if (toolInput.toolName.toLowerCase() === "waitfordelegations") {
       for (const run of getSubagentRunRegistry().listByParentSession(
         input.lumeSessionId,

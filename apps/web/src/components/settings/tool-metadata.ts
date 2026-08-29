@@ -164,6 +164,13 @@ export const TOOL_METADATA: Record<string, FrontendToolMeta> = {
     category: 'execute',
     riskLevel: 'medium',
   },
+  select_worktree: {
+    name: 'select_worktree',
+    label: 'SelectWorktree',
+    description: '绑定既有 Git worktree 到当前线程',
+    category: 'execute',
+    riskLevel: 'medium',
+  },
 
   // === 用户交互 ===
   ask_user_question: {

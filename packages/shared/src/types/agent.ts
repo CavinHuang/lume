@@ -167,6 +167,38 @@ export interface AgentProjectInstructionsInfo {
   truncated: boolean
 }
 
+/** Git linked worktree 元信息（`git worktree list --porcelain` 解析结果）。 */
+export interface ThreadWorktreeInfo {
+  /** worktree 绝对路径 */
+  path: string
+  /** 分支名；detached HEAD 时为 "(detached)" */
+  branch: string
+  /** HEAD 短提交哈希 */
+  head: string
+  /** 是否为主 worktree */
+  isMain: boolean
+  /** 显示名（路径最后一段） */
+  name: string
+}
+
+/** 经 sidecar 校验后持久化的线程活动 worktree。 */
+export interface AgentActiveWorktree {
+  /** linked worktree 的绝对路径 */
+  path: string
+  /** worktree 所属主仓库根目录（失效判定锚点） */
+  mainRepoRoot: string
+  /** 绑定时 Git 报告的分支名（展示用） */
+  branch: string
+  /** 绑定时间戳 */
+  selectedAt: number
+}
+
+/** 设置线程活动 worktree 的输入；null 表示解绑并回到默认 cwd。 */
+export interface SetThreadWorktreeInput {
+  threadId: string
+  worktreePath: string | null
+}
+
 /**
  * 存储在 ~/.lume/agent-sessions.json 中，
  * 存储在独立 Agent 线程索引中。
@@ -190,6 +222,11 @@ export interface AgentThreadMeta {
   runtimeThreadId?: string
   /** 所属工作区 ID */
   workspaceId?: string
+  /**
+   * 当前线程显式激活的 linked worktree。缺失时按 workspace.projectPath 解析默认 cwd；
+   * worktree 失效时 sidecar 会主动清除，不会猜测切换到其它分支。
+   */
+  activeWorktree?: AgentActiveWorktree
   /** Sidecar-issued capability for a private memory maintenance thread. */
   memoryProfile?: {
     kind: 'dream'
@@ -2008,6 +2045,14 @@ export const AGENT_IPC_CHANNELS = {
   // 工作区路径
   /** 获取工作区根路径 */
   GET_WORKSPACE_ROOT_PATH: 'agent:get-workspace-root-path',
+
+  // Worktree 绑定
+  /** 列出线程所属项目的 linked worktree */
+  LIST_THREAD_WORKTREES: 'agent:list-thread-worktrees',
+  /** 设置/清除线程的活动 worktree */
+  SET_THREAD_WORKTREE: 'agent:set-thread-worktree',
+  /** 活动 worktree 变化通知（sidecar → web 推送，载荷为更新后的线程 meta） */
+  THREAD_WORKTREE_UPDATED: 'agent:thread-worktree-updated',
 
   // 分叉
   /** 从指定消息处分叉线程 */

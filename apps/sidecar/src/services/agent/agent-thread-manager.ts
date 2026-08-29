@@ -560,7 +560,7 @@ export function appendAgentTranscriptMessage(
 export type AgentThreadMetaUpdates = Partial<
   Pick<
     AgentThreadMeta,
-    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt"
+    "title" | "sdkThreadId" | "runtimeThreadId" | "workspaceId" | "fileContextId" | "source" | "pinned" | "parentThreadId" | "modelSelectionSource" | "status" | "trashedAt" | "activeWorktree"
   >
 > & {
   modelRef?: string | null;
@@ -1027,6 +1027,12 @@ export function forkAgentThread(
   );
 
   replaceAgentThreadTranscript(newThread.id, forkedMessages);
+
+  // 分叉继承源线程的活动 worktree（对齐 Proma fork 语义）：目录已失效则
+  // 不继承，避免分叉件指向一个即将被 run 入口自愈清除的绑定。
+  if (sourceMeta?.activeWorktree?.path && existsSync(sourceMeta.activeWorktree.path)) {
+    updateAgentThreadMeta(newThread.id, { activeWorktree: sourceMeta.activeWorktree });
+  }
 
   log.info("forked agent thread", { sourceThreadId, threadId: newThread.id, messageCount: forkedMessages.length });
   return { newThreadId: newThread.id };

@@ -80,6 +80,7 @@ import { createSdkWebTools } from "../tools/web/create-web-tools";
 import { resolveSubagentSpawnPolicy } from "../subagents/subagent-policy";
 import { getSubagentRunRegistry } from "../subagents/subagent-run-registry";
 import { getRuntimeCoreEntry } from "./runtime-entry";
+import { createSelectWorktreeTool } from "./select-worktree-tool";
 import { announceSubagentCompletion } from "../subagents/subagent-announce-service";
 import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
@@ -314,6 +315,13 @@ export function buildRuntimeCoreTools(input: {
 
   const isMainTaskThread =
     input.threadType === "main" || input.threadType === undefined;
+  // SelectWorktree 仅主任务线程 + 交互执行注入：后台自动任务与子 Agent 不得
+  // 重定向交互会话的开发目录（对齐 Proma 对 automation/delegation 的排除）；
+  // plan 模式与 Enter/ExitWorktree 一致排除（绑定是会话状态变更）。
+  const selectWorktreeTool = createSelectWorktreeTool({
+    threadId: input.sessionId,
+    enabled: isMainTaskThread && automationExecution !== true && permissionMode !== "plan",
+  });
   const mainTaskRuntime = isMainTaskThread
     ? createMainTaskTools({
         sessionDir: getRuntimeCoreSessionDir(input.sessionId),
@@ -764,8 +772,8 @@ export function buildRuntimeCoreTools(input: {
     policyInput,
     pluginDiagnostics: input.pluginDiagnostics,
     mcpDiagnostics: input.mcpDiagnostics,
-    groups: [
-          { source: "sdk", tools: baseTools },
+        groups: [
+          { source: "sdk", tools: selectWorktreeTool ? [...baseTools, selectWorktreeTool] : baseTools },
           { source: "task", tools: taskLoopTools },
           { source: "lume", tools: lumeTools.customTools as ToolDefinition[] },
           ...(input.mcpTools?.length
