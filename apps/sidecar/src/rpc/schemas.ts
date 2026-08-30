@@ -1855,6 +1855,11 @@ export const routineGetByDateInputSchema = z.object({
   date: z.string().min(1),
 }).strict();
 
+export const promoteShellBackgroundInputSchema = z.object({
+  toolUseId: z.string().min(1),
+  sessionId: z.string().optional(),
+}).strict();
+
 export const routineTriggerEntryInputSchema = z.object({
   entryId: z.string().min(1),
 }).strict();
