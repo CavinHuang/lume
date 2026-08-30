@@ -94,7 +94,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
-import { IM_IPC_CHANNELS, MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES, toLumeRpcErrorEnvelope } from '@lume/shared'
+import { IM_IPC_CHANNELS, MAX_RPC_MESSAGE_BYTES, OBSIDIAN_VAULT_INTERNAL_CHANNELS, RPC_ERROR_CODES, toLumeRpcErrorEnvelope } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -2766,6 +2766,24 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
         guardedRef: payload.guardedRef,
         absolutePath: resolved.path,
         generation: payload.generation,
+      })
+      return { token: scope.token, url: previewScopeUrl(scope), expiresAt: scope.expiresAt }
+    }
+    case 'create_vault_media_preview_scope': {
+      // Vault 笔记内图片：sidecar 校验授权与越界后只回绝对路径（不经渲染层），
+      // 这里登记为带 token 的 media-file 作用域；TTL 与 Proma 的 proma-file 对齐为 1h。
+      if (!context.ownerWebContentsId) throw new Error('preview scope owner is missing')
+      const resolved = await sidecarHost.call(OBSIDIAN_VAULT_INTERNAL_CHANNELS.RESOLVE_MEDIA, {
+        vaultPath: payload.vaultPath,
+        relativePath: payload.noteRelativePath,
+        src: payload.src,
+      }) as { path: string | null }
+      if (!resolved?.path) return null
+      const scope = previewScopes.create({
+        kind: 'media-file',
+        ownerWebContentsId: context.ownerWebContentsId,
+        absolutePath: resolved.path,
+        ttlMs: 60 * 60_000,
       })
       return { token: scope.token, url: previewScopeUrl(scope), expiresAt: scope.expiresAt }
     }

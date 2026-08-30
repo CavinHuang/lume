@@ -8,7 +8,6 @@ import {
   getAssistantCopyText,
   getAssistantDownloadPayload,
   getCopyTextWithoutAfterglow,
-  getTaskProgressStatusText,
   getToolPermissionTitleBadgeText,
   compactMemoryCitationLabel,
   groupMemoryCitationItems,
@@ -16,6 +15,7 @@ import {
   showTemporaryCopiedFeedback,
   type CopyFeedbackState,
 } from './RuntimeEventContentBlock'
+import { getTaskProgressStatusText } from './TaskProgressCapsule'
 import { normalizeThreadFilePathCandidate } from './thread-file-links'
 import type { LumeRuntimeEvent } from '@lume/shared'
 

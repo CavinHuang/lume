@@ -73,8 +73,22 @@ export class OpenClawWeixinAuthError extends Error {
   }
 }
 
+export class OpenClawWeixinRequestError extends Error {
+  constructor(message: string, readonly transient: boolean) {
+    super(message);
+    this.name = "OpenClawWeixinRequestError";
+  }
+}
+
 export function isOpenClawWeixinAuthError(error: unknown): boolean {
   return error instanceof OpenClawWeixinAuthError || asRecord(error).authRequired === true;
+}
+
+/** 网络异常与限流/服务端错误可重试；认证、业务拒绝和其它 4xx 不重试。 */
+export function isOpenClawWeixinTransientError(error: unknown): boolean {
+  if (isOpenClawWeixinAuthError(error)) return false;
+  if (error instanceof OpenClawWeixinRequestError) return error.transient;
+  return true;
 }
 
 const DEFAULT_CHANNEL_VERSION = "1.0.2";
@@ -111,8 +125,12 @@ async function readPayload(response: Response): Promise<Record<string, unknown>>
 }
 
 function isAuthLikePayload(status: number, payload: Record<string, unknown>): boolean {
-  const code = asNumber(payload.errcode) ?? asNumber(payload.ret) ?? asNumber(payload.code);
+  const code = responseCode(payload);
   return status === 401 || status === 403 || code === -14 || code === 401 || code === 403;
+}
+
+function responseCode(payload: Record<string, unknown>): number | undefined {
+  return asNumber(payload.errcode) ?? asNumber(payload.ret) ?? asNumber(payload.code);
 }
 
 function normalizePeerKind(value: unknown): ImPeerKind {
@@ -318,12 +336,22 @@ export function createOpenClawWeixinApi(
         throw new OpenClawWeixinAuthError(`OpenClaw Weixin auth required (${response.status})`);
       }
       log.error("请求失败", { path, status: response.status, errcode: payload.errcode ?? payload.ret ?? payload.code });
-      throw new Error(`OpenClaw Weixin request failed (${response.status})`);
+      throw new OpenClawWeixinRequestError(
+        `OpenClaw Weixin request failed (${response.status})`,
+        response.status === 429 || response.status >= 500
+      );
     }
     if (isAuthLikePayload(response.status, payload)) {
       log.warn("响应指示认证问题", { path, status: response.status });
       throw new OpenClawWeixinAuthError(
         asString(payload.errmsg) ?? asString(payload.message) ?? "OpenClaw Weixin auth required"
+      );
+    }
+    const code = responseCode(payload);
+    if (code !== undefined && code !== 0) {
+      throw new OpenClawWeixinRequestError(
+        asString(payload.errmsg) ?? asString(payload.message) ?? `OpenClaw Weixin business error (${code})`,
+        false
       );
     }
     return payload;

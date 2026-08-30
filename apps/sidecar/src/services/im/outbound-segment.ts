@@ -24,7 +24,9 @@ export function splitImMessage(text: string, limit: ImSegmentLimit): string[] {
   let currentBytes = 0;
   for (const char of text) {
     const charBytes = Buffer.byteLength(char, "utf8");
-    if (current && (current.length + 1 > maxChars || currentBytes + charBytes > maxBytes)) {
+    // `for...of` yields whole code points; use the code point's UTF-16 width so
+    // maxChars remains consistent with the fast-path `text.length` check.
+    if (current && (current.length + char.length > maxChars || currentBytes + charBytes > maxBytes)) {
       segments.push(current);
       current = "";
       currentBytes = 0;

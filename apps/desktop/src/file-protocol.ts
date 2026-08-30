@@ -48,6 +48,9 @@ export interface PreviewScopeRegistry {
 
 export function createPreviewScopeRegistry(options: { now?: () => number } = {}): PreviewScopeRegistry {
   const now = options.now ?? Date.now
+  // 过期 scope 仅在被 get 命中时懒删除；设条目上限并按插入序淘汰最旧，
+  // 防止长会话下未再访问的 token 缓慢累积（Proma 的 local-file-protocol 同款）。
+  const MAX_SCOPES = 500
   const scopes = new Map<string, PreviewScope>()
   const get = (token: string): PreviewScope | null => {
     const scope = scopes.get(token)
@@ -63,6 +66,9 @@ export function createPreviewScopeRegistry(options: { now?: () => number } = {})
       const entryPath = realpathSync(resolve(input.absolutePath))
       if (!statSync(entryPath).isFile()) throw new Error('Preview entry must be a regular file')
       const rootPath = input.kind === 'html-directory' ? realpathSync(dirname(entryPath)) : dirname(entryPath)
+      while (scopes.size >= MAX_SCOPES) {
+        scopes.delete(scopes.keys().next().value!)
+      }
       const token = randomBytes(32).toString('hex')
       const scope: PreviewScope = {
         token,

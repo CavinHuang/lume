@@ -120,6 +120,7 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
   const appSecret = input.account.token ?? "";
   let client: FeishuWsClient | null = null;
   let running = false;
+  let generation = 0;
 
   // 机器人身份进程内缓存：失败不缓存（下条消息重试），成功后恒定
   let botOpenIdPromise: Promise<string | null> | null = null;
@@ -188,6 +189,8 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
         return;
       }
       running = true;
+      generation += 1;
+      const gen = generation;
       const wsClient = (input.createClient ?? defaultCreateClient)(appId, appSecret);
       client = wsClient;
       const dispatcher = new lark.EventDispatcher({}).register({
@@ -216,6 +219,7 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
         },
       });
       void wsClient.start({ eventDispatcher: dispatcher }).catch((error) => {
+        if (gen !== generation || !running) return;
         log.error("飞书 WSClient 启动失败", {
           accountId: input.account.id,
           error: error instanceof Error ? error.message : String(error),
@@ -228,6 +232,7 @@ export function createFeishuWsWorker(input: CreateFeishuWsWorkerInput): ImWorker
       });
     },
     stop() {
+      generation += 1;
       running = false;
       client?.close();
       client = null;

@@ -73,6 +73,18 @@ export interface ObsidianVaultFocusAttribution {
   focus: ObsidianVaultFocus
 }
 
+export interface ObsidianVaultSavePastedImageInput {
+  vaultPath: string
+  /** 目标笔记的相对路径；图片落在其同目录 assets/ 下。 */
+  noteRelativePath: string
+  mimeType: string
+  base64: string
+}
+
+export type ObsidianVaultSavePastedImageResult =
+  | { src: string }
+  | { src: null }
+
 export const OBSIDIAN_VAULT_IPC_CHANNELS = {
   GET_CONFIG: "obsidian:get-config",
   SET_ENABLED: "obsidian:set-enabled",
@@ -87,4 +99,13 @@ export const OBSIDIAN_VAULT_IPC_CHANNELS = {
   RENAME_FILE: "obsidian:rename-file",
   DELETE_FILE: "obsidian:delete-file",
   SET_FOCUS: "obsidian:set-focus",
+  SAVE_PASTED_IMAGE: "obsidian:save-pasted-image",
+} as const
+
+/**
+ * 仅 desktop 主进程消费的内部通道：resolve-media 返回授权根内的绝对路径，
+ * 不进 renderer 公开 allowlist（公开集由 *_IPC_CHANNELS 派生，此对象不在其中）。
+ */
+export const OBSIDIAN_VAULT_INTERNAL_CHANNELS = {
+  RESOLVE_MEDIA: "obsidian:resolve-media",
 } as const
