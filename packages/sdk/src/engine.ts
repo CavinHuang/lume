@@ -1980,6 +1980,8 @@ export class QueryEngine {
     const toolContext: ToolContext = {
       ...context,
       toolUseId: block.id,
+      // 子代理子 Run 的后台命令上限(bash 工具消费);主 Run 不带此标记
+      ...(this.config.subagentRunId ? { subagentRunId: this.config.subagentRunId } : {}),
     }
     let toolCallActive = true
     toolContext.emitEvent = (event) => {

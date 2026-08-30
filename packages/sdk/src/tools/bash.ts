@@ -71,6 +71,18 @@ function resolveOutputLimitBytes(input: { run_in_background?: boolean }): number
   return input.run_in_background === true ? BACKGROUND_MAX_OUTPUT_BYTES : MAX_OUTPUT_BYTES
 }
 
+// ZCode subagentBackgroundBashMaxMs 对齐:子代理子 Run 里启动的后台命令有
+// wall-clock 上限——到点强停并按普通取消通知模型(接收方仍在场,不预消费
+// 通知权,与 revert/终态守卫的"接收方已退场"路径相区分)。0 = 关闭。
+const DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS = 30 * 60_000
+
+export function resolveSubagentBackgroundBashMaxMs(): number {
+  const raw = process.env.LUME_SUBAGENT_BACKGROUND_BASH_MAX_MS?.trim()
+  if (!raw) return DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS
+  const parsed = Number(raw)
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : DEFAULT_SUBAGENT_BACKGROUND_BASH_MAX_MS
+}
+
 interface ForegroundShellTaskHandle {
   sessionId?: string
   trigger: () => Promise<void>
@@ -833,6 +845,30 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
     ...(context.toolUseId ? { tool_use_id: context.toolUseId } : {}),
     prompt: task.command, output_file: task.outputFile, session_id: context.sessionId || '',
   })
+  // 子代理子 Run 的后台命令 wall-clock 上限:到点强停并走普通取消通知(模型
+  // 仍在场,保留其知情权)。定时器兜底自检 status,终态后自然 no-op。
+  const subagentCapMs = context.subagentRunId ? resolveSubagentBackgroundBashMaxMs() : undefined
+  if (subagentCapMs !== undefined && subagentCapMs > 0) {
+    const capTimer = setTimeout(() => {
+      const latest = getProcessJob(job.id)
+      if (!latest || latest.status !== 'running') return
+      stopPersistedWorker(latest)
+      updateProcessJob(latest.id, {
+        status: 'stopped',
+        metadata: {
+          ...latest.metadata,
+          execution: {
+            ...(latest.metadata?.execution as Record<string, unknown> | undefined),
+            version: 2,
+            outcome: 'cancelled',
+            terminationReason: 'aborted',
+            durationMs: Math.max(0, Date.now() - (latest.startedAt ?? Date.now())),
+          },
+        },
+      })
+    }, subagentCapMs)
+    capTimer.unref?.()
+  }
   return {
     type: 'tool_result',
     tool_use_id: '',
