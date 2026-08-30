@@ -155,7 +155,15 @@ export function loadProcessJobs(root: string): ProcessJob[] {
       // a stop) must not resurrect a job the host already marked terminal.
       const resurrected = current && current.status !== 'running' && parsed.status === 'running'
       if (!resurrected) {
-        jobs.set(parsed.id, { ...current, ...parsed, stop: current?.stop })
+        jobs.set(parsed.id, {
+          ...current,
+          ...parsed,
+          // 通知权位只增不减:worker 终态写若与 host 的守卫/停止写竞态,合并时
+          // 不得回滚已消费的通知权(对齐审查 P2)
+          notified: current?.notified || parsed.notified,
+          notificationDeliveredAt: current?.notificationDeliveredAt ?? parsed.notificationDeliveredAt,
+          stop: current?.stop,
+        })
       }
     }
     const job = jobs.get(parsed.id)!
@@ -439,7 +447,13 @@ function refreshProcessJob(id: string): void {
   if (!persisted || (persisted.updatedAt ?? 0) < (current.updatedAt ?? 0)) return
   // Ignore stale worker "running" writes that land after a terminal update.
   if (current.status !== 'running' && persisted.status === 'running') return
-  jobs.set(id, { ...current, ...persisted, stop: current.stop })
+  jobs.set(id, {
+    ...current,
+    ...persisted,
+    notified: current.notified || persisted.notified,
+    notificationDeliveredAt: current.notificationDeliveredAt ?? persisted.notificationDeliveredAt,
+    stop: current.stop,
+  })
 }
 
 function readPersistedJob(statePath: string): ProcessJob | undefined {

@@ -63,9 +63,10 @@ export function looksLikeInteractivePrompt(output: string): boolean {
   return INTERACTIVE_PROMPT_PATTERNS.some((pattern) => pattern.test(lastLine))
 }
 
-/** 首 token 为 sleep 的命令是在刻意等待,不参与自动转后台(见 call 内注释)。 */
+/** 首 token 为 sleep/Start-Sleep 的命令是在刻意等待,不参与自动转后台(见 call 内注释)。 */
 export function isDeliberateWaitCommand(command: string): boolean {
-  return command.trim().split(/\s+/u)[0] === 'sleep'
+  const firstToken = command.trim().split(/\s+/u)[0]?.toLowerCase()
+  return firstToken === 'sleep' || firstToken === 'start-sleep'
 }
 
 function resolveOutputLimitBytes(input: { run_in_background?: boolean }): number {
@@ -92,6 +93,16 @@ interface ForegroundShellTaskHandle {
 // 前台等待期内的 durable 任务,按 toolUseId 索引;仅本进程内有效(sidecar 与
 // 工具执行同进程,RPC 直达)。
 const activeForegroundShellTasks = new Map<string, ForegroundShellTaskHandle>()
+
+// 子代理 cap 定时器:任务终态(completeBackgroundTask)时清除,避免句柄滞留至上限时刻
+const backgroundCapTimers = new Map<string, ReturnType<typeof setTimeout>>()
+function clearBackgroundCapTimer(taskId: string): void {
+  const timer = backgroundCapTimers.get(taskId)
+  if (timer) {
+    clearTimeout(timer)
+    backgroundCapTimers.delete(taskId)
+  }
+}
 
 function isManualPromotionResult(value: unknown): value is ToolResult {
   return Boolean(value) && typeof value === 'object' && (value as { type?: unknown }).type === 'tool_result'
@@ -357,6 +368,7 @@ async function startDirectShellTask({
       : result.execution.terminationReason === 'aborted' ? 'stopped' : 'failed'
     updateProcessJob(attachedTaskId, { status, output: boundedPreview(result.output, MAX_RESULT_CHARS), metadata: { execution: result.execution } })
     unregisterProcessStopHandler(attachedTaskId)
+    clearBackgroundCapTimer(attachedTaskId)
     if (markProcessJobNotified(attachedTaskId)) {
       context.emitEvent?.({
         type: 'system', subtype: 'task_notification', task_id: attachedTaskId,
@@ -698,6 +710,7 @@ async function startDurableShellTask({
       metadata: { execution: result.execution },
     })
     unregisterProcessStopHandler(attachedTaskId)
+    clearBackgroundCapTimer(attachedTaskId)
     if (markProcessJobNotified(attachedTaskId)) {
       context.emitEvent?.({
         type: 'system',
@@ -910,8 +923,11 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
   const subagentCapMs = context.subagentRunId ? resolveSubagentBackgroundBashMaxMs() : undefined
   if (subagentCapMs !== undefined && subagentCapMs > 0) {
     const capTimer = setTimeout(() => {
+      backgroundCapTimers.delete(job.id)
       const latest = getProcessJob(job.id)
       if (!latest || latest.status !== 'running') return
+      // 看门狗语义:到点无条件强停并记取消(身份探测在负载下可能误判存活,
+      // 按 #332 返回值分支会在全量套件下引入 interrupted 误标 flake——已验证回退)
       stopPersistedWorker(latest)
       updateProcessJob(latest.id, {
         status: 'stopped',
@@ -927,6 +943,7 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
         },
       })
     }, subagentCapMs)
+    backgroundCapTimers.set(job.id, capTimer)
     // 同 armCommandKill:不 unref,保证 bun test 与各运行时下定时器如实触发
   }
   return {
