@@ -1,6 +1,8 @@
 import {
   loadProcessJobs,
   markProcessJobNotified,
+  stopPersistedWorker,
+  updateProcessJob,
   waitForProcessJobTerminal,
   type ProcessJob,
 } from "@lume/agent-sdk";
@@ -39,6 +41,63 @@ export function startBackgroundProcessRecovery(): () => void {
 
   for (const job of scanPersistedProcessJobs()) void watch(job);
   return () => abortController.abort();
+}
+
+/**
+ * Coding Run 撤销（REVERT_CODING_RUN）的对齐守卫:被撤销 Run 启动的仍在运行的
+ * 后台任务一并停止,并预先消费其通知权——它们的完成事件针对的是已回滚的文件
+ * 状态,继续投递会诱导模型基于过期结果行动。其他 Run / 手动起的后台任务不受影响。
+ * 对齐 ZCode cancelRemovedBranchBackgroundTasks 的"撤销时间线丢弃在途任务"语义。
+ */
+export function stopRunningProcessJobsForCodingRun(
+  threadId: string,
+  runId: string,
+  reason: string,
+  jobsRootOverride?: string,
+): ProcessJob[] {
+  const root = jobsRootOverride ?? join(getAgentFileContextsDir(), threadId, "artifacts", "process-jobs");
+  if (!existsSync(root)) return [];
+  const stopped: ProcessJob[] = [];
+  for (const job of loadProcessJobs(root)) {
+    if (job.status !== "running") continue;
+    if (!job.runId || job.runId !== runId) continue;
+    try {
+      const stoppedOk = stopPersistedWorker(job);
+      updateProcessJob(job.id, {
+        status: "stopped",
+        // 预先消费通知权:completeBackgroundTask 与 ProcessOutput 都以
+        // markProcessJobNotified 为闸,置位后不再产生 task_notification
+        notified: true,
+        notificationDeliveredAt: Date.now(),
+        metadata: {
+          ...job.metadata,
+          execution: {
+            ...(job.metadata?.execution as Record<string, unknown> | undefined),
+            version: 2,
+            outcome: "cancelled",
+            terminationReason: "aborted",
+            durationMs: Math.max(0, Date.now() - (job.startedAt ?? Date.now())),
+          },
+        },
+      });
+      stopped.push(job);
+      log.warn("stopped background job of reverted coding run", {
+        threadId,
+        runId,
+        reason,
+        jobId: job.id,
+        workerKilled: stoppedOk,
+      });
+    } catch (error) {
+      log.warn("failed to stop background job of reverted coding run", {
+        threadId,
+        runId,
+        jobId: job.id,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+  return stopped;
 }
 
 function scanPersistedProcessJobs(): ProcessJob[] {

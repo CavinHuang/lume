@@ -125,9 +125,14 @@ export {
 export {
   ProcessOutputTool,
   ProcessStopTool,
+  clearProcessJobs,
+  createProcessJobRecord,
   loadProcessJobs,
   markProcessJobContinuationConsumed,
   markProcessJobNotified,
+  getProcessJob,
+  stopPersistedWorker,
+  updateProcessJob,
   waitForProcessJobTerminal,
   type ProcessJob,
 } from './tools/process-job-registry.js'
