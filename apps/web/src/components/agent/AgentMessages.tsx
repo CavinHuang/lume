@@ -19,7 +19,6 @@ import {
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
 import { AgentHistorySelectionLayer } from './AgentHistorySelectionLayer'
 import { TodoPanel } from './TodoPanel'
-import { TaskProgressCapsule } from './TaskProgressCapsule'
 import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
 import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
 import type { TodoBlockData } from './runtime-message-view'
@@ -392,14 +391,6 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     return null
   }, [runtimeEvents])
 
-  const latestTaskProgress = useMemo(() => {
-    for (let i = runtimeEvents.length - 1; i >= 0; i -= 1) {
-      const event = runtimeEvents[i]!
-      if (event.type === 'task.progress') return event
-    }
-    return null
-  }, [runtimeEvents])
-
   const items: React.ReactNode[] = []
   let latestUserMessageIndex = -1
   for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
@@ -464,9 +455,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         </div>
       </div>
       <AgentHistorySelectionLayer threadId={threadId} rootRef={contentRef} />
-      {latestTaskProgress && <TaskProgressCapsule event={latestTaskProgress} />}
-      {/* 任务系统与 todo 面板同位悬浮，task.progress 存在时以任务胶囊为准 */}
-      <TodoPanel data={latestTaskProgress ? null : latestTodo} running={streaming} />
+      <TodoPanel data={latestTodo} running={streaming} />
       <ScrollMinimap
         items={minimapItems}
         scrollContainerRef={scrollContainerRef}
