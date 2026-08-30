@@ -203,7 +203,7 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
                 type="button"
                 disabled={switching}
                 onClick={() => { setCreating(true); setSearch('') }}
-                className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+                className="flex w-full items-center justify-start gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
               >
                 <Plus size={13} className="shrink-0 text-[var(--text-3)]" />
                 创建并检出新分支…
@@ -213,7 +213,7 @@ export function WorkspaceBranchPicker({ workspaceId }: WorkspaceBranchPickerProp
               variant="ghost"
               type="button"
               onClick={() => { closeAndReset(); setGraphOpen(true) }}
-              className="flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
+              className="flex w-full items-center justify-start gap-2 rounded-lg px-2.5 py-2 text-left text-[12.5px] text-[var(--text-2)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]"
             >
               <GitGraph size={13} className="shrink-0 text-[var(--text-3)]" />
               Git 图谱
