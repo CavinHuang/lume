@@ -35,6 +35,7 @@ import {
   shouldInstallAdvancedCdpPolicy,
   shouldInstallAgentSessionPolicy,
 } from "./browser-runtime-policy"
+import { isSuspendProtected } from "./browser-residency-policy"
 import { browserLocatorScript, isBrowserLocator, validateBrowserLocator, type BrowserLocatorQuery, type ResolvedBrowserTarget } from "./browser-locator"
 import { createCursorUpdateScript } from "./browser-cursor"
 import { canAgentClaim, canAgentResumeHandoff, canAgentUse, revokeSharedLease } from "./browser-sharing-policy"
@@ -1964,7 +1965,8 @@ export class BrowserRuntime {
       await this.waitForGuest(tab)
       return this.requestBrowserAuth(tab, params, context)
     }
-    if (tab.lifecycle === "suspended") void this.setTabSuspended(tab, false)
+    // 卸载式挂起下 navigate 前必须完成重挂,否则 browserContents 对空 guest 抛错
+    if (tab.lifecycle === "suspended" || tab.lifecycle === "suspend-pending") this.wakeTab(tab)
     if (context.actor === "agent") tab.recentAgentContext = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, expiresAt: Date.now() + 30_000 }
     if (method === "mark") {
       if (context.actor !== "agent" || (params.status !== "handoff" && params.status !== "deliverable")) throw browserError("invalid_browser_request")
@@ -1973,7 +1975,10 @@ export class BrowserRuntime {
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       return {}
     }
-    if (method === "navigate") return this.navigate(tab, String(params.url ?? ""), context, params.__policyRequired === true, BROWSER_HANDLER_WAIT_CAP_MS, params.__authorizedFilePreviewPath)
+    if (method === "navigate") {
+      await this.waitForGuest(tab)
+      return this.navigate(tab, String(params.url ?? ""), context, params.__policyRequired === true, BROWSER_HANDLER_WAIT_CAP_MS, params.__authorizedFilePreviewPath)
+    }
     await this.waitForGuest(tab)
     if (method === "back") {
       if (tab.navigationIndex <= 0) return undefined
@@ -4063,7 +4068,7 @@ export class BrowserRuntime {
       this.rememberTab(tab)
     }
     tab.webContents?.setBackgroundThrottling(!tab.visible)
-    if (tab.visible) void this.setTabSuspended(tab, false)
+    if (tab.visible) this.wakeTab(tab)
     this.enforceBackgroundLimit()
     return publicTab(tab)
   }
@@ -4078,7 +4083,7 @@ export class BrowserRuntime {
     tab.lifecycle = visible ? "active" : tab.lifecycle === "crashed" ? "crashed" : "background"
     if (visible) tab.lastOpenedAt = new Date().toISOString()
     tab.webContents?.setBackgroundThrottling(!visible)
-    if (visible) void this.setTabSuspended(tab, false)
+    if (visible) this.wakeTab(tab)
     if (!visible) this.hideAgentCursor()
     this.enforceBackgroundLimit()
     return publicTab(tab)
@@ -4164,48 +4169,80 @@ export class BrowserRuntime {
     return { released: Boolean(contents) }
   }
 
-  /**
-   * 挂起保护谓词(对齐 ZCode isBrowserTabResidencyProtected 的当前子集):
-   * agent 动作在途(agentDispatching)或对话框待处理(dialogOpen)时冻结页面
-   * 会打断动作/卡死对话框;lease/handoff/媒体占用属既有的用户可感知保护。
-   * 后续驻留状态机(suspend-pending/restoring + generation + ack)整体替换
-   * enforceBackgroundLimit 时,此谓词即其保护条件集的迁移基线。
-   */
-  private isSuspendProtected(tab: BrowserTab): boolean {
-    return Boolean(tab.agentLease
-      || tab.handoff
-      || tab.agentDispatching
-      || tab.dialogOpen
-      || tab.mediaState?.audible
-      || tab.mediaState?.camera
-      || tab.mediaState?.microphone)
-  }
-
   private enforceBackgroundLimit(): void {
     const candidates = [...this.tabs.values()]
-      .filter((tab) => !tab.visible && tab.lifecycle !== "crashed" && !this.isSuspendProtected(tab))
+      .filter((tab) => !tab.visible && tab.lifecycle !== "crashed" && !isSuspendProtected(tab))
       .sort((left, right) => String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))
     for (const [index, tab] of candidates.entries()) void this.setTabSuspended(tab, index >= 4)
   }
 
+  /**
+   * 挂起/唤醒迁移(对齐 ZCode 驻留状态机的 Lume 化简,主进程驱动、无需 renderer ack):
+   * - 挂起:suspend-pending(CDP 冻结)→ 卸载 guest(复用 release 同款关闭路径,
+   *   释放渲染进程内存;destroyed 回调因 webContents 已置空而早退,不会误标 crashed)
+   *   → suspended。池侧经 tab-changed(guestState:unmounted)自动丢弃 webview 元素。
+   * - 冻结 await 期间被唤醒(lifecycle 已离开 suspend-pending)→ 取消本次挂起。
+   * - 唤醒:卸载态走 wakeTab(recoverGuest → guest-mount-required → 池重建 →
+   *   attachGuest 落 live);仍挂载的旧冻结解冻。
+   */
   private async setTabSuspended(tab: BrowserTab, suspended: boolean): Promise<void> {
+    if (tab.lifecycle === "crashed") return
+    if (!suspended) {
+      if (tab.lifecycle !== "suspended" && tab.lifecycle !== "suspend-pending") return
+      tab.lifecycle = tab.visible ? "active" : "background"
+      const contents = tab.webContents
+      if (contents && !contents.isDestroyed()) {
+        contents.setBackgroundThrottling(!tab.visible)
+        try {
+          await withDebugger(contents, (debuggerRef) => debuggerRef.sendCommand("Page.setWebLifecycleState", { state: "active" }))
+        } catch { /* Chromium may reject lifecycle control for a tab that is still loading. */ }
+      }
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      return
+    }
+    if (tab.lifecycle === "suspended" || tab.lifecycle === "suspend-pending") return
+    if (isSuspendProtected(tab)) return
     const contents = tab.webContents
-    if (!contents || contents.isDestroyed() || tab.lifecycle === "crashed") return
-    if (suspended && tab.lifecycle === "suspended") return
-    if (!suspended && tab.lifecycle !== "suspended") return
-    tab.lifecycle = suspended ? "suspended" : tab.visible ? "active" : "background"
-    contents.setBackgroundThrottling(suspended || !tab.visible)
-    try {
-      await withDebugger(contents, (debuggerRef) => debuggerRef.sendCommand("Page.setWebLifecycleState", { state: suspended ? "frozen" : "active" }))
-    } catch { /* Chromium may reject lifecycle control for a tab that is still loading. */ }
+    if (!contents || contents.isDestroyed()) {
+      tab.lifecycle = "suspended"
+      this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+      return
+    }
+    tab.lifecycle = "suspend-pending"
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+    contents.setBackgroundThrottling(true)
+    try {
+      await withDebugger(contents, (debuggerRef) => debuggerRef.sendCommand("Page.setWebLifecycleState", { state: "frozen" }))
+    } catch { /* Chromium may reject lifecycle control for a tab that is still loading. */ }
+    // 冻结期间被唤醒(lifecycle 已离开 suspend-pending)→ 取消本次挂起
+    if (tab.lifecycle !== "suspend-pending") return
+    this.revokeActiveLocalFilePreview(tab)
+    tab.webContents = null
+    tab.guestState = "unmounted"
+    tab.isLoading = false
+    closeWebContentsAfterRenderer(contents)
+    tab.lifecycle = "suspended"
+    this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
+  }
+
+  /** 唤醒挂起 tab(restoring 语义):卸载态经 recoverGuest 触发重挂(guest-mount-required
+   *  → 池 recover → attachGuest 落 live),仍挂载的冻结解冻。同步返回,重挂异步进行;
+   *  命令路径随后 waitForGuest 等待 guest 就绪。 */
+  private wakeTab(tab: BrowserTab): void {
+    if (tab.lifecycle !== "suspended" && tab.lifecycle !== "suspend-pending") return
+    const contents = tab.webContents
+    if (!contents || contents.isDestroyed()) {
+      this.recoverGuest(tab)
+      return
+    }
+    void this.setTabSuspended(tab, false)
   }
 
   private focus(tabId: string): BrowserTabDescriptor {
     const tab = this.requireTab(tabId, userContext())
     tab.lastOpenedAt = new Date().toISOString()
+    this.wakeTab(tab)
     tab.lifecycle = "active"
-    void this.setTabSuspended(tab, false)
     tab.webContents?.focus()
     return publicTab(tab)
   }
@@ -4309,7 +4346,7 @@ export class BrowserRuntime {
     tab.context = context
     tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
     tab.agentControlState = "active"
-    void this.setTabSuspended(tab, false)
+    this.wakeTab(tab)
     return publicTab(tab)
   }
 

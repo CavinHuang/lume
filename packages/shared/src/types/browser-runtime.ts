@@ -1,7 +1,9 @@
 /** Versioned browser-runtime contract. Boundary values are serialisable and redacted. */
-export const BROWSER_PROTOCOL_VERSION = 8 as const;
+// v9:驻留状态机——lifecycle 扩展 suspend-pending/restoring(挂起改为卸载式,
+// 唤醒进入 restoring 经既有 mount 流程重建;过渡态不向模型上下文透出)
+export const BROWSER_PROTOCOL_VERSION = 9 as const;
 export const BROWSER_PROTOCOL_MIN_SUPPORTED = 5 as const;
-export const BROWSER_PROTOCOL_MAX_SUPPORTED = 8 as const;
+export const BROWSER_PROTOCOL_MAX_SUPPORTED = 9 as const;
 
 export type BrowserBackendType = "iab" | "extension";
 export type BrowserActor = "user" | "agent";
@@ -99,7 +101,7 @@ export interface BrowserTabDescriptor {
     camera: boolean;
     microphone: boolean;
   };
-  lifecycle?: "active" | "background" | "suspended" | "crashed";
+  lifecycle?: "active" | "background" | "suspend-pending" | "suspended" | "restoring" | "crashed";
   viewport?: BrowserViewportState;
   zoomFactor?: number;
   visible: boolean;
