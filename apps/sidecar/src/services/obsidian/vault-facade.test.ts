@@ -169,6 +169,8 @@ describe("vault-facade", () => {
       expect(result.ok).toBe(true);
       const filename = result.ok ? result.relativePath.split("/").pop()! : "";
       expect(readFileSync(join(root, "Lume Inbox", filename), "utf-8")).toBe("");
+      // 对齐 Proma：深层路径要求目标文件夹已存在，拼错路径不静默建树。
+      await expect(fs.createUntitledNote("missing/deep")).rejects.toThrow("目标 Vault 文件夹不存在");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
