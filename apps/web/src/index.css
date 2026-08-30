@@ -1425,3 +1425,25 @@
   opacity: 1;
   transform: translateX(-50%) scale(1);
 }
+
+/* 浏览器 tab:agent 操作中 favicon 槽位的呼吸点指示(ZCode _kt 的 browser-use-operation-breathe) */
+@keyframes browser-use-operation-breathe {
+  0%, 100% {
+    opacity: 0.3;
+    transform: scale(0.75);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.browser-use-operation-breathe {
+  animation: browser-use-operation-breathe 1.6s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .browser-use-operation-breathe {
+    animation: none;
+  }
+}

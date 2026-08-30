@@ -7,8 +7,11 @@
  *    onDragEnd 产出全量 id 序列交面板 reorderTabs(Ade:不动选中);
  *  - 溢出估宽 Xkt:tabs*60px + gap*8px,超 viewport 视为溢出 → "+" 移到右侧独立区、
  *    出现总览入口(chevron);左右渐隐 mask 由滚动位置驱动(Ie.left/right);
+ *  - agent 操作中(operationUntil 未到期)favicon 槽位让位呼吸点指示
+ *    (ZCode _kt,browser-use-operation-breathe 动画),空闲恢复 favicon;
  *  - DOM 标记:data-side-pane-tabs-viewport/-content、data-side-pane-tab-id、
- *    data-state=active|inactive、data-browser-tab-residency(测试/上下文钩子)。
+ *    data-state=active|inactive、data-browser-tab-residency、
+ *    data-browser-use-operation-indicator(测试/上下文钩子)。
  *
  * UI 约定:一律使用 components/ui 的 shadcn 原子组件(AGENTS.md);文案为内联中文。
  */
@@ -37,6 +40,7 @@ import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { isTabStripOverflowing, reorderedByIds } from './browser-panel-logic'
 import type { BrowserPanelTab, UseBrowserPanelResult } from './useBrowserPanel'
+import { useOperationWindowActive } from './useBrowserResizeWarning'
 import { TabOverviewDialog } from './TabOverviewDialog'
 
 /** 渐隐 mask 带宽(px)。 */
@@ -179,6 +183,8 @@ function BrowserTabButton({ tab, selected, panel, isClickSuppressed }: {
   isClickSuppressed: () => boolean
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } = useSortable({ id: tab.tabId })
+  // agent 操作窗(eEt 倒计时):favicon 槽位让位呼吸指示,空闲恢复 favicon(ZCode _kt)。
+  const operationActive = useOperationWindowActive(tab.operationUntil)
   const label = tab.title?.trim() || tab.url || '新标签页'
   const guardClick = (action: () => void) => () => {
     if (isClickSuppressed()) return
@@ -205,7 +211,15 @@ function BrowserTabButton({ tab, selected, panel, isClickSuppressed }: {
         title={label}
         onClick={guardClick(() => panel.selectTab(tab.tabId))}
       >
-        {tab.faviconUrl ? (
+        {operationActive ? (
+          <span
+            aria-hidden="true"
+            data-browser-use-operation-indicator="active"
+            className="browser-use-operation-breathe inline-flex size-3.5 shrink-0 items-center justify-center"
+          >
+            <span className="size-1.5 rounded-full bg-amber-500" />
+          </span>
+        ) : tab.faviconUrl ? (
           <img src={tab.faviconUrl} alt="" className="size-3.5 shrink-0 rounded-sm object-contain" draggable={false} referrerPolicy="no-referrer" />
         ) : (
           <Globe className="size-3.5 shrink-0" aria-hidden="true" />

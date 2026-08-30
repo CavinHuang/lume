@@ -66,6 +66,12 @@
  *     补齐 case "fill",复用 type 机制(可选 ref 点击聚焦 + Fj 粘贴管线),
  *     replaceInputValue:true 承载替换语义(locator fill 的 replace !== false
  *     分支保留在 locator-session.ts)。
+ *   - waitFor 路由为 Lume 扩展:ZCode 执行器 jg 无顶层 waitFor 分支(协议
+ *     枚举成员,直落默认分支 capability_unsupported);Lume 补齐 case "waitFor",
+ *     合成 locator 动作(operation:"waitFor",与 locator.waitFor 同构)委托
+ *     handlePlaywrightAction,复用 playwright 引擎端口的 waitForState 轮询
+ *     (state 缺省 visible 由会话侧决定,超时经 normalizePlaywrightTimeout
+ *     归一,与 locator 面一致)。
  *
  * 注意:screenshot/snapshot/evaluate/element-info 各模块 import 本文件的
  * readState(函数声明,提升绑定),运行期互相调用,ESM 活绑定安全。
@@ -163,6 +169,7 @@ export interface DragCommandParams { fromRef?: string; from?: Point2D; toRef?: s
 export interface CuaDragCommandParams { path: Point2D[]; modifiers?: string[] }
 export interface ElementInfoCommandParams { x: number; y: number }
 export interface EvaluateCommandParams { expression: string }
+export interface WaitForCommandParams { selector: string; state?: "visible" | "hidden" | "attached" | "detached"; timeoutMs?: number }
 
 /** PortingGap:playwright 动作请求形状(name 判别 + 各动作字段)。 */
 export interface PlaywrightActionRequest {
@@ -882,6 +889,25 @@ export async function handlePlaywrightAction(
   })
 }
 
+/**
+ * handleWaitFor(Lume 补齐,与 fill 同为 ZCode 执行器 jg 无分支的协议枚举成员;
+ * 协议注释:与 locator.waitFor 同构 {selector, state?, timeoutMs?}):合成
+ * locator 动作(operation:"waitFor")委托 handlePlaywrightAction,复用
+ * playwright 引擎端口的 waitForState 轮询(actions.ts;state 缺省 visible 由
+ * 会话侧决定)。取消/超时/端口缺失路径与 locator 分支共用(cancelled →
+ * cancelled;timeout → locatorTimeoutResult 文案;无端口 →
+ * capability_unsupported)。
+ */
+export async function handleWaitFor(view: ControlledView, params: WaitForCommandParams, done: CommandDone, opts?: ExecuteBrowserCommandOptions): Promise<BrowserCommandResult> {
+  return handlePlaywrightAction(view, {
+    name: "locator",
+    selector: params.selector,
+    operation: "waitFor",
+    ...(params.state === undefined ? {} : { state: params.state }),
+    ...(params.timeoutMs === undefined ? {} : { timeoutMs: params.timeoutMs }),
+  }, done, opts?.signal, opts?.playwright)
+}
+
 /* ── 分发器 ────────────────────────────────────────────────────────── */
 
 function commandParams<T>(command: BrowserCommand): T {
@@ -957,12 +983,14 @@ export async function executeBrowserCommandOnView(
         return await handleEvaluate(view, commandParams<EvaluateCommandParams>(command), done)
       case "playwright":
         return await handlePlaywrightAction(view, playwrightActionOf(command), done, opts?.signal, opts?.playwright)
+      case "waitFor":
+        return await handleWaitFor(view, commandParams<WaitForCommandParams>(command), done, opts)
       default:
         return done({
           ok: false,
           error: {
             code: "capability_unsupported",
-            message: `command ${command.method} is not supported by executor (available: navigate/getState/back/forward/reload/screenshot/snapshot/click/type/fill/press/scroll/hover/select/check/drag/elementInfo/evaluate)`,
+            message: `command ${command.method} is not supported by executor (available: navigate/getState/back/forward/reload/screenshot/snapshot/click/type/fill/press/cuaKeypress/scroll/cuaScroll/domCuaScroll/hover/select/check/drag/cuaDrag/elementInfo/evaluate/playwright/waitFor)`,
           },
         })
     }

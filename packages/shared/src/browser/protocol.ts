@@ -402,11 +402,14 @@ const screenshotClip = z
 /**
  * 命令 schema 判别联合。
  *
- * 形状按还原源码逐条对照;仅一个例外(枚举内成员、执行器无路由):
- * - `waitFor`:与 locator.waitFor 同构 {selector, state?, timeoutMs?};执行器无路由。
- * `fill` 此前同为无路由例外,ZCode 执行器 jg 无该分支;Lume 执行器已按 locator
- * fill 语义补齐 case(fill = 聚焦目标 + replaceInputValue 替换粘贴),与 type
- * 同构 {ref?, text}。
+ * 形状按还原源码逐条对照。ZCode 执行器 jg 曾缺两分支(fill/waitFor,协议
+ * 枚举成员,直落 capability_unsupported);Lume 均已补齐:
+ * - fill = 聚焦目标 + replaceInputValue 替换粘贴,与 type 同构 {ref?, text};
+ * - waitFor 合成 locator 动作(operation:"waitFor",与 locator.waitFor 同构
+ *   {selector, state?, timeoutMs?})委托 playwright 引擎端口。
+ * `capabilities` 为唯一无路由枚举成员:能力数据经 backend 描述符
+ * (shared/descriptor.ts buildIabDescriptor)向 sidecar 协商,非命令通道,
+ * 工具面亦无发送方 —— 保持无路由(管理器/执行器均不处理)。
  */
 export const browserCommandSchema = z.discriminatedUnion("method", [
   /* ── 导航 ── */

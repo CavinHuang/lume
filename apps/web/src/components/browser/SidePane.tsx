@@ -10,11 +10,13 @@
  *  - 画布:webview 池的 present 目标;responsive 模式下为可滚动画布
  *    (viewport × visualZoom 缩放补偿,wheel 边界续接挂在外层滚动容器);
  *    agent 操作期间用户 resize 弱提示(aEt 移植,见 useBrowserResizeWarning);
+ *  - 视口信息条:宽/高数字输入(Enter/blur 提交 + 整数范围校验 + tooltip 提示 +
+ *    Escape 还原,$Tt 移植)+ 缩放显示;
  *  - 空态/挂起占位/错误卡(证书错误/加载失败/guest 崩溃,LTt/ITt 分型)。
  *
  * UI 约定:一律使用 components/ui 的 shadcn 原子组件(AGENTS.md);文案为内联中文
  * (偏差:旧实现走 react-intl id,浏览器 i18n 键已随四端删除,后置补齐)。
- * ZCode 对应件:SidePane 布局 + NTt 工具栏 + XTt 画布 + LTt/ITt 错误卡 + aEt 警告条。
+ * ZCode 对应件:SidePane 布局 + NTt 工具栏 + XTt 画布 + $Tt 视口输入条 + LTt/ITt 错误卡 + aEt 警告条。
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
 import {
@@ -34,6 +36,7 @@ import {
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
 import { BrowserTabStrip } from './BrowserTabStrip'
 import { formatRelativeTime, isCertificateErrorCode } from './browser-panel-logic'
@@ -42,6 +45,7 @@ import {
   BROWSER_VIEWPORT_LIMITS,
   useBrowserPanel,
   type BrowserPanelTab,
+  type BrowserResponsiveViewport,
   type UseBrowserPanelResult,
 } from './useBrowserPanel'
 
@@ -120,12 +124,12 @@ export function BrowserSidePane({ className, workspaceKey, desktopZoomFactor = 1
         onLocalViewportAction={notifyBrowserViewportResize}
       />
       {selectedTab && panel.responsiveViewport ? (
-        <div className="flex items-center justify-center gap-2 border-b border-border px-3 py-1 text-xs text-muted-foreground">
-          <span>视口 {panel.responsiveViewport.width}×{panel.responsiveViewport.height}</span>
+        <div className="flex shrink-0 items-center justify-center gap-1.5 border-b border-border px-3 py-1 text-xs text-muted-foreground">
+          <ViewportDimensionInput axis="width" viewport={panel.responsiveViewport} onCommit={panel.applyResponsiveViewportSize} />
+          <span aria-hidden="true">×</span>
+          <ViewportDimensionInput axis="height" viewport={panel.responsiveViewport} onCommit={panel.applyResponsiveViewportSize} />
           <span aria-hidden="true">·</span>
           <span>缩放 {Math.round(panel.visualZoom * 100)}%</span>
-          <span aria-hidden="true">·</span>
-          <span>范围 {BROWSER_VIEWPORT_LIMITS.minWidth}~{BROWSER_VIEWPORT_LIMITS.maxWidth} × {BROWSER_VIEWPORT_LIMITS.minHeight}~{BROWSER_VIEWPORT_LIMITS.maxHeight}</span>
         </div>
       ) : null}
       <BrowserCanvas panel={panel} regionRef={canvasRegionRef} showResizeWarning={showResizeWarning} />
@@ -238,6 +242,95 @@ function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAdd
         </DropdownMenuContent>
       </DropdownMenu>
     </div>
+  )
+}
+
+/**
+ * 视口宽/高数字输入(ZCode $Tt 尺寸输入的 Lume 落法,ra 范围 = BROWSER_VIEWPORT_LIMITS)。
+ * 语义:草稿随外部视口值同步;Enter/blur 提交,整数 + 轴对应范围(宽 320..3840/高 320..2160)
+ * 校验(ZCode ZTt),违规 latch 破坏性边框 + tooltip(aria-invalid + sr-only alert),
+ * 输入回到合法值即解除;Escape 还原当前值并失焦(ZCode f);更新走 applyResponsiveViewportSize。
+ */
+function ViewportDimensionInput({ axis, viewport, onCommit }: {
+  axis: 'width' | 'height'
+  viewport: BrowserResponsiveViewport
+  onCommit: (viewport: BrowserResponsiveViewport) => void
+}) {
+  const value = axis === 'width' ? viewport.width : viewport.height
+  const limits = axis === 'width'
+    ? { min: BROWSER_VIEWPORT_LIMITS.minWidth, max: BROWSER_VIEWPORT_LIMITS.maxWidth }
+    : { min: BROWSER_VIEWPORT_LIMITS.minHeight, max: BROWSER_VIEWPORT_LIMITS.maxHeight }
+  const rangeHint = `请输入 ${limits.min}~${limits.max} 之间的整数`
+  const [draft, setDraft] = useState(String(value))
+  const [invalid, setInvalid] = useState(false)
+  useEffect(() => {
+    setDraft(String(value))
+  }, [value])
+
+  /** 合法 = 整数且落在轴范围(ZCode ZTt)。 */
+  const isValid = (raw: string) => {
+    const parsed = Number(raw.trim())
+    return Number.isInteger(parsed) && parsed >= limits.min && parsed <= limits.max
+  }
+
+  /** 提交(ZCode p):违规则 latch 提示;合法但与当前值相同则还原草稿,不动视口。 */
+  const commit = () => {
+    const parsed = Number(draft.trim())
+    if (!isValid(draft)) {
+      setInvalid(true)
+      return
+    }
+    setInvalid(false)
+    if (parsed === value) {
+      setDraft(String(value))
+      return
+    }
+    onCommit(axis === 'width' ? { ...viewport, width: parsed } : { ...viewport, height: parsed })
+  }
+
+  return (
+    <>
+      <Tooltip open={invalid}>
+        <TooltipTrigger
+          render={
+            <Input
+              aria-label={axis === 'width' ? '视口宽度' : '视口高度'}
+              aria-invalid={invalid || undefined}
+              value={draft}
+              inputMode="numeric"
+              min={limits.min}
+              max={limits.max}
+              spellCheck={false}
+              className="h-6 w-14 shrink-0 rounded-md border-transparent bg-foreground/5 px-1 text-center text-xs font-medium tabular-nums hover:bg-accent focus-visible:bg-background"
+              onChange={(event) => {
+                const raw = event.target.value
+                setDraft(raw)
+                // 违规期间即时复检,回到合法即解除(ZCode m)。
+                if (invalid) setInvalid(!isValid(raw))
+              }}
+              onBlur={commit}
+              onKeyDown={(event) => {
+                if (event.key === 'Enter') {
+                  event.preventDefault()
+                  commit()
+                  return
+                }
+                if (event.key === 'Escape') {
+                  event.preventDefault()
+                  setInvalid(false)
+                  setDraft(String(value))
+                  event.currentTarget.blur()
+                }
+              }}
+            />
+          }
+        />
+        <TooltipContent side="bottom" align="center" sideOffset={4} className="border-destructive bg-popover text-destructive">
+          {rangeHint}
+        </TooltipContent>
+      </Tooltip>
+      {invalid ? <span role="alert" className="sr-only">{rangeHint}</span> : null}
+    </>
   )
 }
 
