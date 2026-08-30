@@ -316,6 +316,41 @@ describe("im-runtime-manager", () => {
     expect(stopped).toBe(1);
     expect(manager.getRunningAccountIds()).toEqual([]);
   });
+
+  test("worker 拒绝启动时不覆盖其 auth_required 状态为 running", async () => {
+    const statuses: Array<ImAccountUpdateInput["status"]> = [];
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "dingtalk",
+        label: id,
+        token: "secret",
+        accountKey: "",
+        baseUrl: "",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: (_id, input) => {
+        if (input.status) statuses.push(input.status);
+      },
+      createWorker: () => ({
+        start() {
+          statuses.push("auth_required");
+        },
+        stop() {},
+        isRunning: () => false
+      })
+    });
+
+    await manager.startAccount("account-missing-key");
+
+    expect(manager.getRunningAccountIds()).toEqual([]);
+    expect(statuses).toEqual(["starting", "auth_required"]);
+    expect(statuses).not.toContain("running");
+  });
 });
 
 describe("#598 error 态账号定时自愈", () => {

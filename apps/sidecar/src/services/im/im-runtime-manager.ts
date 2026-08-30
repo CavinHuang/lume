@@ -132,6 +132,9 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
           const account = getRuntimeAccountFn(accountId);
           worker = createWorkerFn(account);
           worker.start();
+          // worker 可在凭据缺失等确定性配置错误下自行回写 auth_required 并拒绝启动。
+          // 此时不能继续登记为 running，否则会覆盖错误状态并阻止后续人工修复。
+          if (!worker.isRunning()) return;
           workers.set(accountId, worker);
           await updateAccountFn(accountId, {
             status: "running",
