@@ -1,4 +1,4 @@
-import { atom } from 'jotai'
+import { atom, type Getter } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import type { CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
@@ -7,16 +7,29 @@ import {
   createThreadFileWorkspace,
   openFileTab,
   type ThreadFileWorkspace,
+  type RightPanelActiveItem,
   type RightPanelFileTab,
 } from '@/components/right-panel/right-panel-files-state'
 import { activeTabIdAtom, tabsAtom } from './tab-atoms'
+import { agentThreadsAtom } from './agent-atoms'
+import { agentWorkspacesAtom, currentWorkspaceIdAtom } from './workspace-atoms'
 import {
-  closeRightPanelTab,
+  findRightPanelTab,
   getOpenRightPanelFunctions,
-  openRightPanelTab,
+  resolveRightPanelWorkspaceKey,
   type RightPanelFunction,
-  type ThreadRightPanelWorkspace,
+  type RightPanelWorkspaceState,
 } from '@/components/right-panel/right-panel-state'
+import {
+  handleCloseAllTabs,
+  handleCloseOtherTabs,
+  handleCloseTab,
+  handleOpenTab,
+  handleReopenClosedTab,
+  handleReorderTabs,
+  handleToggleCollapse,
+  readRightPanelWorkspaceState,
+} from '@/components/right-panel/right-panel-workspace-store'
 
 export type RightPanelDisplayMode = 'normal' | 'expanded' | 'compact'
 
@@ -29,11 +42,6 @@ export interface RightPanelLayoutState {
 const DEFAULT_RIGHT_PANEL_LAYOUT: RightPanelLayoutState = { open: false, mode: 'normal' }
 
 type RightPanelLayoutUpdate = RightPanelLayoutState | ((current: RightPanelLayoutState) => RightPanelLayoutState)
-
-export const rightPanelWorkspacesAtom = atomWithStorage<Record<string, ThreadRightPanelWorkspace>>(
-  'right-panel-workspaces',
-  {},
-)
 
 export const rightPanelLayoutsAtom = atomWithStorage<Record<string, RightPanelLayoutState>>(
   'right-panel-layouts',
@@ -257,42 +265,75 @@ export const agentSideChatMapAtom = atomWithStorage<Record<string, string>>(
 
 type RightPanelWorkspaceAction =
   | { type: 'activate-function'; threadId: string; function: RightPanelFunction; binding?: ThreadFileWorkspace['binding'] }
+  | { type: 'activate-tab'; threadId: string; tabId: string }
   | { type: 'activate-side-chat'; threadId: string }
   | { type: 'open-file'; threadId: string; ref: FileRef; binding?: ThreadFileWorkspace['binding']; lineSelection?: ThreadFileLineSelection; navigationRevision?: number }
   | { type: 'reveal-directory'; threadId: string; request: NonNullable<ThreadFileWorkspace['revealRequest']>; binding?: ThreadFileWorkspace['binding'] }
   | { type: 'close-function'; threadId: string; function: RightPanelFunction }
+  | { type: 'close-tab'; threadId: string; tabId: string }
+  | { type: 'close-other-tabs'; threadId: string; tabId: string }
+  | { type: 'close-all-tabs'; threadId: string }
+  | { type: 'reorder-tabs'; threadId: string; orderedIds: string[] }
+  | { type: 'reopen-closed-tab'; threadId: string; entryId: string }
+  | { type: 'toggle-collapse'; threadId: string }
   | { type: 'close-file'; threadId: string; tabId: string }
 
+/**
+ * threadId → 工作区身份(与 RightPanelWorkspace/浏览器面板分桶同构:
+ * workspaceSlug ?? workspaceId ?? threadId,见 sidecar create-browser-tools.ts)。
+ */
+function resolveThreadWorkspaceKey(get: Getter, threadId: string): string {
+  const thread = get(agentThreadsAtom).find((item) => item.id === threadId)
+  const workspaceId = thread?.workspaceId ?? get(currentWorkspaceIdAtom) ?? undefined
+  const workspace = get(agentWorkspacesAtom).find((item) => item.id === workspaceId)
+  return resolveRightPanelWorkspaceKey({ workspaceSlug: workspace?.slug, workspaceId, threadId })
+}
+
+/**
+ * 统一 tab 变更后的 runtime activeItem 同步:文件 tab 激活(明确指向具体文件)
+ * 优先保留;否则对齐统一层的活动 tab(功能形态),无活动 tab 时清空。
+ */
+function syncedFunctionActiveItem(
+  runtimeWorkspace: ThreadFileWorkspace,
+  state: RightPanelWorkspaceState,
+): RightPanelActiveItem | null {
+  if (runtimeWorkspace.activeItem?.kind === 'file') return runtimeWorkspace.activeItem
+  const type = state.tabs.find((tab) => tab.id === state.activeTabId)?.type
+  return type ? { kind: 'function', type } : null
+}
+
 export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: RightPanelWorkspaceAction) => {
-  const persisted = get(rightPanelWorkspacesAtom)
   const runtime = get(rightPanelFileWorkspacesAtom)
-  const persistedWorkspace = persisted[action.threadId] ?? { tabs: {} }
   const runtimeWorkspace = runtime[action.threadId] ?? createThreadFileWorkspace(
     'binding' in action ? action.binding ?? {} : {},
   )
-
-  if (action.type === 'activate-function') {
-    set(rightPanelWorkspacesAtom, {
-      ...persisted,
-      [action.threadId]: openRightPanelTab(persistedWorkspace, action.function),
-    })
+  const setRuntimeActiveItem = (activeItem: RightPanelActiveItem | null) => {
     set(rightPanelFileWorkspacesAtom, {
       ...runtime,
-      [action.threadId]: { ...runtimeWorkspace, activeItem: { kind: 'function', type: action.function } },
+      [action.threadId]: { ...runtimeWorkspace, activeItem },
     })
-    return
   }
+  const syncRuntimeWithUnifiedTabs = () => {
+    const state = readRightPanelWorkspaceState(resolveThreadWorkspaceKey(get, action.threadId))
+    setRuntimeActiveItem(syncedFunctionActiveItem(runtimeWorkspace, state))
+  }
+  const workspaceKey = () => resolveThreadWorkspaceKey(get, action.threadId)
 
-  if (action.type === 'activate-side-chat') {
-    // side-chat 只切到 chat 视图（runtime activeItem），不进 persisted tabs，避免污染 files tab 栏（见 #18）
-    set(rightPanelFileWorkspacesAtom, {
-      ...runtime,
-      [action.threadId]: { ...runtimeWorkspace, activeItem: { kind: 'function', type: 'chat' } },
-    })
+  if (action.type === 'activate-function' || action.type === 'activate-tab' || action.type === 'activate-side-chat') {
+    const type = action.type === 'activate-function'
+      ? action.function
+      : action.type === 'activate-side-chat'
+        ? 'chat'
+        : findRightPanelTab(readRightPanelWorkspaceState(workspaceKey()), action.tabId)?.type
+    // 未知 tabId(如重开竞态)只激活既有 tab,不落新类型
+    if (type) handleOpenTab(workspaceKey(), type)
+    syncRuntimeWithUnifiedTabs()
     return
   }
 
   if (action.type === 'open-file') {
+    // 开文件不改统一 tab 开合:即使 files 功能 tab 被独立关闭,文件子 tab 仍可呈现
+    // (守卫语义:agent 开文件不复活用户主动关闭的功能 tab)
     set(rightPanelFileWorkspacesAtom, {
       ...runtime,
       [action.threadId]: openFileTab(runtimeWorkspace, action.ref, {
@@ -305,10 +346,7 @@ export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: Right
   }
 
   if (action.type === 'reveal-directory') {
-    set(rightPanelWorkspacesAtom, {
-      ...persisted,
-      [action.threadId]: openRightPanelTab(persistedWorkspace, 'files'),
-    })
+    handleOpenTab(workspaceKey(), 'files')
     set(rightPanelFileWorkspacesAtom, {
       ...runtime,
       [action.threadId]: { ...runtimeWorkspace, activeItem: { kind: 'function', type: 'files' }, revealRequest: action.request },
@@ -316,26 +354,42 @@ export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: Right
     return
   }
 
-  if (action.type === 'close-function') {
-    const nextPersisted = closeRightPanelTab(persistedWorkspace, action.function)
-    const functionFallback = getOpenRightPanelFunctions(nextPersisted.tabs)
-    const activeItem = runtimeWorkspace.activeItem?.kind === 'function'
-      && runtimeWorkspace.activeItem.type === action.function
-      ? runtimeWorkspace.openTabs.at(-1)
-        ? { kind: 'file' as const, tabId: runtimeWorkspace.openTabs.at(-1)!.id }
-        : functionFallback[0]
-          ? { kind: 'function' as const, type: functionFallback[0] }
-          : null
-      : runtimeWorkspace.activeItem
-    set(rightPanelWorkspacesAtom, { ...persisted, [action.threadId]: nextPersisted })
-    set(rightPanelFileWorkspacesAtom, {
-      ...runtime,
-      [action.threadId]: { ...runtimeWorkspace, activeItem },
-    })
+  if (action.type === 'close-function' || action.type === 'close-tab') {
+    handleCloseTab(workspaceKey(), action.type === 'close-function' ? action.function : action.tabId)
+    syncRuntimeWithUnifiedTabs()
     return
   }
 
-  const fallbackFunctions = getOpenRightPanelFunctions(persistedWorkspace.tabs)
+  if (action.type === 'close-other-tabs') {
+    handleCloseOtherTabs(workspaceKey(), action.tabId)
+    syncRuntimeWithUnifiedTabs()
+    return
+  }
+
+  if (action.type === 'close-all-tabs') {
+    handleCloseAllTabs(workspaceKey())
+    syncRuntimeWithUnifiedTabs()
+    return
+  }
+
+  if (action.type === 'reorder-tabs') {
+    handleReorderTabs(workspaceKey(), action.orderedIds)
+    return
+  }
+
+  if (action.type === 'reopen-closed-tab') {
+    handleReopenClosedTab(workspaceKey(), action.entryId)
+    syncRuntimeWithUnifiedTabs()
+    return
+  }
+
+  if (action.type === 'toggle-collapse') {
+    handleToggleCollapse(workspaceKey())
+    return
+  }
+
+  // 关文件:runtime 语义(邻位/功能回退),功能回退候选来自统一层当前打开集合
+  const fallbackFunctions = getOpenRightPanelFunctions(readRightPanelWorkspaceState(workspaceKey()).tabs)
   set(rightPanelFileWorkspacesAtom, {
     ...runtime,
     [action.threadId]: closeFileTab(runtimeWorkspace, action.tabId, fallbackFunctions),

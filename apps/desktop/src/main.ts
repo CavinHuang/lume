@@ -173,6 +173,7 @@ import {
 import { ensureBrowserRestoreSchemePrivileged, installBrowserRestoreBootstrapProtocol } from './browser/restore-protocol'
 import { BROWSER_GUEST_PARTITION, createBrowserIpc, type BrowserIpc } from './browser/ipc'
 import { createLumeBrowserRuntime, type LumeBrowserRuntime } from './browser/assemble'
+import { handleGitPanelCommand } from './browser/git-panel-service'
 
 // 浏览器恢复停靠 scheme 必须在 app ready 前注册 privileged(registerSchemesAsPrivileged
 // 全进程仅一次,restore-protocol 内部去重)。
@@ -1931,6 +1932,10 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
   // （未知命令由其抛错）；与裸 ipcMain.handle 通道共用同一校验实现。
   if (browserIpc && command.startsWith('lume:browser-view-')) {
     return browserIpc.handleRendererCommand(command, payload, context.ownerWebContentsId ?? 0)
+  }
+  // 右侧面板 Git 状态 tab（git-panel-service.ts handleGitPanelCommand；载荷形状在此校验）
+  if (command.startsWith('lume:browser-git-')) {
+    return handleGitPanelCommand(command, payload)
   }
   switch (command) {
     case 'connection_vault_status': {

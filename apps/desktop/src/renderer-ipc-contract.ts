@@ -92,6 +92,10 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'lume:browser-view-suspend-ready',
   'lume:browser-view-ensure-resident',
   'lume:browser-view-restore-tabs',
+  // 右侧面板 Git 状态 tab（apps/desktop/src/browser/git-panel-service.ts
+  // GIT_PANEL_IPC_CHANNELS 单源；main dispatchCommand 前缀转发）。
+  'lume:browser-git-status',
+  'lume:browser-git-diff',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([

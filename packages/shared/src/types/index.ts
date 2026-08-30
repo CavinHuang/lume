@@ -39,3 +39,4 @@ export * from "./suggestion";
 export * from "./persona";
 export * from "./renderer-allowlist";
 export * from "./prompt-serialization";
+export * from "./git-panel";

@@ -1,145 +1,240 @@
 import { describe, expect, test } from 'bun:test'
 import {
-  RIGHT_PANEL_FUNCTION_ORDER,
+  RIGHT_PANEL_CLOSED_RING_LIMIT,
+  activateRightPanelTab,
+  closeAllRightPanelTabs,
+  closeOtherRightPanelTabs,
   closeRightPanelTab,
-  createDefaultRightPanelTab,
   createEmptyRightPanelWorkspace,
+  createRightPanelTab,
   firstOpenRightPanelTab,
   getAvailableRightPanelFunctions,
+  getOpenRightPanelFunctions,
   getRightPanelReviewLaunchTarget,
-  migrateLegacyRightPanelHints,
   openRightPanelTab,
-  sanitizeRightPanelWorkspace,
+  pushRightPanelClosedRing,
+  recomputeRightPanelCollapse,
+  reorderRightPanelTabs,
+  resolveRightPanelWorkspaceKey,
+  sanitizeRightPanelWorkspaceState,
 } from './right-panel-state'
 
-describe('right-panel-state', () => {
-  test('persists each function at most once in fixed order', () => {
-    let workspace = createEmptyRightPanelWorkspace()
-    workspace = openRightPanelTab(workspace, 'files')
+const tab = (type: Parameters<typeof createRightPanelTab>[0]) => createRightPanelTab(type)
+
+describe('right-panel-state tab model', () => {
+  test('open upserts singleton tabs, activates them and expands the pane', () => {
+    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'files')
     workspace = openRightPanelTab(workspace, 'files')
     workspace = openRightPanelTab(workspace, 'vault')
 
-    expect(Object.keys(workspace.tabs)).toEqual(['files', 'vault'])
-    expect(RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])).toEqual(['files', 'vault'])
+    // 单例幂等:files 不重复;打开顺序即数组序(用户可重排)
+    expect(workspace.tabs).toEqual([tab('files'), tab('vault')])
+    expect(workspace.activeTabId).toBe('vault')
+    expect(workspace.collapsed).toBe(false)
     // browser 尚未打开,仍在可用清单里
-    expect(getAvailableRightPanelFunctions(workspace)).toEqual(['browser'])
+    expect(getAvailableRightPanelFunctions(workspace.tabs)).toEqual(['browser', 'git'])
+    expect(getOpenRightPanelFunctions(workspace.tabs)).toEqual(['files', 'vault'])
   })
 
-  test('closing a function only changes persisted function presence', () => {
-    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'vault')
+  test('re-opening an existing tab keeps its position and only activates it', () => {
+    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'files')
+    workspace = openRightPanelTab(workspace, 'vault')
     workspace = openRightPanelTab(workspace, 'files')
 
-    expect(closeRightPanelTab(workspace, 'files')).toEqual({
-      tabs: { vault: { type: 'vault' } },
-    })
+    expect(workspace.tabs.map((item) => item.type)).toEqual(['files', 'vault'])
+    expect(workspace.activeTabId).toBe('files')
   })
 
-  test('files storage state contains no runtime navigation or file tabs', () => {
-    expect(createDefaultRightPanelTab('files')).toEqual({ type: 'files' })
-    expect(sanitizeRightPanelWorkspace({
-      activeTab: 'files',
-      tabs: {
-        files: {
-          type: 'files',
-          source: 'thread',
-          selectedPath: 'secret.txt',
-          searchQuery: 'secret',
-          treeVisible: false,
-          treeWidth: 500,
-          openTabs: [{ path: 'secret.txt' }],
-        },
-      },
-    })).toEqual({ tabs: { files: { type: 'files' } } })
+  test('activate expands a collapsed pane and ignores unknown ids', () => {
+    let workspace = { ...openRightPanelTab(createEmptyRightPanelWorkspace(), 'browser'), collapsed: true }
+    workspace = activateRightPanelTab(workspace, 'browser')
+    expect(workspace.collapsed).toBe(false)
+    expect(workspace.activeTabId).toBe('browser')
+
+    expect(activateRightPanelTab(workspace, 'nope')).toBe(workspace)
   })
 
-  test('sanitize repairs malformed tabs without restoring persisted active state', () => {
-    expect(sanitizeRightPanelWorkspace({
-      activeTab: 'files',
-      tabs: {
-        files: { type: 'vault' },
-        vault: { type: 'vault', zoom: 'nope' },
-        review: { type: 'review' },
-      },
+  test('close activates the neighbor at the same index (ZCode wd)', () => {
+    let workspace = createEmptyRightPanelWorkspace()
+    for (const type of ['files', 'vault', 'browser'] as const) workspace = openRightPanelTab(workspace, type)
+    workspace = activateRightPanelTab(workspace, 'vault')
+
+    workspace = closeRightPanelTab(workspace, 'vault')
+    expect(workspace.tabs.map((item) => item.type)).toEqual(['files', 'browser'])
+    // 原索引处邻居 = browser
+    expect(workspace.activeTabId).toBe('browser')
+  })
+
+  test('closing a non-active tab keeps the active tab; closing the active tail falls back left', () => {
+    let workspace = createEmptyRightPanelWorkspace()
+    for (const type of ['files', 'vault', 'browser'] as const) workspace = openRightPanelTab(workspace, type)
+    workspace = activateRightPanelTab(workspace, 'browser')
+
+    workspace = closeRightPanelTab(workspace, 'files')
+    expect(workspace.tabs.map((item) => item.type)).toEqual(['vault', 'browser'])
+    expect(workspace.activeTabId).toBe('browser')
+
+    workspace = closeRightPanelTab(workspace, 'browser')
+    expect(workspace.tabs.map((item) => item.type)).toEqual(['vault'])
+    expect(workspace.activeTabId).toBe('vault')
+  })
+
+  test('closing the last tab empties the workspace and auto-collapses (ZCode ode)', () => {
+    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'git')
+    workspace = closeRightPanelTab(workspace, 'git')
+    expect(workspace).toEqual({ tabs: [], activeTabId: null, collapsed: true })
+    expect(recomputeRightPanelCollapse(workspace)).toBe(workspace)
+  })
+
+  test('close others keeps the target activated (ZCode Ede) and returns the closed tabs', () => {
+    let workspace = createEmptyRightPanelWorkspace()
+    for (const type of ['files', 'vault', 'browser'] as const) workspace = openRightPanelTab(workspace, type)
+    workspace = activateRightPanelTab(workspace, 'files')
+
+    const [next, closed] = closeOtherRightPanelTabs(workspace, 'files')
+    expect(next.tabs).toEqual([tab('files')])
+    expect(next.activeTabId).toBe('files')
+    expect(closed.map((item) => item.type)).toEqual(['vault', 'browser'])
+
+    // 目标不存在时保持原状
+    const [unchanged, none] = closeOtherRightPanelTabs(workspace, 'nope')
+    expect(unchanged).toBe(workspace)
+    expect(none).toEqual([])
+  })
+
+  test('close all empties and collapses (ZCode Dde)', () => {
+    let workspace = createEmptyRightPanelWorkspace()
+    for (const type of ['files', 'vault'] as const) workspace = openRightPanelTab(workspace, type)
+    const [next, closed] = closeAllRightPanelTabs(workspace)
+    expect(next).toEqual({ tabs: [], activeTabId: null, collapsed: true })
+    expect(closed.map((item) => item.type)).toEqual(['files', 'vault'])
+  })
+
+  test('reorder applies full id permutations without touching the active tab (ZCode Ade)', () => {
+    let workspace = createEmptyRightPanelWorkspace()
+    for (const type of ['files', 'vault', 'git'] as const) workspace = openRightPanelTab(workspace, type)
+    workspace = activateRightPanelTab(workspace, 'vault')
+
+    const reordered = reorderRightPanelTabs(workspace, ['git', 'vault', 'files'])
+    expect(reordered.tabs.map((item) => item.type)).toEqual(['git', 'vault', 'files'])
+    expect(reordered.activeTabId).toBe('vault')
+
+    // 非全量/含未知 id:保持原序
+    expect(reorderRightPanelTabs(workspace, ['files', 'vault'])).toBe(workspace)
+    expect(reorderRightPanelTabs(workspace, ['files', 'vault', 'nope'])).toBe(workspace)
+  })
+
+  test('sanitize drops unknown types, dedupes ids and repairs a stale activeTabId', () => {
+    expect(sanitizeRightPanelWorkspaceState({
+      tabs: [
+        { id: 'files', type: 'files', selectedPath: 'secret.txt' },
+        { id: 'files', type: 'files' },
+        { type: 'git' },
+        { type: 'review' },
+      ],
+      activeTabId: 'gone',
+      collapsed: false,
     })).toEqual({
-      tabs: {
-        vault: { type: 'vault' },
-      },
+      tabs: [tab('files'), tab('git')],
+      activeTabId: 'git',
+      collapsed: false,
     })
+
+    expect(sanitizeRightPanelWorkspaceState(null)).toEqual({ tabs: [], activeTabId: null, collapsed: false })
+    expect(sanitizeRightPanelWorkspaceState({ tabs: [], collapsed: true })).toEqual({ tabs: [], activeTabId: null, collapsed: true })
   })
 
-  test('legacy Files hint opens only the persisted Files function entry', () => {
-    expect(migrateLegacyRightPanelHints({ sidePanelView: 'files', fileTreeOpen: false })).toEqual({
-      tabs: { files: { type: 'files' } },
-    })
+  test('workspace key resolution matches the browser panel bucket identity', () => {
+    expect(resolveRightPanelWorkspaceKey({ workspaceSlug: 'slug', workspaceId: 'ws', threadId: 't' })).toBe('slug')
+    expect(resolveRightPanelWorkspaceKey({ workspaceId: 'ws', threadId: 't' })).toBe('ws')
+    expect(resolveRightPanelWorkspaceKey({ threadId: 't' })).toBe('t')
   })
 
-  test('first open function follows fixed function order', () => {
-    expect(firstOpenRightPanelTab({
-      vault: createDefaultRightPanelTab('vault'),
-      files: createDefaultRightPanelTab('files'),
-    })).toBe('files')
+  test('first open function follows the user tab order', () => {
+    expect(firstOpenRightPanelTab([tab('vault'), tab('files')])).toBe('vault')
+    expect(firstOpenRightPanelTab([])).toBeNull()
+  })
+})
+
+describe('right-panel closed ring', () => {
+  test('pushes new entries at the head, dedupes by id and caps at 8 (ZCode Xde)', () => {
+    let ring = pushRightPanelClosedRing([], [tab('files')], 1)
+    ring = pushRightPanelClosedRing(ring, [tab('vault')], 2)
+    ring = pushRightPanelClosedRing(ring, [tab('files')], 3)
+
+    expect(ring.map((entry) => entry.tab.type)).toEqual(['files', 'vault'])
+    expect(ring[0]!.closedAt).toBe(3)
+
+    for (let index = 0; index < 10; index += 1) {
+      ring = pushRightPanelClosedRing(ring, [{ id: `files-${index}`, type: 'files' }], 100 + index)
+    }
+    expect(ring).toHaveLength(RIGHT_PANEL_CLOSED_RING_LIMIT)
   })
 
-  test('review launcher opens the current changed turn or falls back to the previous turn', () => {
-    const previousReport = {
+  test('excludes chat (ZCode selection-side-chat semantics)', () => {
+    expect(pushRightPanelClosedRing([], [tab('chat')])).toEqual([])
+  })
+})
+
+test('review launcher opens the current changed turn or falls back to the previous turn', () => {
+  const previousReport = {
+    runId: 'run-1',
+    status: 'unverified' as const,
+    workspaceChanged: true,
+    changedFiles: ['src/previous.ts'],
+    fileChanges: [{ path: 'src/previous.ts' }],
+    externalChangedFiles: [],
+    pendingBackground: false,
+  }
+  const currentReport = {
+    ...previousReport,
+    runId: 'run-2',
+    changedFiles: ['src/current.ts'],
+    fileChanges: [{ path: 'src/current.ts' }],
+  }
+  const baseEvents = [
+    {
+      id: 'started-1',
+      type: 'run.started' as const,
+      threadId: 'thread-1',
       runId: 'run-1',
-      status: 'unverified' as const,
-      workspaceChanged: true,
-      changedFiles: ['src/previous.ts'],
-      fileChanges: [{ path: 'src/previous.ts' }],
-      externalChangedFiles: [],
-      pendingBackground: false,
-    }
-    const currentReport = {
-      ...previousReport,
+      createdAt: '2026-07-30T00:00:00.000Z',
+    },
+    {
+      id: 'report-1',
+      type: 'coding.report.updated' as const,
+      threadId: 'thread-1',
+      runId: 'run-1',
+      createdAt: '2026-07-30T00:01:00.000Z',
+      codingReport: previousReport,
+    },
+    {
+      id: 'started-2',
+      type: 'run.started' as const,
+      threadId: 'thread-1',
       runId: 'run-2',
-      changedFiles: ['src/current.ts'],
-      fileChanges: [{ path: 'src/current.ts' }],
-    }
-    const baseEvents = [
-      {
-        id: 'started-1',
-        type: 'run.started' as const,
-        threadId: 'thread-1',
-        runId: 'run-1',
-        createdAt: '2026-07-30T00:00:00.000Z',
-      },
-      {
-        id: 'report-1',
-        type: 'coding.report.updated' as const,
-        threadId: 'thread-1',
-        runId: 'run-1',
-        createdAt: '2026-07-30T00:01:00.000Z',
-        codingReport: previousReport,
-      },
-      {
-        id: 'started-2',
-        type: 'run.started' as const,
-        threadId: 'thread-1',
-        runId: 'run-2',
-        createdAt: '2026-07-30T00:02:00.000Z',
-      },
-    ]
+      createdAt: '2026-07-30T00:02:00.000Z',
+    },
+  ]
 
-    expect(getRightPanelReviewLaunchTarget(baseEvents)).toMatchObject({
-      recency: 'previous',
-      report: { runId: 'run-1' },
-      changes: [{ path: 'src/previous.ts' }],
-    })
-    expect(getRightPanelReviewLaunchTarget([
-      ...baseEvents,
-      {
-        id: 'report-2',
-        type: 'coding.report.updated' as const,
-        threadId: 'thread-1',
-        runId: 'run-2',
-        createdAt: '2026-07-30T00:03:00.000Z',
-        codingReport: currentReport,
-      },
-    ])).toMatchObject({
-      recency: 'current',
-      report: { runId: 'run-2' },
-      changes: [{ path: 'src/current.ts' }],
-    })
+  expect(getRightPanelReviewLaunchTarget(baseEvents)).toMatchObject({
+    recency: 'previous',
+    report: { runId: 'run-1' },
+    changes: [{ path: 'src/previous.ts' }],
+  })
+  expect(getRightPanelReviewLaunchTarget([
+    ...baseEvents,
+    {
+      id: 'report-2',
+      type: 'coding.report.updated' as const,
+      threadId: 'thread-1',
+      runId: 'run-2',
+      createdAt: '2026-07-30T00:03:00.000Z',
+      codingReport: currentReport,
+    },
+  ])).toMatchObject({
+    recency: 'current',
+    report: { runId: 'run-2' },
+    changes: [{ path: 'src/current.ts' }],
   })
 })

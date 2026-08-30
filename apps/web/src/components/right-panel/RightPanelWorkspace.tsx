@@ -14,7 +14,6 @@ import {
   rightPanelFileTabsAtom,
   rightPanelLayoutAtom,
   rightPanelWorkspaceActionAtom,
-  rightPanelWorkspacesAtom,
   tabsAtom,
 } from '@/atoms'
 import { PanelRightOpen } from 'lucide-react'
@@ -30,13 +29,20 @@ import {
   type ThreadFileWorkspace,
 } from './right-panel-files-state'
 import {
-  createEmptyRightPanelWorkspace,
   firstOpenRightPanelTab,
   getOpenRightPanelFunctions,
   getRightPanelReviewLaunchTarget,
-  sanitizeRightPanelWorkspace,
+  resolveRightPanelWorkspaceKey,
   type RightPanelFunction,
+  type RightPanelTab,
 } from './right-panel-state'
+import {
+  handleExpandPanel,
+  readRightPanelWorkspaceState,
+  useRightPanelClosedRing,
+  useRightPanelStoreVersion,
+  useRightPanelWorkspaceState,
+} from './right-panel-workspace-store'
 import { RIGHT_PANEL_DEFAULT_WIDTH, getRightPanelDragWidth } from './right-panel-layout'
 import { RightPanelLauncher } from './RightPanelLauncher'
 import { RightPanelTabBar } from './RightPanelTabBar'
@@ -47,11 +53,12 @@ import { ThreadFileEnvProvider } from '../agent/thread-file-env'
 import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { VaultRightPanelWorkspace } from './VaultRightPanelWorkspace'
 import { BrowserRightPanelWorkspace, useOpenBrowserUrlReveal } from './BrowserRightPanelWorkspace'
+import { GitPanel } from './GitPanel'
 import { CodingReviewPanel } from './CodingReviewPanel'
 import { type CodingReviewPanelState } from '@/atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
-  files: '文件', chat: '问答', vault: 'Obsidian Vault', browser: '浏览器',
+  files: '文件', chat: '问答', vault: 'Obsidian Vault', browser: '浏览器', git: 'Git',
 }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
@@ -59,7 +66,6 @@ type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWork
 export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)
-  const persisted = useAtomValue(rightPanelWorkspacesAtom)
   const [runtime, setRuntime] = useAtom(rightPanelFileWorkspacesAtom)
   const [persistedFileTabs, setPersistedFileTabs] = useAtom(rightPanelFileTabsAtom)
   const dispatch = useSetAtom(rightPanelWorkspaceActionAtom)
@@ -81,8 +87,13 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const workspaceId = thread?.workspaceId ?? currentWorkspaceId ?? undefined
   const agentWorkspace = agentWorkspaces.find((item) => item.id === workspaceId)
   const workspaceSlug = agentWorkspace?.slug
-  // 浏览器面板工作区身份:与 sidecar 浏览器上下文同构(workspaceSlug ?? workspaceId ?? threadId)。
-  const browserWorkspaceKey = workspaceSlug ?? workspaceId ?? threadId
+  // 面板工作区身份(ZCode kd):统一 tab 仓库与浏览器面板分桶同构(workspaceSlug ?? workspaceId ?? threadId)。
+  const workspaceKey = threadId
+    ? resolveRightPanelWorkspaceKey({ workspaceSlug, workspaceId, threadId })
+    : undefined
+  const unified = useRightPanelWorkspaceState(workspaceKey ?? '')
+  const closedTabs = useRightPanelClosedRing()
+  const storeVersion = useRightPanelStoreVersion()
   const binding = useMemo(() => ({
     workspaceId,
     fileContextId: thread?.fileContextId ?? thread?.id,
@@ -96,7 +107,11 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
         const workspace = agentWorkspaces.find((candidate) => candidate.id === item.workspaceId)
         return workspace?.realpathKey ?? workspace?.projectPath
       })(),
-      openFunctions: getOpenRightPanelFunctions(sanitizeRightPanelWorkspace(persisted[item.id] ?? createEmptyRightPanelWorkspace()).tabs),
+      openFunctions: getOpenRightPanelFunctions(readRightPanelWorkspaceState(resolveRightPanelWorkspaceKey({
+        workspaceSlug: agentWorkspaces.find((candidate) => candidate.id === item.workspaceId)?.slug,
+        workspaceId: item.workspaceId,
+        threadId: item.id,
+      })).tabs),
     })))
     if (result.revokedScopeTokens.length > 0
       || Object.keys(result.workspaces).length !== Object.keys(runtime).length
@@ -104,7 +119,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       setRuntime(result.workspaces)
       result.revokedScopeTokens.forEach((token) => void revokeFilePreviewScope(token).catch(() => undefined))
     }
-  }, [agentWorkspaces, currentWorkspaceId, persisted, threads])
+  }, [agentWorkspaces, currentWorkspaceId, runtime, storeVersion, threads, setRuntime])
 
   useEffect(() => {
     setPersistedFileTabs((current) => {
@@ -165,10 +180,19 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   // open-browser-url reveal 桥(常驻订阅;须在下方早退 return 之前挂上)。
   useOpenBrowserUrlReveal(threadId)
 
+  // 展开即恢复可见(ZCode 打开路径 b(!1)):面板重新打开时清除自动/手动折叠。
+  useEffect(() => {
+    if (layout.open && workspaceKey) handleExpandPanel(workspaceKey)
+  }, [layout.open, workspaceKey])
+
   if (!threadId || !layout.open) return null
 
-  const persistedWorkspace = sanitizeRightPanelWorkspace(persisted[threadId] ?? createEmptyRightPanelWorkspace())
-  const openFunctions = getOpenRightPanelFunctions(persistedWorkspace.tabs)
+  // 可见性:布局开关 + 统一层折叠(ode 自动折叠/手动折叠);审阅激活时保持可见。
+  const panelVisible = !unified.collapsed || Boolean(codingReview)
+  if (!panelVisible) return null
+
+  const openFunctions = getOpenRightPanelFunctions(unified.tabs)
+  const activeUnifiedTab: RightPanelTab | null = unified.tabs.find((tab) => tab.id === unified.activeTabId) ?? null
   const storedRuntimeWorkspace = runtime[threadId]
   const runtimeWorkspace = storedRuntimeWorkspace
     ? reconcileThreadFileWorkspaces({ [threadId]: storedRuntimeWorkspace }, [{ id: threadId, ...binding, openFunctions }]).workspaces[threadId]!
@@ -184,16 +208,15 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
             ? { kind: 'file', tabId: restoredActiveId! }
             : restoredTabs.at(-1)
               ? { kind: 'file', tabId: restoredTabs.at(-1)!.id }
-            : firstOpenRightPanelTab(persistedWorkspace.tabs)
-              ? { kind: 'function', type: firstOpenRightPanelTab(persistedWorkspace.tabs)! }
+            : firstOpenRightPanelTab(unified.tabs)
+              ? { kind: 'function', type: firstOpenRightPanelTab(unified.tabs)! }
               : null,
         )
         return { ...restored, openTabs: restoredTabs }
       })()
-  const hasOpenTabs = firstOpenRightPanelTab(persistedWorkspace.tabs) !== null
+  const hasOpenTabs = unified.tabs.length > 0
     || runtimeWorkspace.openTabs.length > 0
     || Boolean(codingReview)
-    || (runtimeWorkspace.activeItem?.kind === 'function' && runtimeWorkspace.activeItem.type === 'chat')
 
   const action = (value: Parameters<typeof dispatch>[0]) => dispatch(value)
 
@@ -236,23 +259,33 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
         ) : (
           <>
             <RightPanelTabBar
-              workspace={persistedWorkspace}
+              tabs={unified.tabs}
               fileTabs={runtimeWorkspace.openTabs}
+              activeTabId={unified.activeTabId}
               activeItem={runtimeWorkspace.activeItem}
+              closedTabs={closedTabs}
               reviewOpen={Boolean(codingReview)}
               reviewActive={codingReview?.active}
               onActivateReview={() => closeCodingReview({ type: 'activate', threadId })}
               onCloseReview={() => closeCodingReview({ type: 'close', threadId })}
-              onActivateFunction={(fn) => {
+              onActivateTab={(tabId) => {
                 closeCodingReview({ type: 'deactivate', threadId })
-                action({ type: 'activate-function', threadId, function: fn, binding })
+                action({ type: 'activate-tab', threadId, tabId })
               }}
               onActivateFile={(tabId) => {
                 closeCodingReview({ type: 'deactivate', threadId })
                 updateRuntime((current) => ({ ...current, activeItem: { kind: 'file', tabId } }))
+                // files 功能 tab 已开时同步激活统一层(高亮一致);被独立关闭时不复活(守卫语义)
+                if (unified.tabs.some((tab) => tab.type === 'files')) {
+                  action({ type: 'activate-tab', threadId, tabId: 'files' })
+                }
               }}
-              onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
-              onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
+              onCloseTab={(tabId) => action({ type: 'close-tab', threadId, tabId })}
+              onCloseOtherTabs={(tabId) => action({ type: 'close-other-tabs', threadId, tabId })}
+              onCloseAllTabs={() => action({ type: 'close-all-tabs', threadId })}
+              onReorderTabs={(orderedIds) => action({ type: 'reorder-tabs', threadId, orderedIds })}
+              onReopenClosedTab={(entryId) => action({ type: 'reopen-closed-tab', threadId, entryId })}
+              onCloseFile={(tabId: string) => action({ type: 'close-file', threadId, tabId })}
               onOpenFunction={(fn) => {
                 closeCodingReview({ type: 'deactivate', threadId })
                 action({ type: 'activate-function', threadId, function: fn, binding })
@@ -261,13 +294,14 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
             {hasOpenTabs ? (
               <RightPanelActiveContent
                 runtime={runtimeWorkspace}
+                activeTab={activeUnifiedTab}
                 workspaceSlug={workspaceSlug}
                 workspaceProjectPath={agentWorkspace?.projectPath}
                 fileContextId={binding.fileContextId}
                 openFunctions={openFunctions}
                 onRuntimeChange={updateRuntime}
                 threadId={threadId}
-                browserWorkspaceKey={browserWorkspaceKey}
+                workspaceKey={workspaceKey}
                 codingReview={codingReview}
                 onOpenCodingFile={workspaceSlug ? (path) => {
                   closeCodingReview({ type: 'deactivate', threadId })
@@ -312,36 +346,47 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   )
 }
 
-function RightPanelActiveContent({ runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, browserWorkspaceKey, codingReview, onOpenCodingFile }: {
+/**
+ * 活动内容分发:审阅(运行时临时面)> 文件 tab(runtime activeItem 明确指向具体
+ * 文件)> 统一层活动 tab 按类型分发(browser/git/files/vault/chat)。
+ */
+function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, workspaceKey, codingReview, onOpenCodingFile }: {
   runtime: ThreadFileWorkspace
+  activeTab: RightPanelTab | null
   workspaceSlug?: string
   workspaceProjectPath?: string
   fileContextId?: string
   openFunctions: RightPanelFunction[]
   onRuntimeChange: (workspace: ThreadFileWorkspaceUpdate) => void
   threadId: string
-  browserWorkspaceKey?: string
+  workspaceKey?: string
   codingReview?: CodingReviewPanelState
   onOpenCodingFile?: (path: string) => void
 }) {
   if (codingReview?.active) {
     return <CodingReviewPanel threadId={threadId} state={codingReview} onOpenFile={onOpenCodingFile} />
   }
-  const active = runtime.activeItem
-  if (!active) return <PlaceholderRightPanelTab label="" />
-  if (active.kind === 'file' || active.type === 'files') {
+  if (runtime.activeItem?.kind === 'file') {
     return <FilesRightPanelWorkspace threadId={threadId} workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
   }
-  if (active.kind === 'function' && active.type === 'chat') {
+  const type = activeTab?.type
+  if (!type) return <PlaceholderRightPanelTab label="" />
+  if (type === 'files') {
+    return <FilesRightPanelWorkspace threadId={threadId} workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
+  }
+  if (type === 'chat') {
     return <RightPanelSideChat threadId={threadId} workspaceSlug={workspaceSlug} fileContextId={fileContextId} />
   }
-  if (active.kind === 'function' && active.type === 'vault') {
+  if (type === 'vault') {
     return <VaultRightPanelWorkspace threadId={threadId} />
   }
-  if (active.kind === 'function' && active.type === 'browser') {
-    return <BrowserRightPanelWorkspace workspaceKey={browserWorkspaceKey} />
+  if (type === 'browser') {
+    return <BrowserRightPanelWorkspace workspaceKey={workspaceKey} />
   }
-  return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[active.type]} />
+  if (type === 'git') {
+    return <GitPanel workspacePath={workspaceProjectPath} />
+  }
+  return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[type]} />
 }
 
 /** 右侧面板 side-chat：基于 AgentMessages + AgentInput 组装的问答副窗口（见 #18） */

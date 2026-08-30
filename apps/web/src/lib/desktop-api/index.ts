@@ -1,5 +1,6 @@
 export * from './agent'
 export * from './browser-view'
+export * from './git-panel'
 export * from './logger'
 export * from './native'
 export * from './system'

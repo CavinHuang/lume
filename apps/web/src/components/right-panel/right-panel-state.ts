@@ -1,36 +1,48 @@
+/**
+ * 右侧面板统一 tab 模型 —— ZCode SidePane 壳层语义的 Lume 落法。
+ *
+ * 语义来源:docs/analysis/P1-shell-architecture.md §1/§2、docs/analysis/zcode-sidepane-consolidated.md §2:
+ *   - sidePaneState = { tabs: SidePaneTab[], activeTabId } + isSidePaneCollapsed;
+ *   - 纯 reducer:wd 关 tab(邻居回落)/Td 激活/Ede 关其他/Dde 关全部/
+ *     Ade 重排(不动 activeTabId)/ode scope 重算(无可见 tab → 自动折叠)/
+ *     sde upsert+激活(打开类操作一律先展开);
+ *   - 最近关闭环 Xde=8(排除 selection-side-chat/browser-use,Lume 对应 chat)。
+ *
+ * 与浏览器面板的关系:统一 tab 数组里的 `browser` 是承载 BrowserSidePane 的宿主
+ * tab;浏览器内部的多 tab(url/residency/generation)仍由 useBrowserPanel +
+ * browser-workspace-state 承载,挂载/重挂时按 workspaceKey 自恢复。git 为单例
+ * (GitPanel 只读);files/vault/chat 沿用原语义(chat 仅由划线引用触发,见 #18)。
+ */
 import type { LumeRuntimeEvent, RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 
-export type RightPanelFunction = 'files' | 'chat' | 'vault' | 'browser'
+export type RightPanelFunction = 'files' | 'chat' | 'vault' | 'browser' | 'git'
 
-export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault', 'browser']
+/** 可主动打开/参与回退优先级的功能集合(chat 不在菜单提供,由划线引用触发,见 #18)。 */
+export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault', 'browser', 'git']
 
-export interface ThreadRightPanelWorkspace {
-  tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>
+/** ZCode SidePaneTab 对齐:tab 全面板唯一 id;单例类型 id === type。 */
+export interface RightPanelTab {
+  id: string
+  type: RightPanelFunction
 }
 
-export type RightPanelTabState =
-  | FilesTabState
-  | ChatTabState
-  | VaultTabState
-  | BrowserTabState
-
-export interface FilesTabState {
-  type: 'files'
+/** ZCode sidePaneState + isSidePaneCollapsed:按 workspaceKey 分桶持久(见 right-panel-workspace-store.ts)。 */
+export interface RightPanelWorkspaceState {
+  tabs: RightPanelTab[]
+  activeTabId: string | null
+  collapsed: boolean
 }
 
-/** Obsidian Vault 面板：全局状态（vault/文件选择不在会话间区分），无持久化 tab 状态 */
-export interface VaultTabState {
-  type: 'vault'
-}
+/** 最近关闭环容量(ZCode Xde=8)。 */
+export const RIGHT_PANEL_CLOSED_RING_LIMIT = 8
 
-/** 内嵌浏览器面板（BrowserSidePane）：tab 模型由 browser-workspace-state 承载，这里只记 tab 开合 */
-export interface BrowserTabState {
-  type: 'browser'
-}
+/** 不入最近关闭环的类型(ZCode 排除 selection-side-chat/browser-use)。 */
+const RIGHT_PANEL_RING_EXCLUDED_TYPES: ReadonlySet<RightPanelFunction> = new Set(['chat'])
 
-/** 右侧面板 side-chat：为当前会话临时配一个问答副窗口（见 #18） */
-export interface ChatTabState {
-  type: 'chat'
+/** 最近关闭环条目(重开时按 type upsert)。 */
+export interface RightPanelClosedEntry {
+  tab: RightPanelTab
+  closedAt: number
 }
 
 export interface RightPanelReviewLaunchTarget {
@@ -73,87 +85,153 @@ export function getRightPanelReviewLaunchTarget(
   return null
 }
 
-export function createEmptyRightPanelWorkspace(): ThreadRightPanelWorkspace {
-  return { tabs: {} }
+/* ── 工厂 / 消毒 ─────────────────────────────────────────────────────── */
+
+export function createEmptyRightPanelWorkspace(): RightPanelWorkspaceState {
+  return { tabs: [], activeTabId: null, collapsed: false }
 }
 
-export function createDefaultRightPanelTab(type: RightPanelFunction): RightPanelTabState {
-  return { type }
+/** 单例类型 id === type;未来多开类型在此扩展 id 生成。 */
+export function createRightPanelTab(type: RightPanelFunction): RightPanelTab {
+  return { id: type, type }
 }
 
-export function openRightPanelTab(
-  workspace: ThreadRightPanelWorkspace,
-  type: RightPanelFunction,
-): ThreadRightPanelWorkspace {
-  return {
-    tabs: {
-      ...workspace.tabs,
-      [type]: workspace.tabs[type] ?? createDefaultRightPanelTab(type),
-    },
-  }
+export function findRightPanelTab(state: RightPanelWorkspaceState, tabId: string): RightPanelTab | null {
+  return state.tabs.find((tab) => tab.id === tabId) ?? null
 }
 
-export function getAvailableRightPanelFunctions(workspace: ThreadRightPanelWorkspace): RightPanelFunction[] {
-  return RIGHT_PANEL_FUNCTION_ORDER.filter((type) => !workspace.tabs[type])
+/** ZCode sd 消毒:剔除未知类型、按 id 去重、activeTabId 失效回落最后一个 tab。 */
+export function sanitizeRightPanelWorkspaceState(value: unknown): RightPanelWorkspaceState {
+  if (!isRecord(value)) return createEmptyRightPanelWorkspace()
+  const seen = new Set<string>()
+  const tabs = (Array.isArray(value.tabs) ? value.tabs : []).flatMap((item): RightPanelTab[] => {
+    if (!isRecord(item) || !isRightPanelFunction(item.type)) return []
+    const id = typeof item.id === 'string' && item.id ? item.id : item.type
+    if (seen.has(id)) return []
+    seen.add(id)
+    return [{ id, type: item.type }]
+  })
+  const activeTabId = typeof value.activeTabId === 'string' && seen.has(value.activeTabId)
+    ? value.activeTabId
+    : tabs.at(-1)?.id ?? null
+  return { tabs, activeTabId, collapsed: value.collapsed === true }
 }
 
-export function firstOpenRightPanelTab(
-  tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>,
-): RightPanelFunction | null {
-  return RIGHT_PANEL_FUNCTION_ORDER.find((type) => tabs[type]) ?? null
+/* ── 纯 reducer(ZCode wd/Td/Ede/Dde/Ade/ode/sde 对齐) ────────────────── */
+
+/** 激活(ZCode Td);打开类操作一律先展开(ZCode 打开路径 b(!1))。 */
+export function activateRightPanelTab(state: RightPanelWorkspaceState, tabId: string): RightPanelWorkspaceState {
+  if (!state.tabs.some((tab) => tab.id === tabId)) return state
+  if (state.activeTabId === tabId && !state.collapsed) return state
+  return { ...state, activeTabId: tabId, collapsed: false }
 }
 
-export function getOpenRightPanelFunctions(
-  tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>,
-): RightPanelFunction[] {
-  return RIGHT_PANEL_FUNCTION_ORDER.filter((type) => Boolean(tabs[type]))
+/** upsert(单例幂等,不改变既有位置)+ 激活 + 展开(ZCode sde/fd)。 */
+export function openRightPanelTab(state: RightPanelWorkspaceState, type: RightPanelFunction): RightPanelWorkspaceState {
+  const existing = state.tabs.find((tab) => tab.type === type)
+  if (existing) return activateRightPanelTab(state, existing.id)
+  const tab = createRightPanelTab(type)
+  return activateRightPanelTab({ ...state, tabs: [...state.tabs, tab] }, tab.id)
 }
 
-export function closeRightPanelTab(
-  workspace: ThreadRightPanelWorkspace,
-  type: RightPanelFunction,
-): ThreadRightPanelWorkspace {
-  const tabs = { ...workspace.tabs }
-  delete tabs[type]
-
-  return { tabs }
+/** 关闭(ZCode wd):删空 → 收起;删的是活动 tab → 激活原索引处邻居。 */
+export function closeRightPanelTab(state: RightPanelWorkspaceState, tabId: string): RightPanelWorkspaceState {
+  const index = state.tabs.findIndex((tab) => tab.id === tabId)
+  if (index < 0) return state
+  const tabs = state.tabs.filter((tab) => tab.id !== tabId)
+  if (tabs.length === 0) return { tabs, activeTabId: null, collapsed: true }
+  const activeTabId = state.activeTabId === tabId
+    ? tabs[Math.min(index, tabs.length - 1)]!.id
+    : state.activeTabId
+  return { tabs, activeTabId, collapsed: state.collapsed }
 }
 
-export function sanitizeRightPanelWorkspace(value: unknown): ThreadRightPanelWorkspace {
-  if (!isRecord(value)) {
-    return createEmptyRightPanelWorkspace()
-  }
-
-  const rawTabs = isRecord(value.tabs) ? value.tabs : {}
-  const tabs: ThreadRightPanelWorkspace['tabs'] = {}
-
-  for (const type of RIGHT_PANEL_FUNCTION_ORDER) {
-    const tab = sanitizeRightPanelTab(type, rawTabs[type])
-    if (tab) {
-      tabs[type] = tab
-    }
-  }
-
-  return { tabs }
+/** 关其他(ZCode Ede):保留目标并激活;返回 [新状态, 被关 tabs(入环用)]。 */
+export function closeOtherRightPanelTabs(
+  state: RightPanelWorkspaceState,
+  tabId: string,
+): [RightPanelWorkspaceState, RightPanelTab[]] {
+  const target = findRightPanelTab(state, tabId)
+  if (!target) return [state, []]
+  const closed = state.tabs.filter((tab) => tab.id !== tabId)
+  if (closed.length === 0) return [activateRightPanelTab(state, tabId), []]
+  return [{ tabs: [target], activeTabId: target.id, collapsed: false }, closed]
 }
 
-export function migrateLegacyRightPanelHints(input: {
-  sidePanelView?: unknown
-  fileTreeOpen?: unknown
-}): ThreadRightPanelWorkspace {
-  if (input.sidePanelView !== 'files') {
-    return createEmptyRightPanelWorkspace()
-  }
-
-  return openRightPanelTab(createEmptyRightPanelWorkspace(), 'files')
+/** 关全部(ZCode Dde):清空 → 收起;返回 [新状态, 被关 tabs(入环用)]。 */
+export function closeAllRightPanelTabs(state: RightPanelWorkspaceState): [RightPanelWorkspaceState, RightPanelTab[]] {
+  if (state.tabs.length === 0) return [state, []]
+  const empty = recomputeRightPanelCollapse(createEmptyRightPanelWorkspace())
+  return [empty, state.tabs]
 }
 
-function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightPanelTabState | null {
-  if (!isRecord(value) || value.type !== type) {
-    return null
-  }
+/**
+ * 重排(ZCode Ade splice 语义):非全量排列/含未知 id 时保持原序;
+ * 不改动 activeTabId。
+ */
+export function reorderRightPanelTabs(
+  state: RightPanelWorkspaceState,
+  orderedIds: readonly string[],
+): RightPanelWorkspaceState {
+  if (orderedIds.length !== state.tabs.length) return state
+  const byId = new Map(state.tabs.map((tab) => [tab.id, tab]))
+  if (orderedIds.some((id) => !byId.has(id))) return state
+  const tabs = orderedIds.map((id) => byId.get(id)!)
+  const unchanged = tabs.every((tab, index) => tab === state.tabs[index])
+  return unchanged ? state : { ...state, tabs }
+}
 
-  return { type }
+/** scope 重算(ZCode ode):无可见 tab → 自动折叠。 */
+export function recomputeRightPanelCollapse(state: RightPanelWorkspaceState): RightPanelWorkspaceState {
+  const collapsed = state.tabs.length === 0
+  return state.collapsed === collapsed ? state : { ...state, collapsed }
+}
+
+/* ── 最近关闭环(ZCode Xde=8) ─────────────────────────────────────────── */
+
+/** 压入最近关闭环:新条目置顶、按 tab id 去重、排除类型不入环、超容量从尾部丢弃。 */
+export function pushRightPanelClosedRing(
+  ring: readonly RightPanelClosedEntry[],
+  closed: readonly RightPanelTab[],
+  closedAt = Date.now(),
+): RightPanelClosedEntry[] {
+  const entries = closed.filter((tab) => !RIGHT_PANEL_RING_EXCLUDED_TYPES.has(tab.type))
+  if (entries.length === 0) return [...ring]
+  const ids = new Set(entries.map((tab) => tab.id))
+  return [
+    ...entries.map((tab) => ({ tab, closedAt })),
+    ...ring.filter((entry) => !ids.has(entry.tab.id)),
+  ].slice(0, RIGHT_PANEL_CLOSED_RING_LIMIT)
+}
+
+/* ── 派生查询 ────────────────────────────────────────────────────────── */
+
+export function getAvailableRightPanelFunctions(tabs: readonly RightPanelTab[]): RightPanelFunction[] {
+  const open = new Set(tabs.map((tab) => tab.type))
+  return RIGHT_PANEL_FUNCTION_ORDER.filter((type) => !open.has(type))
+}
+
+export function getOpenRightPanelFunctions(tabs: readonly RightPanelTab[]): RightPanelFunction[] {
+  const open = new Set(tabs.map((tab) => tab.type))
+  return RIGHT_PANEL_FUNCTION_ORDER.filter((type) => open.has(type))
+}
+
+/** 打开的第一个功能 tab(按用户排列序;仅用于恢复兜底)。 */
+export function firstOpenRightPanelTab(tabs: readonly RightPanelTab[]): RightPanelFunction | null {
+  return tabs[0]?.type ?? null
+}
+
+/** 工作区身份规约(ZCode kd):与 sidecar 浏览器上下文/浏览器面板分桶同构。 */
+export function resolveRightPanelWorkspaceKey(input: {
+  workspaceSlug?: string
+  workspaceId?: string
+  threadId: string
+}): string {
+  return input.workspaceSlug ?? input.workspaceId ?? input.threadId
+}
+
+function isRightPanelFunction(value: unknown): value is RightPanelFunction {
+  return value === 'files' || value === 'chat' || value === 'vault' || value === 'browser' || value === 'git'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

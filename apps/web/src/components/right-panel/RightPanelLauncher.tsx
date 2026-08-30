@@ -1,4 +1,4 @@
-import { FileDiff, FolderOpen, Globe } from 'lucide-react'
+import { FileDiff, FolderOpen, GitBranch, Globe } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { RightPanelFunction } from './right-panel-state'
 import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
@@ -22,6 +22,7 @@ const LAUNCHER_ITEMS: Array<{
   { type: 'files', label: '文件', shortcut: '⌘P', Icon: FolderOpen },
   { type: 'vault', label: 'Obsidian Vault', Icon: ObsidianIcon },
   { type: 'browser', label: '浏览器', Icon: Globe },
+  { type: 'git', label: 'Git', Icon: GitBranch },
 ]
 
 export function RightPanelLauncher({ onOpen, review, onOpenReview }: RightPanelLauncherProps) {

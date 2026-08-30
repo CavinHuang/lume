@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test'
 import { buildRightPanelTabItems, closeAllTabsMenuItem, getRightPanelCloseFallback, shouldCloseRightPanelFunctionMenuForTarget, shouldCloseTabForMouseButton } from './RightPanelTabBar'
 import { createThreadFileWorkspace, openFileTab } from './right-panel-files-state'
+import { createRightPanelTab, type RightPanelTab } from './right-panel-state'
 
 const fileTab = (id: string, relativePath: string) => ({
   ...openFileTab(
@@ -9,6 +10,8 @@ const fileTab = (id: string, relativePath: string) => ({
   ).openTabs[0]!,
   id,
 })
+
+const functionTabs = (...types: Array<RightPanelTab['type']>): RightPanelTab[] => types.map(createRightPanelTab)
 
 describe('RightPanelTabBar', () => {
   test('keeps the function menu open for inside pointer targets only', () => {
@@ -22,12 +25,31 @@ describe('RightPanelTabBar', () => {
     expect(shouldCloseRightPanelFunctionMenuForTarget(menu, 'outside-target' as unknown as Node)).toBe(true)
   })
 
-  test('places the runtime review tab before persisted functions', () => {
+  test('places the runtime review tab before the unified tabs', () => {
     expect(buildRightPanelTabItems(
-      { tabs: { files: { type: 'files' } } },
+      functionTabs('files'),
       [],
       true,
-    ).map((item) => item.id)).toEqual(['review', 'function:files'])
+    ).map((item) => item.id)).toEqual(['review', 'files'])
+  })
+
+  test('keeps file child tabs after their files host in the unified order', () => {
+    const items = buildRightPanelTabItems(
+      functionTabs('browser', 'files', 'git'),
+      [
+        fileTab('file-a', 'src/a.ts'),
+        fileTab('file-b', 'src/b.ts'),
+      ],
+    )
+    // 文件子 tab 紧随 files 宿主;统一 tab 按用户排列序
+    expect(items.map((item) => item.id)).toEqual(['browser', 'files', 'file-a', 'file-b', 'git'])
+
+    // files 关闭时,文件子 tab 殿后仍可见
+    const withoutFiles = buildRightPanelTabItems(
+      functionTabs('git'),
+      [fileTab('file-a', 'src/a.ts')],
+    )
+    expect(withoutFiles.map((item) => item.id)).toEqual(['git', 'file-a'])
   })
 
   test('middle click closes a tab but primary click does not', () => {
@@ -48,7 +70,7 @@ describe('RightPanelTabBar', () => {
 
   test('chooses the tab on the right after closing, then falls back to the left', () => {
     const items = buildRightPanelTabItems(
-      { tabs: { files: { type: 'files' } } },
+      functionTabs('files'),
       [
         fileTab('file-a', 'src/a.ts'),
         fileTab('file-b', 'src/b.ts'),
@@ -56,8 +78,8 @@ describe('RightPanelTabBar', () => {
       true,
     )
 
-    expect(getRightPanelCloseFallback(items, 'review')?.id).toBe('function:files')
-    expect(getRightPanelCloseFallback(items, 'function:files')?.id).toBe('file-a')
+    expect(getRightPanelCloseFallback(items, 'review')?.id).toBe('files')
+    expect(getRightPanelCloseFallback(items, 'files')?.id).toBe('file-a')
     expect(getRightPanelCloseFallback(items, 'file-a')?.id).toBe('file-b')
     expect(getRightPanelCloseFallback(items, 'file-b')?.id).toBe('file-a')
   })
