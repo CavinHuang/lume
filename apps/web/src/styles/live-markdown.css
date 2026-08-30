@@ -153,10 +153,13 @@
   overflow-x: auto;
   padding: 0.9rem 0;
   text-align: center;
+  line-height: 1.2;
 }
 .live-markdown-editor .live-markdown-math-inline {
   display: inline-block;
-  vertical-align: -0.1em;
+  vertical-align: baseline;
+  line-height: 1.2;
+  white-space: nowrap;
 }
 .live-markdown-editor .live-markdown-math-inline .katex,
 .live-markdown-editor .live-markdown-math-block .katex {

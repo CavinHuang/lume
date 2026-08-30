@@ -185,6 +185,16 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
     void setObsidianVaultFocus(thread, vault, null).catch(() => undefined)
   }, [])
 
+  // 快照恢复的笔记重新上报会话焦点：卸载时焦点已被清理，不重报则
+  // Agent 侧拿不到恢复后的笔记上下文。
+  useEffect(() => {
+    const restored = restoredRef.current
+    if (restored.selectedFile && restored.vaultPath) {
+      reportFocus({ kind: 'file', relativePath: restored.selectedFile.path })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const loadFiles = useCallback(async (path: string, showLoading = false): Promise<ObsidianVaultFileEntry[]> => {
     if (showLoading) setEntries(null)
     try {
@@ -326,7 +336,18 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
         if (cancelled) return
         setConfig(next)
         if (next.enabled && next.candidates.length > 0) {
-          setVaultPath((current) => current ?? next.candidates[0]!.path)
+          setVaultPath((current) => {
+            // 快照恢复的 vault 已不在授权集（被移除/注销）：清空编辑区回到未选状态。
+            if (current && !next.candidates.some((vault) => vault.path === current)) {
+              ++readRequestRef.current
+              setFileLoading(false)
+              setSelectedFile(null)
+              setDraft('')
+              reportFocus(null)
+              return null
+            }
+            return current ?? next.candidates[0]!.path
+          })
         }
       })
       .catch((cause) => toast.error(cause instanceof Error ? cause.message : '无法读取 Vault 配置'))
