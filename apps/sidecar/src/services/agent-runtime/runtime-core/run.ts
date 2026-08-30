@@ -862,6 +862,8 @@ async function createRuntimeCoreSessionImpl(
     toolInput: Parameters<typeof codingRunTracker.observe>[0],
   ): void => {
     codingRunTracker.observe(toolInput);
+    // 反作弊证据：清单簿记（Task 工具/TodoWrite）之外的实际工具活动
+    if (!LIST_TOOL_NAMES.has(toolInput.toolName)) sawNonTaskToolUse = true;
     const task = toolInput.result._meta?.task as
       { id?: string; status?: string } | undefined;
     if (task?.id && task.status === "running") {
@@ -1200,6 +1202,8 @@ async function createRuntimeCoreSessionImpl(
   let taskGateRoundsUsed = 0;
   const MAX_TODO_GATE_ROUNDS = 3;
   let todoGateRoundsUsed = 0;
+  // 反作弊：本 run 是否出现过清单簿记以外的工具活动（false + 全部标记完成 = 可疑空转收尾）
+  let sawNonTaskToolUse = false;
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     filesRoot: input.filesRoot,
@@ -1371,14 +1375,27 @@ async function createRuntimeCoreSessionImpl(
     // Task 持久任务门控：只看本 run 触碰过的任务，历史陈旧 pending 不劫持收尾；
     // 计划任务不受门控（自动化收尾节奏由其自身编排决定）
     if (automationExecution) return undefined;
-    const touchedTasks = (mainTaskRuntimeRef?.getTouchedTasks() ?? []).filter((task) => task.status === "in_progress");
-    if (touchedTasks.length === 0) return undefined;
-    if (taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS) return undefined;
-    taskGateRoundsUsed += 1;
-    const lastRoundNote = taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS
-      ? "\n（这是最后一次自动推进，其后 run 将结束——请如实说明剩余任务的真实状态，不要虚假标记完成。）"
-      : "";
-    return getTaskCompletionBlocker(touchedTasks) + lastRoundNote;
+    const touchedAll = mainTaskRuntimeRef?.getTouchedTasks() ?? [];
+    const executingTasks = touchedAll.filter((task) => task.status === "in_progress");
+    if (executingTasks.length > 0) {
+      if (taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS) return undefined;
+      taskGateRoundsUsed += 1;
+      const lastRoundNote = taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS
+        ? "\n（这是最后一次自动推进，其后 run 将结束——请如实说明剩余任务的真实状态，不要虚假标记完成。）"
+        : "";
+      return getTaskCompletionBlocker(executingTasks) + lastRoundNote;
+    }
+    // 反作弊（对齐 ZCode 验证器"仅 represented by 清单更新 → fail"）：本 run
+    // 批量标记完成任务、却除清单簿记外无任何工具活动 → 插入一次证据确认
+    // （共享门控预算：最多质疑 3 轮，其后放行收尾）
+    if (!sawNonTaskToolUse && taskGateRoundsUsed < MAX_TASK_GATE_ROUNDS) {
+      const completedTasks = touchedAll.filter((task) => task.status === "completed");
+      if (completedTasks.length >= 2) {
+        taskGateRoundsUsed += 1;
+        return `[task incomplete] 本 run 将 ${completedTasks.length} 个任务标记为完成，但除任务清单更新外未观察到任何实际执行（工具调用）。若任务确实无需工具即已完成，请逐项重申各自的实际产出后再次收尾；若尚未真正执行，请现在执行。`;
+      }
+    }
+    return undefined;
   };
   const enableFileCheckpointing = input.permissionMode !== "plan";
   // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
