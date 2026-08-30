@@ -9,6 +9,9 @@ import { shouldRenderMermaidCodeBlock } from '@/lib/mermaid-detection'
 
 type PreviewKind = 'code' | 'table' | 'mermaid' | 'thematic-break' | 'math'
 
+export type ResolveLiveMarkdownImageSrc = (src: string) => Promise<string | null>
+export type SaveLiveMarkdownPastedImage = (file: File) => Promise<string | null>
+
 interface PreviewBlock {
   kind: PreviewKind
   from: number
@@ -305,6 +308,50 @@ class InlineMathWidget extends WidgetType {
   override ignoreEvent(): boolean { return false }
 }
 
+class InlineImageWidget extends WidgetType {
+  private destroyed = false
+
+  constructor(
+    private readonly src: string,
+    private readonly alt: string,
+    private readonly title: string,
+    private readonly from: number,
+    private readonly resolveImageSrc?: ResolveLiveMarkdownImageSrc,
+  ) { super() }
+
+  override eq(other: InlineImageWidget): boolean {
+    return this.src === other.src && this.alt === other.alt && this.title === other.title && this.from === other.from
+  }
+
+  override toDOM(view: EditorView): HTMLElement {
+    const element = document.createElement('span')
+    element.className = 'live-markdown-image'
+    element.dataset.liveMarkdownInlineFrom = String(this.from)
+    element.setAttribute('aria-label', '点击编辑图片')
+
+    const image = document.createElement('img')
+    image.alt = this.alt
+    image.title = this.title
+    image.loading = 'lazy'
+    image.addEventListener('load', () => view.requestMeasure())
+    image.addEventListener('error', () => view.requestMeasure())
+    element.appendChild(image)
+
+    // 绝对 URL 直接用；Vault 相对路径经 resolveImageSrc 异步换成受控 URL，不改写 markdown 原文。
+    if (/^(?:https?:|data:|blob:|lume-file:)/i.test(this.src)) {
+      image.src = this.src
+    } else if (this.resolveImageSrc) {
+      void this.resolveImageSrc(this.src).then((resolved) => {
+        if (!this.destroyed && resolved) image.src = resolved
+      }).catch(() => {})
+    }
+    return element
+  }
+
+  override destroy(): void { this.destroyed = true }
+  override ignoreEvent(): boolean { return false }
+}
+
 function splitTableRow(line: string): string[] {
   const content = line.trim().replace(/^\|/, '').replace(/\|$/, '')
   const cells: string[] = []
@@ -324,6 +371,25 @@ function splitTableRow(line: string): string[] {
 function isTableSeparator(line: string): boolean {
   const cells = splitTableRow(line)
   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))
+}
+
+interface InlineImagePreview { from: number; to: number; src: string; alt: string; title: string }
+
+/** 行内图片语法（含尖括号 URL），与 Proma 的 live-markdown-preview-syntax 同一正则。 */
+function findInlineImages(line: string): InlineImagePreview[] {
+  const imagePattern = /!\[([^\]]*)\]\((?:<([^>]+)>|([^\s)]+))(?:\s+(?:"([^"]*)"|'([^']*)'|\(([^)]*)\)))?\)/g
+  const previews: InlineImagePreview[] = []
+  let match: RegExpExecArray | null
+  while ((match = imagePattern.exec(line)) !== null) {
+    previews.push({
+      from: match.index,
+      to: match.index + match[0]!.length,
+      src: match[2] ?? match[3] ?? '',
+      alt: match[1] ?? '',
+      title: match[4] ?? match[5] ?? match[6] ?? '',
+    })
+  }
+  return previews
 }
 
 function buildBlocks(state: EditorState): PreviewBlock[] {
@@ -382,7 +448,7 @@ function buildBlocks(state: EditorState): PreviewBlock[] {
   return blocks
 }
 
-function buildDecorations(state: EditorState, blocks: PreviewBlock[], lines: Set<number>): DecorationSet {
+function buildDecorations(state: EditorState, blocks: PreviewBlock[], lines: Set<number>, resolveImageSrc?: ResolveLiveMarkdownImageSrc): DecorationSet {
   const entries: Array<{ from: number; to: number; decoration: Decoration }> = []
   const protectedRanges = blocks.map((block) => ({ from: block.from, to: block.to }))
   for (const block of blocks) {
@@ -402,6 +468,14 @@ function buildDecorations(state: EditorState, blocks: PreviewBlock[], lines: Set
       if (protectedRanges.some((range) => from >= range.from && to <= range.to)) continue
       entries.push({ from, to, decoration: Decoration.replace({ widget: new InlineMathWidget(match[2]!) }) })
     }
+    // 仅在提供解析器时渲染图片，未接入 Vault 的使用方保持纯文本展示。
+    if (!resolveImageSrc) continue
+    for (const preview of findInlineImages(line.text)) {
+      const from = line.from + preview.from
+      const to = line.from + preview.to
+      if (protectedRanges.some((range) => from >= range.from && to <= range.to)) continue
+      entries.push({ from, to, decoration: Decoration.replace({ widget: new InlineImageWidget(preview.src, preview.alt, preview.title, from, resolveImageSrc) }) })
+    }
   }
   entries.sort((left, right) => left.from - right.from || left.to - right.to)
   const builder = new RangeSetBuilder<Decoration>()
@@ -410,31 +484,49 @@ function buildDecorations(state: EditorState, blocks: PreviewBlock[], lines: Set
 }
 
 /** Common live preview for block Markdown that ink-mde does not render itself. */
-export const liveMarkdownBlockPreview: Extension = [
+export function createLiveMarkdownBlockPreview(
+  resolveImageSrc?: ResolveLiveMarkdownImageSrc,
+  savePastedImage?: SaveLiveMarkdownPastedImage,
+): Extension {
+  return [
   liveMarkdownShikiHighlight,
   StateField.define<PreviewState>({
     create: (state) => {
       const lines = activeLines(state)
       const blocks = buildBlocks(state)
-      return { activeLines: lines, blocks, decorations: buildDecorations(state, blocks, lines) }
+      return { activeLines: lines, blocks, decorations: buildDecorations(state, blocks, lines, resolveImageSrc) }
     },
     update: (value, transaction) => {
       const lines = activeLines(transaction.state)
       if (!transaction.docChanged && sameLines(lines, value.activeLines)) return value
       const blocks = transaction.docChanged ? buildBlocks(transaction.state) : value.blocks
-      return { activeLines: lines, blocks, decorations: buildDecorations(transaction.state, blocks, lines) }
+      return { activeLines: lines, blocks, decorations: buildDecorations(transaction.state, blocks, lines, resolveImageSrc) }
     },
     provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
   }),
   EditorView.domEventHandlers({
+    paste: (event, view) => {
+      const image = Array.from(event.clipboardData?.files ?? []).find((file) => /^image\/(?:png|jpeg|gif|webp)$/i.test(file.type))
+      if (!image || !savePastedImage || view.state.readOnly) return false
+      event.preventDefault()
+      void savePastedImage(image).then((src) => {
+        if (!src) return
+        const position = view.state.selection.main.from
+        const alt = image.name.replace(/[\\[\]]/g, '\\$&') || '粘贴的图片'
+        const markdown = `![${alt}](<${src}>)`
+        view.dispatch({ changes: { from: position, insert: markdown }, selection: { anchor: position + markdown.length } })
+      }).catch(() => {})
+      return true
+    },
     mousedown: (event, view) => {
       const target = event.target as HTMLElement | null
       const block = target?.closest<HTMLElement>('[data-live-markdown-block-from]')
-      if (!block) return false
+      const inline = target?.closest<HTMLElement>('[data-live-markdown-inline-from]')
+      if (!block && !inline) return false
       // CodeBlock 的复制按钮必须在外层选区切换之前收到完整 click 序列。
       // 否则 mousedown 会把预览切回源码并卸载按钮，导致 click 永远无法触发。
       if (target?.closest('button, a, input, select, textarea, [role="button"]')) return true
-      const from = Number(block.dataset.liveMarkdownBlockFrom)
+      const from = Number(block?.dataset.liveMarkdownBlockFrom ?? inline?.dataset.liveMarkdownInlineFrom)
       if (!Number.isSafeInteger(from)) return false
       event.preventDefault()
       view.dispatch({ selection: { anchor: from } })
@@ -442,4 +534,8 @@ export const liveMarkdownBlockPreview: Extension = [
       return true
     },
   }),
-]
+  ]
+}
+
+/** Default extension for consumers that do not need local-media resolution. */
+export const liveMarkdownBlockPreview = createLiveMarkdownBlockPreview()

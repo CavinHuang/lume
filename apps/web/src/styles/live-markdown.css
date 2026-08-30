@@ -158,6 +158,20 @@
   display: inline-block;
   vertical-align: -0.1em;
 }
+.live-markdown-editor .live-markdown-image {
+  display: inline-block;
+  max-width: 100%;
+  cursor: text;
+}
+.live-markdown-editor .live-markdown-image img {
+  display: block;
+  max-width: min(100%, 56rem);
+  max-height: 44rem;
+  border: 1px solid color-mix(in oklab, var(--border) 38%, transparent);
+  border-radius: 0.5rem;
+  background: color-mix(in oklab, var(--muted) 20%, transparent);
+  object-fit: contain;
+}
 .vault-ink-mde .vault-markdown-table table {
   width: 100%;
   border-collapse: collapse;

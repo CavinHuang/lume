@@ -27,7 +27,7 @@ import { Input } from '@/components/ui/input'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
-import { LiveMarkdownEditor } from '@/components/markdown/LiveMarkdownEditor'
+import { VaultLiveMarkdownEditor } from '@/components/obsidian/VaultLiveMarkdownEditor'
 import { cn } from '@/lib/utils'
 
 /** 头部「新建笔记」落入收件夹（对齐 Proma 的 inboxPath 语义）。 */
@@ -654,8 +654,10 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
               </Tooltip>
             </div>
             <div className="min-h-0 flex-1">
-              <LiveMarkdownEditor
+              <VaultLiveMarkdownEditor
                 key={selectedFile.path}
+                vaultPath={vaultPath ?? ''}
+                relativePath={selectedFile.path}
                 value={draft}
                 onChange={setDraft}
                 onSave={() => { void saveDraft() }}

@@ -4,7 +4,7 @@ import { Prec, RangeSetBuilder, StateEffect, StateField, type EditorState, type 
 import { Decoration, EditorView, ViewPlugin, keymap, type DecorationSet } from '@codemirror/view'
 import ink, { type Instance } from 'ink-mde'
 import { cn } from '@/lib/utils'
-import { liveMarkdownBlockPreview } from './LiveMarkdownPreview'
+import { createLiveMarkdownBlockPreview, type ResolveLiveMarkdownImageSrc, type SaveLiveMarkdownPastedImage } from './LiveMarkdownPreview'
 
 export interface LiveMarkdownEditorHandle {
   focus: () => void
@@ -13,7 +13,7 @@ export interface LiveMarkdownEditorHandle {
   getView: () => EditorView | null
 }
 
-interface LiveMarkdownEditorProps {
+export interface LiveMarkdownEditorProps {
   value: string
   onChange: (value: string) => void
   onSave?: () => void
@@ -21,6 +21,10 @@ interface LiveMarkdownEditorProps {
   /** 只读时沿用同一套 Live Preview 渲染，但不允许修改源文档。 */
   readOnly?: boolean
   extensions?: readonly Extension[]
+  /** 把笔记内的相对图片路径解析成受控 URL；缺省时图片保持纯文本展示。 */
+  resolveImageSrc?: ResolveLiveMarkdownImageSrc
+  /** 粘贴图片文件时落盘并返回 markdown src；缺省时粘贴行为不变。 */
+  savePastedImage?: SaveLiveMarkdownPastedImage
   className?: string
 }
 
@@ -186,6 +190,8 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   onCancel,
   readOnly = false,
   extensions = [],
+  resolveImageSrc,
+  savePastedImage,
   className,
 }, ref): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement>(null)
@@ -195,10 +201,14 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   const onChangeRef = React.useRef(onChange)
   const onSaveRef = React.useRef(onSave)
   const onCancelRef = React.useRef(onCancel)
+  const resolveImageSrcRef = React.useRef(resolveImageSrc)
+  const savePastedImageRef = React.useRef(savePastedImage)
   valueRef.current = value
   onChangeRef.current = onChange
   onSaveRef.current = onSave
   onCancelRef.current = onCancel
+  resolveImageSrcRef.current = resolveImageSrc
+  savePastedImageRef.current = savePastedImage
 
   React.useImperativeHandle(ref, () => ({
     focus: () => instanceRef.current?.focus(),
@@ -246,7 +256,7 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
           return { destroy: () => { if (viewRef.current === view) viewRef.current = null } }
         }),
         ...markdownSyntaxVisibility,
-        liveMarkdownBlockPreview,
+        createLiveMarkdownBlockPreview(resolveImageSrcRef.current, savePastedImageRef.current),
         ...extensions,
       ].map((extension) => ({ type: 'default' as const, value: extension })),
       search: false,

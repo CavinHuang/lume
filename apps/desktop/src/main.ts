@@ -2769,6 +2769,24 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       })
       return { token: scope.token, url: previewScopeUrl(scope), expiresAt: scope.expiresAt }
     }
+    case 'create_vault_media_preview_scope': {
+      // Vault 笔记内图片：sidecar 校验授权与越界后只回绝对路径（不经渲染层），
+      // 这里登记为带 token 的 media-file 作用域；TTL 与 Proma 的 proma-file 对齐为 1h。
+      if (!context.ownerWebContentsId) throw new Error('preview scope owner is missing')
+      const resolved = await sidecarHost.call('obsidian:resolve-media', {
+        vaultPath: payload.vaultPath,
+        relativePath: payload.noteRelativePath,
+        src: payload.src,
+      }) as { path: string | null }
+      if (!resolved?.path) return null
+      const scope = previewScopes.create({
+        kind: 'media-file',
+        ownerWebContentsId: context.ownerWebContentsId,
+        absolutePath: resolved.path,
+        ttlMs: 60 * 60_000,
+      })
+      return { token: scope.token, url: previewScopeUrl(scope), expiresAt: scope.expiresAt }
+    }
     case 'revoke_file_preview_scope':
       previewScopes.revoke(String(payload.token ?? ''))
       return null

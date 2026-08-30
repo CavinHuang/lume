@@ -61,6 +61,7 @@ test("renderer IPC commands are explicitly allowlisted", () => {
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("reveal_guarded_file_ref"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("save_guarded_file_ref_as"), true);
   assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("create_guarded_file_preview_scope"), true);
+  assert.equal(ALLOWED_RENDERER_INVOKE_COMMANDS.has("create_vault_media_preview_scope"), true);
   assert.equal(validateRendererInvokeCommand("open_external"), "open_external");
   assert.throws(
     () => validateRendererInvokeCommand("shell:run-arbitrary-command"),
