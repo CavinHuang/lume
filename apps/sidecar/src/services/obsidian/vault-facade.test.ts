@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createVaultFileSystem } from "./vault-facade";
 
 function formatLocalDate(date: Date): string {
@@ -10,6 +11,20 @@ function formatLocalDate(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+/** 结构合法的最小 PNG：签名 + 13 字节 IHDR chunk + 空 IEND chunk，共 45 字节。 */
+function makePngBase64(): string {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(25);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write("IHDR", 4, "ascii");
+  const iend = Buffer.alloc(12);
+  iend.write("IEND", 4, "ascii");
+  return Buffer.concat([signature, ihdr, iend]).toString("base64");
+}
+
+/** 仅有前缀魔数、缺少 chunk 结构的 PNG 字节：深度校验必须拒绝。 */
+const PNG_SIGNATURE_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02]).toString("base64");
 
 describe("vault-facade", () => {
   function makeVault(): string {
@@ -153,7 +168,11 @@ describe("vault-facade", () => {
       const fs = createVaultFileSystem(root);
       const result = await fs.createUntitledNote("Lume Inbox");
       expect(result.ok).toBe(true);
-      expect(readFileSync(join(root, "Lume Inbox", result.relativePath.split("/").pop()!), "utf-8")).toBe("");
+      if (!result.ok) throw new Error(`创建收件夹笔记失败：${result.reason}`);
+      const filename = result.relativePath.split("/").pop()!;
+      expect(readFileSync(join(root, "Lume Inbox", filename), "utf-8")).toBe("");
+      // 对齐 Proma：深层路径要求目标文件夹已存在，拼错路径不静默建树。
+      await expect(fs.createUntitledNote("missing/deep")).rejects.toThrow("目标 Vault 文件夹不存在");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -200,6 +219,45 @@ describe("vault-facade", () => {
       const fs = createVaultFileSystem(root);
       const huge = "x".repeat(2 * 1024 * 1024 + 1);
       await expect(fs.writeFile({ relativePath: "huge.md", content: huge })).rejects.toThrow("2 MB");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("resolveMedia 解析根内图片路径并拒绝越界", () => {
+    const root = makeVault();
+    try {
+      writeFileSync(join(root, "notes", "pic.png"), "png-bytes", "utf-8");
+      const fs = createVaultFileSystem(root);
+      expect(fs.resolveMedia("notes/a.md", "pic.png")).toBe(realpathSync(join(root, "notes", "pic.png")));
+      expect(fs.resolveMedia("notes/a.md", "./pic.png?v=1#frag")).toBe(realpathSync(join(root, "notes", "pic.png")));
+      expect(fs.resolveMedia("notes/a.md", "../root-note.md")).toBe(realpathSync(join(root, "root-note.md")));
+      expect(fs.resolveMedia("notes/a.md", "missing.png")).toBeNull();
+      expect(fs.resolveMedia("notes/a.md", "../../outside.png")).toBeNull();
+      expect(fs.resolveMedia("notes/a.md", "")).toBeNull();
+      // file: 绝对 URL 经 fileURLToPath 归一化后须在 Windows 同样可解析。
+      expect(fs.resolveMedia("notes/a.md", `${pathToFileURL(join(root, "notes", "pic.png")).href}?v=1`)).toBe(realpathSync(join(root, "notes", "pic.png")));
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("savePastedImage 落盘笔记同目录 assets 并校验图片结构", () => {
+    const root = makeVault();
+    try {
+      const fs = createVaultFileSystem(root);
+      const pngBase64 = makePngBase64();
+      const saved = fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: pngBase64 });
+      expect(saved.src?.startsWith("assets/pasted-image-") && saved.src.endsWith(".png")).toBe(true);
+      expect(statSync(join(root, "notes", saved.src!)).size).toBe(45);
+
+      // 声明 MIME 与图片结构不符时拒绝：仅前缀魔数、深度结构不完整、类型错标。
+      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: PNG_SIGNATURE_BASE64 })).toEqual({ src: null });
+      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/gif", base64: pngBase64 })).toEqual({ src: null });
+      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: Buffer.from("not-an-image").toString("base64") })).toEqual({ src: null });
+
+      const rootSaved = fs.savePastedImage({ noteRelativePath: "root-note.md", mimeType: "image/png", base64: pngBase64 });
+      expect(rootSaved.src?.startsWith("assets/")).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

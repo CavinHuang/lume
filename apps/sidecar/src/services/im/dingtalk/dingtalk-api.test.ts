@@ -26,10 +26,27 @@ describe("sendDingtalkText", () => {
     expect(res.error).toContain("sessionWebhook");
   });
 
-  it("HTTP 非 2xx 时返回 ok:false 含状态码", async () => {
-    const fakeFetch = (async () => new Response("boom", { status: 500 })) as unknown as typeof fetch;
+  it("HTTP 5xx 作为瞬时错误重试一次", async () => {
+    let attempts = 0;
+    const fakeFetch = (async () => {
+      attempts += 1;
+      return new Response("boom", { status: 500 });
+    }) as unknown as typeof fetch;
     const res = await sendDingtalkText({ text: "x", contextToken: "https://hw" }, { fetchImpl: fakeFetch });
     expect(res.ok).toBe(false);
     expect(res.error).toContain("500");
+    expect(attempts).toBe(2);
+  });
+
+  it("HTTP 4xx 作为确定性错误不重试", async () => {
+    let attempts = 0;
+    const fakeFetch = (async () => {
+      attempts += 1;
+      return new Response("bad request", { status: 400 });
+    }) as unknown as typeof fetch;
+    const res = await sendDingtalkText({ text: "x", contextToken: "https://hw" }, { fetchImpl: fakeFetch });
+    expect(res.ok).toBe(false);
+    expect(res.error).toContain("400");
+    expect(attempts).toBe(1);
   });
 });

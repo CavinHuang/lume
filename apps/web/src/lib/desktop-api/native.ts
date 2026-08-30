@@ -111,6 +111,9 @@ export const createFilePreviewScope = (input: { ref: FileRef; kind: 'html-direct
   invoke<{ token: string; url: string; expiresAt: number }>('create_file_preview_scope', input)
 export const createGuardedFilePreviewScope = (input: { guardedRef: GuardedFileRef; kind: 'html-directory' | 'media-file'; generation?: number }) =>
   invoke<{ token: string; url: string; expiresAt: number }>('create_guarded_file_preview_scope', input)
+// Vault 笔记内图片：renderer 只传相对路径，主进程经 sidecar 校验后返回带 token 的受控 URL。
+export const createVaultMediaPreviewScope = (input: { vaultPath: string; noteRelativePath: string; src: string }) =>
+  invoke<{ token: string; url: string; expiresAt: number } | null>('create_vault_media_preview_scope', input)
 export const saveGuardedFileRefAs = (guardedRef: GuardedFileRef, filename: string, filters?: SaveFilePathFilter[]) =>
   invoke<{ path: string | null }>('save_guarded_file_ref_as', { guardedRef, filename, filters })
 export const revokeFilePreviewScope = (token: string) =>

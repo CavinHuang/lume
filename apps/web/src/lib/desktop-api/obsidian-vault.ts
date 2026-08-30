@@ -5,6 +5,7 @@ import {
   type ObsidianVaultFileEntry,
   type ObsidianVaultFocus,
   type ObsidianVaultReadResult,
+  type ObsidianVaultSavePastedImageResult,
   type ObsidianVaultWriteResult,
 } from '@lume/shared'
 
@@ -46,3 +47,6 @@ export const deleteObsidianVaultFile = (input: { vaultPath: string; relativePath
 
 export const setObsidianVaultFocus = (threadId: string, vaultPath: string, focus: ObsidianVaultFocus | null) =>
   sidecarCall<{ ok: true }>(OBSIDIAN_VAULT_IPC_CHANNELS.SET_FOCUS, { threadId, vaultPath, focus })
+
+export const saveObsidianVaultPastedImage = (input: { vaultPath: string; noteRelativePath: string; mimeType: string; base64: string }) =>
+  sidecarCall<ObsidianVaultSavePastedImageResult>(OBSIDIAN_VAULT_IPC_CHANNELS.SAVE_PASTED_IMAGE, input)

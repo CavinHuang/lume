@@ -632,6 +632,13 @@ export interface AgentOptions {
     }
   ) => void | Promise<void>
   /**
+   * Host-owned per-turn transient context. Called before each provider request;
+   * returning a string injects it as a transient `runtime` message (visible to
+   * the model for this request only, not persisted in conversation history) —
+   * used for reminders such as a stale task list.
+   */
+  turnRuntimeContext?: (input: { turn: number; toolsUsedLastTurn: string[] }) => Promise<string | undefined> | string | undefined
+  /**
    * Host-owned completion policy. Returning feedback keeps the agent loop alive
    * and presents that feedback to the model as an internal user message.
    */
@@ -874,6 +881,13 @@ export interface QueryEngineConfig {
   contextController?: AgentContextController
   /** Optional host-owned policy that can prevent natural completion. */
   completionGuard?: () => Promise<CompletionGuardResult>
+  /**
+   * Host-owned per-turn transient context. Called before each provider request;
+   * returning a string injects it as a transient `runtime` message (visible to
+   * the model for this request only, not persisted in conversation history) —
+   * used for reminders such as a stale task list.
+   */
+  turnRuntimeContext?: (input: { turn: number; toolsUsedLastTurn: string[] }) => Promise<string | undefined> | string | undefined
 }
 
 export type CompletionGuardResult =
