@@ -128,7 +128,7 @@ export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent })
               {/* key 随悬浮态变化：每次打开面板重播行的交错入场动画 */}
               <TaskRows
                 key={hovered ? 'open' : 'closed'}
-                variant="Capsules"
+                variant="List"
                 autoOpenKey={event.currentTaskId ?? event.tasks.find((task) => task.status === 'running' || task.status === 'in_progress')?.id}
                 labels={{ completed: '已完成', failed: '失败' }}
                 rows={event.tasks.map((task, index) => toTaskRowModel(task, index))}
