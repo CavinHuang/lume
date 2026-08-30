@@ -175,6 +175,8 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     stopAll() {
+      this.stopAutoRecovery();
+      recoveryBackoff.clear();
       for (const accountId of new Set([...workers.keys(), ...pendingStarts.keys()])) {
         this.stopAccount(accountId);
       }

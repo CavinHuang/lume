@@ -147,6 +147,9 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
             continue;
           }
           log.error("轮询处理出错", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
+          // worker 会继续轮询；下一轮成功必须重新写回 running，否则账号会永久
+          // 停留在 error，定时自愈又会因该 worker 仍在运行而无法真正重启。
+          runningStatusPersisted = false;
           await updateAccount(input.account.id, {
             status: "error",
             lastError: redactSensitiveText(error instanceof Error ? error.message : String(error))

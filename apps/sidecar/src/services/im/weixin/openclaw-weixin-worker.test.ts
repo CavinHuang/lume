@@ -1,6 +1,14 @@
 import { describe, expect, test } from "bun:test";
 import { createOpenClawWeixinWorker } from "./openclaw-weixin-worker";
 
+async function waitFor(predicate: () => boolean, timeoutMs = 1000): Promise<void> {
+  const startedAt = Date.now();
+  while (!predicate()) {
+    if (Date.now() - startedAt > timeoutMs) throw new Error("waitFor timeout");
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+}
+
 describe("openclaw-weixin-worker", () => {
   test("routes updates and saves latest cursor and context", async () => {
     const routed: unknown[] = [];
@@ -173,5 +181,44 @@ describe("openclaw-weixin-worker", () => {
       status: "auth_required",
       lastError: "auth expired"
     }));
+  });
+
+  test("瞬时轮询失败后成功会把账号状态恢复为 running", async () => {
+    const statuses: string[] = [];
+    let attempts = 0;
+    const worker = createOpenClawWeixinWorker({
+      account: {
+        id: "account-1",
+        provider: "weixin",
+        label: "工作微信",
+        token: "token-1",
+        baseUrl: "https://ilink.example.com",
+        enabled: true,
+        status: "running",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      },
+      pollIntervalMs: 1,
+      api: {
+        getUpdates: async () => {
+          attempts += 1;
+          if (attempts === 2) throw new Error("temporary network error");
+          return { updates: [] };
+        },
+        sendText: async () => ({ ok: true }),
+        notifyStart: async () => ({ ok: true }),
+        notifyStop: async () => ({ ok: true })
+      },
+      updateAccount: async (_id, input) => {
+        if (input.status) statuses.push(input.status);
+      }
+    });
+
+    worker.start();
+    await waitFor(() => statuses.join(",") === "running,error,running");
+    worker.stop();
+
+    expect(statuses).toEqual(["running", "error", "running"]);
   });
 });

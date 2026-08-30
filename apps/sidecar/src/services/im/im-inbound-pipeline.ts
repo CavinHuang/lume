@@ -37,6 +37,8 @@ const CONTROL_COMMAND_RE = new RegExp(
 /** 单会话缓冲条数上限：阻塞期刷屏的内存护栏 */
 const MAX_BUFFER_PER_SCOPE = 200;
 
+const WATCHDOG_TIMEOUT_POLICY = "at-most-once" as const;
+
 export interface ImInboundPipelineOptions {
   /** 静默窗口毫秒数，窗口内连发合并 */
   quietWindowMs?: number;
@@ -302,7 +304,8 @@ export function createImInboundPipeline(options: ImInboundPipelineOptions = {}):
           accountId: merged.accountId,
           peerId: merged.peerId,
           batchSize: batch.length,
-          timeoutMs: runTimeoutMs
+          timeoutMs: runTimeoutMs,
+          watchdogPolicy: WATCHDOG_TIMEOUT_POLICY,
         });
         // 释放全局槽位后仍保留当前 scope 的 blocked 状态，直到不可取消的底层
         // 运行真正结束，避免同一会话在晚成功运行期间启动第二个 agent。

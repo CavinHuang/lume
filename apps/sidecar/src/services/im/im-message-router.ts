@@ -152,8 +152,9 @@ function titleForMessage(message: InboundImRouteMessage): string {
 }
 
 function userMessageForMessage(message: InboundImRouteMessage): string {
-  if (message.peerKind === "group" && message.senderId?.trim()) {
-    return `${message.senderId.trim()}: ${message.text}`;
+  const senderLabel = message.senderName?.trim() || message.senderId?.trim();
+  if (message.peerKind === "group" && senderLabel) {
+    return `${senderLabel}: ${message.text}`;
   }
   return message.text;
 }
@@ -859,7 +860,7 @@ async function updateThreadSourceMeta(
 
 
 /**
- * #598：/list /switch 的历史线程——同 IM 来源（provider/accountId/peerId）且非
+ * #598：/list /switch 的历史线程——同 IM 来源（provider/accountId/peerKind/peerId）且非
  * 当前绑定线程，按最近更新排序取前 10 条。
  */
 function listPeerHistoryThreads(
@@ -872,6 +873,7 @@ function listPeerHistoryThreads(
       thread.source
       && thread.source.provider === message.provider
       && (thread.source.accountId ?? "") === message.accountId
+      && thread.source.peerKind === message.peerKind
       && (thread.source.peerId ?? "") === message.peerId
       && thread.id !== currentThreadId)
     .sort((a, b) => b.updatedAt - a.updatedAt)

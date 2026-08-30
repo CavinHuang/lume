@@ -401,4 +401,24 @@ describe("#598 error 态账号定时自愈", () => {
     // 不抛错即通过（无 error 账号时 tick 为空转）
     expect(true).toBe(true);
   });
+
+  test("stopAll 同时停止自愈定时器，不在关停阶段拉起 error 账号", async () => {
+    const account = makeAccount("a3", "error");
+    let starts = 0;
+    const manager = createImRuntimeManager({
+      listAccounts: () => [account],
+      getRuntimeAccount: () => ({ ...account, token: "t" } as never),
+      updateAccount: () => undefined,
+      createWorker: () => {
+        starts += 1;
+        return { start() {}, stop() {}, isRunning: () => true };
+      }
+    });
+
+    manager.startAutoRecovery({ intervalMs: 5 });
+    manager.stopAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(starts).toBe(0);
+  });
 });
