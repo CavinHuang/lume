@@ -1,19 +1,20 @@
 import { describe, expect, test } from "bun:test";
-import type { LumeRuntimeEvent, Task } from "@lume/agent-sdk";
+import type { Task } from "@lume/agent-sdk";
+import type { TaskProgressRuntimeEvent } from "@lume/shared";
 import { emitTaskProgress, getTaskCompletionBlocker } from "./task-tools";
 
 function task(id: string, status: Task["status"]): Task {
   return { id, subject: `任务${id}`, status, blocks: [], blockedBy: [] };
 }
 
-function emit(tasks: Task[]): LumeRuntimeEvent {
-  let captured: LumeRuntimeEvent | undefined;
+function emit(tasks: Task[]): TaskProgressRuntimeEvent {
+  let captured: TaskProgressRuntimeEvent | undefined;
   emitTaskProgress(
     {
       threadId: "thread-1",
       runId: "run-1",
       emitRuntimeEvent: (event) => {
-        captured = event;
+        captured = event as TaskProgressRuntimeEvent;
       },
     },
     {
@@ -33,17 +34,13 @@ describe("emitTaskProgress 状态派生", () => {
   test("有任务执行中 → in_progress，currentTaskId 指向执行中任务", () => {
     const event = emit([task("1", "completed"), task("2", "in_progress"), task("3", "pending")]);
     expect(event.status).toBe("in_progress");
-    if (event.type === "task.progress") {
-      expect(event.currentTaskId).toBe("2");
-    }
+    expect(event.currentTaskId).toBe("2");
   });
 
   test("全部完成 → completed，无 currentTaskId", () => {
     const event = emit([task("1", "completed"), task("2", "completed")]);
     expect(event.status).toBe("completed");
-    if (event.type === "task.progress") {
-      expect(event.currentTaskId).toBeUndefined();
-    }
+    expect(event.currentTaskId).toBeUndefined();
   });
 
   test("部分完成但无人在跑 → in_progress（不回落 pending，UI 才能看到执行中）", () => {
@@ -62,12 +59,12 @@ describe("emitTaskProgress 状态派生", () => {
   });
 
   test("事件元数据：id 含序列号、runId 缺省回落 threadId", () => {
-    let captured: LumeRuntimeEvent | undefined;
+    let captured: TaskProgressRuntimeEvent | undefined;
     emitTaskProgress(
       {
         threadId: "thread-1",
         emitRuntimeEvent: (event) => {
-          captured = event;
+          captured = event as TaskProgressRuntimeEvent;
         },
       },
       {
@@ -78,13 +75,9 @@ describe("emitTaskProgress 状态派生", () => {
         task: task("1", "pending"),
       },
     );
-    if (captured?.type === "task.progress") {
-      expect(captured.id).toBe("task.progress:thread-1:7");
-      expect(captured.runId).toBe("thread-1");
-      expect(captured.sequence).toBe(7);
-    } else {
-      throw new Error("expected task.progress event");
-    }
+    expect(captured?.id).toBe("task.progress:thread-1:7");
+    expect(captured?.runId).toBe("thread-1");
+    expect(captured?.sequence).toBe(7);
   });
 });
 
