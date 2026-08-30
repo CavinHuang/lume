@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import {
   createOpenClawWeixinApi,
-  isOpenClawWeixinAuthError
+  isOpenClawWeixinAuthError,
+  isOpenClawWeixinTransientError
 } from "./openclaw-weixin-api";
 
 describe("openclaw-weixin-api", () => {
@@ -524,6 +525,23 @@ describe("openclaw-weixin-api", () => {
     await timeoutApi.getUpdates().catch((error) => {
       expect(isOpenClawWeixinAuthError(error)).toBe(true);
     });
+  });
+
+  test("classifies HTTP and business failures for segment retry", async () => {
+    for (const [response, transient] of [
+      [Response.json({}, { status: 500 }), true],
+      [Response.json({}, { status: 400 }), false],
+      [Response.json({ errcode: 1001, errmsg: "rejected" }), false]
+    ] as const) {
+      const api = createOpenClawWeixinApi({
+        baseUrl: "https://ilink.example.com",
+        token: "token-1"
+      }, async () => response);
+      const error = await api.sendText({ peerId: "wxid", peerKind: "dm", text: "hello" })
+        .then(() => null, (reason: unknown) => reason);
+      expect(error).not.toBeNull();
+      expect(isOpenClawWeixinTransientError(error)).toBe(transient);
+    }
   });
 
   test("sendImage posts image_item with CDN parameters", async () => {

@@ -4,24 +4,37 @@
  * `..`/空段/隐藏目录/软链接、根内越界检查、mkdir 后复验（TOCTOU）、
  * 2MB/5000 文件/深度 16 限额、sha256 乐观锁、独占创建、原子写。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   ObsidianVaultDeleteInput,
   ObsidianVaultFileEntry,
   ObsidianVaultReadResult,
   ObsidianVaultRenameInput,
+  ObsidianVaultSavePastedImageInput,
+  ObsidianVaultSavePastedImageResult,
   ObsidianVaultWriteInput,
   ObsidianVaultWriteResult,
 } from "@lume/shared";
 import { writeFileAtomic } from "@lume/agent-sdk";
 import { assertVaultRoot } from "./vault-registry";
+import { isValidImageBytes } from "./image-content-validation";
 
 const MAX_VAULT_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_VAULT_FILES = 5_000;
 const MAX_VAULT_DEPTH = 16;
 const HIDDEN_DIRECTORY_PREFIX = ".";
+const MAX_VAULT_PASTED_IMAGE_BYTES = 10 * 1024 * 1024;
+// 解码前先拒超限 base64，避免多复制一份 Node Buffer。
+const MAX_VAULT_PASTED_IMAGE_BASE64_CHARS = Math.ceil(MAX_VAULT_PASTED_IMAGE_BYTES / 3) * 4;
+const PASTED_IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
 
 function sha256(content: string): string {
   return createHash("sha256").update(content, "utf-8").digest("hex");
@@ -133,6 +146,8 @@ function assertContentSize(content: string): void {
 export interface ObsidianVaultFileSystem {
   listFiles(): ObsidianVaultFileEntry[];
   readFile(relativePath: string): ObsidianVaultReadResult;
+  resolveMedia(noteRelativePath: string, src: string): string | null;
+  savePastedImage(input: Omit<ObsidianVaultSavePastedImageInput, "vaultPath">): ObsidianVaultSavePastedImageResult;
   writeFile(input: Omit<ObsidianVaultWriteInput, "vaultPath">): Promise<ObsidianVaultWriteResult>;
   createUntitledNote(folderPath?: string, content?: string, now?: Date): Promise<ObsidianVaultWriteResult>;
   createFolder(relativePath: string): void;
@@ -208,6 +223,57 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
     };
   };
 
+  // 媒体解析面向 .obsidian 之外的所有根内文件，不走仅 .md 的 getSafeVaultTarget。
+  const resolveMedia = (noteRelativePath: string, src: string): string | null => {
+    if (typeof src !== "string" || !src.trim() || src.includes("\0")) return null;
+    const note = getSafeVaultTarget(root, noteRelativePath);
+    const source = src.trim().replace(/[?#].*$/, "");
+    if (!source) return null;
+
+    let candidate: string;
+    try {
+      // file: 经 fileURLToPath 归一化（处理 Windows 盘符），裸 pathname 的
+      // /D:/... 形态在 win32 relative 下恒判越界（Proma 同款缺陷，此处修复）。
+      candidate = source.toLowerCase().startsWith("file:")
+        ? resolve(fileURLToPath(new URL(source)))
+        : resolve(dirname(note.absolutePath), decodeURIComponent(source));
+    } catch {
+      return null;
+    }
+    if (!isWithinRoot(root, candidate)) return null;
+
+    const relativeCandidate = toRelativePath(root, candidate);
+    try {
+      const target = getSafeVaultPath(root, relativeCandidate);
+      return existsSync(target.absolutePath) && lstatSync(target.absolutePath).isFile() ? target.absolutePath : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const savePastedImage = (input: Omit<ObsidianVaultSavePastedImageInput, "vaultPath">): ObsidianVaultSavePastedImageResult => {
+    const extension = PASTED_IMAGE_EXTENSIONS[input.mimeType];
+    if (!extension || typeof input.base64 !== "string" || input.base64.length === 0 || input.base64.length > MAX_VAULT_PASTED_IMAGE_BASE64_CHARS) return { src: null };
+    const normalizedBase64 = input.base64.replace(/\s/g, "");
+    if (!normalizedBase64 || normalizedBase64.length > MAX_VAULT_PASTED_IMAGE_BASE64_CHARS || normalizedBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalizedBase64)) return { src: null };
+
+    const data = Buffer.from(normalizedBase64, "base64");
+    // 声明 MIME 必须命中完整图片结构签名，拒绝改后缀/多态文件（Proma 同校验）。
+    if (!isValidImageBytes(input.mimeType, data) || data.length > MAX_VAULT_PASTED_IMAGE_BYTES) return { src: null };
+
+    const note = getSafeVaultTarget(root, input.noteRelativePath);
+    const directory = dirname(note.relativePath);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `pasted-image-${timestamp}-${randomUUID()}.${extension}`;
+    const mediaRelativePath = directory === "." ? `assets/${filename}` : `${directory}/assets/${filename}`;
+    const target = getSafeVaultPath(root, mediaRelativePath);
+    mkdirSync(dirname(target.absolutePath), { recursive: true });
+    // mkdir 引入新祖先，写前按当前目录树复验一次。
+    const revalidated = getSafeVaultPath(root, mediaRelativePath);
+    writeFileSync(revalidated.absolutePath, data, { flag: "wx" });
+    return { src: toRelativePath(dirname(note.absolutePath), revalidated.absolutePath) };
+  };
+
   const writeFile = async (input: Omit<ObsidianVaultWriteInput, "vaultPath">): Promise<ObsidianVaultWriteResult> => {
     assertContentSize(input.content);
     const target = getSafeVaultTarget(root, input.relativePath);
@@ -234,14 +300,21 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
   const createUntitledNote = async (folderPath = "", content = "", now = new Date()): Promise<ObsidianVaultWriteResult> => {
     assertContentSize(content);
     const folder = getSafeVaultFolderTarget(root, folderPath);
+    // Proma 语义：仅顶层收件夹随创建自动补齐；更深层路径要求目标文件夹
+    // 已存在，拼错/已被外部删除的路径报错而不是凭空建出目录树。
+    if (folder.relativePath.includes("/")) {
+      const stats = existsSync(folder.absolutePath) ? lstatSync(folder.absolutePath) : null;
+      if (!stats || !stats.isDirectory()) throw new Error("目标 Vault 文件夹不存在");
+    }
 
     for (let sequence = 1; sequence <= Number.MAX_SAFE_INTEGER; sequence++) {
       const relativePath = folder.relativePath
         ? `${folder.relativePath}/${untitledNoteFilename(now, sequence)}`
         : untitledNoteFilename(now, sequence);
       const target = getSafeVaultTarget(root, relativePath);
-      // 收件夹等父目录随创建自动补齐（Proma 的 inbox 语义）。
-      mkdirSync(dirname(target.absolutePath), { recursive: true });
+      if (!folder.relativePath.includes("/")) {
+        mkdirSync(dirname(target.absolutePath), { recursive: true });
+      }
       const revalidated = getSafeVaultTarget(root, target.relativePath);
       if (!createFileExclusively(revalidated.absolutePath, content)) continue;
       const result = readFile(revalidated.relativePath);
@@ -304,5 +377,5 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
     unlinkSync(revalidated.absolutePath);
   };
 
-  return { listFiles, readFile, writeFile, createUntitledNote, createFolder, renameFile, deleteFile };
+  return { listFiles, readFile, resolveMedia, savePastedImage, writeFile, createUntitledNote, createFolder, renameFile, deleteFile };
 }
