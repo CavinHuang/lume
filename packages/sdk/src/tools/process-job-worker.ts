@@ -191,6 +191,14 @@ function finish(code, spawnError) {
     terminationReason = 'nonzero'
     outcome = 'failed'
   }
+  // Host 侧(撤销守卫/停止/超时 deadline)已写终态时,worker 延迟的 finish 写
+  // 不得覆盖 host 的 metadata——POSIX SIGTERM 竞态下该写会回滚 host 的
+  // timeout 语义为 aborted。仅结束流,跳过状态写入。
+  try {
+    if (JSON.parse(fs.readFileSync(spec.statePath, 'utf8')).status !== 'running') {
+      return
+    }
+  } catch (readError) {}
   const execution = {
     version: 2,
     outcome,

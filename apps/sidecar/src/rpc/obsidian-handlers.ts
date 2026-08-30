@@ -7,10 +7,12 @@
  */
 
 import {
+  OBSIDIAN_VAULT_INTERNAL_CHANNELS,
   OBSIDIAN_VAULT_IPC_CHANNELS,
   type ObsidianVaultConfig,
   type ObsidianVaultFocus,
   type ObsidianVaultReadResult,
+  type ObsidianVaultSavePastedImageResult,
 } from "@lume/shared";
 import { getEffectiveLumeConfig, updateLumeConfigSection } from "../services/system/lume-config-service";
 import {
@@ -59,6 +61,16 @@ const setFocusInputSchema = z
       .nullable(),
   })
   .strict();
+
+const resolveMediaInputSchema = relativePathSchema.extend({
+  src: z.string(),
+});
+
+const savePastedImageInputSchema = vaultPathSchema.extend({
+  noteRelativePath: z.string().min(1),
+  mimeType: z.string().trim().min(1),
+  base64: z.string(),
+});
 
 function withVaultFileSystem<T>(vaultPath: string, run: (fs: ReturnType<typeof createVaultFileSystem>) => T): T {
   const root = resolveAuthorizedVaultRoot(vaultPath);
@@ -143,6 +155,16 @@ export function createObsidianVaultHandlers(): Record<string, RpcHandler> {
         clearObsidianVaultFocus(input.threadId);
       }
       return { ok: true as const };
+    },
+    [OBSIDIAN_VAULT_INTERNAL_CHANNELS.RESOLVE_MEDIA]: async (params) => {
+      const input = validateInput(resolveMediaInputSchema, params, OBSIDIAN_VAULT_INTERNAL_CHANNELS.RESOLVE_MEDIA);
+      return { path: withVaultFileSystem(input.vaultPath, (fs) => fs.resolveMedia(input.relativePath, input.src)) };
+    },
+    [OBSIDIAN_VAULT_IPC_CHANNELS.SAVE_PASTED_IMAGE]: async (params) => {
+      const input = validateInput(savePastedImageInputSchema, params, OBSIDIAN_VAULT_IPC_CHANNELS.SAVE_PASTED_IMAGE);
+      return withVaultFileSystem(input.vaultPath, (fs) =>
+        fs.savePastedImage({ noteRelativePath: input.noteRelativePath, mimeType: input.mimeType, base64: input.base64 }),
+      ) satisfies ObsidianVaultSavePastedImageResult;
     },
   };
 }

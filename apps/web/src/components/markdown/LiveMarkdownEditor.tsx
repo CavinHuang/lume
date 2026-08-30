@@ -4,7 +4,7 @@ import { Prec, RangeSetBuilder, StateEffect, StateField, type EditorState, type 
 import { Decoration, EditorView, ViewPlugin, keymap, type DecorationSet } from '@codemirror/view'
 import ink, { type Instance } from 'ink-mde'
 import { cn } from '@/lib/utils'
-import { liveMarkdownBlockPreview } from './LiveMarkdownPreview'
+import { createLiveMarkdownBlockPreview, type ResolveLiveMarkdownImageSrc, type SaveLiveMarkdownPastedImage } from './LiveMarkdownPreview'
 
 export interface LiveMarkdownEditorHandle {
   focus: () => void
@@ -13,7 +13,7 @@ export interface LiveMarkdownEditorHandle {
   getView: () => EditorView | null
 }
 
-interface LiveMarkdownEditorProps {
+export interface LiveMarkdownEditorProps {
   value: string
   onChange: (value: string) => void
   onSave?: () => void
@@ -21,6 +21,10 @@ interface LiveMarkdownEditorProps {
   /** 只读时沿用同一套 Live Preview 渲染，但不允许修改源文档。 */
   readOnly?: boolean
   extensions?: readonly Extension[]
+  /** 把笔记内的相对图片路径解析成受控 URL；缺省时图片保持纯文本展示。 */
+  resolveImageSrc?: ResolveLiveMarkdownImageSrc
+  /** 粘贴图片文件时落盘并返回 markdown src；缺省时粘贴行为不变。 */
+  savePastedImage?: SaveLiveMarkdownPastedImage
   className?: string
 }
 
@@ -35,6 +39,8 @@ const markdownSyntaxMarkerNames = new Set([
   'HeaderMark',
   'LinkMark',
   'QuoteMark',
+  // ink-mde 使用 GFM parser；隐藏 ~~ 定界符，让删除线呈现与 Obsidian Live Preview 一致。
+  'StrikethroughMark',
 ])
 const hiddenMarkdownSyntax = Decoration.replace({ class: 'live-markdown-syntax-hidden' })
 const pendingListHeading = Decoration.mark({ class: 'live-markdown-pending-list-heading' })
@@ -186,6 +192,8 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   onCancel,
   readOnly = false,
   extensions = [],
+  resolveImageSrc,
+  savePastedImage,
   className,
 }, ref): React.ReactElement {
   const hostRef = React.useRef<HTMLDivElement>(null)
@@ -195,10 +203,14 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   const onChangeRef = React.useRef(onChange)
   const onSaveRef = React.useRef(onSave)
   const onCancelRef = React.useRef(onCancel)
+  const resolveImageSrcRef = React.useRef(resolveImageSrc)
+  const savePastedImageRef = React.useRef(savePastedImage)
   valueRef.current = value
   onChangeRef.current = onChange
   onSaveRef.current = onSave
   onCancelRef.current = onCancel
+  resolveImageSrcRef.current = resolveImageSrc
+  savePastedImageRef.current = savePastedImage
 
   React.useImperativeHandle(ref, () => ({
     focus: () => instanceRef.current?.focus(),
@@ -246,7 +258,7 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
           return { destroy: () => { if (viewRef.current === view) viewRef.current = null } }
         }),
         ...markdownSyntaxVisibility,
-        liveMarkdownBlockPreview,
+        createLiveMarkdownBlockPreview(resolveImageSrcRef.current, savePastedImageRef.current),
         ...extensions,
       ].map((extension) => ({ type: 'default' as const, value: extension })),
       search: false,
@@ -291,7 +303,18 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   React.useEffect(() => {
     const instance = instanceRef.current
     if (!instance || instance.getDoc() === value) return
+    // 外部刷新文档（例如 Agent 改写打开中的 Vault 笔记）时，
+    // 不能把长文档里的阅读者弹回顶部。
+    const scroller = hostRef.current?.querySelector<HTMLElement>('.cm-scroller')
+    const scrollTop = scroller?.scrollTop
+    const scrollLeft = scroller?.scrollLeft
     instance.update(value)
+    if (scroller && scrollTop !== undefined && scrollLeft !== undefined) {
+      requestAnimationFrame(() => {
+        scroller.scrollTop = scrollTop
+        scroller.scrollLeft = scrollLeft
+      })
+    }
   }, [value])
 
   return <div ref={hostRef} className={cn('live-markdown-editor vault-ink-mde h-full min-h-0', className)} />

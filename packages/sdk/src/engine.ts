@@ -1090,6 +1090,8 @@ export class QueryEngine {
     let structuredOutputRetriesExceeded = false
     let completedNaturally = false
     let completionGuardStop: { message: string; errorCode?: string } | undefined
+    // 上一模型轮使用的工具名（供 turnRuntimeContext 判断「多少轮没碰某类工具」）
+    let lastTurnToolNames: string[] = []
     let maxTokensExhausted = false
     let maxOutputRecoveryAttempts = 0
     const MAX_OUTPUT_RECOVERY = 3
@@ -1131,6 +1133,18 @@ export class QueryEngine {
       )
       if (skillCatalog) {
         apiMessages.push({ role: 'runtime', content: skillCatalog })
+      }
+
+      // Host-owned 每轮瞬态上下文（如过期任务清单提醒）。与 transientRuntimeContext
+      // 同一通道：只进本请求的 apiMessages，不写入 this.messages 历史。
+      if (this.config.turnRuntimeContext) {
+        const runtimeTurnContext = await this.config.turnRuntimeContext({
+          turn: this.turnCount,
+          toolsUsedLastTurn: lastTurnToolNames,
+        })
+        if (runtimeTurnContext) {
+          apiMessages.push({ role: 'runtime', content: runtimeTurnContext })
+        }
       }
 
       this.turnCount++
@@ -1431,6 +1445,7 @@ export class QueryEngine {
       const toolUseBlocks = response.content.filter(
         (block): block is ToolUseBlock => block.type === 'tool_use',
       )
+      lastTurnToolNames = toolUseBlocks.map((block) => block.name)
 
       const structuredOutput = parseStructuredOutput(
         extractAssistantText(response),

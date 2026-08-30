@@ -286,7 +286,7 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
             }
           }
         }
-        await withTimeout(
+        const sent = await withTimeout(
           client.im.v1.message.create({
             params: { receive_id_type: "chat_id" },
             data: {
@@ -298,6 +298,8 @@ export function createFeishuCardStream(options: FeishuCardStreamOptions): Feishu
           UPDATE_TIMEOUT_MS,
           "卡片消息发送"
         );
+        const sendBusinessError = isBusinessError(sent);
+        if (sendBusinessError) throw new Error(sendBusinessError);
       } catch (error) {
         if (cardId) removeActiveFeishuCard(cardId);
         recoveryTracked = false;

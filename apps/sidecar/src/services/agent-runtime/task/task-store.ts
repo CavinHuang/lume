@@ -345,7 +345,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       if (task.status === "completed" && requestedStatus !== "pending") throw new Error("Completed Tasks cannot be overwritten");
       const ownerChange = Object.prototype.hasOwnProperty.call(mutationInput, "owner");
       const sensitive = requestedStatus === "in_progress" || requestedStatus === "completed" || requestedStatus === "pending" || ownerChange;
-      this.assertFence(task, mutationInput, sensitive);
+      this.assertFence(task, mutationInput, sensitive, context);
 
       const changed = new Map<string, StoredTask>();
       const updateTask = (item: StoredTask) => {
@@ -365,7 +365,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       if (typeof mutationInput.subject === "string") task.subject = requireText(mutationInput.subject, "subject");
       if (typeof mutationInput.description === "string") task.description = mutationInput.description;
       if (typeof mutationInput.activeForm === "string") task.activeForm = mutationInput.activeForm;
-      if (requestedStatus === "in_progress") this.claim(task, context, mutationInput);
+      if (requestedStatus === "in_progress") this.claim(task, context, mutationInput, tasks, changed, updateTask);
       if (requestedStatus === "completed") {
         if (this.executorBinding(task)) throw new Error("Task cannot be completed while its executor is active");
         // 与 claim 同门控：被未完成依赖阻塞的 Task 不得直通 completed（#647 P2-1）
@@ -410,7 +410,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       const task = tasks.get(requireText(input.taskId, "taskId"));
       if (!task) throw new Error(`Task not found: ${input.taskId}`);
       if (task.status !== "in_progress") throw new Error("Only an in_progress Task can be stopped");
-      this.assertFence(task, input, true);
+      this.assertFence(task, input, true, context);
       const oldToken = this.claimToken(task);
       const executorRef = this.executorBinding(task);
       cancellation = { taskId: task.id, claimToken: oldToken, ...(executorRef ? { executorRef } : {}) };
@@ -442,7 +442,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       const task = tasks.get(requireText(input.taskId, "taskId"));
       if (!task) throw new Error(`Task not found: ${input.taskId}`);
       if (task.status !== "in_progress") throw new Error("Only an in_progress Task can bind an executor");
-      this.assertFence(task, input, true);
+      this.assertFence(task, input, true, context);
       if (this.executorBinding(task)) throw new Error("Task claim already has an active executor");
       const lume = serviceMetadata(task);
       lume.executorRef = input.executorRef;
@@ -618,19 +618,43 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     if (this.hasCycle(tasks)) throw new Error("Task dependency change would create a cycle");
   }
 
-  private claim(task: StoredTask, context: TaskStoreContext, input: Record<string, unknown>): void {
+  private claim(
+    task: StoredTask,
+    context: TaskStoreContext,
+    input: Record<string, unknown>,
+    tasks: Map<string, StoredTask>,
+    changed: Map<string, StoredTask>,
+    updateTask: (item: StoredTask) => void,
+  ): void {
+    // 同任务僵尸自愈：上一 run 认领本任务后 run 终止，新 run 直接续做（最常见的
+    // 恢复路径）时先自动释放旧认领再认领；非僵尸（同 run / 栅栏在飞 / 无 parentRun）
+    // 给出 TaskStop 指引。
+    if (task.status === "in_progress") {
+      if (!this.tryReleaseZombieClaim(task, context)) {
+        throw new Error(`Task ${task.id} is already in_progress: run TaskStop on it first to release the previous claim, then claim again`);
+      }
+    }
     if (task.status !== "pending") throw new Error("Only pending Tasks can be claimed");
     if (task.blockedBy.some((id) => this.readTask(id)?.status !== "completed")) throw new Error("Task is blocked by unfinished dependencies");
-    const active = this.readTasks().find((item) => item.status === "in_progress");
-    if (active && active.id !== task.id) throw new Error(`Task list already has active Task ${active.id}`);
     if (this.readTasks().some((item) => this.executorFence(item))) throw new Error("Task list is fenced until the previous executor terminates");
+    const active = [...tasks.values()].find((item) => item.status === "in_progress");
+    if (active && active.id !== task.id) {
+      // 串行线程自愈（对齐 ZCode 的无僵尸清单）：run 串行推进，活跃认领的
+      // parentRun ≠ 当前 run 即为上一 run 终止时遗留的僵尸认领，自动释放后
+      // 放行本次认领；有执行器栅栏（子代理在飞）已在上方拦截。
+      if (!this.tryReleaseZombieClaim(active, context)) {
+        throw new Error(`Task list already has active Task ${active.id}`);
+      }
+      updateTask(active);
+      changed.set(active.id, active);
+    }
     const lume = serviceMetadata(task);
     const parentRunId = context.runId?.trim();
     const attemptsInRun = parentRunId
       ? (lume.attemptRunId === parentRunId ? Number(lume.attemptsInRun ?? 0) : 0) + 1
       : 1;
     if (parentRunId && attemptsInRun > MAX_TASK_CLAIMS_PER_RUN) {
-      throw new Error(`同一父 Run 中最多认领同一 Task ${MAX_TASK_CLAIMS_PER_RUN} 次；请在新 Run 中改派或调整策略`);
+      throw new Error(`同一父 Run 中最多认领同一 Task ${MAX_TASK_CLAIMS_PER_RUN} 次，本轮已无法继续认领该 Task。请停止重试，向用户说明该任务多次执行未完成及当前卡点，建议用户检查任务定义后在新对话中继续。`);
     }
     const token = randomUUID();
     task.status = "in_progress";
@@ -646,6 +670,18 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       },
     };
     void input;
+  }
+
+  /* 上一 run 终止时遗留的 in_progress 认领即僵尸：run 串行推进意味着其所属
+   * run 必已结束。无 parentRun 记录的旧数据保守不自动处理；有执行器栅栏的
+   * 由调用方的 fence 检查先行拦截。 */
+  private tryReleaseZombieClaim(active: StoredTask, context: TaskStoreContext): boolean {
+    if (this.executorFence(active)) return false;
+    const claim = serviceMetadata(active).claim as Record<string, unknown> | undefined;
+    const parentRun = claim && typeof claim.parentRun === "string" ? claim.parentRun : undefined;
+    if (!parentRun || !context.runId?.trim() || parentRun === context.runId.trim()) return false;
+    this.releaseClaim(active, {}, "run ended");
+    return true;
   }
 
   private releaseClaim(task: StoredTask, input: Record<string, unknown>, reason: string): void {
@@ -671,11 +707,23 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     task.metadata = { ...metadataObject(task.metadata), _lume: lume };
   }
 
-  private assertFence(task: StoredTask, input: Record<string, unknown>, sensitive: boolean): void {
+  private assertFence(task: StoredTask, input: Record<string, unknown>, sensitive: boolean, context: TaskStoreContext): void {
     if (!sensitive) return;
-    if (typeof input.expectedRevision !== "number" || input.expectedRevision !== task.revision) throw new Error(`Task revision conflict: expected ${String(input.expectedRevision)}, current ${task.revision}`);
+    // 宽容写路径（LLM 不必先读 revision 再写）：缺省 expectedRevision 视为按
+    // 当前 revision 提交（前提：kernel 线程互斥下单写者串行）；显式传入但不匹配
+    // 仍报错，保留显式 fencing 供多代理并发场景使用。
+    if (typeof input.expectedRevision !== "number") input.expectedRevision = task.revision;
+    if (input.expectedRevision !== task.revision) throw new Error(`Task revision conflict: expected ${String(input.expectedRevision)}, current ${task.revision}`);
     const token = this.claimToken(task);
-    if (task.status === "in_progress" && (!token || input.claimToken !== token)) throw new Error("Task claim token is missing or expired");
+    if (task.status === "in_progress") {
+      if (!token) throw new Error("Task claim token is missing or expired");
+      // 缺省 claimToken 时复用当前 actor 自己的活跃认领；跨 actor 仍必须显式携带
+      if (typeof input.claimToken !== "string") {
+        const claim = serviceMetadata(task).claim as Record<string, unknown> | undefined;
+        if (claim && claim.actor === context.actorId) input.claimToken = token;
+      }
+      if (input.claimToken !== token) throw new Error("Task claim token is missing or expired");
+    }
   }
 
   private applyMetadataPatch(task: StoredTask, patch: unknown): void {

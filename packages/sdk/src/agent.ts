@@ -964,6 +964,7 @@ export class Agent {
       enableFileCheckpointing: opts.enableFileCheckpointing === true,
       contextController: opts.contextController,
       completionGuard: opts.completionGuard,
+      turnRuntimeContext: opts.turnRuntimeContext,
     })
     this.currentEngine = engine
 
