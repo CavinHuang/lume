@@ -3459,6 +3459,12 @@ export class BrowserRuntime {
     }
   }
 
+  /**
+   * 截图唯一入口(fullPage 走 CDP beyond-viewport,视口走下方三层策略链)。
+   * 对齐 ZCode 表面协议(prepare/ready/release + 屏外定影)时仅需整体替换
+   * 视口策略链——父窗口裁剪分支(surfaceBounds 裁剪)即为首个被替换对象,
+   * 它依赖 webview 的窗口绝对 bounds,面板折叠/DPR 缩放下语义不稳。
+   */
   private async screenshot(tab: BrowserTab, params: Record<string, unknown>): Promise<string> {
     if (params.fullPage === true) {
       const result = await withDebugger(browserContents(tab), (debuggerRef) => debuggerRef.sendCommand("Page.captureScreenshot", { format: "png", captureBeyondViewport: true }), 8_000) as { data?: string }
@@ -4169,15 +4175,26 @@ export class BrowserRuntime {
     return { released: Boolean(contents) }
   }
 
+  /**
+   * 挂起保护谓词(对齐 ZCode isBrowserTabResidencyProtected 的当前子集):
+   * agent 动作在途(agentDispatching)或对话框待处理(dialogOpen)时冻结页面
+   * 会打断动作/卡死对话框;lease/handoff/媒体占用属既有的用户可感知保护。
+   * 后续驻留状态机(suspend-pending/restoring + generation + ack)整体替换
+   * enforceBackgroundLimit 时,此谓词即其保护条件集的迁移基线。
+   */
+  private isSuspendProtected(tab: BrowserTab): boolean {
+    return Boolean(tab.agentLease
+      || tab.handoff
+      || tab.agentDispatching
+      || tab.dialogOpen
+      || tab.mediaState?.audible
+      || tab.mediaState?.camera
+      || tab.mediaState?.microphone)
+  }
+
   private enforceBackgroundLimit(): void {
     const candidates = [...this.tabs.values()]
-      .filter((tab) => !tab.visible
-        && tab.lifecycle !== "crashed"
-        && !tab.agentLease
-        && !tab.handoff
-        && !tab.mediaState?.audible
-        && !tab.mediaState?.camera
-        && !tab.mediaState?.microphone)
+      .filter((tab) => !tab.visible && tab.lifecycle !== "crashed" && !this.isSuspendProtected(tab))
       .sort((left, right) => String(right.lastOpenedAt ?? "").localeCompare(String(left.lastOpenedAt ?? "")))
     for (const [index, tab] of candidates.entries()) void this.setTabSuspended(tab, index >= 4)
   }
