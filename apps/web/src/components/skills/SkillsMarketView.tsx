@@ -119,6 +119,21 @@ const SKILL_VISUALS: Record<string, Pick<MarketDisplayCard, 'category' | 'action
 /** 分类分区展示顺序：参考稿的分类体系在前，来源分组在后 */
 const MARKET_SECTION_ORDER = ['生产力', '开发者工具', '实用工具', '指南', '插件', '内置', '外部市场源', '本地发现', '其他'] as const
 
+/** manifest 声明的分类 key → 展示名（与 ZCode 的 Ppt 映射一致）；未识别的分类原样展示 */
+const MARKET_CATEGORY_LABELS: Record<string, string> = {
+  productivity: '生产力',
+  developerTools: '开发者工具',
+  utilities: '实用工具',
+  guides: '指南',
+  finance: '财务',
+  template: '模板',
+  other: '其他',
+}
+
+function resolveCategoryLabel(category: string): string {
+  return MARKET_CATEGORY_LABELS[category] ?? category
+}
+
 export function SkillsMarketView() {
   const workspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -141,6 +156,7 @@ export function SkillsMarketView() {
   const [syncNotice, setSyncNotice] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [sourcePanelOpen, setSourcePanelOpen] = useState(false)
+  const [expandedGroups, setExpandedGroups] = useState<ReadonlySet<string>>(new Set())
   const [sourceDialogOpen, setSourceDialogOpen] = useState(false)
   const [busyItemId, setBusyItemId] = useState<string | null>(null)
   const [lastSyncedAt, setLastSyncedAt] = useState<number | null>(null)
@@ -212,7 +228,7 @@ export function SkillsMarketView() {
     const groups = new Map<string, MarketDisplayCard[]>()
     for (const card of cards) {
       // 插件按 manifest 声明的分类分组（未声明归「其他」）；技能按来源分组
-      const key = card.pluginCategory ?? (card.kind === 'plugin' ? '其他' : card.category)
+      const key = resolveCategoryLabel(card.pluginCategory ?? (card.kind === 'plugin' ? '其他' : card.category))
       const bucket = groups.get(key)
       if (bucket) bucket.push(card)
       else groups.set(key, [card])
@@ -718,12 +734,12 @@ export function SkillsMarketView() {
                 {syncNotice}
               </div>
             )}
-            {sections.map((section) => (
-              <section key={section.category} className="mt-8">
-                <h2 className="pb-2 text-[16px] font-semibold text-[var(--text-1)]">{section.category}</h2>
+            {query.trim() ? (
+              <section className="mt-8">
+                <h2 className="pb-2 text-[16px] font-semibold text-[var(--text-1)]">搜索结果 {cards.length}</h2>
                 <div aria-hidden="true" className="h-px bg-[color:color-mix(in_oklab,var(--border-strong)_24%,transparent)]" />
                 <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
-                  {section.cards.map((card) => (
+                  {cards.map((card) => (
                     <MarketItemRow
                       key={`${card.kind}:${card.id}`}
                       card={card}
@@ -743,7 +759,36 @@ export function SkillsMarketView() {
                   ))}
                 </div>
               </section>
-            ))}
+            ) : (
+              sections.map((section) => (
+                <MarketCategorySection
+                  key={section.category}
+                  category={section.category}
+                  cards={section.cards}
+                  expanded={expandedGroups.has(section.category)}
+                  busyItemId={busyItemId}
+                  onToggleExpanded={() => {
+                    setExpandedGroups((previous) => {
+                      const next = new Set(previous)
+                      if (next.has(section.category)) next.delete(section.category)
+                      else next.add(section.category)
+                      return next
+                    })
+                  }}
+                  onOpenDetail={(card) => {
+                    if (card.kind === 'skill') void handleOpenSkillDetail(card.item as SkillCatalogItem)
+                    else void handleOpenPluginDetail(card.item as PluginMarketItem)
+                  }}
+                  onAction={(card) => {
+                    if (card.kind === 'skill') void handleSkillAction(card.item as SkillCatalogItem)
+                    else void handlePluginAction(card.item as PluginMarketItem)
+                  }}
+                  onUninstall={(card) => {
+                    if (card.kind === 'plugin') void handleUninstallPlugin(card.item as PluginMarketItem)
+                  }}
+                />
+              ))
+            )}
           </div>
         )}
       </div>
@@ -905,6 +950,67 @@ function MarketItemRow({
         </DropdownMenu>
       )}
     </div>
+  )
+}
+
+function MarketCategorySection({
+  category,
+  cards,
+  expanded,
+  busyItemId,
+  onToggleExpanded,
+  onOpenDetail,
+  onAction,
+  onUninstall,
+}: {
+  category: string
+  cards: MarketDisplayCard[]
+  expanded: boolean
+  busyItemId: string | null
+  onToggleExpanded: () => void
+  onOpenDetail: (card: MarketDisplayCard) => void
+  onAction: (card: MarketDisplayCard) => void
+  onUninstall: (card: MarketDisplayCard) => void
+}) {
+  // 与 ZCode 一致：折叠时每分组先展示 6 条，其余折叠进「再显示 N 个」
+  const visibleCards = expanded ? cards : cards.slice(0, 6)
+  const remaining = cards.length - visibleCards.length
+
+  return (
+    <section className="mt-8">
+      <h2 className="pb-2 text-[16px] font-semibold text-[var(--text-1)]">{category}</h2>
+      <div aria-hidden="true" className="h-px bg-[color:color-mix(in_oklab,var(--border-strong)_24%,transparent)]" />
+      <div className="mt-2 grid grid-cols-2 gap-x-6 gap-y-1">
+        {visibleCards.map((card) => (
+          <MarketItemRow
+            key={`${card.kind}:${card.id}`}
+            card={card}
+            busy={busyItemId === `${card.kind}:${card.id}`}
+            onOpenDetail={() => onOpenDetail(card)}
+            onAction={() => onAction(card)}
+            onUninstall={() => onUninstall(card)}
+          />
+        ))}
+      </div>
+      {remaining > 0 && (
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="mt-2 flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-[14px] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]"
+        >
+          再显示 {remaining} 个
+        </button>
+      )}
+      {expanded && cards.length > 6 && (
+        <button
+          type="button"
+          onClick={onToggleExpanded}
+          className="mt-2 flex w-full items-center gap-2 rounded-xl px-2 py-2 text-left text-[14px] text-[var(--text-3)] transition-colors hover:bg-[var(--surface-2)] hover:text-[var(--text-1)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[color:color-mix(in_oklab,var(--brand)_30%,transparent)]"
+        >
+          收起
+        </button>
+      )}
+    </section>
   )
 }
 
