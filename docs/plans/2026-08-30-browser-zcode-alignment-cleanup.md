@@ -122,3 +122,37 @@ D. 自由视口模型 + operation/resize-baseline 事件(涉及桥,需 C6 版本
 2. 新增命令/事件一律新增名字;废弃走 `@deprecated` 标记 + 一个版本周期的双发;
 3. 任何跨进程 payload 变更必须带 `BROWSER_PROTOCOL_VERSION` bump + 双端握手测试;
 4. renderer 恒为 `actor=user`、agent 必经 sidecar ingress 的安全边界不动。
+
+---
+
+## 执行附录(2026-08-30,清理阶段完成)
+
+### 已落地(按提交序)
+
+| 提交 | 内容 | 计划项 |
+|---|---|---|
+| `df8d890b3` | 测试改目录级发现 + node-repl-worker 套件更名 + electronMockStub 补 nativeTheme(修复预存在损坏的 webmcp-consumer 测试);633 pass(原白名单 590,+43 个此前不受保护的测试) | C1 |
+| `346d2ebd8` | 挂起保护谓词 `isSuspendProtected` 收敛,补 agentDispatching/dialogOpen 两个保护缺口(对齐 ZCode operationActive 语义);截图唯一入口契约标注 | C4/C5 |
+| `1a2dc404f` | **死面清理**(计划外新增,消费方驱动的审计产物,见下) | D1/D2 |
+| `e5ec4503d` | IAB 桥协议版本闸(assertIabProtocolCompatible)+ incompatible_protocol 纳入稳定码集 | C6 |
+
+### 死面审计结论(45 方法 × 19 事件全语料比对)
+
+- **方法面零死项**:45/45 均有消费方(bounds/devtools/emulate/print/share/unshare/focus 仅单引号调用,首轮比对曾误判);
+- **5 个死事件删除**:`browser:agent-cursor`(光标移动热路径死发)、`browser:cursor-error`、`browser:debugger-detached`、`browser:lease-revoked`、`browser:tab-share-changed` —— 自始零消费方;
+- **webmcp 推送链删除、拉取链保留**:`lume:browser-page-event` 通道 + handlePageEvent/handleBrowserPageEvent + guest-preload onToolsChanged 转发移除(事件自始无消费方);`webmcp:list/invoke` + shim + enable 门完整保留(sidecar policy/broker 有活接线);
+- **确认非死代码**:weread webview(web 引用 159 处,活产品功能)、webmcp 能力面、file-protocol 预览、annotation 子系统。
+
+### 与原计划的偏差
+
+- **C2 无需执行**:browser-action-queue 的 epoch/cancel 死机制已在上游(#610)移除,现存 21 行为纯串行队列;
+- **C4 大幅缩水**:截图本就是单一入口(`screenshot()`),annotation 亦委托之;实际只补了契约标注;
+- **C7 结论反转**:WebMCP 链有端到端接线,非实验死代码 → 不删,仅移除其中无消费方的推送事件;
+- **C8 结论反转**:weread webview 是活功能 → 不删;
+- **C3/C9 未动**:光标路径统一与方法面 @deprecated 标记留待对齐主线需要时再做(当前无叠加风险)。
+
+### 对齐主线就绪状态
+
+- 行为护栏:desktop 633(+43)/0、sidecar browser 面 40+31+26 全绿;typecheck 除预存在的 obsidian vault-facade 错误(HEAD 即有,另案)外通过;
+- 桥安全:方法/事件/挂载协议未改名未改 payload;`incompatible_protocol` 闸就位;
+- 下一步按原计划主线 A→B→C→D:驻留状态机 → 截图表面协议 → 录像 → 自由视口 + 操作事件。
