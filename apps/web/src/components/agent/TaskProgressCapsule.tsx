@@ -7,7 +7,9 @@ export function getTaskProgressStatusText(event: TaskProgressViewEvent): string 
   const current = event.currentTaskId
     ? event.tasks.find((task) => task.id === event.currentTaskId)
     : event.tasks.find((task) => task.status === 'running')
-  const title = current?.title || current?.description || current?.id
+  // 进行中优先展示 activeForm（进行时文案），终态回落 subject/title
+  const preferActiveForm = event.status !== 'completed' && event.status !== 'failed' && event.status !== 'cancelled'
+  const title = (preferActiveForm && current?.activeForm) || current?.title || current?.description || current?.id
   // 注意：event.message 是 sidecar 的机器文案（如 "Task updated: 7"），不透出给用户
   if (event.status === 'completed') return '任务已完成'
   if (event.status === 'failed') return title ? `执行失败：${title}` : '任务执行失败'
