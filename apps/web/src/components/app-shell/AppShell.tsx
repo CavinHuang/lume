@@ -8,8 +8,10 @@ import { activeTabIdAtom, commandPaletteOpenAtom, rightPanelLayoutAtom, sidebarC
 import { useEffect, useState } from 'react'
 import { DesktopActionVisualOverlay } from '@/components/agent/DesktopActionVisualOverlay'
 import { cn } from '@/lib/utils'
+import { useTaskNotificationSound } from '@/hooks/useTaskNotificationSound'
 
 export function AppShell() {
+  useTaskNotificationSound()
   const setOpen = useSetAtom(commandPaletteOpenAtom)
   const tabs = useAtomValue(tabsAtom)
   const activeTabId = useAtomValue(activeTabIdAtom)

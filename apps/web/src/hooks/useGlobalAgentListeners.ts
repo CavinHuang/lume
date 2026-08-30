@@ -21,6 +21,7 @@ import {
   memoryCenterVersionAtom,
 } from '@/atoms'
 import { buildDesktopProposalOpenRequestState } from '@/components/settings/desktop-assistant-proposals-state'
+import { playTaskNotificationSound } from '@/lib/notification-sound'
 import { threadMessagesCache } from '@/components/agent/thread-messages-cache'
 import {
   AGENT_IPC_CHANNELS,
@@ -377,6 +378,8 @@ export function useGlobalAgentListeners() {
         }
         case AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST: {
           const req = params as AgentToolPermissionRequest
+          // 需要用户确认权限：提示音（移植自 ZCode 任务通知音效）
+          void playTaskNotificationSound()
           setPendingInteractive((prev) => upsertPendingToolPermission(prev, req))
           break
         }

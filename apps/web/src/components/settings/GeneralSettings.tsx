@@ -19,7 +19,7 @@ import type {
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom } from '@/atoms'
+import { agentWorkspacesAtom, currentWorkspaceIdAtom, settingsInitialTabAtom, taskNotificationEnabledAtom, taskNotificationSoundEnabledAtom } from '@/atoms'
 import { getGeneralSettings, getProxySettings, saveProxySettings, updateGeneralSettings } from '@/lib/desktop-api'
 import { cn } from '@/lib/utils'
 import {
@@ -39,6 +39,8 @@ const DEFAULT_PROXY_SETTINGS: AgentProxySettings = {
 export function GeneralSettings() {
   const [workspaces] = useAtom(agentWorkspacesAtom)
   const [currentWorkspaceId, setCurrentWorkspaceId] = useAtom(currentWorkspaceIdAtom)
+  const [taskNotificationEnabled, setTaskNotificationEnabled] = useAtom(taskNotificationEnabledAtom)
+  const [taskNotificationSoundEnabled, setTaskNotificationSoundEnabled] = useAtom(taskNotificationSoundEnabledAtom)
   const [settings, setSettings] = React.useState<GeneralSettingsModel>(GENERAL_SETTINGS_DEFAULTS)
   const [proxyStatus, setProxyStatus] = React.useState<AgentProxyStatus | null>(null)
   const [proxyDraft, setProxyDraft] = React.useState<AgentProxySettings>(DEFAULT_PROXY_SETTINGS)
@@ -222,6 +224,30 @@ export function GeneralSettings() {
                 onCheckedChange={(checked) => void persistSettings({
                   agentIsland: { enabled: checked },
                 }, '灵动岛设置已保存')}
+              />
+            </SettingsRow>
+          </div>
+        </SettingsCard>
+
+        <SettingsCard title="任务通知">
+          <div className="divide-y divide-[color:color-mix(in_oklab,var(--border)_64%,transparent)]">
+            <SettingsRow
+              label="任务通知"
+              desc="任务完成、出错或需要确认时进行提示"
+            >
+              <LumeSwitch
+                checked={taskNotificationEnabled}
+                onCheckedChange={setTaskNotificationEnabled}
+              />
+            </SettingsRow>
+            <SettingsRow
+              label="通知声音"
+              desc="通知开启后，可单独关闭任务通知提示音"
+            >
+              <LumeSwitch
+                checked={taskNotificationSoundEnabled}
+                disabled={!taskNotificationEnabled}
+                onCheckedChange={setTaskNotificationSoundEnabled}
               />
             </SettingsRow>
           </div>
