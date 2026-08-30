@@ -129,7 +129,6 @@ type ImAgentStreamEmitter = {
   onError: (error: string) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
-  onBrowserAuthRequest: () => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 };
 
@@ -975,9 +974,6 @@ export function createImAgentStreamEmitter(
     },
     onAskUserQuestion: (request) => {
       emitNotification(AGENT_IPC_CHANNELS.ASK_USER_QUESTION, request);
-    },
-    onBrowserAuthRequest: () => {
-      emitRuntimeError(threadId, "IM 通道不支持浏览器安全凭证交互", emitNotification);
     },
     onToolPermissionRequest: (request) => {
       emitNotification(AGENT_IPC_CHANNELS.TOOL_PERMISSION_REQUEST, request);

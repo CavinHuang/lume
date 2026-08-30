@@ -31,7 +31,6 @@ import {
   scopePluginAssetUrls,
 } from "../src/plugin-asset-registry.ts";
 import * as sharedIpc from '@lume/shared';
-import { BROWSER_IPC_CHANNELS } from '@lume/shared';
 import {
   createPreviewProtocolResponse,
   createPreviewScopeRegistry,
@@ -104,23 +103,18 @@ test("renderer sidecar allowlist equals shared derived channels plus local incre
   // 与派生侧共用 shared 单源 NOTIFY_ONLY_CHANNEL_VALUES——本测试的独立性针对
   // PUBLIC_CHANNEL_SOURCES 漏配，不重复维护推送值枚举。）
   const sharedMethods = Object.entries(sharedIpc)
-    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && value && typeof value === "object")
+    // BROWSER_VIEW_IPC_CHANNELS(内嵌浏览器面板,lume:browser-view-*)是 main↔renderer
+    // IPC 通道表,经 dispatchCommand→BrowserIpc 漏斗路由,不是 renderer→sidecar 的
+    // RPC method——与 privileged/island 两表一样按名排除。
+    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && name !== "BROWSER_VIEW_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.entries(value))
-    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !Object.values(BROWSER_IPC_CHANNELS).includes(value) && !NOTIFY_ONLY_CHANNEL_VALUES.has(value))
+    .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !NOTIFY_ONLY_CHANNEL_VALUES.has(value))
     .map(([, value]) => value);
   const expected = new Set([...sharedMethods, ...LOCAL_RENDERER_SIDECAR_METHODS]);
   assert.deepEqual(
     [...PUBLIC_RENDERER_SIDECAR_METHODS].sort(),
     [...expected].sort(),
   );
-});
-
-test("renderer may inspect browser backend availability without invoking browser actions", () => {
-  assert.equal(validateRendererSidecarMethod("browser:backends"), "browser:backends");
-  assert.equal(validateRendererSidecarMethod("browser:reference-candidates"), "browser:reference-candidates");
-  assert.equal(validateRendererSidecarMethod("browser:create-reference-grant"), "browser:create-reference-grant");
-  assert.equal(validateRendererSidecarMethod("browser:revoke-reference-grant"), "browser:revoke-reference-grant");
-  assert.throws(() => validateRendererSidecarMethod("browser:broker"), /unsupported renderer sidecar method/);
 });
 
 test("plugin package writes are main-owned and unavailable through generic RPC", () => {
@@ -130,8 +124,6 @@ test("plugin package writes are main-owned and unavailable through generic RPC",
   assert.equal(validateRendererSidecarMethod("agent:get-market-catalog"), "agent:get-market-catalog");
   assert.throws(() => validateRendererSidecarMethod("future:unreviewed-method"), /unsupported renderer sidecar method/);
   assert.match(mainSource, /desktop:save-plugin-package/);
-  assert.match(mainSource, /desktop:install-plugin-package/);
-  assert.match(mainSource, /createChromeNativeHostInstallPlan/);
   assert.match(mainSource, /showSaveDialog/);
   assert.match(mainSource, /plugin-package:privileged-finalize/);
 });
@@ -460,39 +452,6 @@ test("connection credential reveal remains main-process privileged", () => {
   assert.throws(() => validateRendererSidecarMethod("channel:privileged-decrypt-key"), /unsupported renderer sidecar method/);
 });
 
-test("browser webview guests are one-time authorized and receive no host bridge", () => {
-  const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
-  const guestPreloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-guest-preload.tsx"), "utf8");
-  assert.match(mainSource, /will-attach-webview/);
-  assert.match(mainSource, /authorizeGuestMount/);
-  assert.match(mainSource, /did-attach-webview/);
-  assert.match(mainSource, /browser-guest-preload\.cjs/);
-  assert.match(mainSource, /params\.allowpopups = ['"]{2}/);
-  assert.match(mainSource, /ipcMain\.on\('lume:browser-guest-mounted'/);
-  // guest-preload 不得向 page 暴露任意 host bridge。Task 82 起唯一允许的受审例外是
-  // Web MCP shim（__lumeWebMcpModelContext，frozen、仅 registerTool/getTools/executeTool
-  // 等受限方法）。锁定 exposeInMainWorld 的所有引用键名均为 __lumeWebMcpModelContext，
-  // 防止新增未审 bridge（代码与文档注释一并检查）。
-  const exposeCalls = [...guestPreloadSource.matchAll(/exposeInMainWorld\(\s*['"]([^'"]+)['"]/g)].map((m) => m[1]);
-  assert.ok(exposeCalls.length > 0 && exposeCalls.every((k) => k === "__lumeWebMcpModelContext"), `guest-preload 仅允许暴露 __lumeWebMcpModelContext，实际暴露：${JSON.stringify(exposeCalls)}`);
-  assert.match(guestPreloadSource, /ipcRenderer\.send\('lume:browser-guest-mounted'/);
-});
-
-test("renderer browser guest pool never reparents an attached webview", () => {
-  const poolSource = readFileSync(resolve(DESKTOP_ROOT, "..", "web", "src", "components", "browser", "BrowserWebviewPool.tsx"), "utf8");
-  assert.match(poolSource, /BROWSER_GUEST_HOST_ID = 'lume-browser-webview-pool'/);
-  assert.match(poolSource, /document\.body\.append\(host\)/);
-  assert.match(poolSource, /lumePendingMounts/);
-  assert.match(poolSource, /await pending/);
-  assert.match(poolSource, /api\.recover\(tabId/);
-  assert.match(poolSource, /wrapper\.style\.position = 'fixed'/);
-  assert.match(poolSource, /wrapper\.style\.visibility = 'hidden'/);
-  assert.match(poolSource, /webview\.setAttribute\('allowpopups', ''\)/);
-  assert.doesNotMatch(poolSource, /wrapper\.style\.display = 'none'/);
-  assert.doesNotMatch(poolSource, /append\(existing\.wrapper\)/);
-  assert.doesNotMatch(poolSource, /append\(entry\.wrapper\)/);
-});
-
 test("main process does not opt BrowserWindow renderers out of sandbox", () => {
   const mainSource = readFileSync(resolve(DESKTOP_ROOT, "src", "main.ts"), "utf8");
   assert.equal(mainSource.includes("sandbox: false"), false);
@@ -536,15 +495,6 @@ test("preload bridge is compatible with Electron sandbox require limits", () => 
   const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "preload.ts"), "utf8");
   assert.match(preloadSource, /from ['"]electron['"]/);
   assert.equal(preloadSource.includes("node:"), false);
-});
-
-test("browser auth preload sends secrets only through its dedicated main-process channel", () => {
-  const preloadSource = readFileSync(resolve(DESKTOP_ROOT, "src", "browser-auth-preload.ts"), "utf8");
-  assert.match(preloadSource, /from ['"]electron['"]/);
-  assert.match(preloadSource, /ipcRenderer\.send\(['"]lume:browser-auth['"]/);
-  assert.equal(preloadSource.includes("ipcRenderer.invoke"), false);
-  assert.equal(preloadSource.includes("node:"), false);
-  assert.equal(preloadSource.includes("navigator.clipboard"), false);
 });
 
 test("app protocol resolves only lume app URLs within the web root", () => {

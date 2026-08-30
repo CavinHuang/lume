@@ -1,6 +1,6 @@
 import type { SDKMessage, ToolDefinition } from "@lume/agent-sdk";
 import { getRuntimeHostPorts } from "../host-ports";
-import type { AgentAskUserQuestionRequest, AgentBrowserAuthRequest, AgentDesktopActionRequest, AgentToolPermissionRequest, DesktopActionVisualRuntimeEvent } from "@lume/shared";
+import type { AgentAskUserQuestionRequest, AgentDesktopActionRequest, AgentToolPermissionRequest, DesktopActionVisualRuntimeEvent } from "@lume/shared";
 import type { AgentSendInput } from "@lume/shared";
 import type { MemoryToolPolicy } from "../../memory-v2/policy";
 import { createSdkMemoryTools } from "./memory/create-memory-tools";
@@ -27,10 +27,10 @@ import { getComputerUseSessionRegistry } from "./computer-use/computer-use-sessi
 import type { ResolvedComputerUseSurface } from "./computer-use/computer-use-surface";
 import { createComputerUseRequestBridge } from "./node-repl/node-repl-computer-use-bridge";
 import { createPlanningTodoTools } from "./planning/create-planning-todo-tools";
+import { createBrowserTools } from "./browser/create-browser-tools";
+import { isBrowserAgentToolsEnabled } from "./browser/browser-availability";
 import { createSuggestionTools } from "./suggest/create-suggestion-tools";
 import type { ExecutionSurfaceContext } from "../../planning/planning-execution-context";
-import { isBundledBrowserRuntimeAvailable } from "../plugins/plugin-manager";
-import { createBrowserMcpTools } from "./browser/create-browser-tools";
 
 export interface CreateLumeRuntimeToolsInput {
   threadId: string;
@@ -52,7 +52,6 @@ export interface CreateLumeRuntimeToolsInput {
   planningExecutionContext?: ExecutionSurfaceContext;
   emitSdkMessage?: (message: SDKMessage) => void;
   emitAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
-  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitDesktopActionVisualEvent?: (event: DesktopActionVisualRuntimeEvent) => void;
   emitToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
@@ -140,7 +139,6 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     sessionId: input.threadId,
     cwd,
     workspaceSlug: input.workspaceSlug,
-    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitComputerUseRequest: computerUseSurface === "sky"
       ? createComputerUseRequestBridge({
         tools: allComputerUseTools,
@@ -160,11 +158,16 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
   const computerUseTools = computerUseSurface === "mcp"
     ? allComputerUseTools
     : [];
-  // 无 bundled 浏览器运行时的安装（CI/精简包）整族不注入，25 个 schema 不再
-  // 常驻 core 池白占 ~2100 token/请求；环境存在时常驻保 prompt-cache 稳定（#539）
-  const browserTools = input.threadType === "subagent" || !isBundledBrowserRuntimeAvailable()
+  // 浏览器工具族:主线程专属(ZCode 语义 subagent 硬拒),settings 门控 +
+  // 传输可用性在 isEnabled 里二次把关。旧 broker 注册语义等价重建。
+  const browserTools = input.threadType === "subagent" || !isBrowserAgentToolsEnabled()
     ? []
-    : createBrowserMcpTools({ threadId: input.threadId });
+    : createBrowserTools({
+      threadId: input.threadId,
+      ...(input.runId ? { runId: input.runId } : {}),
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      ...(input.workspaceSlug ? { workspaceSlug: input.workspaceSlug } : {}),
+    });
   const customTools = [
     ...memoryTools,
     ...dreamEvidenceTools,
@@ -180,9 +183,9 @@ export function createLumeRuntimeTools(input: CreateLumeRuntimeToolsInput): Crea
     ...suggestionTools,
     ...imageGenTools,
     ...nodeReplTools,
-    ...browserTools,
     ...planningTodoTools,
     ...computerUseTools,
+    ...browserTools,
   ];
 
   // 注入池归属由 ToolRuntime.build 重算；此处只产出自定义工具本身

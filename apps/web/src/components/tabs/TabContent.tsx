@@ -7,7 +7,6 @@ import { ProactiveHub } from '@/components/proactive/ProactiveHub'
 import { ReadingView } from '@/components/reading/ReadingView'
 import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
-import { BrowserTabView } from './BrowserTabView'
 import { TodoView } from '@/components/todo/TodoView'
 
 export function TabContent() {
@@ -58,10 +57,6 @@ export function TabContent() {
 
   if (activeTab.type === 'lume') {
     return <LumeView />
-  }
-
-  if (activeTab.type === 'browser') {
-    return <BrowserTabView tab={activeTab} />
   }
 
   if (activeTab.type === 'todo') return <TodoView workspaceId={activeTab.workspaceId} todoId={activeTab.todoId} initialTitle={activeTab.todoPrefill} />

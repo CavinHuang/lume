@@ -29,8 +29,6 @@ import {
   readWorkspaceRootPath,
   renameAuthorizedFileRef,
   resolveAuthorizedFileRef,
-  resolveAuthorizedBrowserPreviewPath,
-  resolveAuthorizedBrowserUploadPaths,
   validateGuardedFileRef,
   resolveThreadAttachmentPath,
   resolveWorkspaceSlugBySessionId,
@@ -220,53 +218,6 @@ describe("agent-files-service file ops", () => {
     expect(converted).toEqual({ source: "session", scopeId: workdir.fileContextId, relativePath: "files/brief.md" });
     // canonical（realpath）回显口径
     expect(resolveAuthorizedFileRef(converted).absolutePath).toBe(realpathSync(join(workdir.filesRoot, "brief.md")));
-  });
-
-  test("browser uploads resolve only current thread project and session files", () => {
-    const configDir = createTempConfigDir();
-    const projectPath = join(configDir, "browser-upload-project");
-    mkdirSync(projectPath);
-    const workspace = createAgentWorkspace("browser-upload", { projectPath });
-    const thread = createAgentThread("browser upload", undefined, workspace.id);
-    const workdir = resolveAgentThreadWorkdir(thread.id);
-    const projectFile = join(projectPath, "project.txt");
-    const sessionFile = join(workdir.filesRoot, "session.txt");
-    writeFileSync(projectFile, "project", "utf8");
-    writeFileSync(sessionFile, "session", "utf8");
-    const encodedRef = `lume-file-ref:${Buffer.from(JSON.stringify({
-      source: "session",
-      scopeId: workdir.fileContextId,
-      relativePath: "files/session.txt",
-    })).toString("base64url")}`;
-
-    // canonical（realpath）回显口径
-    expect(resolveAuthorizedBrowserUploadPaths(thread.id, [projectFile, encodedRef])).toEqual([
-      realpathSync(projectFile),
-      realpathSync(sessionFile),
-    ]);
-    const outside = join(configDir, "outside-upload.txt");
-    writeFileSync(outside, "outside", "utf8");
-    expect(() => resolveAuthorizedBrowserUploadPaths(thread.id, [outside])).toThrow("不属于当前任务");
-  });
-
-  test("browser file previews accept current task files and reject outside paths", () => {
-    const configDir = createTempConfigDir();
-    const projectPath = join(configDir, "browser-preview-project");
-    mkdirSync(projectPath);
-    const workspace = createAgentWorkspace("browser-preview", { projectPath });
-    const thread = createAgentThread("browser preview", undefined, workspace.id);
-    const previewFile = join(projectPath, "preview page.html");
-    writeFileSync(previewFile, "<h1>preview</h1>", "utf8");
-
-    expect(resolveAuthorizedBrowserPreviewPath(thread.id, pathToFileURL(previewFile).toString()))
-      .toBe(realpathSync(previewFile));
-
-    const outside = join(configDir, "outside-preview.html");
-    writeFileSync(outside, "<h1>outside</h1>", "utf8");
-    expect(() => resolveAuthorizedBrowserPreviewPath(thread.id, pathToFileURL(outside).toString()))
-      .toThrow("不属于当前任务");
-    expect(() => resolveAuthorizedBrowserPreviewPath(thread.id, "https://example.com"))
-      .toThrow("本地预览地址非法");
   });
 
   test("reads and atomically writes editable FileRefs with encoding and mtime conflict protection", () => {

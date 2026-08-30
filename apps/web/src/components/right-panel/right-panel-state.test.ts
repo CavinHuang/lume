@@ -17,19 +17,19 @@ describe('right-panel-state', () => {
     let workspace = createEmptyRightPanelWorkspace()
     workspace = openRightPanelTab(workspace, 'files')
     workspace = openRightPanelTab(workspace, 'files')
-    workspace = openRightPanelTab(workspace, 'browser')
+    workspace = openRightPanelTab(workspace, 'vault')
 
-    expect(Object.keys(workspace.tabs)).toEqual(['files', 'browser'])
-    expect(RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])).toEqual(['browser', 'files'])
+    expect(Object.keys(workspace.tabs)).toEqual(['files', 'vault'])
+    expect(RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])).toEqual(['files', 'vault'])
     expect(getAvailableRightPanelFunctions(workspace)).toEqual([])
   })
 
   test('closing a function only changes persisted function presence', () => {
-    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'browser')
+    let workspace = openRightPanelTab(createEmptyRightPanelWorkspace(), 'vault')
     workspace = openRightPanelTab(workspace, 'files')
 
     expect(closeRightPanelTab(workspace, 'files')).toEqual({
-      tabs: { browser: { type: 'browser', url: '', addressInput: '', zoom: 1, deviceToolbarVisible: false } },
+      tabs: { vault: { type: 'vault' } },
     })
   })
 
@@ -53,15 +53,15 @@ describe('right-panel-state', () => {
 
   test('sanitize repairs malformed tabs without restoring persisted active state', () => {
     expect(sanitizeRightPanelWorkspace({
-      activeTab: 'browser',
+      activeTab: 'files',
       tabs: {
-        files: { type: 'browser' },
-        browser: { type: 'browser', zoom: 'nope' },
+        files: { type: 'vault' },
+        vault: { type: 'vault', zoom: 'nope' },
         review: { type: 'review' },
       },
     })).toEqual({
       tabs: {
-        browser: { type: 'browser', url: '', addressInput: '', zoom: 1, deviceToolbarVisible: false },
+        vault: { type: 'vault' },
       },
     })
   })
@@ -74,9 +74,9 @@ describe('right-panel-state', () => {
 
   test('first open function follows fixed function order', () => {
     expect(firstOpenRightPanelTab({
+      vault: createDefaultRightPanelTab('vault'),
       files: createDefaultRightPanelTab('files'),
-      browser: createDefaultRightPanelTab('browser'),
-    })).toBe('browser')
+    })).toBe('files')
   })
 
   test('review launcher opens the current changed turn or falls back to the previous turn', () => {

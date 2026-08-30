@@ -6,7 +6,6 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 
 import { Button } from '@/components/ui/button'
 import { ThreadTabContextMenu } from './ThreadTabContextMenu'
-import { browserRuntime } from '@/lib/desktop-api'
 export function TabBar() {
   const [tabs, setTabs] = useAtom(tabsAtom)
   const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom)
@@ -15,9 +14,6 @@ export function TabBar() {
 
   const closeTab = (id: string, e: React.MouseEvent) => {
     e.stopPropagation()
-    if (tabs.find((tab) => tab.id === id)?.type === 'browser') {
-      void browserRuntime({ method: 'close', params: { tabId: id } }).catch(() => undefined)
-    }
     setTabs((prev) => prev.filter((t) => t.id !== id))
     if (activeTabId === id) {
       const remaining = tabs.filter((t) => t.id !== id && t.type !== 'settings')

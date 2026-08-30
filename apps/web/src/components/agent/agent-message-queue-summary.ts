@@ -12,10 +12,8 @@ export function summarizeQueuedMessage(item: AgentQueuedMessage): string {
   const parts: string[] = []
   const fileCount = item.messageAttachments?.length ?? 0
   const commentCount = item.commentAttachments?.length ?? 0
-  const browserCount = item.browserAttachments?.length ?? 0
   if (fileCount > 0) parts.push(`${fileCount} 文件`)
   if (commentCount > 0) parts.push(`${commentCount} 评论`)
-  if (browserCount > 0) parts.push(`${browserCount} 浏览器注释`)
 
   return parts.length > 0 ? parts.join(' · ') : '（空消息）'
 }

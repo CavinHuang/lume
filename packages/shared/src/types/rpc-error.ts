@@ -93,8 +93,6 @@ export const RPC_ERROR_CODES = {
   RPC_TIMEOUT: "rpc_timeout",
   /** 密文加密密钥注入被拒(desktop 启动关键路径) */
   SECRET_ENCRYPTION_KEY_INVALID: "secret_encryption_key_invalid",
-  /** desktop 浏览器主进程通道断开/不可用。与 shared browser-runtime.ts 的 BrowserErrorCode "browser_unavailable" 同字符串双域,改须核对彼侧白名单 */
-  BROWSER_UNAVAILABLE: "browser_unavailable",
 
   // ---- 业务码族(#793② 渐进收编,第二批):MCP/插件/连接器/通知域出站位点 ----
   /** MCP 授权缺失,需用户重新完成 OAuth(workspace-mcp-manager) */

@@ -6,7 +6,6 @@ import type {
   AgentMessageQueueSnapshot,
   AgentAskUserQuestionRequest,
   AgentAskUserQuestionResponseInput,
-  AgentBrowserAuthRequest,
   AgentDesktopActionRequest,
   AgentPendingGuidance,
   AgentPromoteQueuedMessageToGuidanceInput,
@@ -78,7 +77,6 @@ import type { LumeRunItem } from "../agent-runtime/runtime-core/run-items";
 import type { LumeRunState } from "../agent-runtime/runtime-core/run-state";
 import { emitAgentNotification, emitDiagnosticContent } from "./agent-notification-service";
 import { createFileReferenceBinding } from "./agent-files-service";
-import { getActiveBrowserBroker } from "../browser/browser-broker-holder";
 import { normalizeAgentUserMessage } from "./agent-user-message-parts";
 import { getPlanningTodoStore } from "../planning/planning-todo-store";
 import { addPlanningAuthorizedTodo, authorizePlanningOperation, finishPlanningExecutionRun, resolvePlanningExecutionContext } from "../planning/planning-execution-context";
@@ -95,7 +93,6 @@ type AgentStreamEmitter = {
   onError: (error: string, options?: { fromActiveRun?: boolean }) => void;
   onTitleUpdated: (title: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
-  onBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   onDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
 };
@@ -1277,7 +1274,6 @@ async function prepareAgentSendStage({
   let activeTurnStartedAt: string | null = null;
   let userSdkMessage: SDKMessage | null = null;
 
-  const browserContinuity = await getActiveBrowserBroker()?.getThreadAgentContinuity(threadId).catch(() => undefined);
   const existingToolPolicy =
     input.messageMetadata?.toolPolicy && typeof input.messageMetadata.toolPolicy === "object"
       ? (input.messageMetadata.toolPolicy as AgentToolPolicy)
@@ -1287,14 +1283,12 @@ async function prepareAgentSendStage({
     ...(input.traceContext ? { traceContext: input.traceContext } : {}),
     ...(input.messageAttachments?.length ? { messageAttachments: input.messageAttachments } : {}),
     ...(input.commentAttachments?.length ? { commentAttachments: input.commentAttachments } : {}),
-    ...(input.browserAttachments?.length ? { browserAttachments: input.browserAttachments } : {}),
     ...(input.messageParts ? { messageParts: normalizedUserMessage.parts } : {}),
     ...(normalizedUserMessage.capabilityReferences.length ? {
       capabilityReferences: normalizedUserMessage.capabilityReferences.map((reference) => reference.uri),
       capabilityFingerprints: capabilityProjection.fingerprints,
       capabilityReferenceViews: capabilityProjection.references,
     } : {}),
-    browserContinuity: browserContinuity ?? null,
     toolPolicy: mergeToolPolicies(
       existingToolPolicy,
       capabilityProjection.allowedTools
@@ -1617,14 +1611,6 @@ async function runSendAgentMessage(
         subagentRunId: request.subagentRunId
       });
       emit.onAskUserQuestion(request);
-    },
-    onBrowserAuthRequest: (request) => {
-      runtimeStatusManager.markAwaitingUserAnswer(threadId, {
-        toolUseId: request.requestId,
-        originThreadId: request.originThreadId,
-        subagentRunId: request.subagentRunId
-      });
-      emit.onBrowserAuthRequest?.(request);
     },
     onDesktopActionRequest: (request) => {
       runtimeStatusManager.markAwaitingUserAnswer(threadId, {
@@ -1994,7 +1980,6 @@ export function updateQueuedAgentMessage(input: AgentUpdateQueuedMessageInput): 
       ...(input.messageParts ? { messageParts: input.messageParts } : {}),
       ...(input.messageAttachments ? { messageAttachments: input.messageAttachments } : {}),
       ...(input.commentAttachments ? { commentAttachments: input.commentAttachments } : {}),
-      ...(input.browserAttachments ? { browserAttachments: input.browserAttachments } : {}),
       messageMetadata
     });
     if (!updated) {
@@ -2089,14 +2074,11 @@ function restoreUnconsumedGuidanceToQueue(threadId: string): void {
   emitAgentMessageQueueChanged(threadId);
 }
 
-// 富 steer 附件摘要:以"摘要信封"注入 guidance 文本(模型可见、不可执行),与 ContextAssembler 的 <browser_attachments> 风格一致。
+// 富 steer 附件摘要:以"摘要信封"注入 guidance 文本(模型可见、不可执行)。
 function summarizeGuidanceAttachments(input: AgentSendInput): string | undefined {
   const parts: string[] = [];
   if (input.commentAttachments?.length) {
     parts.push(`<diff_comments count="${input.commentAttachments.length}">`);
-  }
-  if (input.browserAttachments?.length) {
-    parts.push(`<browser_attachments count="${input.browserAttachments.length}">${JSON.stringify(input.browserAttachments)}</browser_attachments>`);
   }
   if (input.messageAttachments?.length) {
     parts.push(`<file_attachments count="${input.messageAttachments.length}">`);
@@ -2116,7 +2098,6 @@ function toQueuedMessage(dispatch: AgentRuntimeKernelQueuedDispatch<AgentSendInp
     ...(dispatch.input.messageParts ? { messageParts: dispatch.input.messageParts } : {}),
     ...(dispatch.input.messageAttachments ? { messageAttachments: dispatch.input.messageAttachments } : {}),
     ...(dispatch.input.commentAttachments ? { commentAttachments: dispatch.input.commentAttachments } : {}),
-    ...(dispatch.input.browserAttachments ? { browserAttachments: dispatch.input.browserAttachments } : {}),
     ...(dispatch.input.clientSubmissionId ? { clientSubmissionId: dispatch.input.clientSubmissionId } : {}),
     ...(dispatch.input.modelRef ? { modelRef: dispatch.input.modelRef } : {}),
     ...(dispatch.input.channelId ? { channelId: dispatch.input.channelId } : {}),

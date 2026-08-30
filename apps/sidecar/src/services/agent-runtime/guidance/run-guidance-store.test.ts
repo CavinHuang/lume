@@ -84,7 +84,7 @@ describe("RunGuidanceStore", () => {
   test("addQueuedDispatch 应保留附件摘要并在 consume 时输出", () => {
     const store = new RunGuidanceStore({ now: () => 3000 });
     const dispatch = createDispatch("queued-rich", "改用方案 B");
-    (dispatch as TestDispatch & { attachmentsBrief?: string }).attachmentsBrief = "<browser_attachments>方案 B 截图</browser_attachments>";
+    (dispatch as TestDispatch & { attachmentsBrief?: string }).attachmentsBrief = "<file_attachments>方案 B 截图</file_attachments>";
 
     const guidance = store.addQueuedDispatch(dispatch as never);
     expect(guidance.attachmentsBrief).toContain("方案 B 截图");

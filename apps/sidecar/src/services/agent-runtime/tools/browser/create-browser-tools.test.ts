@@ -1,837 +1,296 @@
-import { describe, expect, test } from "bun:test"
-import type { BrowserTabDescriptor } from "@lume/shared"
-import { BrowserToolSessionRegistry } from "./browser-tool-session"
-import { createBrowserMcpTools } from "./create-browser-tools"
+/**
+ * 浏览器工具族 → 46 命令协议映射测试:经注入的 fake 后端捕获 buildCommand
+ * 产物,钉住工具面与 zod 协议闸的关键映射(tabs/导航/视口/快照/交互/
+ * playwright/cua/dom_cua/对话框/录制/可见性)与结果塑形(meta 剥除、
+ * 错误折进 tool_result、tabs_new 同调用导航)。
+ */
+import { describe, expect, test } from "bun:test";
 
-describe("createBrowserMcpTools", () => {
-  test("opens an Agent tab and snapshots it without a Node REPL", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown>; browserSessionId: string; browserTurnId: string }> = []
-    const tab = agentTab("tab-1", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: typeof calls[number]) => {
-        calls.push(request)
-        if (request.method === "create_tab") return { id: tab.tabId }
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot("tab-1")
-        throw new Error("unsupported")
+import {
+  BROWSER_CAPABILITIES,
+  type BrowserCommand,
+  type BrowserCommandContext,
+  type BrowserCommandResult,
+} from "@lume/shared";
+import type { ToolDefinition } from "@lume/agent-sdk";
+
+import { createBrowserTools, BROWSER_TOOL_NAMES, type BrowserToolName } from "./create-browser-tools";
+
+type ExecuteFn = (input: {
+  context: BrowserCommandContext;
+  command: BrowserCommand;
+}) => BrowserCommandResult | Promise<BrowserCommandResult>;
+
+function capturingBackend(execute: ExecuteFn) {
+  const commands: BrowserCommand[] = [];
+  return {
+    commands,
+    backend: {
+      descriptor: {
+        id: "iab:test",
+        generation: 1,
+        type: "iab" as const,
+        name: "test",
+        capabilities: { browser: BROWSER_CAPABILITIES, tab: [] as [] },
+        apiSupportOverrides: [],
+        metadata: { provider: "test" },
       },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const openTool = tools.find((tool) => tool.name === "mcp__browser__open")!
-    const openResult = await openTool.call({ url: "https://example.com" }, { toolUseId: "open-1" } as any)
-    const opened = JSON.parse(String(openResult.content))
-    const snapshot = await call(tools, "mcp__browser__snapshot", {})
-    const scoped = await call(tools, "mcp__browser__snapshot", { scope_ref: "@e1" })
-
-    expect(opened.active_tab_id).toBe("tab-1")
-    expect(openResult._meta?.repeatGuard).toEqual({
-      state: { ok: true, tool: "open", url: "https://example.com", title: null, generation: null }
-    })
-    expect(snapshot.observation.snapshot_id).toBe("snap-1")
-    expect(scoped.observation.refs.e1).toMatchObject({ role: "textbox", name: "Search" })
-    expect(calls.at(-1)).toMatchObject({ method: "browser_snapshot", params: { tabId: "tab-1", scope_ref: "@e1", snapshot_id: "snap-1" } })
-    // #604:open 后 activeTabId 已锁,动作免前置 list_tabs 直达 desktop(内联校验兜底)
-    expect(calls.map((request) => request.method)).toEqual(["create_tab", "browser_snapshot", "browser_snapshot"])
-    expect(new Set(calls.map((request) => request.browserSessionId))).toEqual(new Set(["browser-tools:thread-1"]))
-    expect(new Set(calls.map((request) => request.browserTurnId))).toEqual(new Set(["browser-tools:thread-1"]))
-  })
-
-  test("lists only Agent-owned tabs from the current task and switches explicitly", async () => {
-    const tabs = [agentTab("mine", "thread-1"), agentTab("other", "thread-2"), { ...agentTab("user", "thread-1"), profileKind: "user" as const }]
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async () => tabs,
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const listed = await call(tools, "mcp__browser__list_tabs", {})
-    const switched = await call(tools, "mcp__browser__switch_tab", { tab_id: "mine" })
-
-    expect(listed.tabs.map((tab: BrowserTabDescriptor) => tab.tabId)).toEqual(["mine"])
-    expect(switched.active_tab_id).toBe("mine")
-  })
-
-  test("runs a bounded script only on the locked task tab", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_run_script") return { status: "completed", value: { title: "Example" } }
-        throw new Error("unsupported")
+      async execute(input: { context: BrowserCommandContext; command: BrowserCommand }) {
+        commands.push(input.command);
+        return await execute(input);
       },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+    },
+  };
+}
 
-    const result = await call(tools, "mcp__browser__run_script", { script: "return { title: document.title }", arg: { expected: true } })
+function makeTools(execute: ExecuteFn): { tools: ToolDefinition[]; commands: BrowserCommand[] } {
+  const { backend, commands } = capturingBackend(execute);
+  return { commands, tools: createBrowserTools({ threadId: "thread-1", backend }) };
+}
 
-    expect(result.value).toEqual({ title: "Example" })
-    expect(calls.at(-1)).toMatchObject({
-      method: "browser_run_script",
-      params: { tabId: "locked-tab", script: "return { title: document.title }", arg: { expected: true } },
-    })
-  })
+function toolByName(tools: ToolDefinition[], name: BrowserToolName): ToolDefinition {
+  const tool = tools.find((candidate) => candidate.name === `mcp__browser__${name}`);
+  if (!tool) throw new Error(`missing tool: ${name}`);
+  return tool;
+}
 
-  test("navigates only the locked tab and handles blocking dialogs explicitly", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${calls.length}`)
-        if (request.method === "navigate_tab_url") return { ...tab, url: "https://example.org/" }
-        if (request.method === "tab_get_js_dialog") return { dialog: { id: "dialog-1", type: "confirm", message: "Continue?" } }
-        if (request.method === "tab_handle_js_dialog") return { ok: true }
-        throw new Error("unsupported")
+/** 单命令工具:调用一次并返回后端收到的命令。 */
+async function mapOne(name: BrowserToolName, args: Record<string, unknown>, backendResult?: ExecuteFn): Promise<BrowserCommand> {
+  const { commands, tools } = makeTools(backendResult ?? (() => ({ ok: true })));
+  const tool = toolByName(tools, name);
+  await tool.call(args, { toolUseId: "tu-1" } as never);
+  expect(commands).toHaveLength(1);
+  return commands[0]!;
+}
+
+describe("工具面与注册形状", () => {
+  test("19 个工具,统一 mcp__browser__ 前缀", () => {
+    const { tools } = makeTools(() => ({ ok: true }));
+    expect(tools).toHaveLength(BROWSER_TOOL_NAMES.length);
+    expect(tools.map((tool) => tool.name)).toEqual(BROWSER_TOOL_NAMES.map((name) => `mcp__browser__${name}`));
+  });
+
+  test("读类工具标只读且允许 plan mode,写类相反", () => {
+    const { tools } = makeTools(() => ({ ok: true }));
+    const snapshot = toolByName(tools, "snapshot");
+    const navigate = toolByName(tools, "navigate");
+    expect(snapshot.isReadOnly?.()).toBe(true);
+    expect(navigate.isReadOnly?.()).toBe(false);
+    const snapshotMeta = snapshot.runtimeMetadata as Record<string, unknown>;
+    expect(snapshotMeta.allowedInPlanMode).toBe(true);
+    expect(navigate.runtimeMetadata && (navigate.runtimeMetadata as Record<string, unknown>).allowedInPlanMode).toBe(false);
+  });
+});
+
+describe("工具 → 命令映射", () => {
+  test("tab 生命周期族", async () => {
+    expect(await mapOne("tabs_list", {})).toEqual({ method: "list" });
+    expect(await mapOne("user_open_tabs", {})).toEqual({ method: "listUserTabs" });
+    expect(await mapOne("claim_tab", { tabId: "u1" })).toEqual({ method: "claimTab", tabId: "u1" });
+    expect(await mapOne("tabs_new", {})).toEqual({ method: "newTab" });
+    expect(await mapOne("tabs_activate", { tabId: "t2" })).toEqual({ method: "activateTab", tabId: "t2" });
+    expect(await mapOne("tabs_close", { tabId: "t3" })).toEqual({ method: "close", tabId: "t3" });
+    expect(await mapOne("tabs_close", {})).toEqual({ method: "close" });
+    expect(await mapOne("tabs_finalize", { keep: [{ tabId: "t1", status: "deliverable" }] })).toEqual({
+      method: "finalizeTabs",
+      keep: [{ tabId: "t1", status: "deliverable" }],
+    });
+  });
+
+  test("导航 / 翻页 / 视口族", async () => {
+    expect(await mapOne("navigate", { url: "https://example.com/", tabId: "t9" })).toEqual({
+      method: "navigate",
+      tabId: "t9",
+      url: "https://example.com/",
+    });
+    expect(await mapOne("tab_action", { action: "reload" })).toEqual({ method: "reload" });
+    expect(await mapOne("tab_action", { action: "back", tabId: "t1" })).toEqual({ method: "back", tabId: "t1" });
+    expect(await mapOne("viewport", { action: "set", width: 1280, height: 720 })).toEqual({
+      method: "browserViewportSet",
+      width: 1280,
+      height: 720,
+    });
+    expect(await mapOne("viewport", { action: "reset", tabId: "t1" })).toEqual({ method: "browserViewportReset", tabId: "t1" });
+  });
+
+  test("观察族:snapshot/screenshot 参数透传", async () => {
+    expect(await mapOne("snapshot", { maxElements: 50, includeHidden: true })).toEqual({
+      method: "snapshot",
+      maxElements: 50,
+      includeHidden: true,
+    });
+    expect(await mapOne("screenshot", { fullPage: true, tabId: "t1" })).toEqual({
+      method: "screenshot",
+      fullPage: true,
+      tabId: "t1",
+    });
+  });
+
+  test("interact:ref 路径与坐标路径按键类拆分参数", async () => {
+    expect(await mapOne("interact", { action: "click", ref: "e12", button: "right", doubleClick: true })).toEqual({
+      method: "click",
+      ref: "e12",
+      button: "right",
+      doubleClick: true,
+    });
+    expect(await mapOne("interact", { action: "click", x: 10, y: 20 })).toEqual({ method: "click", x: 10, y: 20 });
+    // fill 无执行器路由(desktop 只路由 type),工具层映射为同构的 type 命令。
+    expect(await mapOne("interact", { action: "fill", ref: "e3", text: "hello" })).toEqual({
+      method: "type",
+      ref: "e3",
+      text: "hello",
+    });
+    expect(await mapOne("interact", { action: "press", ref: "e4", key: "Enter" })).toEqual({
+      method: "press",
+      ref: "e4",
+      key: "Enter",
+    });
+    expect(await mapOne("interact", { action: "select", ref: "e5", values: ["a", "b"] })).toEqual({
+      method: "select",
+      ref: "e5",
+      values: ["a", "b"],
+    });
+    expect(await mapOne("interact", { action: "check", ref: "e6", checked: false })).toEqual({
+      method: "check",
+      ref: "e6",
+      checked: false,
+    });
+    expect(await mapOne("interact", {
+      action: "drag",
+      fromRef: "e7",
+      to: { x: 1, y: 2 },
+    })).toEqual({ method: "drag", fromRef: "e7", to: { x: 1, y: 2 } });
+  });
+
+  test("playwright / cua / dom_cua 族", async () => {
+    expect(await mapOne("playwright", { action: { name: "domSnapshot" }, tabId: "t1" })).toEqual({
+      method: "playwright",
+      tabId: "t1",
+      action: { name: "domSnapshot" },
+    });
+    expect(await mapOne("playwright", {
+      action: { name: "locator", selector: "role=button[name=\"Submit\"]", operation: "click" },
+    })).toEqual({
+      method: "playwright",
+      action: { name: "locator", selector: "role=button[name=\"Submit\"]", operation: "click" },
+    });
+    expect(await mapOne("cua", { action: "keypress", keys: ["Control+a"] })).toEqual({
+      method: "cuaKeypress",
+      keys: ["Control+a"],
+    });
+    expect(await mapOne("cua", { action: "scroll", x: 5, y: 6, scrollX: 0, scrollY: 120 })).toEqual({
+      method: "cuaScroll",
+      x: 5,
+      y: 6,
+      scrollX: 0,
+      scrollY: 120,
+    });
+    expect(await mapOne("cua", { action: "drag", path: [{ x: 0, y: 0 }, { x: 9, y: 9 }] })).toEqual({
+      method: "cuaDrag",
+      path: [{ x: 0, y: 0 }, { x: 9, y: 9 }],
+    });
+    expect(await mapOne("dom_cua", { nodeId: "e5", scrollX: 0, scrollY: 200 })).toEqual({
+      method: "domCuaScroll",
+      nodeId: "e5",
+      scrollX: 0,
+      scrollY: 200,
+    });
+  });
+
+  test("对话框 / 录制 / 可见性族", async () => {
+    expect(await mapOne("dialog", { action: "get" })).toEqual({ method: "getDialog" });
+    expect(await mapOne("dialog", { action: "handle", accept: true, promptText: "hi" })).toEqual({
+      method: "handleDialog",
+      accept: true,
+      promptText: "hi",
+    });
+    expect(await mapOne("recording", { action: "start", options: { maxDurationMs: 5_000 } })).toEqual({
+      method: "recordingStart",
+      options: { maxDurationMs: 5_000 },
+    });
+    expect(await mapOne("recording", { action: "status", recordingId: "r1" })).toEqual({
+      method: "recordingStatus",
+      recordingId: "r1",
+    });
+    expect(await mapOne("recording", { action: "cancel", recordingId: "r1", tabId: "t1" })).toEqual({
+      method: "recordingCancel",
+      recordingId: "r1",
+      tabId: "t1",
+    });
+    expect(await mapOne("visibility", {})).toEqual({ method: "browserVisibilityGet" });
+    expect(await mapOne("visibility", { visible: true })).toEqual({ method: "browserVisibilitySet", visible: true });
+  });
+});
+
+describe("zod 协议闸", () => {
+  test("越界参数经真实工具调用被 zod 闸拦截", async () => {
+    const { tools } = makeTools(() => ({ ok: true }));
+    const tool = toolByName(tools, "viewport");
+    const result = await tool.call({ action: "set", width: 100, height: 100 }, { toolUseId: "tu-1" } as never);
+    expect(result.is_error).toBe(true);
+    const text = typeof result.content === "string" ? result.content : "";
+    expect(text).toContain("invalid browserViewportSet arguments");
+  });
+});
+
+describe("结果塑形", () => {
+  test("成功结果剥 meta/elapsedMs,错误结果折进 is_error", async () => {
+    const { tools: okTools } = makeTools(() => ({
+      ok: true,
+      elapsedMs: 12,
+      meta: {
+        browserUse: true,
+        backendType: "iab",
+        browserId: "iab:test",
+        browserGeneration: 1,
+        openTabIds: ["t1"],
       },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
+      tabs: [{ tabId: "t1", url: "https://example.com/", title: "Example", viewport: { width: 800, height: 600 } }],
+    }));
+    const okTool = toolByName(okTools, "tabs_list");
+    const okResult = await okTool.call({}, { toolUseId: "tu-1" } as never);
+    expect(okResult.is_error).toBeUndefined();
+    const okPayload = JSON.parse(okResult.content as string) as Record<string, unknown>;
+    expect(okPayload.ok).toBe(true);
+    expect(okPayload.meta).toBeUndefined();
+    expect(okPayload.elapsedMs).toBeUndefined();
+    expect(Array.isArray(okPayload.tabs)).toBe(true);
 
-    const navigated = await call(tools, "mcp__browser__navigate", { url: "https://example.org/" })
-    const dialog = await call(tools, "mcp__browser__dialog", {})
-    const handled = await call(tools, "mcp__browser__handle_dialog", { dialog_id: "dialog-1", accept: false })
-
-    expect(calls.find((request) => request.method === "navigate_tab_url")).toMatchObject({ params: { tabId: "locked-tab", url: "https://example.org/" } })
-    expect(dialog.dialog).toMatchObject({ id: "dialog-1", type: "confirm" })
-    expect(calls.find((request) => request.method === "tab_handle_js_dialog")).toMatchObject({ params: { tabId: "locked-tab", dialog_id: "dialog-1", action: "dismiss" } })
-    expect(navigated.observation.snapshot_id).toStartWith("snap-")
-    expect(handled.observation.snapshot_id).toStartWith("snap-")
-  })
-
-  test("resolves snapshot refs into semantic actions and observes after every action", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshotNumber = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
-        if (request.method === "playwright_locator_fill") return { ok: true }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", { interactive_only: true })
-    const result = await call(tools, "mcp__browser__fill", { ref: "@e1", text: "agent" })
-
-    expect(calls.at(-2)).toMatchObject({
-      method: "playwright_locator_fill",
-      params: {
-        tabId: "locked-tab",
-        text: "agent",
-        semanticRef: "e1",
-        semanticSnapshotId: "snap-1",
-        semanticIntent: "textbox Search",
-        locator: { version: 1, steps: [{ kind: "role", role: "textbox", name: "Search", exact: true }] },
-      },
-    })
-    expect(calls.at(-1)).toMatchObject({ method: "browser_snapshot", params: { tabId: "locked-tab", interactive_only: true } })
-    expect(result.observation.snapshot_id).toBe("snap-2")
-  })
-
-  test("returns screenshots as transient image content without putting pixels in text", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    const pixels = Buffer.from("jpeg-pixels").toString("base64")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "tab_screenshot") return { data: pixels }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const result = await rawCall(tools, "mcp__browser__screenshot", {})
-
-    expect(result.content[0].text).not.toContain(pixels)
-    expect(result.content[1]).toMatchObject({
-      type: "image",
-      source: { type: "base64", media_type: "image/jpeg", data: pixels },
-      _meta: { persist: false },
-    })
-  })
-
-  test("binds annotated screenshots to refs from the latest snapshot", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    const pixels = Buffer.from("png-pixels").toString("base64")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, "snap-1")
-        if (request.method === "tab_screenshot") return { data: pixels, annotated_refs: ["@e1"] }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const result = await rawCall(tools, "mcp__browser__screenshot", { annotated: true })
-
-    expect(calls.at(-1)).toMatchObject({
-      method: "tab_screenshot",
-      params: { tabId: "locked-tab", annotated: true, fullPage: false, semanticSnapshotId: "snap-1" },
-    })
-    expect(JSON.parse(result.content[0].text)).toMatchObject({ annotated: true, snapshot_id: "snap-1", annotated_refs: ["@e1"] })
-    expect(result.content[1]).toMatchObject({ type: "image", source: { media_type: "image/png", data: pixels } })
-  })
-
-  test("requires a fresh snapshot before an annotated screenshot", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    const tools = createBrowserMcpTools({
-      broker: {
-        listBackends: () => [{ backend: "iab" }],
-        dispatch: async (request: { method: string }) => request.method === "list_tabs" ? { tabs: [tab] } : undefined,
-      } as any,
-      sessionRegistry: new BrowserToolSessionRegistry(),
-      threadId: "thread-1",
-    })
-
-    const result = await rawCall(tools, "mcp__browser__screenshot", { annotated: true })
-
-    expect(JSON.parse(String(result.content))).toMatchObject({ ok: false, code: "snapshot_required" })
-  })
-
-  test("coordinates file chooser uploads and click-triggered downloads", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshotNumber = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
-        if (request.method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: false }
-        if (request.method === "playwright_file_chooser_set_files") return {}
-        if (request.method === "playwright_wait_for_download") return { download_id: "download-1" }
-        if (request.method === "playwright_download_path") return { path: "browser-download:00000000-0000-0000-0000-000000000001" }
-        if (request.method === "playwright_locator_click") return { ok: true }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const uploaded = await call(tools, "mcp__browser__upload", { ref: "e1", files: ["files/report.pdf"] })
-    const downloadResult = await rawCall(tools, "mcp__browser__download", { ref: "e1" })
-    const downloaded = JSON.parse(String(downloadResult.content))
-
-    expect(calls.find((request) => request.method === "playwright_file_chooser_set_files")).toMatchObject({
-      params: { tabId: "locked-tab", file_chooser_id: "chooser-1", files: ["files/report.pdf"] },
-    })
-    expect(uploaded.action.count).toBe(1)
-    expect(downloaded.action.file_ref).toBe("browser-download:00000000-0000-0000-0000-000000000001")
-    expect(downloadResult._meta?.repeatGuard.state.file_ref).toBe("browser-download:00000000-0000-0000-0000-000000000001")
-    const methods = calls.map((request) => request.method)
-    expect(methods).toContain("playwright_wait_for_file_chooser")
-    expect(methods).toContain("playwright_wait_for_download")
-    expect(methods).toContain("playwright_download_path")
-  })
-
-  test("reports in-progress downloads instead of failing, and polls them by download_id", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshotNumber = 0
-    let polled = false
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
-        if (request.method === "playwright_wait_for_download") return { download_id: "download-1" }
-        if (request.method === "playwright_locator_click") return { ok: true }
-        if (request.method === "playwright_download_path") {
-          if (request.params?.download_id && polled) {
-            return { path: "browser-download:00000000-0000-0000-0000-000000000002", state: "completed", filename: "report.pdf", mime_type: "application/pdf", origin: "https://example.com", total_bytes: 2048, received_bytes: 2048 }
-          }
-          polled = true
-          return { path: null, state: "pending", filename: "report.pdf", mime_type: "application/pdf", origin: "https://example.com", total_bytes: 2048, received_bytes: 1024 }
-        }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const timedOut = await rawCall(tools, "mcp__browser__download", { ref: "e1" })
-    const pending = JSON.parse(String(timedOut.content))
-    const polledResult = await rawCall(tools, "mcp__browser__download", { download_id: "download-1" })
-    const completed = JSON.parse(String(polledResult.content))
-
-    expect(timedOut.isError).toBeFalsy()
-    expect(pending.action).toMatchObject({ download_id: "download-1", state: "in_progress", filename: "report.pdf", mime_type: "application/pdf", origin: "https://example.com", total_bytes: 2048, received_bytes: 1024 })
-    expect(completed).toMatchObject({ ok: true, download_id: "download-1", state: "completed", file_ref: "browser-download:00000000-0000-0000-0000-000000000002", filename: "report.pdf", mime_type: "application/pdf", total_bytes: 2048 })
-  })
-
-  test("rejects multi-file upload to a single-file chooser", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshotNumber = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
-        if (request.method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: false }
-        if (request.method === "playwright_locator_click") return { ok: true }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const result = await rawCall(tools, "mcp__browser__upload", { ref: "e1", files: ["files/a.pdf", "files/b.pdf"] })
-
-    expect(JSON.parse(String(result.content))).toMatchObject({ ok: false, code: "invalid_browser_request", active_tab_id: "locked-tab" })
-  })
-
-  test("rejects upload paths that do not match the chooser's accepted types", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshotNumber = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
-        if (request.method === "playwright_wait_for_file_chooser") return { file_chooser_id: "chooser-1", is_multiple: true, accept: ".pdf,image/*" }
-        if (request.method === "playwright_file_chooser_set_files") return {}
-        if (request.method === "playwright_locator_click") return { ok: true }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const rejected = await rawCall(tools, "mcp__browser__upload", { ref: "e1", files: ["files/report.exe"] })
-    const accepted = await rawCall(tools, "mcp__browser__upload", { ref: "e1", files: ["files/report.pdf", "files/photo.PNG", "browser-download:00000000-0000-0000-0000-000000000003"] })
-
-    expect(JSON.parse(String(rejected.content))).toMatchObject({
+    const { tools: errTools } = makeTools(() => ({
       ok: false,
-      code: "invalid_browser_request",
-      message: expect.stringContaining("report.exe does not match the file input's accepted types"),
-    })
-    expect(JSON.parse(String(accepted.content))).toMatchObject({ ok: true })
-  })
+      error: { code: "timeout", message: "browser 命令 navigate 超时(30000ms)", sideEffect: "uncertain" },
+    }));
+    const errTool = toolByName(errTools, "navigate");
+    const errResult = await errTool.call({ url: "https://example.com/" }, { toolUseId: "tu-2" } as never);
+    expect(errResult.is_error).toBe(true);
+    const errPayload = JSON.parse(errResult.content as string) as Record<string, unknown>;
+    expect(errPayload.ok).toBe(false);
+    expect((errPayload.error as Record<string, unknown>).code).toBe("timeout");
+  });
 
-  test("fills a saved password without exposing its value to the tool call", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${calls.length}`)
-        if (request.method === "browser_list_secrets") return [{ id: "secret-1", origin: "https://example.com", username: "alice" }]
-        if (request.method === "browser_fill_secret") return { status: "submitted" }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const secrets = await call(tools, "mcp__browser__list_secrets", {})
-    await call(tools, "mcp__browser__snapshot", {})
-    const filled = await call(tools, "mcp__browser__fill_secret", { ref: "e1", secret_id: "secret-1" })
-
-    expect(secrets.secrets).toEqual([{ id: "secret-1", origin: "https://example.com", username: "alice" }])
-    expect(filled.action).toEqual({ status: "submitted" })
-    const fill = calls.find((request) => request.method === "browser_fill_secret")
-    expect(fill).toMatchObject({ params: { secret_id: "secret-1", semanticRef: "e1" } })
-    expect(JSON.stringify(fill)).not.toContain("password-value")
-  })
-
-  test("rejects refs without a current snapshot or after the locked tab disappears", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    // #604 契约:动作免前置 list_tabs,tab 存活性由 desktop 内联校验并以结构化
-    // 码原样回传(此处以 broker 抛裸码 Error 模拟 desktop requireTab 的行为)
-    let tabClosed = false
-    let listTabsCalls = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") {
-          listTabsCalls += 1
-          return [tab]
+  test("tabs_new 携带 url:newTab 成功后同调用导航,tabId 回填进结果", async () => {
+    const { commands, tools } = makeTools((input) =>
+      input.command.method === "newTab"
+        ? {
+          ok: true,
+          meta: {
+            browserUse: true,
+            backendType: "iab",
+            browserId: "iab:test",
+            browserGeneration: 1,
+            openTabIds: ["tab-1"],
+            tabId: "tab-1",
+          },
         }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId)
-        if (request.method === "playwright_locator_click") {
-          if (tabClosed) throw new Error("tab_not_found")
-          return { ok: true }
-        }
-        throw new Error("unexpected_action")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const beforeSnapshot = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    await call(tools, "mcp__browser__snapshot", {})
-    tabClosed = true
-    const afterClose = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    const stillLocked = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-
-    expect(JSON.parse(String(beforeSnapshot.content)).code).toBe("stale_target")
-    expect(JSON.parse(String(afterClose.content)).code).toBe("tab_not_found")
-    // 首个 tab_not_found 已清 session.snapshot:后续 ref 动作走本地快速路径
-    // 报 stale_target(模型重取快照时 desktop 会对已关 tab 回 tab_not_found,链路自洽)
-    expect(JSON.parse(String(stillLocked.content)).code).toBe("stale_target")
-    expect(beforeSnapshot.is_error).toBeTrue()
-    expect(afterClose.is_error).toBeTrue()
-    // 首次初始化后动作零 list_tabs 往返:tab 关闭检测不靠重拉列表,靠 desktop 错误码
-    expect(listTabsCalls).toBe(1)
-  })
-
-  test("does not report a completed action as failed when its follow-up snapshot fails", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshots = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") {
-          if (++snapshots === 1) return semanticSnapshot(tab.tabId)
-          throw new Error("stale_target")
-        }
-        if (request.method === "playwright_locator_click") return { ok: true }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const raw = await rawCall(tools, "mcp__browser__click", { ref: "e1" })
-    const result = JSON.parse(String(raw.content))
-
-    expect(raw.is_error).toBeUndefined()
-    expect(result).toMatchObject({ ok: true, action: { ok: true }, observation: null, observation_error: "stale_target", requires_snapshot: true })
-  })
-
-  test("navigation_timeout carries the observe-first hint in its message (#641)", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "navigate_tab_url") throw new Error("navigation_timeout")
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const raw = await rawCall(tools, "mcp__browser__navigate", { url: "https://slow.example" })
-    const result = JSON.parse(String(raw.content))
-
-    expect(raw.is_error).toBeTrue()
-    expect(result.code).toBe("navigation_timeout")
-    expect(result.retryable).toBe(false)
-    expect(result.message).toContain("snapshot")
-  })
-
-  test("stops browser mutations after a non-retryable action repeats on the same page", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    let actionCalls = 0
-    let snapshotNumber = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
-        if (request.method === "playwright_locator_click") {
-          actionCalls += 1
-          throw Object.assign(new Error("actionability_failed"), { code: "actionability_failed" })
-        }
-        if (request.method === "playwright_locator_fill") throw new Error("unexpected_action")
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const firstSnapshot = await rawCall(tools, "mcp__browser__snapshot", {})
-    await rawCall(tools, "mcp__browser__click", { ref: "e1" })
-    const secondSnapshot = await rawCall(tools, "mcp__browser__snapshot", {})
-    await rawCall(tools, "mcp__browser__click", { ref: "e1" })
-    const blocked = await rawCall(tools, "mcp__browser__fill", { ref: "e1", text: "retry" })
-    const blockedResult = JSON.parse(String(blocked.content))
-
-    expect(actionCalls).toBe(2)
-    expect(blocked.is_error).toBeTrue()
-    expect(blockedResult).toMatchObject({ ok: false, code: "repeated_action_failure", retryable: false })
-    expect(firstSnapshot._meta?.repeatGuard.state).toEqual(secondSnapshot._meta?.repeatGuard.state)
-    expect(firstSnapshot._meta?.repeatGuard.state).not.toHaveProperty("snapshot_id")
-  })
-
-  test("circuit-breaks ref-less confirm tools after repeated user declines (#661)", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    let scriptCalls = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_run_script") {
-          scriptCalls += 1
-          throw Object.assign(new Error("user_declined"), { code: "user_declined" })
-        }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
-    await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
-    const blocked = await rawCall(tools, "mcp__browser__run_script", { script: "return 1" })
-    const blockedResult = JSON.parse(String(blocked.content))
-
-    // 连拒两次后第三次不再触达 broker（无真窗可弹）
-    expect(scriptCalls).toBe(2)
-    expect(blockedResult).toMatchObject({ ok: false, code: "repeated_action_failure", retryable: false })
-  })
-
-  test("returns script exceptions as structured tool errors", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => request.method === "list_tabs"
-        ? [tab]
-        : { status: "exception", exception: { message: "Error: boom" } },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    const tool = tools.find((candidate) => candidate.name === "mcp__browser__run_script")!
-    const raw = await tool.call({ script: "throw new Error('boom')" }, { toolUseId: "script-error" } as any)
-    const result = JSON.parse(String(raw.content))
-
-    expect(raw.is_error).toBeTrue()
-    expect(result).toMatchObject({ ok: false, code: "script_exception", message: "Error: boom" })
-  })
-
-  test("reports expired snapshot cursors as retryable and drops the cached snapshot", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") {
-          const cursor = request.params?.cursor
-          if (cursor) throw Object.assign(new Error("stale_snapshot_cursor"), { code: "stale_snapshot_cursor" })
-          return semanticSnapshot(tab.tabId)
-        }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const expired = await rawCall(tools, "mcp__browser__snapshot", { cursor: "expired-cursor" })
-    const result = JSON.parse(String(expired.content))
-    const afterExpiry = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-
-    expect(result).toMatchObject({ ok: false, code: "stale_snapshot_cursor", retryable: true })
-    expect(JSON.parse(String(afterExpiry.content)).code).toBe("stale_target")
-  })
-
-  test("drops the cached snapshot when the user takes over the page", async () => {
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId)
-        if (request.method === "playwright_locator_click") throw Object.assign(new Error("user_takeover_required"), { code: "user_takeover_required" })
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const takeover = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    const afterTakeover = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-
-    expect(JSON.parse(String(takeover.content)).code).toBe("user_takeover_required")
-    // 接管后旧 ref 不可用：缓存快照已清，重试必须先重新观察
-    expect(JSON.parse(String(afterTakeover.content)).code).toBe("stale_target")
-  })
-
-  test("skips the post-action rescan when desktop reports no_detectable_change (#604)", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshotNumber = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId, `snap-${++snapshotNumber}`)
-        if (request.method === "playwright_locator_hover") return { ok: true, effect: { kind: "no_detectable_change" } }
-        if (request.method === "playwright_locator_click") return { ok: true, effect: { kind: "dom_changed" } }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const unchanged = await call(tools, "mcp__browser__hover", { ref: "@e1" })
-    const changed = await call(tools, "mcp__browser__click", { ref: "@e1" })
-
-    // hover 无可检测变化：不重扫，旧 refs 保持有效；click 有变化：正常全量观察
-    expect(calls.filter((request) => request.method === "browser_snapshot")).toHaveLength(2)
-    expect(unchanged.observation_unchanged).toBe(true)
-    expect(unchanged.observation).toBeUndefined()
-    expect(changed.observation.snapshot_id).toBe("snap-2")
-  })
-
-  test("blocks identical retries after executed_unknown, yields after two blocks (#603)", async () => {
-    const calls: Array<{ method: string }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [tab] }
-        if (request.method === "browser_snapshot") return semanticSnapshot(tab.tabId)
-        if (request.method === "playwright_locator_click") {
-          throw Object.assign(new Error("executed_unknown"), { code: "executed_unknown" })
-        }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const first = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    const retryOne = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    const retryTwo = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    const retryThree = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-
-    expect(JSON.parse(String(first.content)).code).toBe("executed_unknown")
-    // 同代际同参盲目重试在发起前拦截,不触达 desktop
-    expect(JSON.parse(String(retryOne.content)).code).toBe("outcome_unknown_retry_blocked")
-    expect(JSON.parse(String(retryTwo.content)).code).toBe("outcome_unknown_retry_blocked")
-    // 连续两次拦截后尊重模型意志放行;页面代际未变,desktop 再次报 executed_unknown
-    expect(JSON.parse(String(retryThree.content)).code).toBe("executed_unknown")
-    const clickDispatches = calls.filter((request) => request.method === "playwright_locator_click")
-    expect(clickDispatches.length).toBe(2)
-  })
-
-  test("clears the unknown-outcome gate once the page generation advances", async () => {
-    const calls: Array<{ method: string; params?: Record<string, unknown> }> = []
-    const tab = agentTab("locked-tab", "thread-1")
-    let snapshotNumber = 0
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push(request)
-        if (request.method === "list_tabs") return { tabs: [{ ...tab, generation: snapshotNumber }] }
-        if (request.method === "browser_snapshot") {
-          // 每次重新观察后代际推进:重新观察到的是世界的新状态(新语境)
-          const current = ++snapshotNumber
-          return { ...semanticSnapshot(tab.tabId, `snap-${current}`), navigation_generation: current }
-        }
-        if (request.method === "playwright_locator_click") {
-          // push 已含本次:首次派发时历史数为 1
-          const priorClicks = calls.filter((entry) => entry.method === "playwright_locator_click").length
-          if (priorClicks <= 1) {
-            throw Object.assign(new Error("executed_unknown"), { code: "executed_unknown" })
-          }
-          return { ok: true, effect: { kind: "dom_changed" } }
-        }
-        throw new Error("unsupported")
-      },
-    } as any
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: new BrowserToolSessionRegistry(), threadId: "thread-1" })
-
-    await call(tools, "mcp__browser__snapshot", {})
-    const first = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    expect(JSON.parse(String(first.content)).code).toBe("executed_unknown")
-
-    // 指引路径:先重新观察——观察到的是动作已生效后的新页面(代际推进),
-    // 同参重试属新语境,闸门放行直达 desktop
-    await call(tools, "mcp__browser__snapshot", {})
-    const retried = await rawCall(tools, "mcp__browser__click", { ref: "@e1" })
-    expect(JSON.parse(String(retried.content)).code).toBeUndefined()
-    expect(calls.filter((entry) => entry.method === "playwright_locator_click").length).toBe(2)
-  })
-})
-
-async function call(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {
-  const result = await rawCall(tools, name, args)
-  return JSON.parse(String(result.content))
-}
-
-async function rawCall(tools: ReturnType<typeof createBrowserMcpTools>, name: string, args: Record<string, unknown>): Promise<any> {
-  const tool = tools.find((candidate) => candidate.name === name)
-  if (!tool) throw new Error(`missing tool ${name}`)
-  return tool.call(args, { toolUseId: `call-${name}` } as any)
-}
-
-function semanticSnapshot(tabId: string, snapshotId = "snap-1") {
-  return {
-    snapshot_id: snapshotId,
-    tab_id: tabId,
-    navigation_generation: 1,
-    tree: '- textbox "Search" [ref=e1]',
-    refs: { e1: { role: "textbox", name: "Search" } },
-  }
-}
-
-function agentTab(tabId: string, ownerThreadId: string): BrowserTabDescriptor {
-  return {
-    tabId,
-    ownerThreadId,
-    profileKind: "agent",
-    backend: "iab",
-    generation: 1,
-    url: "https://example.com",
-    title: tabId,
-    visible: false,
-    surface: null,
-  }
-}
-
-describe("#604① list_tabs 会话级 TTL 缓存", () => {
-  function harness(tabsProvider: () => BrowserTabDescriptor[]) {
-    const calls: Array<{ method: string }> = []
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push({ method: request.method })
-        if (request.method === "create_tab") return { id: `tab-${calls.length}` }
-        if (request.method === "list_tabs") return { tabs: tabsProvider() }
-        throw new Error("unsupported")
-      },
-    } as any
-    const registry = new BrowserToolSessionRegistry()
-    return {
-      calls,
-      registry,
-      tools: createBrowserMcpTools({ broker, sessionRegistry: registry, threadId: "thread-604" }),
-    }
-  }
-
-  test("TTL 内复用缓存：连续两次 list_tabs 只派发一次", async () => {
-    const h = harness(() => [agentTab("tab-1", "thread-604")])
-    await rawCall(h.tools, "mcp__browser__list_tabs", {})
-    await rawCall(h.tools, "mcp__browser__list_tabs", {})
-    expect(h.calls.filter((c) => c.method === "list_tabs")).toHaveLength(1)
-  })
-
-  test("TTL 过期后重新拉取", async () => {
-    const h = harness(() => [agentTab("tab-1", "thread-604")])
-    await rawCall(h.tools, "mcp__browser__list_tabs", {})
-    const session = h.registry.getOrCreate("thread-604") as any
-    session.tabsCache.fetchedAt -= 2000
-    await rawCall(h.tools, "mcp__browser__list_tabs", {})
-    expect(h.calls.filter((c) => c.method === "list_tabs")).toHaveLength(2)
-  })
-
-  test("open 新 tab 后缓存失效，switch_tab 能看见新 tab", async () => {
-    let expanded = false
-    const h = harness(() => {
-      const tabs = [agentTab("tab-1", "thread-604")]
-      if (expanded) tabs.push(agentTab("tab-2", "thread-604"))
-      return tabs
-    })
-    await rawCall(h.tools, "mcp__browser__list_tabs", {})
-    await rawCall(h.tools, "mcp__browser__open", { url: "https://two.example" })
-    expanded = true
-    // open 后缓存必须失效：switch 才能看见 open 带来的新 tab
-    const result = await rawCall(h.tools, "mcp__browser__switch_tab", { tab_id: "tab-2" })
-    expect(JSON.parse(String(result.content)).active_tab_id).toBe("tab-2")
-  })
-
-  test("外部关闭 active tab：reconcile 失配自愈并清缓存重新拉取", async () => {
-    let includeActive = true
-    const h = harness(() => {
-      const tabs = [agentTab("tab-1", "thread-604")]
-      if (includeActive) tabs.push(agentTab("active-gone", "thread-604"))
-      return tabs
-    })
-    await rawCall(h.tools, "mcp__browser__switch_tab", { tab_id: "active-gone" })
-    const before = h.calls.filter((c) => c.method === "list_tabs").length
-    includeActive = false
-    // TTL 外才会重新拉取；此处直接回拨模拟时间流逝
-    ;(h.registry.getOrCreate("thread-604") as any).tabsCache.fetchedAt -= 2000
-    await rawCall(h.tools, "mcp__browser__list_tabs", {})
-    const after = h.calls.filter((c) => c.method === "list_tabs").length
-    expect(after).toBeGreaterThan(before)
-  })
-})
-
-describe("#838② tab 生命周期推送失效", () => {
-  test("invalidateTabsCaches 清空全部会话的 list_tabs 微缓存", () => {
-    const registry = new BrowserToolSessionRegistry()
-    registry.getOrCreate("thread-a").tabsCache = { tabs: [], fetchedAt: Date.now() }
-    registry.getOrCreate("thread-b").tabsCache = { tabs: [], fetchedAt: Date.now() }
-    registry.invalidateTabsCaches()
-    expect(registry.getOrCreate("thread-a").tabsCache).toBeUndefined()
-    expect(registry.getOrCreate("thread-b").tabsCache).toBeUndefined()
-  })
-
-  test("推送失效后 list_tabs 不等 TTL 立刻重新拉取（0 延迟语义）", async () => {
-    const calls: Array<{ method: string }> = []
-    const broker = {
-      listBackends: () => [{ backend: "iab" }],
-      dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-        calls.push({ method: request.method })
-        if (request.method === "list_tabs") return { tabs: [agentTab("tab-1", "thread-838")] }
-        throw new Error("unsupported")
-      },
-    } as any
-    const registry = new BrowserToolSessionRegistry()
-    const tools = createBrowserMcpTools({ broker, sessionRegistry: registry, threadId: "thread-838" })
-    await rawCall(tools, "mcp__browser__list_tabs", {})
-    registry.invalidateTabsCaches()
-    await rawCall(tools, "mcp__browser__list_tabs", {})
-    expect(calls.filter((c) => c.method === "list_tabs")).toHaveLength(2)
-  })
-})
-
-describe("#604① 错误驱动失效", () => {
-  test("broker 报 tab_not_found 即清 tabs 缓存，重试立刻见新列表", async () => {
-    let expanded = false
-    const h = (() => {
-      const calls: Array<{ method: string }> = []
-      const broker = {
-        listBackends: () => [{ backend: "iab" }],
-        dispatch: async (request: { method: string; params?: Record<string, unknown> }) => {
-          calls.push({ method: request.method })
-          if (request.method === "create_tab") return { id: `tab-${calls.length}` }
-          if (request.method === "list_tabs") {
-            const tabs = [agentTab("tab-1", "thread-604e")]
-            if (expanded) tabs.push(agentTab("tab-2", "thread-604e"))
-            return { tabs }
-          }
-          if (request.method === "browser_run_script") throw new Error("tab_not_found")
-          throw new Error("unsupported")
-        },
-      } as any
-      const registry = new BrowserToolSessionRegistry()
-      return {
-        calls,
-        registry,
-        tools: createBrowserMcpTools({ broker, sessionRegistry: registry, threadId: "thread-604e" }),
-        expand: () => { expanded = true },
-      }
-    })()
-
-    await rawCall(h.tools, "mcp__browser__list_tabs", {})
-    await rawCall(h.tools, "mcp__browser__run_script", { script: "1" })
-    // 错误驱动失效已即时清缓存（不必等 TTL 过期）
-    expect(h.registry.getOrCreate("thread-604e").tabsCache).toBeUndefined()
-    const before = h.calls.filter((c) => c.method === "list_tabs").length
-    h.expand()
-    // 刚刷新过的缓存必须被 tab_not_found 失效：下一次立刻看到新列表
-    await rawCall(h.tools, "mcp__browser__switch_tab", { tab_id: "tab-2" })
-    const after = h.calls.filter((c) => c.method === "list_tabs").length
-    expect(after).toBeGreaterThan(before)
-  })
-})
+        : { ok: true },
+    );
+    const tool = toolByName(tools, "tabs_new");
+    const result = await tool.call({ url: "https://example.com/" }, { toolUseId: "tu-1" } as never);
+    expect(commands).toHaveLength(2);
+    expect(commands[0]).toEqual({ method: "newTab" });
+    expect(commands[1]).toEqual({ method: "navigate", tabId: "tab-1", url: "https://example.com/" });
+    const payload = JSON.parse(result.content as string) as Record<string, unknown>;
+    expect(payload.tabId).toBe("tab-1");
+    expect(payload.ok).toBe(true);
+  });
+});

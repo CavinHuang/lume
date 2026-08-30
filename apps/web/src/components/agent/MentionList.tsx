@@ -1,6 +1,6 @@
 import { Fragment, forwardRef, useEffect, useImperativeHandle, useRef, useState, useCallback } from 'react'
 import { cn } from '@/lib/utils'
-import { Bot, File, Globe2, Hash, TerminalSquare, ArrowLeft, Loader2, Package, BookOpen, ListChecks } from 'lucide-react'
+import { Bot, File, Hash, TerminalSquare, ArrowLeft, Loader2, Package, BookOpen, ListChecks } from 'lucide-react'
 import { type MentionItem } from './slash-command-state'
 import { getMcpConfig, getMcpStatus } from '@/lib/desktop-api'
 import { buildMcpServerRows, type McpServerRow, type McpUiStatus } from '@/components/settings/mcp-settings-state'
@@ -14,7 +14,6 @@ interface MentionListProps {
   getWorkspaceSlug?: () => string | null
   /** 选中即执行命令（executeOnSelect）时触发，替代插入 mention 文本 */
   onCommandExecute?: (id: string) => void
-  onBrowserReferenceSelect?: (item: MentionItem) => void
 }
 
 export interface MentionListRef {
@@ -22,7 +21,7 @@ export interface MentionListRef {
 }
 
 export const MentionList = forwardRef<MentionListRef, MentionListProps>(
-  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute, onBrowserReferenceSelect }, ref) {
+  function MentionList({ items, command, trigger = '/', getWorkspaceSlug, onCommandExecute }, ref) {
     const [selectedIndex, setSelectedIndex] = useState(0)
     const [panelMode, setPanelMode] = useState<'commands' | 'mcp-status'>('commands')
     const [mcpRows, setMcpRows] = useState<McpServerRow[]>([])
@@ -84,10 +83,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
       const item = displayItems[index]
       if (!item) return
       if (item.disabled) return
-      if (item.type === 'browser' && item.browserCandidate && onBrowserReferenceSelect) {
-        onBrowserReferenceSelect(item)
-        return
-      }
       if (item.id === 'mcp' && item.type === 'command') {
         setPanelMode('mcp-status')
         setMcpSelectedIndex(0)
@@ -102,7 +97,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
         ...item,
         ...(item.uri ? { occurrenceId: crypto.randomUUID() } : {}),
       })
-    }, [displayItems, command, fetchMcpData, onBrowserReferenceSelect, onCommandExecute])
+    }, [displayItems, command, fetchMcpData, onCommandExecute])
 
     useImperativeHandle(ref, () => ({
       onKeyDown: ({ event }: { event: KeyboardEvent }) => {
@@ -217,7 +212,7 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
     }
 
     const footerLabel = trigger === '@'
-      ? '继续输入以搜索 Agent、连接账户、网页与文件'
+      ? '继续输入以搜索 Agent、连接账户与文件'
       : trigger === '/'
         ? '继续输入以搜索命令、技能与插件'
         : trigger === '#'
@@ -297,8 +292,6 @@ export const MentionList = forwardRef<MentionListRef, MentionListProps>(
 function getMentionSectionLabel(section: MentionItem['section']): string {
   if (section === 'capability') return '动作'
   if (section === 'agent') return 'Agents'
-  if (section === 'browser-tab') return '内置浏览器'
-  if (section === 'chrome-page') return 'Chrome 最近标签'
   if (section === 'project-file') return '项目文件'
   if (section === 'session-file') return '会话文件'
   if (section === 'file') return 'Files'
@@ -315,7 +308,6 @@ function MentionItemIcon({ item }: { item: MentionItem }) {
   if (item.type === 'plugin') return <Package size={16} />
   if (item.type === 'skill') return <BookOpen size={16} />
   if (item.type === 'agent') return <Bot size={16} />
-  if (item.type === 'browser') return <Globe2 size={16} />
   if (item.type === 'file') return <File size={16} />
   if (item.type === 'mcp') return <Hash size={16} />
   if (item.type === 'todo') return <ListChecks size={16} />

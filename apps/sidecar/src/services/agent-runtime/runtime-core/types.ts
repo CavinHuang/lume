@@ -1,7 +1,6 @@
 import type { SDKMessage } from "@lume/agent-sdk";
 import type { AgentSendInput, FileReferenceBinding, RuntimeCodingReport } from "@lume/shared";
 import type { AgentAskUserQuestionRequest } from "@lume/shared";
-import type { AgentBrowserAuthRequest } from "@lume/shared";
 import type { AgentDesktopActionRequest } from "@lume/shared";
 import type { AgentToolPermissionRequest } from "@lume/shared";
 import type { LumeRuntimeEvent } from "@lume/shared";
@@ -12,7 +11,6 @@ export interface AgentRuntimeEmitter {
   onComplete: (payload?: { reason?: "max_turns" | "repeat_guard" | "stopped" }) => void;
   onError: (error: string) => void;
   onAskUserQuestion: (request: AgentAskUserQuestionRequest) => void;
-  onBrowserAuthRequest: (request: AgentBrowserAuthRequest) => void;
   onDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   onToolPermissionRequest: (request: AgentToolPermissionRequest) => void;
   onTodoUpdated?: (state: { todos: { content: string; activeForm: string; status: "pending" | "in_progress" | "completed" }[]; currentActiveForm: string | null }) => void;

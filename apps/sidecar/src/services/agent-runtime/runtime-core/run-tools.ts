@@ -51,7 +51,6 @@ import {
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
-  AgentBrowserAuthRequest,
   AgentDesktopActionRequest,
   AgentSendInput,
   AgentToolPermissionRequest,
@@ -221,7 +220,6 @@ export function buildRuntimeCoreTools(input: {
   emitSdkMessage?: (message: SDKMessage) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
-  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -298,7 +296,6 @@ export function buildRuntimeCoreTools(input: {
     runId: input.runId,
     emitSdkMessage: input.emitSdkMessage,
     emitAskUserQuestion: input.emitAskUserQuestion ?? (() => {}),
-    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitDesktopActionVisualEvent: input.emitRuntimeEvent,
     emitToolPermissionRequest: input.emitToolPermissionRequest ?? (() => {}),
@@ -441,8 +438,7 @@ export function buildRuntimeCoreTools(input: {
             permissionMode,
             emitRuntimeEvent: input.emitRuntimeEvent,
             emitAskUserQuestion: input.emitAskUserQuestion,
-            emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-            emitDesktopActionRequest: input.emitDesktopActionRequest,
+                    emitDesktopActionRequest: input.emitDesktopActionRequest,
             emitToolPermissionRequest: input.emitToolPermissionRequest,
           });
         } catch (error) {
@@ -582,8 +578,7 @@ export function buildRuntimeCoreTools(input: {
           progressReporter,
           permissionMode,
           emitAskUserQuestion: input.emitAskUserQuestion,
-          emitBrowserAuthRequest: input.emitBrowserAuthRequest,
-          emitDesktopActionRequest: input.emitDesktopActionRequest,
+                emitDesktopActionRequest: input.emitDesktopActionRequest,
           emitToolPermissionRequest: input.emitToolPermissionRequest,
         });
       if (runInBackground) {

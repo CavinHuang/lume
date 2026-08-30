@@ -28,7 +28,6 @@ import { WebSearchSettings } from './WebSearchSettings'
 import { VoiceDictationSettings } from './VoiceDictationSettings'
 import { ArchiveSettings } from './ArchiveSettings'
 import { SkillsSettings } from './SkillsSettings'
-import { BrowserSettings } from './BrowserSettings'
 import {
   SETTINGS_NAV_GROUPS,
   SETTINGS_NAV_ITEMS,
@@ -138,7 +137,6 @@ export function SettingsView() {
           {tab === 'models' && <AgentSettings />}
           {tab === 'agents' && <AgentsSettings />}
           {tab === 'skills' && <SkillsSettings />}
-          {tab === 'browser' && <BrowserSettings onOpenSkills={() => setTab('skills')} />}
           {tab === 'workspaces' && <WorkspacesSettings />}
           {tab === 'memory' && <MemorySettings />}
           {tab === 'reading' && <ReadingSettings />}

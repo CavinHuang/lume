@@ -443,7 +443,6 @@ describe("model-selection", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
-      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -491,7 +490,6 @@ describe("model-selection", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
-      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     });
 
@@ -555,7 +553,6 @@ describe("model-selection", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
-      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined,
     });
 
@@ -609,7 +606,6 @@ describe("model-selection", () => {
       onError: () => undefined,
       onTitleUpdated: () => undefined,
       onAskUserQuestion: () => undefined,
-      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined,
     });
 

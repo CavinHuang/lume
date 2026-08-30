@@ -40,16 +40,6 @@ describe('AgentMessageQueueList 契约(平铺浮层)', () => {
     expect(html).toContain('重试')
   })
 
-  test('无文本的浏览器附件行显示附件摘要', () => {
-    const html = renderToStaticMarkup(
-      <AgentMessageQueueList
-        snapshot={snapshotWith([{ id: 'q-rich', text: '', browserAttachments: [{ id: 'b1' } as never] }])}
-        onReorder={noopReorder} onRemove={() => undefined} onEdit={() => undefined} onPromoteToGuidance={() => undefined}
-      />,
-    )
-    expect(html).toContain('浏览器注释')
-  })
-
   test('interrupted 时渲染 Resume 横幅', () => {
     const html = renderToStaticMarkup(
       <AgentMessageQueueList
@@ -62,10 +52,10 @@ describe('AgentMessageQueueList 契约(平铺浮层)', () => {
     expect(html).toContain('继续')
   })
 
-  test('富 steer:带浏览器附件的行引导按钮可点(非 disabled)', () => {
+  test('富 steer 行引导按钮可点(非 disabled)', () => {
     const html = renderToStaticMarkup(
       <AgentMessageQueueList
-        snapshot={snapshotWith([{ id: 'q-rich', text: '改这里', browserAttachments: [{ id: 'b1' } as never] }])}
+        snapshot={snapshotWith([{ id: 'q-rich', text: '改这里' }])}
         onReorder={noopReorder} onRemove={() => undefined} onEdit={() => undefined} onPromoteToGuidance={() => undefined}
       />,
     )
@@ -94,11 +84,10 @@ describe('AgentMessageQueueList 契约(平铺浮层)', () => {
             { id: 'f2', filename: 'b.txt', mediaType: 'text/plain' } as never,
           ],
           commentAttachments: [{ id: 'c1' } as never],
-          browserAttachments: [{ id: 'b1' } as never],
         }])}
         onReorder={noopReorder} onRemove={() => undefined} onEdit={() => undefined} onPromoteToGuidance={() => undefined}
       />,
     )
-    expect(html).toContain('2 文件 · 1 评论 · 1 浏览器注释')
+    expect(html).toContain('2 文件 · 1 评论')
   })
 })

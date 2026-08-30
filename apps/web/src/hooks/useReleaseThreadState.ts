@@ -1,7 +1,6 @@
 import * as React from 'react'
 import { useSetAtom } from 'jotai'
 import {
-  agentBrowserAttachmentsAtom,
   agentDiffCommentDraftsAtom,
   agentInputDraftAtom,
   agentInputHistoryAtom,
@@ -34,7 +33,7 @@ function removeKey<T>(prev: Record<string, T>, threadId: string): Record<string,
  * 所有移除路径必须走这里而不是手拼子集：draft/history 是 atomWithStorage
  * （localStorage，跨重启残留），runtimeEvents/messagesCache 是会话期内存驻留，
  * 漏清任何一项都会孤儿化。恢复路径无需对称操作——重开线程时 hydrate 会重建
- * （permissionModes/diffCommentDrafts/browserAttachments 为草稿类数据，放弃
+ * （permissionModes/diffCommentDrafts 为草稿类数据，放弃
  * 与 draft 同语义；内存状态残留反而会让恢复线程显示陈旧的运行中/Resume 横幅）。
  */
 export function useReleaseThreadState() {
@@ -50,7 +49,6 @@ export function useReleaseThreadState() {
   const setPlanModePhase = useSetAtom(agentPlanModePhaseAtom)
   const setThreadPermissionModes = useSetAtom(agentThreadPermissionModesAtom)
   const setDiffCommentDrafts = useSetAtom(agentDiffCommentDraftsAtom)
-  const setBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
   const setQueuedAttachmentPreviewUrls = useSetAtom(queuedAttachmentPreviewUrlAtom)
   return React.useCallback(
     (threadId: string) => {
@@ -65,7 +63,6 @@ export function useReleaseThreadState() {
       setPlanModePhase((prev) => removeKey(prev, threadId))
       setThreadPermissionModes((prev) => removeKey(prev, threadId))
       setDiffCommentDrafts((prev) => removeKey(prev, threadId))
-      setBrowserAttachments((prev) => removeKey(prev, threadId))
       // 队列删除时顺带收集该线程排队消息的附件 id，用于下方 revoke 预览 objectURL。
       // updater 内只收集不 revoke（保持纯净）；id 重复 push 无害（下方按 prev 幂等去重）。
       const removedAttachmentIds: string[] = []
@@ -98,7 +95,7 @@ export function useReleaseThreadState() {
       setDraftState, setHistoryState, setRuntimeEvents, setStreamingStates, setRuntimeStatus,
       setPendingInteractive, setMessageQueues, setQueueInterrupted, setSubagentRuns,
       setPlanModePhase, setThreadPermissionModes,
-      setDiffCommentDrafts, setBrowserAttachments, setQueuedAttachmentPreviewUrls,
+      setDiffCommentDrafts, setQueuedAttachmentPreviewUrls,
     ],
   )
 }

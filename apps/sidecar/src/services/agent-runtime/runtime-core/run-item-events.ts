@@ -45,11 +45,6 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       : Array.isArray(metadata?.commentAttachments)
         ? metadata.commentAttachments
         : undefined;
-    const browserAttachments = Array.isArray(run.input.browserAttachments)
-      ? run.input.browserAttachments
-      : Array.isArray(metadata?.browserAttachments)
-        ? metadata.browserAttachments
-        : undefined;
     events.push({
       id: `${run.runId}:message.user.submitted`,
       type: "message.user.submitted",
@@ -59,7 +54,6 @@ export function projectRunStateToRuntimeEvents(run: LumeRunState): LumeRuntimeEv
       text: userMessage,
       ...(attachments && attachments.length > 0 ? { attachments } : {}),
       ...(commentAttachments?.length ? { commentAttachments } : {}),
-      ...(browserAttachments?.length ? { browserAttachments } : {}),
       ...(typeof metadata?.messageId === "string" ? { messageId: metadata.messageId } : {}),
       ...(typeof metadata?.versionGroupId === "string" ? { versionGroupId: metadata.versionGroupId } : {}),
       ...(typeof metadata?.versionIndex === "number" ? { versionIndex: metadata.versionIndex } : {}),

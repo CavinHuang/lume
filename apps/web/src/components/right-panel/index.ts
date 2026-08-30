@@ -1,4 +1,3 @@
-export * from './BrowserRightPanelTab'
 export * from './PlaceholderRightPanelTab'
 export * from './FilesRightPanelWorkspace'
 export * from './RightPanelFilePreview'

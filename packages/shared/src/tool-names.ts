@@ -1,11 +1,3 @@
-/** 内置浏览器 MCP 工具的 server id 与注入名前缀（mcp__browser__*），工具名单的唯一权威来源 */
-export const BROWSER_MCP_SERVER_ID = "browser";
-export const BROWSER_TOOL_NAME_PREFIX = `mcp__${BROWSER_MCP_SERVER_ID}__`;
-
-export function isBuiltinBrowserToolName(toolName: string): boolean {
-  return toolName.startsWith(BROWSER_TOOL_NAME_PREFIX);
-}
-
 export function canonicalizeAgentToolName(toolName: string): string {
   const normalized = toolName.trim().toLowerCase();
   switch (normalized) {

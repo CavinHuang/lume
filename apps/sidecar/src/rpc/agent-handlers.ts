@@ -184,7 +184,6 @@ const log = createLogger("agent-handlers");
 
 interface AgentHandlersContext {
   writeNotification: NotificationWriter;
-  notifyBrowserPluginState?: () => void;
   planModePhaseTracker: PlanModePhaseTracker;
   notifyPlanModePhaseChange: (
     threadId: string,
@@ -1167,7 +1166,6 @@ export function createAgentHandlers(
     ...createSkillHandlers(),
     ...createPluginHandlers({
       writeNotification: context.writeNotification,
-      notifyBrowserPluginState: context.notifyBrowserPluginState,
     }),
     ...createFileHandlers({
       writeNotification: context.writeNotification,

@@ -12,8 +12,6 @@ import { ImageGenResult } from './image-gen-result'
 import { TodoResult } from './todo-result'
 import { DefaultResult } from './default-result'
 import { PlanningTodoResult } from './planning-todo-result'
-import { BROWSER_TOOL_PREFIX } from '../message-blocks/tool-summary'
-import { BrowserResult } from './browser-result'
 
 interface ToolResultRendererProps {
   toolName: string
@@ -24,7 +22,6 @@ interface ToolResultRendererProps {
 
 export function ToolResultRenderer({ toolName, input, result, imagePresentation }: ToolResultRendererProps): ReactNode {
   // #601:内置浏览器工具走专属渲染——截图内联为真图、snapshot 折叠、错误高亮
-  if (toolName.startsWith(BROWSER_TOOL_PREFIX)) return <BrowserResult input={input} result={result} />
   switch (toolName) {
     case 'Bash': return <BashResult input={input} result={result} />
     case 'Read': return <ReadResult input={input} result={result} />

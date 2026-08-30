@@ -34,7 +34,6 @@ export * from "./plugin-audit";
 export * from "./plugin-market";
 export * from "./computer-use";
 export * from "./logging";
-export * from "./browser-runtime";
 export * from "./agent-island";
 export * from "./suggestion";
 export * from "./persona";

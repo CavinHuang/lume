@@ -61,12 +61,6 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'data_export_zip',
   'data_migrate_to_dir',
   'data_apply_migration',
-  'browser_runtime',
-  'browser_settings:get',
-  'browser_settings:update',
-  'browser_import:discover',
-  'browser_import:start',
-  'browser_import:cancel',
   'connection_vault_status',
   'connection_vault_setup',
   'connection_vault_unlock',
@@ -86,6 +80,18 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'voice_dictation_commit_cursor',
   'voice_dictation_hide_indicator',
   'desktop_flash_window',
+  // 内嵌浏览器面板：renderer→main invoke 通道名（apps/desktop/src/browser/ipc.ts
+  // BROWSER_VIEW_IPC_CHANNELS 单源；main dispatchCommand 前缀转发到
+  // BrowserIpc.handleRendererCommand）。
+  'lume:browser-view-attach-guest',
+  'lume:browser-view-detach-guest',
+  'lume:browser-view-update-viewport',
+  'lume:browser-view-screenshot-surface-ready',
+  'lume:browser-view-close-tab-from-renderer',
+  'lume:browser-view-report-residency',
+  'lume:browser-view-suspend-ready',
+  'lume:browser-view-ensure-resident',
+  'lume:browser-view-restore-tabs',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -95,12 +101,24 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'window-state',
   'tray-action',
   'logs:live',
-  'browser:event',
   'agent:island:state',
   'voice-dictation:state',
   'voice-dictation:transcript',
   'voice-dictation:toggle',
   'voice-dictation:indicator-toggle',
+  // 内嵌浏览器面板：main→renderer 事件通道名（main 侧以 `lume:event:<通道名>` send，
+  // preload listen 同名加前缀；来源 apps/desktop/src/browser/core/guest-manager.ts
+  // BROWSER_VIEW_CHANNELS + screenshot-surface 表面通道 + open-browser-url）。
+  'lume:browser-view-ready',
+  'lume:browser-view-operation',
+  'lume:browser-view-visibility',
+  'lume:browser-view-viewport-changed',
+  'lume:browser-view-screenshot-surface-prepare',
+  'lume:browser-view-screenshot-surface-release',
+  'lume:browser-view-close-tab',
+  'lume:browser-view-suspend',
+  'lume:browser-view-restore',
+  'lume:open-browser-url',
 ])
 
 export function validateRendererInvokeCommand(command) {

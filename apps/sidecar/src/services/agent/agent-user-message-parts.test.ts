@@ -28,15 +28,15 @@ describe("normalizeAgentUserMessage", () => {
 
   test("deduplicates refs and lets a whole plugin cover its skill refs", () => {
     const result = normalizeAgentUserMessage({
-      userMessage: "lume-skill://browser:inspect lume-plugin://browser",
+      userMessage: "lume-skill://weather:inspect lume-plugin://weather",
       messageParts: [
-        { type: "capability_ref", occurrenceId: "ref-1", uri: "lume-skill://browser:inspect" },
+        { type: "capability_ref", occurrenceId: "ref-1", uri: "lume-skill://weather:inspect" },
         { type: "text", text: " " },
-        { type: "capability_ref", occurrenceId: "ref-2", uri: "lume-plugin://browser" }
+        { type: "capability_ref", occurrenceId: "ref-2", uri: "lume-plugin://weather" }
       ]
     });
     expect(result.capabilityReferences.map((reference) => reference.uri)).toEqual([
-      "lume-plugin://browser"
+      "lume-plugin://weather"
     ]);
   });
 

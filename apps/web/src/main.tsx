@@ -17,7 +17,6 @@ import './index.css'
 import 'katex/dist/katex.min.css'
 import './styles/live-markdown.css'
 import { PierreDiffProvider } from './components/diff/PierreDiffProvider'
-import { BrowserWebviewPoolProvider } from './components/browser/BrowserWebviewPool'
 
 // Release 构建无 DevTools：先把 console.error/warn 桥接进统一日志，再注册全局未处理拒绝监听。
 installConsoleBridge()
@@ -53,9 +52,7 @@ async function bootstrap() {
   ReactDOM.createRoot(document.getElementById('root')!).render(
     <React.StrictMode>
       <PierreDiffProvider>
-        <BrowserWebviewPoolProvider>
-          <App />
-        </BrowserWebviewPoolProvider>
+        <App />
       </PierreDiffProvider>
     </React.StrictMode>
   )

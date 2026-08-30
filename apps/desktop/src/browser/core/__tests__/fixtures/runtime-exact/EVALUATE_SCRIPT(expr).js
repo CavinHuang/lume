@@ -1,0 +1,2 @@
+(function(){try{var __v=(function(){ return (1+1
+); })();var __s;try{__s=JSON.stringify(__v);}catch(e){__s=undefined;}if(typeof __s==='string')return {ok:true,kind:'json',data:__s};return {ok:true,kind:'str',data:String(__v)};}catch(err){return {ok:false,message:(err&&err.message)?String(err.message):String(err)};}})()
