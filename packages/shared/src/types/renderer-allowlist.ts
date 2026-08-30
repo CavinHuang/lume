@@ -6,13 +6,12 @@
  * - 取全部 *_IPC_CHANNELS 常量（PLUGIN_PACKAGE_PRIVILEGED 与 AGENT_ISLAND 除外——
  *   前者主进程专属，后者 island 窗口专用通道）；
  * - 排除通知类 key（CHANGED/REMINDER_DUE/EVENTS，renderer 经事件通道订阅而非 RPC 调用）；
- * - 排除 privileged 通道与 BROWSER_IPC_CHANNELS 成员（走桌面专属入口）。
+ * - 排除 privileged 通道(桌面专属入口)。
  * （#528 清理：RENDERER_BLOCKED_CHANNEL_VALUES 黑名单已随 copy-folder 两条死通道一并删除。）
  * 新增通道常量时需同步本文件的 source 列表；契约测试是漏配的绊线（会红）。
  */
 import { AGENT_IPC_CHANNELS } from "./agent"
 import { AUTOMATION_IPC_CHANNELS } from "./automation"
-import { BROWSER_IPC_CHANNELS } from "./browser-runtime"
 import { CHANNEL_IPC_CHANNELS } from "./channel"
 import { DESKTOP_CONTEXT_IPC_CHANNELS } from "./computer-use"
 import { GENERAL_SETTINGS_IPC_CHANNELS } from "./general-settings"
@@ -56,7 +55,6 @@ export const NOTIFY_ONLY_CHANNEL_VALUES: ReadonlySet<string> = new Set([
   "reading:noteGenFailed",
 ])
 
-const BROWSER_CHANNEL_VALUES = new Set<string>(Object.values(BROWSER_IPC_CHANNELS))
 
 const PUBLIC_CHANNEL_SOURCES = [
   AGENT_IPC_CHANNELS,
@@ -88,7 +86,6 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
         typeof value === "string" &&
         !NOTIFICATION_CHANNEL_KEYS.has(key) &&
         !value.includes(":privileged-") &&
-        !BROWSER_CHANNEL_VALUES.has(value) &&
         !NOTIFY_ONLY_CHANNEL_VALUES.has(value),
     )
     .map(([, value]) => value),
@@ -96,17 +93,12 @@ export const SHARED_RENDERER_SIDECAR_METHODS: ReadonlySet<string> = new Set(
 
 /**
  * 派生集之外的本地增量（desktop 侧全量消费，契约测试双向 == 断言）：
- * - browser:* —— BROWSER_IPC_CHANNELS 走桌面专属入口，被派生规则排除的四个只读 method；
  * - lume-config:changed —— CHANGED 通知 key 被派生规则排除，但 renderer 经 sidecar_call 订阅；
  * - healthcheck —— runtime IPC_CHANNELS 之外的裸方法。
  * （F5 清理曾删除 agent:revert-coding-file / revert-coding-run / rewind-coding-turn
  * 死条目；其后快照还原功能(#572)为前两者接入了真实 handler，经 sidecar_call 正常放行。）
  */
 export const LOCAL_RENDERER_SIDECAR_METHODS: readonly string[] = [
-  "browser:backends",
-  "browser:reference-candidates",
-  "browser:create-reference-grant",
-  "browser:revoke-reference-grant",
   "lume-config:changed",
   "healthcheck",
 ]

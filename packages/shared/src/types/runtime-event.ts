@@ -1,4 +1,12 @@
-import type { AgentBrowserAttachment, AgentCapabilityReferenceView, AgentDiffCommentAttachment, AgentMessageAttachmentInput, AgentUserMessagePart, FileRef, FileReferenceBinding, FileReferenceProtocolVersion } from "./agent";
+import type {
+  AgentDiffCommentAttachment,
+  AgentMessageAttachmentInput,
+  AgentUserMessagePart,
+  FileReferenceBinding,
+  FileReferenceProtocolVersion,
+  AgentCapabilityReferenceView,
+  FileRef,
+} from "./agent";
 import type { DesktopActionKind, DesktopActionStatus } from "./computer-use";
 import type { ImPeerKind, ImProvider } from "./im";
 import type { MemoryClaim } from "./memory";
@@ -88,7 +96,6 @@ export interface UserMessageSubmittedRuntimeEvent extends RuntimeEventBase {
   text: string;
   attachments?: AgentMessageAttachmentInput[];
   commentAttachments?: AgentDiffCommentAttachment[];
-  browserAttachments?: AgentBrowserAttachment[];
   messageId?: string;
   versionGroupId?: string;
   versionIndex?: number;

@@ -9,7 +9,6 @@ export * from "./tool-names";
 export * from "./afterglow";
 export * from "./data/model-meta";
 export * from "./data/catalog-mapping";
-export * from "./browser-api-registry";
 export * from "./agent-island-projections";
 export * from "./coding-revert-summary";
 export * from "./stable-serialize";
