@@ -183,12 +183,17 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   }, [])
 
   // 卸载时清空会话焦点，避免 Agent 带着已关闭的笔记上下文运行。
-  useEffect(() => () => {
-    aliveRef.current = false
-    const thread = threadRef.current
-    const vault = vaultPathRef.current
-    if (!thread || !vault) return
-    void setObsidianVaultFocus(thread, vault, null).catch(() => undefined)
+  // setup 中重置存活标记：StrictMode dev 双挂载（同一实例 ref 保留）下
+  // 第二次挂载的焦点上报不被上一次 cleanup 永久关闭。
+  useEffect(() => {
+    aliveRef.current = true
+    return () => {
+      aliveRef.current = false
+      const thread = threadRef.current
+      const vault = vaultPathRef.current
+      if (!thread || !vault) return
+      void setObsidianVaultFocus(thread, vault, null).catch(() => undefined)
+    }
   }, [])
 
   // 快照恢复的笔记重新上报会话焦点：卸载时焦点已被清理，不重报则
@@ -236,6 +241,8 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
       }
       return list
     } catch (cause) {
+      // 已切换到其他 vault：旧 vault 的失败列表同样不得清空新面板的文件树。
+      if (vaultPathRef.current !== path) return []
       setEntries([])
       toast.error(cause instanceof Error ? cause.message : '无法读取 Vault 文件列表')
       return []
@@ -251,18 +258,21 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
     // 但不得回写 UI 基线，否则会把新文件的草稿当作旧文件的新基线造成覆盖。
     const savingPath = selected.path
     const savingVault = vault
+    // 基线以调用时刻的草稿为准：await 之后的新键入不计入已保存基线，
+    // dirty 保持为真让自动保存补存末段内容。
+    const savingContent = draftRef.current
     const stale = (): boolean => selectedFileRef.current?.path !== savingPath || vaultPathRef.current !== savingVault
     const flight = (async (): Promise<void> => {
       try {
         const result = await writeObsidianVaultFile({
           vaultPath: vault,
           relativePath: selected.path,
-          content: draftRef.current,
+          content: savingContent,
           expectedSha256: selected.read.sha256,
         })
         if (stale()) return
         if (result.ok) {
-          setSelectedFile({ path: selected.path, read: { relativePath: result.relativePath, content: draftRef.current, sha256: result.sha256, modifiedAt: result.modifiedAt } })
+          setSelectedFile({ path: selected.path, read: { relativePath: result.relativePath, content: savingContent, sha256: result.sha256, modifiedAt: result.modifiedAt } })
           setConflict(false)
           void loadFiles(vault)
           if (!silent) toast.success('已保存到 Vault')
@@ -303,9 +313,11 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   }, [saveDraft])
 
   const flushPendingSave = useCallback(async (): Promise<void> => {
-    // 在途保存等待其落盘（切换文件不丢末段键入）；空闲时立即触发一次保存。
+    // 在途保存等待其落盘后补存一次：flight 期间的新键入不在已落盘 payload 里，
+    // 此时 dirty 仍为真，再触发一次即可不丢末段内容。
     if (inFlightSaveRef.current) {
       await inFlightSaveRef.current
+      await saveDraft({ silent: true })
       return
     }
     await saveDraft({ silent: true })
