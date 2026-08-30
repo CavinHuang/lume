@@ -224,6 +224,7 @@ export function buildImRunCardSession(input: BuildImRunCardSessionInput): ImRunC
       unsubRuntimeStatus();
       // 未曾开过卡（无任何内容事件即终态）：无需建空卡
       if (!opening) {
+        stream.close();
         return;
       }
       stream.apply(finishEventOf(status));

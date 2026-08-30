@@ -75,13 +75,23 @@ describe("mergeImMessageBatch", () => {
     expect(merged.text).toBe("张三: 帮我看看\n\nuser-b: 收到");
   });
 
+  test("群聊仅有显示名时仍按不同发送者分别归因", () => {
+    const merged = mergeImMessageBatch([
+      msg({ peerKind: "group", text: "第一条", senderName: "张三" }),
+      msg({ peerKind: "group", text: "第二条", senderName: "李四" })
+    ]);
+    expect(merged.text).toBe("张三: 第一条\n\n李四: 第二条");
+    expect(merged.senderId).toBeUndefined();
+  });
+
   test("群聊单发送者保持原语义（senderId 保留）", () => {
     const merged = mergeImMessageBatch([
-      msg({ peerKind: "group", text: "第一条", senderId: "user-a" }),
-      msg({ peerKind: "group", text: "第二条", senderId: "user-a" })
+      msg({ peerKind: "group", text: "第一条", senderId: "user-a", senderName: "张三" }),
+      msg({ peerKind: "group", text: "第二条", senderId: "user-a", senderName: "张三" })
     ]);
     expect(merged.text).toBe("第一条\n\n第二条");
     expect(merged.senderId).toBe("user-a");
+    expect(merged.senderName).toBe("张三");
   });
 
   test("单条也剥 messageId（已见标记归管线管）", () => {
@@ -346,6 +356,40 @@ describe("createImInboundPipeline", () => {
     // 超时释放唯一槽位后，其他会话可以继续路由
     pipeline.enqueue(msg({ peerId: "u-ok", text: "正常", messageId: "ok1" }));
     await waitFor(() => routed.length === 1 && routed[0]?.peerId === "u-ok");
+  });
+
+  test("运行超时后同会话仍保持串行，底层晚成功后才处理新消息", async () => {
+    const gate = deferred<{ threadId: string }>();
+    const routed: string[] = [];
+    const seenIds = new Set<string>();
+    const pipeline = createImInboundPipeline({
+      quietWindowMs: 5,
+      runTimeoutMs: 20,
+      routeMessage: async (message) => {
+        routed.push(message.text);
+        if (routed.length === 1) return gate.promise;
+        return { threadId: "next-thread" };
+      },
+      hasSeen: (_provider, _accountId, messageId) => seenIds.has(messageId),
+      remember: (_provider, _accountId, messageId) => {
+        seenIds.add(messageId);
+      }
+    });
+
+    const first = pipeline.enqueue(msg({ text: "首条", messageId: "serial-1" }));
+    await expect(first).resolves.toBeUndefined();
+
+    const second = pipeline.enqueue(msg({ text: "后续", messageId: "serial-2" }));
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    expect(routed).toEqual(["首条"]);
+
+    gate.resolve({ threadId: "late-thread" });
+    await expect(second).resolves.toBeUndefined();
+    await waitFor(() => routed.length === 2);
+
+    await expect(pipeline.enqueue(msg({ text: "首条重投", messageId: "serial-1" }))).resolves.toBeUndefined();
+    await new Promise((resolve) => setTimeout(resolve, 15));
+    expect(routed).toEqual(["首条", "后续"]);
   });
 
   test("运行失败结束后，阻塞期累积的消息在重新静默窗口后重试", async () => {

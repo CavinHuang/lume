@@ -1,3 +1,4 @@
+import { Loader2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -21,6 +22,9 @@ interface ConfirmDialogProps extends ConfirmDialogOptions {
   onOpenChange: (open: boolean) => void
   onConfirm: () => void
   onSecondary?: () => void
+  /** 进行中置真：禁用全部按钮并在确认键上显示 spinner，阻止重复提交与误关。 */
+  loading?: boolean
+  loadingLabel?: string
 }
 
 export function ConfirmDialog({
@@ -33,31 +37,36 @@ export function ConfirmDialog({
   onOpenChange,
   onConfirm,
   onSecondary,
+  loading = false,
+  loadingLabel,
 }: ConfirmDialogProps) {
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={(next) => { if (!loading) onOpenChange(next) }}>
       <DialogContent className="sm:max-w-md" showCloseButton={false}>
         <DialogHeader>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription>{description}</DialogDescription>
         </DialogHeader>
         <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
+          <Button variant="outline" disabled={loading} onClick={() => onOpenChange(false)}>
             取消
           </Button>
           {secondaryLabel && onSecondary && (
-            <Button variant="outline" onClick={onSecondary}>
+            <Button variant="outline" disabled={loading} onClick={onSecondary}>
               {secondaryLabel}
             </Button>
           )}
           <Button
             variant={destructive ? 'destructive' : 'default'}
+            disabled={loading}
             onClick={() => {
               onConfirm()
-              onOpenChange(false)
+              // loading 语义下由父层在异步完成后关窗，让 spinner 真正可见。
+              if (!loading) onOpenChange(false)
             }}
           >
-            {confirmLabel}
+            {loading && <Loader2 className="size-3.5 animate-spin" />}
+            {loading && loadingLabel ? loadingLabel : confirmLabel}
           </Button>
         </DialogFooter>
       </DialogContent>

@@ -7,7 +7,7 @@ import type {
 } from "../provider-registry";
 import { registerImProvider } from "../provider-registry";
 import { createOpenClawWeixinWorker } from "./openclaw-weixin-worker";
-import { createOpenClawWeixinApi, OpenClawWeixinAuthError } from "./openclaw-weixin-api";
+import { createOpenClawWeixinApi, isOpenClawWeixinTransientError } from "./openclaw-weixin-api";
 import { sendImSegments, splitImMessage } from "../outbound-segment";
 import { uploadMediaToWeixinCdn } from "./openclaw-weixin-cdn";
 import { createLogger } from "../../infra/logger";
@@ -45,7 +45,7 @@ async function sendText(input: ImSendInput): Promise<ImSendResult> {
         return {
           ok: false,
           error: error instanceof Error ? error.message : String(error),
-          transient: !(error instanceof OpenClawWeixinAuthError),
+          transient: isOpenClawWeixinTransientError(error),
         };
       }
     });
