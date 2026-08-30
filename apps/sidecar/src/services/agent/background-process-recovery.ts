@@ -137,7 +137,10 @@ function scanPersistedProcessJobs(): ProcessJob[] {
 }
 
 export function persistTerminalProcessJobNotification(job: ProcessJob): void {
+  // notified/notificationDeliveredAt 已置位说明通知权已被消费(如撤销守卫预消费):
+  // 恢复补投不得绕过该闸把过期结果再注入线程(审查 P1)
   if (!job.threadId || job.status === "running" || job.continuationConsumedAt) return;
+  if (job.notified || job.notificationDeliveredAt) return;
   const thread = getAgentThreadMeta(job.threadId);
   if (!thread || thread.status === "trashed") return;
 

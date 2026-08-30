@@ -26,9 +26,10 @@ import { isReadOnlyShellInput } from '../utils/shell-read-only.js'
 import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-sandbox.js'
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
-// 显式后台任务的落盘上限:后台长任务(服务器/watcher)的日志量级与前台命令完全
-// 不同,50MB 超限即杀会让长驻任务静默死掉。放宽到 1GB,保留上限作为失控兜底
-// (超限仍记 output_limit 并终止进程)。
+// 后台档落盘上限:durable 任务(spec 恒为此值,天然可转后台)与已转后台的
+// direct 任务适用。后台长任务(服务器/watcher)日志量级与前台完全不同,50MB
+// 超限即杀会让长驻任务静默死掉;保留上限作为失控兜底(超限仍记 output_limit
+// 并终止)。注意 durable worker 对每个字节双写(合并流+单流),实际磁盘峰值约 2GB。
 const BACKGROUND_MAX_OUTPUT_BYTES = 1024 * 1024 * 1024
 const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
@@ -125,7 +126,7 @@ export const BashTool = defineTool({
     type: 'object',
     properties: {
       command: { type: 'string', description: 'The shell command to execute. Use one shell dialect per command; on Windows without configured POSIX Bash, prefer PowerShell syntax and do not use cmd.exe or POSIX-only redirection.' },
-      timeout: { type: 'number', description: 'Optional timeout in milliseconds (max 600000). When omitted the command runs without a process timeout.' },
+      timeout: { type: 'number', description: 'Optional foreground budget in milliseconds (max 600000). A command still running when the budget expires continues in the background without a kill deadline; timeout never terminates backgrounded commands.' },
       description: { type: 'string', description: 'Short description for background task tracking' },
       run_in_background: { type: 'boolean', description: 'Run the command in the background and return a task ID immediately' },
       purpose: { type: 'string', description: 'Optional execution purpose, e.g. verification' },
@@ -142,16 +143,12 @@ export const BashTool = defineTool({
   },
   async call(input, context) {
     const command = String(input.command)
-    // #381:未显式传 timeout 不设进程超时——前台等待只有 15s 即转后台,默认
-    // 120s 的唯一生效点是击杀后台长任务(dev server/watcher),与"continue in
-    // the background"语义矛盾;显式 timeout 仍尊重(上限 600s)。
+    // #381+:timeout 是"前台等待/击杀预算",不是后台 deadline——预算内跑完则
+    // 前台返回;超预算转后台后命令免于击杀(对齐 ZCode 转后台即 timeoutMs:0),
+    // 无论显式还是自动转后台。后台长任务的唯一兜底是输出上限与显式 ProcessStop。
     const timeoutMs = input.timeout === undefined
       ? undefined
       : Math.min(Number(input.timeout), 600_000)
-    // 显式 run_in_background 的命令是 detached 的:timeout 只表达"前台愿意
-    // 等多久",不再作为后台击杀 deadline——`run_in_background + timeout` 组合
-    // 否则会杀掉本该长驻的 dev server/watcher(与 #381 同一矛盾,本改动补完
-    // 显式 timeout 这一半)。自动转后台路径不受影响:timeout 仍是工作 deadline。
     const commandTimeoutMs = input.run_in_background === true ? undefined : timeoutMs
     const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : undefined
     const verificationError = purpose?.toLowerCase() === 'verification'
@@ -200,6 +197,12 @@ export const BashTool = defineTool({
     const task = await startShellTask({ command, timeoutMs: commandTimeoutMs, purpose, context, outputLimitBytes: resolveOutputLimitBytes(input) })
     if (input.run_in_background) return promoteToBackground(task, input.description, context)
 
+    // 击杀 deadline 策略(对齐 ZCode"预算到期转后台而非击杀"):
+    // - 自动转后台期限 = min(timeout, 15s):timeout<15s 时到点转后台,与 ZCode
+    //   budget=timeout 行为一致(旧行为是前台击杀,与 ZCode 相反);
+    // - sleep 刻意等待分支才武装精确的命令击杀;转后台即清除(promote 咽喉统一处理)。
+    const autoBackgroundDeadlineMs = Math.min(commandTimeoutMs ?? AUTO_BACKGROUND_MS, AUTO_BACKGROUND_MS)
+
     // 手动转后台:前台等待期内的 durable 任务按 toolUseId 注册,宿主可经
     // RPC(agent:promote-shell-background)触发 promote;触发后 call() 立即
     // 以后台回执返回,命令与完成通知链路照常由 promoteToBackground 接管。
@@ -215,8 +218,21 @@ export const BashTool = defineTool({
           activeForegroundShellTasks.delete(foregroundToolUseId)
           return Promise.resolve(promoteToBackground(task, input.description, context, false, true))
             .then((result) => { resolveManualPromotion!(result) })
+            .catch((error: unknown) => {
+              resolveManualPromotion!({
+                type: 'tool_result',
+                tool_use_id: '',
+                content: `Failed to move the command to the background: ${error instanceof Error ? error.message : String(error)}`,
+                is_error: true,
+              })
+            })
         },
       })
+    }
+    // sleep 刻意等待:立即武装精确的命令击杀(不受 2s 进度竞速窗口推迟);
+    // 非 sleep 命令不武装——预算到期走转后台,转后台即免死
+    if (commandTimeoutMs !== undefined && isDeliberateWaitCommand(command)) {
+      task.armCommandKill(commandTimeoutMs)
     }
     try {
       // Promise.race 会把 undefined 经 Promise.resolve 立即兑现——manualPromotion
@@ -251,15 +267,20 @@ export const BashTool = defineTool({
 
       const completion = await raceForeground([
         task.done,
-        delay(Math.max(0, AUTO_BACKGROUND_MS - PROGRESS_THRESHOLD_MS)).then(() => null),
+        delay(Math.max(0, autoBackgroundDeadlineMs - PROGRESS_THRESHOLD_MS)).then(() => null),
       ])
       if (isManualPromotionResult(completion)) return completion
       if (completion) return finishForegroundTask(task, completion)
+      // 原子认领:若手动 promote 恰在此窗口触发,注册表条目已被摘除——让位给
+      // manualPromotion,避免双 promote 重复发 task_started/武装重复定时器
+      const claimedAutoPromotion = foregroundToolUseId ? activeForegroundShellTasks.delete(foregroundToolUseId) : true
+      if (!claimedAutoPromotion && manualPromotion) return await manualPromotion
       return await (manualPromotion
         ? Promise.race([promoteToBackground(task, input.description, context, true), manualPromotion])
         : promoteToBackground(task, input.description, context, true))
     } finally {
       if (foregroundToolUseId) activeForegroundShellTasks.delete(foregroundToolUseId)
+      task.clearCommandKill()
     }
   },
 })
@@ -303,10 +324,11 @@ async function startDirectShellTask({
   // 不再退化为纯 node（#538）
   const childEnv = { ...process.env }
   delete childEnv.ELECTRON_RUN_AS_NODE
+  // 命令超时不交给 spawn 原生 timeout:击杀 deadline 需可清除(转后台即免死),
+  // 由 call() 经 armCommandKill 持有
   const proc = spawnWithProcessSandbox(shell.command, shell.args, {
     cwd: context.cwd,
     env: childEnv,
-    timeoutMs,
     detached,
     stdio: ['ignore', 'pipe', 'pipe'],
   }, sandbox)
@@ -350,9 +372,11 @@ async function startDirectShellTask({
     context.onBackgroundTaskCompleted?.()
   }
 
+  // 后台化时由 widenOutputLimit 放宽(对齐 ZCode commit 时重协商上限)
+  let activeOutputLimit = outputLimitBytes
   const appendOutput = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
     if (settled) return
-    const remaining = outputLimitBytes - outputBytes
+    const remaining = activeOutputLimit - outputBytes
     const accepted = remaining > 0 ? chunk.subarray(0, remaining) : Buffer.alloc(0)
     outputBytes += accepted.length
     if (accepted.length > 0) {
@@ -373,8 +397,11 @@ async function startDirectShellTask({
     if (terminationReason === 'completed') terminationReason = reason
     terminateProcessTree(proc, { detached: true })
   }
-  const timeoutTimer = timeoutMs !== undefined ? setTimeout(() => stop('timeout'), timeoutMs) : undefined
-  timeoutTimer?.unref?.()
+  let commandKillTimer: ReturnType<typeof setTimeout> | undefined
+  const clearCommandKill = () => {
+    if (commandKillTimer) clearTimeout(commandKillTimer)
+    commandKillTimer = undefined
+  }
   const abortHandler = () => stop('aborted')
   context.abortSignal?.addEventListener('abort', abortHandler, { once: true })
   proc.stdout?.on('data', (chunk: Buffer) => appendOutput('stdout', chunk))
@@ -384,7 +411,6 @@ async function startDirectShellTask({
     const finish = async (code: number | null, spawnError?: string) => {
       if (settled) return
       settled = true
-      if (timeoutTimer) clearTimeout(timeoutTimer)
       context.abortSignal?.removeEventListener('abort', abortHandler)
       if (progressTimer) clearInterval(progressTimer)
       const stdoutTail = stdoutDecoder.end()
@@ -454,6 +480,17 @@ async function startDirectShellTask({
     outputFile,
     job: undefined,
     done,
+    stop,
+    armCommandKill(ms: number): void {
+      clearCommandKill()
+      // 不 unref:bun test 下 unref'd 定时器不触发(实测),且有界 deadline
+      // (≤600s)在长驻宿主内不构成退出阻滞
+      commandKillTimer = setTimeout(() => stop('timeout'), ms)
+    },
+    clearCommandKill,
+    widenOutputLimit(): void {
+      activeOutputLimit = BACKGROUND_MAX_OUTPUT_BYTES
+    },
     promote(taskId: string, subject: string): ShellTaskResult | undefined {
       if (attachedTaskId) return undefined
       if (completedResult) return completedResult
@@ -560,9 +597,10 @@ async function startDurableShellTask({
     command: shell.command,
     args: shell.args,
     cwd: context.cwd,
-    // #381:undefined 时省略字段——worker setTimeout(fn, undefined) 会立即击杀
-    ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    maxOutputBytes: outputLimitBytes,
+    // 对齐 ZCode"转后台即重写参数":spec 永不携带 timeoutMs(击杀 deadline 由
+    // 工具侧在前台阶段持有,转后台即清除),上限恒为后台档——durable 任务天然
+    // 可转后台,50MB 档会让自动转后台的长任务静默超限死亡(审查 P1)
+    maxOutputBytes: BACKGROUND_MAX_OUTPUT_BYTES,
     processToken,
     statePath: join(jobDir, 'state.json'),
     resultFile,
@@ -578,8 +616,7 @@ async function startDurableShellTask({
   const worker = spawnWithProcessSandbox(process.execPath, ['-e', PROCESS_JOB_WORKER_SOURCE, specPath], {
     cwd: context.cwd,
     env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
-    // #381:worker 比命令超时多 10s 兜底;命令无超时则 worker 同样无界
-    ...(timeoutMs !== undefined ? { timeoutMs: timeoutMs + 10_000 } : {}),
+    // 命令超时由工具侧持有(worker 无界):转后台即免死要求 deadline 可清除
     detached: true,
     stdio: 'ignore',
   }, sandbox)
@@ -689,14 +726,14 @@ async function startDurableShellTask({
           // 任务记录被清（如 registry 清理）：视作终态收尾，否则定时器与监听器泄漏至
           // 进程结束，且后台写租约无人释放会永久占死该工作区的写互斥（#711 review）
           clearInterval(poll)
-          context.abortSignal?.removeEventListener('abort', stop)
+          context.abortSignal?.removeEventListener('abort', abortStop)
           context.onBackgroundTaskCompleted?.()
           return
         }
         if (latest.status === 'running') return
         clearInterval(poll)
         // 与 direct 路径对称：任务终态后摘除 run-abort 监听器，避免每次调用泄漏一个闭包（#538）
-        context.abortSignal?.removeEventListener('abort', stop)
+        context.abortSignal?.removeEventListener('abort', abortStop)
         if (settled) return
         settled = true
         // Drain the worker's final writes to EOF; a single bounded read can
@@ -744,34 +781,53 @@ async function startDurableShellTask({
         resolveDone(result)
       })()
     }, 100)
-    poll.unref?.()
+    // 不 unref:bun test 下 unref'd 定时器在其他非 unref 定时器耗尽后停止调度
+    // (实测),会导致终态轮询永久停摆;轮询本就只存活于命令执行期,持有循环合理
   })
 
-  const stop = () => {
+  const stop = (reason: ToolExecutionMetadata['terminationReason'] = 'aborted') => {
     const latest = getProcessJob(job.id)
     if (!latest || latest.status !== 'running') return
     // A direct signal would only reach the worker (on Windows TerminateProcess
     // kills exactly one process); the registry helper tears down the whole
     // command process tree.
     stopPersistedWorker(latest)
+    const timedOut = reason === 'timeout'
     const execution = normalizePersistedExecution(command, purpose, shellType, outputFile, {
       version: 2,
-      outcome: 'cancelled',
-      terminationReason: 'aborted',
+      outcome: timedOut ? 'timed_out' : 'cancelled',
+      terminationReason: timedOut ? 'timeout' : 'aborted',
       exitCode: null,
       durationMs: Date.now() - startedAt,
       command: redactSensitiveText(command),
       shell: shellType,
     }, startedAt)
-    updateProcessJob(job.id, { status: 'stopped', metadata: { execution } })
+    updateProcessJob(job.id, { status: timedOut ? 'failed' : 'stopped', metadata: { execution } })
   }
-  context.abortSignal?.addEventListener('abort', stop, { once: true })
+  const abortStop = () => stop('aborted')
+  context.abortSignal?.addEventListener('abort', abortStop, { once: true })
+  let commandKillTimer: ReturnType<typeof setTimeout> | undefined
+  const clearCommandKill = () => {
+    if (commandKillTimer) clearTimeout(commandKillTimer)
+    commandKillTimer = undefined
+  }
 
   return {
     command,
     outputFile,
     job,
     done,
+    stop,
+    armCommandKill(ms: number): void {
+      clearCommandKill()
+      // 不 unref:bun test 下 unref'd 定时器不触发(实测),且有界 deadline
+      // (≤600s)在长驻宿主内不构成退出阻滞
+      commandKillTimer = setTimeout(() => stop('timeout'), ms)
+    },
+    clearCommandKill,
+    widenOutputLimit(): void {
+      // durable spec 已恒为后台档上限,无需放宽
+    },
     promote(taskId: string, subject: string): ShellTaskResult | undefined {
       if (attachedTaskId) return undefined
       if (completedResult) return completedResult
@@ -819,6 +875,10 @@ async function startDurableShellTask({
 }
 
 async function promoteToBackground(task: ShellTask, description: unknown, context: ToolContext, automatic = false, manual = false): Promise<ToolResult> {
+  // 对齐 ZCode"commit 即重写参数":转后台起命令免于 timeout 击杀、输出上限
+  // 放宽到后台档(durable 的 spec 已恒为后台档,此处覆盖 direct 槽位)
+  task.clearCommandKill()
+  task.widenOutputLimit()
   const subject = typeof description === 'string' && description.trim() ? description.trim() : 'Background shell command'
   const job = task.job ?? createProcessJobRecord({
       subject,
@@ -867,7 +927,7 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
         },
       })
     }, subagentCapMs)
-    capTimer.unref?.()
+    // 同 armCommandKill:不 unref,保证 bun test 与各运行时下定时器如实触发
   }
   return {
     type: 'tool_result',
@@ -1565,7 +1625,6 @@ export function interpretShellExit(command: string, exitCode: number): { isError
 
 function delay(ms: number): Promise<void> {
   return new Promise((resolve) => {
-    const timer = setTimeout(resolve, ms)
-    timer.unref?.()
+    setTimeout(resolve, ms)
   })
 }

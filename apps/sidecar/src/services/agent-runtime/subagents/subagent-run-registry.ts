@@ -104,6 +104,27 @@ class SubagentRunRegistry {
           };
       if (restoredRun !== run) {
         finalizedStaleRuns += 1;
+        // 重启恢复的 stale→errored 也是终态迁移:与 update() 咽喉同口径收口
+        // 子线程在途后台任务,否则 sidecar 重启场景下孤儿进程恰按 #858 Rejected
+        // 掉的"仅封通知不杀进程"路径存活(审查 P1)。失败仅告警。
+        if (restoredRun.childThreadId) {
+          try {
+            const stoppedJobs = stopRunningProcessJobsForThread(restoredRun.childThreadId, "subagent run stale after restart");
+            if (stoppedJobs.length > 0) {
+              log.warn("stopped running background jobs of stale subagent run", {
+                runId: restoredRun.runId,
+                childThreadId: restoredRun.childThreadId,
+                count: stoppedJobs.length,
+              });
+            }
+          } catch (error) {
+            log.warn("failed to stop background jobs of stale subagent run", {
+              runId: restoredRun.runId,
+              childThreadId: restoredRun.childThreadId,
+              errorMessage: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
       }
       this.runs.set(restoredRun.runId, restoredRun);
     }
