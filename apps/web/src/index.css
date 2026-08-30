@@ -38,28 +38,6 @@
   --text-body-lg: 14px;
 }
 
-/* TaskRows 组件设计 token —— 映射到 Lume 变量，双主题自适应 */
-@theme {
-  --color-ink: var(--lume-text-primary);
-  --color-ink-2: var(--lume-text-secondary);
-  --color-ink-3: var(--lume-text-muted);
-  --color-green: var(--lume-success);
-  --color-red: var(--destructive);
-  --color-green-tint: color-mix(in oklab, var(--lume-success) 14%, transparent);
-  --color-red-tint: color-mix(in oklab, var(--destructive) 14%, transparent);
-  --color-surface: var(--lume-bg-elevated);
-  --color-inset: color-mix(in oklab, var(--lume-text-muted) 10%, var(--lume-bg-elevated));
-  --color-line: var(--lume-border-subtle);
-  --radius-card: 16px;
-  --shadow-card: 0 10px 30px -14px hsl(var(--lume-shadow-panel) / 0.5);
-}
-
-/* TaskRows 内联 SVG 引用的原始变量（var(--line) / var(--ink-3)） */
-:root {
-  --line: var(--lume-border-subtle);
-  --ink-3: var(--lume-text-muted);
-}
-
 @layer base {
   * { border-color: var(--color-border);
     @apply border-border outline-ring/50; }
@@ -1446,18 +1424,4 @@
 .routine-tooltip-wrapper:hover .routine-tooltip {
   opacity: 1;
   transform: translateX(-50%) scale(1);
-}
-
-/* TaskRows 组件动效 keyframes（组件内联 animation 按名引用） */
-@keyframes fade-in {
-  from { opacity: 0; }
-  to { opacity: 1; }
-}
-@keyframes fade-up {
-  from { opacity: 0; transform: translateY(8px); }
-  to { opacity: 1; transform: translateY(0); }
-}
-@keyframes pop-in {
-  from { opacity: 0; transform: scale(0.6); }
-  to { opacity: 1; transform: scale(1); }
 }
