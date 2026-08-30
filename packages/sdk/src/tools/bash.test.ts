@@ -576,6 +576,62 @@ describe("BashTool #381 background timeout semantics", () => {
     }
   }, 60_000);
 
+  test("budget expiry promotes instead of killing; backgrounded command outlives timeout", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-budget-promote-"));
+    // 非 sleep 命令:走自动转后台路径(sleep 会被刻意等待排除)
+    const command = /(?:^|[\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
+      ? "Write-Output start; Start-Sleep -Seconds 4; Write-Output done"
+      : "printf start; sleep 4; printf done";
+    const events: SDKMessage[] = [];
+    const context = {
+      cwd: root,
+      sessionId: "budget-promote-test",
+      artifactsRoot: join(root, "artifacts"),
+      emitEvent: (event: SDKMessage) => events.push(event),
+    };
+    // timeout 2s < 命令 4s:预算到期转后台(旧行为前台击杀/后台到点击杀),
+    // 命令继续跑完并发成功通知——对齐 ZCode budget=timeout 语义
+    const result = await BashTool.call({ command, timeout: 2_000 }, context);
+    expect(String(result.content)).toContain("exceeded the foreground budget");
+    const taskId = String(result.content).match(/task_\d+/)?.[0];
+    expect(taskId).toBeTruthy();
+
+    // 经事件断言完成(不走 ProcessOutput 水合路径,规避负载下身份探测误判)
+    let notification: SDKMessage | undefined;
+    for (let i = 0; i < 100 && !notification; i += 1) {
+      notification = events.find((event) =>
+        event.type === "system" && event.subtype === "task_notification"
+        && event.task_id === taskId && event.status === "completed",
+      );
+      if (!notification) await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+    expect(notification).toBeDefined();
+    expect(events.filter((event) =>
+      event.type === "system" && event.subtype === "task_notification" && event.task_id === taskId
+    )).toHaveLength(1);
+  }, 60_000);
+
+  test("explicit timeout still terminates a foreground command via tool-side deadline", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-fg-timeout-"));
+    const command = /(?:^|[\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
+      ? "Start-Sleep -Seconds 30"
+      : "sleep 30";
+    const context = {
+      cwd: root,
+      sessionId: "foreground-timeout-test",
+      artifactsRoot: join(root, "artifacts"),
+      emitEvent: () => {},
+    };
+    // sleep 刻意等待分支:精确命令击杀仍生效(工具侧 deadline)
+    console.error("[dbg-t] calling fg timeout");
+    const result = await BashTool.call({ command, timeout: 2_000 }, context);
+    console.error("[dbg-t] call resolved:", String(result.content).split(String.fromCharCode(10))[0]);
+    expect(result.is_error).toBeTrue();
+    expect(result.content).toContain("terminated (timeout");
+  }, 30_000);
+
   test("classifies deliberate wait commands for auto-background exclusion", () => {
     expect(isDeliberateWaitCommand("sleep 30")).toBeTrue();
     expect(isDeliberateWaitCommand("  sleep  30")).toBeTrue();

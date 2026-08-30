@@ -1857,7 +1857,8 @@ export const routineGetByDateInputSchema = z.object({
 
 export const promoteShellBackgroundInputSchema = z.object({
   toolUseId: z.string().min(1),
-  sessionId: z.string().optional(),
+  // 必填:跨会话校验是手动转后台唯一屏障,双缺省放行是 fail-open(审查 P2)
+  sessionId: z.string().min(1),
 }).strict();
 
 export const routineTriggerEntryInputSchema = z.object({
