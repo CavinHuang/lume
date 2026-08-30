@@ -14,10 +14,11 @@ import {
   type BrowserTabDescriptor,
 } from "@lume/shared"
 import { BROWSER_API_REGISTRY, STABLE_BROWSER_ERROR_CODES, browserApiSupportForBackend } from "@lume/shared"
-// 单源派生自 shared;desktop 侧 fallback 值本身(browser_internal_error)与仅由
-// legacy 插件客户端抛出的 incompatible_protocol 不经本侧透传,过滤掉(#638 review)
+// 单源派生自 shared;desktop 侧 fallback 值本身(browser_internal_error)不经本侧透传,
+// 过滤掉(#638 review)。incompatible_protocol 原同样被过滤(彼时仅 legacy 插件客户端抛出);
+// IAB 协议版本闸(assertIabProtocolCompatible)引入后 broker 会主动抛出该码,故纳入。
 const SIDECAR_STABLE_BROWSER_ERROR_CODES: ReadonlySet<string> = new Set(
-  STABLE_BROWSER_ERROR_CODES.filter((code) => code !== "browser_internal_error" && code !== "incompatible_protocol"),
+  STABLE_BROWSER_ERROR_CODES.filter((code) => code !== "browser_internal_error"),
 )
 import { classifyBrowserAction } from "./browser-action-policy"
 import { resolveAuthorizedBrowserPreviewPath, resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
@@ -238,6 +239,10 @@ export class BrowserBroker {
     const queueKey = `${backend}:${tabId ?? "browser"}`
     const previous = this.queues.get(queueKey) ?? Promise.resolve()
     const execute = async () => {
+      // IAB 协议版本闸:握手描述符的协议范围与本 sidecar 构建期常量不相容时 fail closed,
+      // 防止 desktop/sidecar 跨版本错配时命令命中未知方法或载荷(extension 后端在
+      // sanitizeExtensionRuntimeDescriptor 已有同款校验)。置于队列内部,不改变串行语义。
+      if (backend === "iab") await this.assertIabProtocolCompatible(input)
       const policy = classifyBrowserAction(input.method, input.params, normalized.method)
       if (policy.decision === "deny") throw new Error(policy.errorCode ?? "action_denied")
       let confirmationToken: string | undefined
@@ -308,7 +313,25 @@ export class BrowserBroker {
     if (this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected) await this.refreshExtensionRuntime(input)
     return [this.descriptor("iab", runtime), ...(this.extension && this.extensionBackendEnabled && this.chromePluginEnabled && this.extensionConnected ? [this.descriptor("extension")] : [])]
   }
-  private async runtimeDescriptor(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<BrowserRuntimeDescriptor | undefined> {
+  /**
+   * IAB 协议版本闸:拉取 desktop 握手描述符并校验协议范围。握手不可达时放行
+   * (真实命令以真实传输错误失败);已声明范围但与 sidecar 构建期常量不相容 →
+   * incompatible_protocol(非重试,
+   * 提示升级另一端)。未声明范围的端点(前协议时代)无法校验,交由 MAC+sequence
+   * 桥与稳定错误码层兜底。
+   */
+  private async assertIabProtocolCompatible(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<void> {
+    const runtime = await this.runtimeDescriptor(input)
+    // 握手不可达时放行:真实命令会以真实传输错误失败,闸只对"拿到了描述符
+    // 且声明范围不相容"的正向证据行动,避免吞掉更有诊断价值的原始错误
+    if (!runtime) return
+    const { minSupported, maxSupported } = runtime
+    if (typeof minSupported !== "number" || typeof maxSupported !== "number") return
+    if (maxSupported < BROWSER_PROTOCOL_MIN_SUPPORTED || minSupported > BROWSER_PROTOCOL_MAX_SUPPORTED) {
+      throw new Error("incompatible_protocol")
+    }
+  }
+    private async runtimeDescriptor(input: { threadId?: string; browserSessionId: string; browserTurnId: string }): Promise<BrowserRuntimeDescriptor | undefined> {
     try {
       return await this.main.request({
         requestId: randomUUID(),

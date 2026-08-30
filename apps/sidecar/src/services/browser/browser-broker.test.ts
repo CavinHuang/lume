@@ -9,8 +9,24 @@ import { BrowserRpcError } from "../../rpc/browser-rpc-sequence";
 import { createAgentThread } from "../agent/agent-thread-manager";
 import { createAgentWorkspace } from "../agent/agent-workspace-manager";
 
+test("IAB 协议版本闸:声明范围不相容 → incompatible_protocol,未声明 → 放行", async () => {
+  const mismatch = new BrowserBroker({ request: async (request: { method?: string }) =>
+    request.method === "handshake" ? { protocolVersion: 3, minSupported: 3, maxSupported: 3 } : { ok: true } });
+  mismatch.setPluginState({ browserEnabled: true });
+  await assert.rejects(
+    mismatch.dispatch({ method: "list", params: { tabId: "tab-v" }, browserSessionId: "s", browserTurnId: "t" }),
+    /incompatible_protocol/,
+  );
+
+  const legacy = new BrowserBroker({ request: async (request: { method?: string }) =>
+    request.method === "handshake" ? { ok: true } : { ok: true } });
+  legacy.setPluginState({ browserEnabled: true });
+  const result = await legacy.dispatch({ method: "list", params: { tabId: "tab-v" }, browserSessionId: "s", browserTurnId: "t" });
+  assert.deepEqual(result, { ok: true });
+});
+
 test("per-tab queue slot is reclaimed after settle (#615)", async () => {
-  const broker = new BrowserBroker({ request: async () => ({ ok: true }) });
+  const broker = new BrowserBroker({ request: async (request: { method?: string }) => request.method === "handshake" ? { protocolVersion: 8, minSupported: 5, maxSupported: 8 } : { ok: true } });
   broker.setPluginState({ browserEnabled: true });
   const queues = (broker as unknown as { queues: Map<string, Promise<unknown>> }).queues;
 
@@ -21,7 +37,7 @@ test("per-tab queue slot is reclaimed after settle (#615)", async () => {
 });
 
 test("serial chain keeps working across slot reclamation (#615)", async () => {
-  const broker = new BrowserBroker({ request: async () => ({ ok: true }) });
+  const broker = new BrowserBroker({ request: async (request: { method?: string }) => request.method === "handshake" ? { protocolVersion: 8, minSupported: 5, maxSupported: 8 } : { ok: true } });
   broker.setPluginState({ browserEnabled: true });
   const queues = (broker as unknown as { queues: Map<string, Promise<unknown>> }).queues;
 
@@ -107,13 +123,15 @@ test("broker obtains and binds one-time confirmation for consequential actions",
     return { ok: true };
   } });
   broker.setPluginState({ browserEnabled: true });
+  // 协议版本闸的 handshake 调用不参与命令序断言
+  const commandCalls = () => calls.filter((request) => request.method !== "handshake")
   await broker.dispatch({ method: "submitForm", params: { tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "button" }] }, semanticIntent: "提交表单" }, tabId: "tab-1", browserSessionId: "s", browserTurnId: "t" });
-  assert.equal(calls[0].method, "policy:confirm");
-  assert.equal(calls[1].method, "click");
-  assert.equal(calls[1].params.__policyRequired, true);
-  assert.equal(calls[1].params.__policyConfirmation, "confirmation-token");
+  assert.equal(commandCalls()[0].method, "policy:confirm");
+  assert.equal(commandCalls()[1].method, "click");
+  assert.equal(commandCalls()[1].params.__policyRequired, true);
+  assert.equal(commandCalls()[1].params.__policyConfirmation, "confirmation-token");
   await broker.dispatch({ method: "submitForm", params: { tabId: "tab-1", locator: { version: 1, steps: [{ kind: "css", selector: "button.other" }] }, semanticIntent: "提交表单" }, tabId: "tab-1", browserSessionId: "s", browserTurnId: "t" });
-  assert.notEqual(calls[0].params.bindingHash, calls[2].params.bindingHash);
+  assert.notEqual(commandCalls()[0].params.bindingHash, commandCalls()[2].params.bindingHash);
   await assert.rejects(() => broker.dispatch({ method: "click", params: { semanticIntent: "Pay now" }, browserSessionId: "s", browserTurnId: "t" }), /action_denied/);
 });
 
@@ -155,11 +173,13 @@ test("Agent scripts require confirmation and stay bound to the selected tab", as
   })
 
   assert.deepEqual(result, { status: "completed", value: { title: "Example" } })
-  assert.equal(calls[0].method, "policy:confirm")
-  assert.equal(calls[1].method, "agentScript:evaluate")
-  assert.equal(calls[1].context.tabId, "tab-1")
-  assert.equal(calls[1].params.__policyRequired, true)
-  assert.equal(calls[1].params.__policyConfirmation, "script-token")
+  // 版本闸的 handshake 在队列内先行,命令序断言需过滤
+  const commandCalls = () => calls.filter((request: { method: string }) => request.method !== "handshake")
+  assert.equal(commandCalls()[0].method, "policy:confirm")
+  assert.equal(commandCalls()[1].method, "agentScript:evaluate")
+  assert.equal(commandCalls()[1].context.tabId, "tab-1")
+  assert.equal(commandCalls()[1].params.__policyRequired, true)
+  assert.equal(commandCalls()[1].params.__policyConfirmation, "script-token")
 })
 
 test("agent-created in-app tabs are bound to the owning thread workspace", async () => {
@@ -221,7 +241,7 @@ test("canonical BrowserClient commands select and normalize the requested backen
   const mainCalls: any[] = []
   const extensionCalls: any[] = []
   const broker = new BrowserBroker(
-    { request: async (request) => { mainCalls.push(request); return request.method === "handshake" ? { capabilities: [{ id: "advancedCdp" }] } : request.method === "policy:confirm" ? { approved: true, token: "token" } : request.method === "screenshot" ? "cG5n" : request.method === "elementScreenshot" ? { data: "ZWxlbWVudA==" } : { ok: true } } },
+    { request: async (request) => { mainCalls.push(request); return request.method === "handshake" ? { protocolVersion: 8, minSupported: 5, maxSupported: 8, capabilities: [{ id: "advancedCdp" }] } : request.method === "policy:confirm" ? { approved: true, token: "token" } : request.method === "screenshot" ? "cG5n" : request.method === "elementScreenshot" ? { data: "ZWxlbWVudA==" } : { ok: true } } },
     { isAvailable: () => true, request: async (request) => {
       extensionCalls.push(request)
       if (request.method === "handshake") return {
@@ -552,7 +572,7 @@ test("event waits do not block the action that produces the event", async () => 
   const waiting = broker.dispatch({ method: "playwright_wait_for_download", params: { tabId: "tab-1" }, browserSessionId: "s", browserTurnId: "t" })
   await Promise.resolve()
   await broker.dispatch({ method: "playwright_locator_click", params: { tabId: "tab-1", selector: "a.download" }, browserSessionId: "s", browserTurnId: "t" })
-  assert.deepEqual(calls, ["wait:download", "click"])
+  assert.deepEqual(calls.filter((method) => method !== "handshake"), ["wait:download", "click"])
   resolveDownload({ download_id: "download-1" })
   assert.deepEqual(await waiting, { download_id: "download-1" })
 })
