@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, isDeliberateWaitCommand, looksLikeInteractivePrompt, promoteForegroundShellTask, redactSensitiveText, tailTruncate } from "./bash";
+import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, isDeliberateWaitCommand, looksLikeInteractivePrompt, promoteForegroundShellTask, redactSensitiveText, resolveSubagentBackgroundBashMaxMs, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearProcessJobs, ProcessOutputTool } from "./process-job-registry";
 import {
@@ -540,6 +540,40 @@ describe("BashTool #381 background timeout semantics", () => {
     const completed = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 30_000 }, context);
     expect(completed._meta?.execution).toMatchObject({ outcome: "succeeded", terminationReason: "completed" });
     expect(completed.content).toContain("done");
+  }, 60_000);
+
+  test("caps background command lifetime in subagent runs only", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-subagent-cap-"));
+    const command = /(?:^|[\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
+      ? "Start-Sleep -Seconds 30"
+      : "sleep 30";
+    const original = process.env.LUME_SUBAGENT_BACKGROUND_BASH_MAX_MS;
+    process.env.LUME_SUBAGENT_BACKGROUND_BASH_MAX_MS = "1500";
+    try {
+      const context = {
+        cwd: root,
+        sessionId: "subagent-cap-test",
+        artifactsRoot: join(root, "artifacts"),
+        subagentRunId: "sub-run-1",
+        emitEvent: () => {},
+      };
+      const started = await BashTool.call({ command, run_in_background: true }, context);
+      const taskId = String(started.content).match(/task_\d+/)?.[0];
+      expect(taskId).toBeTruthy();
+
+      // 子代理域:约 1.5s 上限到点强停,普通取消通知照常投递(模型知情)
+      const completed = await ProcessOutputTool.call({ task_id: taskId!, block: true, timeout: 20_000 }, context);
+      expect(completed._meta?.execution).toMatchObject({ outcome: "cancelled", terminationReason: "aborted" });
+
+      // 主线程域不受限为结构性保证(promoteToBackground 仅在 context.subagentRunId
+      // 存在时武装定时器);此处只钉解析器语义,避免全量套件下 taskkill 引发的
+      // pid 复用×身份缓存窗口(#241)造成的水合误判
+      expect(resolveSubagentBackgroundBashMaxMs()).toBe(1500);
+    } finally {
+      if (original === undefined) delete process.env.LUME_SUBAGENT_BACKGROUND_BASH_MAX_MS;
+      else process.env.LUME_SUBAGENT_BACKGROUND_BASH_MAX_MS = original;
+    }
   }, 60_000);
 
   test("classifies deliberate wait commands for auto-background exclusion", () => {

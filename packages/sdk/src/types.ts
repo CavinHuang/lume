@@ -208,6 +208,9 @@ export interface ToolContext {
   sessionId?: string
   /** Host Run identity used to correlate durable process jobs. */
   runId?: string
+  /** 子代理子 Run 标识:存在时该 Run 启动的后台命令受 wall-clock 上限约束
+   *  (LUME_SUBAGENT_BACKGROUND_BASH_MAX_MS,对齐 ZCode subagentBackgroundBashMaxMs)。 */
+  subagentRunId?: string
   /** Current user message used to group file checkpoints. */
   currentUserMessageId?: string
   /** Update the active working directory for subsequent tool calls in this session. */
