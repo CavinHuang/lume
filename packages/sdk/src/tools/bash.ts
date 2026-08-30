@@ -500,6 +500,9 @@ async function startDirectShellTask({
       commandKillTimer = setTimeout(() => stop('timeout'), ms)
     },
     clearCommandKill,
+    detachRunAbort(): void {
+      context.abortSignal?.removeEventListener('abort', abortHandler)
+    },
     widenOutputLimit(): void {
       activeOutputLimit = BACKGROUND_MAX_OUTPUT_BYTES
     },
@@ -837,6 +840,9 @@ async function startDurableShellTask({
       // (≤600s)在长驻宿主内不构成退出阻滞
       commandKillTimer = setTimeout(() => stop('timeout'), ms)
     },
+    detachRunAbort(): void {
+      context.abortSignal?.removeEventListener('abort', abortStop)
+    },
     clearCommandKill,
     widenOutputLimit(): void {
       // durable spec 已恒为后台档上限,无需放宽
@@ -892,6 +898,10 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
   // 放宽到后台档(durable 的 spec 已恒为后台档,此处覆盖 direct 槽位)
   task.clearCommandKill()
   task.widenOutputLimit()
+  // 摘除 run-abort 监听:已转后台的任务跨回合存活,不被回合中止/Run 强停连带
+  // 击杀(对齐 ZCode externalAbort 的 phase 门控);清理责任移交 ProcessStop
+  // 与撤销/子代理终态守卫
+  task.detachRunAbort()
   const subject = typeof description === 'string' && description.trim() ? description.trim() : 'Background shell command'
   const job = task.job ?? createProcessJobRecord({
       subject,
