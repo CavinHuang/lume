@@ -1449,6 +1449,10 @@
 }
 
 /* TaskRows 组件动效 keyframes（组件内联 animation 按名引用） */
+/* spin 显式声明：不间接依赖其他组件的 animate-spin 触发 Tailwind 输出 */
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
 @keyframes fade-in {
   from { opacity: 0; }
   to { opacity: 1; }

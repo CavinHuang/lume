@@ -471,7 +471,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
       </div>
       <AgentHistorySelectionLayer threadId={threadId} rootRef={contentRef} />
       {/* 胶囊可见时 todo 面板让位；胶囊终态自动消失后 todo 面板恢复，不因事件存在而永久压制 */}
-      {latestTaskProgress && <TaskProgressCapsule event={latestTaskProgress} onVisibleChange={setTaskCapsuleVisible} />}
+      {latestTaskProgress && <TaskProgressCapsule key={threadId} event={latestTaskProgress} onVisibleChange={setTaskCapsuleVisible} />}
       <TodoPanel data={taskCapsuleVisible ? null : latestTodo} running={streaming} />
       <ScrollMinimap
         items={minimapItems}

@@ -1530,7 +1530,7 @@ async function createRuntimeCoreSessionImpl(
             .slice(0, 5)
             .map((task) => `${task.status === "in_progress" ? "[~]" : "[ ]"} ${task.subject}`)
             .join("\n");
-          return `[task reminder] 当前任务清单仍有 ${unfinishedTasks.length} 项未完成，且已多轮未更新任务状态。如正在处理某项：先 TaskUpdate 将它置为唯一的 in_progress；完成一项立即标记 completed；全部完成后提交最终状态。\n${preview}`;
+          return `[task reminder] 本次执行创建或更新的任务仍有 ${unfinishedTasks.length} 项未完成，且已多轮未更新任务状态。如正在处理某项：先 TaskUpdate 将它置为唯一的 in_progress；完成一项立即标记 completed；全部完成后提交最终状态。\n${preview}`;
         }
         const unfinishedTodos = (currentTodoState?.todos ?? []).filter((todo) => todo.status !== "completed");
         if (unfinishedTodos.length > 0) {

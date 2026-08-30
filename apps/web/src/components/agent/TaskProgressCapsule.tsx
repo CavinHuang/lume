@@ -46,7 +46,8 @@ export function TaskProgressCapsule({ event, onVisibleChange }: { event: TaskPro
     return () => onVisibleChange?.(false)
   }, [dismissed])
 
-  if (dismissed) return null
+  // 任务全部被删除后事件仍残留（空列表），直接隐藏胶囊
+  if (dismissed || event.tasks.length === 0) return null
 
   const completedCount = event.tasks.filter((task) => task.status === 'completed' || task.status === 'skipped').length
   const failedCount = event.tasks.filter((task) => task.status === 'failed').length
@@ -61,7 +62,9 @@ export function TaskProgressCapsule({ event, onVisibleChange }: { event: TaskPro
         ? '任务已取消'
         : event.status === 'completed'
           ? '任务已完成'
-          : '任务进行中'
+          : event.status === 'pending'
+            ? '任务待执行'
+            : '任务进行中'
   const ringTone = failedCount > 0 || event.status === 'failed'
     ? 'var(--destructive)'
     : isWaiting
