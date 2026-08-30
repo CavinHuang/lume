@@ -255,6 +255,8 @@ export interface TaskProgressRuntimeTask {
   id: string;
   subject?: string;
   title?: string;
+  /** 进行时文案（如"正在验证依赖流转"），进行中状态的展示优先级高于 subject */
+  activeForm?: string;
   description?: string;
   expectedTools?: string[];
   expectedFiles?: string[];

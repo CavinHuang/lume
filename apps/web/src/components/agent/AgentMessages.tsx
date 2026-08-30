@@ -19,6 +19,7 @@ import {
 import { RuntimeEventContentBlock } from './RuntimeEventContentBlock'
 import { AgentHistorySelectionLayer } from './AgentHistorySelectionLayer'
 import { TodoPanel } from './TodoPanel'
+import { TaskProgressCapsule } from './TaskProgressCapsule'
 import { ScrollMinimap, type MinimapItem } from './ScrollMinimap'
 import { summarizeMessageForPreview } from '@/components/app-shell/ThreadMiniMapPopover'
 import type { TodoBlockData } from './runtime-message-view'
@@ -73,6 +74,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
+  const [taskCapsuleVisible, setTaskCapsuleVisible] = useState(false)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const projectionRef = useRef<ProjectionRef | null>(null)
@@ -391,6 +393,14 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     return null
   }, [runtimeEvents])
 
+  const latestTaskProgress = useMemo(() => {
+    for (let i = runtimeEvents.length - 1; i >= 0; i -= 1) {
+      const event = runtimeEvents[i]!
+      if (event.type === 'task.progress') return event
+    }
+    return null
+  }, [runtimeEvents])
+
   const items: React.ReactNode[] = []
   let latestUserMessageIndex = -1
   for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
@@ -455,7 +465,9 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         </div>
       </div>
       <AgentHistorySelectionLayer threadId={threadId} rootRef={contentRef} />
-      <TodoPanel data={latestTodo} running={streaming} />
+      {/* 胶囊可见时 todo 面板让位；胶囊终态自动消失后 todo 面板恢复，不因事件存在而永久压制 */}
+      {latestTaskProgress && <TaskProgressCapsule key={threadId} event={latestTaskProgress} onVisibleChange={setTaskCapsuleVisible} />}
+      <TodoPanel data={taskCapsuleVisible ? null : latestTodo} running={streaming} />
       <ScrollMinimap
         items={minimapItems}
         scrollContainerRef={scrollContainerRef}

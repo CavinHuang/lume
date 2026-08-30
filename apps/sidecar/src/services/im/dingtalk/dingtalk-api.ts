@@ -40,7 +40,11 @@ export async function sendDingtalkText(
       });
       if (!res.ok) {
         const body = await res.text().catch(() => "");
-        return { ok: false, error: `钉钉回复 HTTP ${res.status}: ${body}` };
+        return {
+          ok: false,
+          error: `钉钉回复 HTTP ${res.status}: ${body}`,
+          transient: res.status === 429 || res.status >= 500,
+        };
       }
       // 钉钉 webhook 业务错误惯例是 HTTP 200 + errcode≠0（如 token 过期 310000），
       // 不检查会把失败当成功，回复静默丢失且桌面端收到假 sent
