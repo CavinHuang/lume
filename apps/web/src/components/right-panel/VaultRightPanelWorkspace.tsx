@@ -130,12 +130,16 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   const draftRef = useRef(draft)
   const readRequestRef = useRef(0)
   const externalNoticeRef = useRef<string | null>(null)
+  const inFlightSaveRef = useRef<Promise<void> | null>(null)
+  const conflictRef = useRef(conflict)
+  const aliveRef = useRef(true)
   const treeWidthRef = useRef(treeWidth)
   const dragCleanupRef = useRef<(() => void) | null>(null)
   selectedFileRef.current = selectedFile
   vaultPathRef.current = vaultPath
   threadRef.current = threadId
   draftRef.current = draft
+  conflictRef.current = conflict
   treeWidthRef.current = treeWidth
 
   const vaults = useMemo(() => config?.candidates ?? [], [config])
@@ -172,13 +176,15 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   const reportFocus = useCallback((focus: { kind: 'file' | 'folder'; relativePath: string } | null): void => {
     const thread = threadRef.current
     const vault = vaultPathRef.current
-    if (!thread || !vault) return
+    // 组件已卸载后不再上报，防止在途 IPC 把已清理的会话焦点复活。
+    if (!thread || !vault || !aliveRef.current) return
     const next = focus ? { ...focus, sequence: ++focusSequence.current } : null
     void setObsidianVaultFocus(thread, vault, next).catch(() => undefined)
   }, [])
 
   // 卸载时清空会话焦点，避免 Agent 带着已关闭的笔记上下文运行。
   useEffect(() => () => {
+    aliveRef.current = false
     const thread = threadRef.current
     const vault = vaultPathRef.current
     if (!thread || !vault) return
@@ -199,6 +205,8 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
     if (showLoading) setEntries(null)
     try {
       const list = await listObsidianVaultFiles(path)
+      // 已切换到其他 vault：丢弃陈旧列表，避免旧 vault 的文件树与删除检测污染新面板。
+      if (vaultPathRef.current !== path) return list
       setEntries((current) => {
         if (current !== null && current.length === list.length
           && current.every((entry, index) => entry.relativePath === list[index]?.relativePath && entry.modifiedAt === list[index]?.modifiedAt)) return current
@@ -239,27 +247,40 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
     const vault = vaultPathRef.current
     if (saving || !selected || !vault || draftRef.current === selected.read.content) return
     setSaving(true)
-    try {
-      const result = await writeObsidianVaultFile({
-        vaultPath: vault,
-        relativePath: selected.path,
-        content: draftRef.current,
-        expectedSha256: selected.read.sha256,
-      })
-      if (result.ok) {
-        setSelectedFile({ path: selected.path, read: { relativePath: result.relativePath, content: draftRef.current, sha256: result.sha256, modifiedAt: result.modifiedAt } })
-        setConflict(false)
-        void loadFiles(vault)
-        if (!silent) toast.success('已保存到 Vault')
-      } else {
-        setConflict(true)
-        toast.error('文件已在外部修改，请重新加载后再保存')
+    // 在途期间切走文件/vault：磁盘写入仍合法（sha 锁定保存时的文件），
+    // 但不得回写 UI 基线，否则会把新文件的草稿当作旧文件的新基线造成覆盖。
+    const savingPath = selected.path
+    const savingVault = vault
+    const stale = (): boolean => selectedFileRef.current?.path !== savingPath || vaultPathRef.current !== savingVault
+    const flight = (async (): Promise<void> => {
+      try {
+        const result = await writeObsidianVaultFile({
+          vaultPath: vault,
+          relativePath: selected.path,
+          content: draftRef.current,
+          expectedSha256: selected.read.sha256,
+        })
+        if (stale()) return
+        if (result.ok) {
+          setSelectedFile({ path: selected.path, read: { relativePath: result.relativePath, content: draftRef.current, sha256: result.sha256, modifiedAt: result.modifiedAt } })
+          setConflict(false)
+          void loadFiles(vault)
+          if (!silent) toast.success('已保存到 Vault')
+        } else {
+          setConflict(true)
+          // 冲突未解除前每次自动保存都会失败：只提示一次，避免 toast 死循环。
+          if (!conflictRef.current) toast.error('文件已在外部修改，请重新加载后再保存')
+        }
+      } catch (cause) {
+        if (!stale()) toast.error(cause instanceof Error ? cause.message : '保存失败')
+      } finally {
+        setSaving(false)
+        // saving 守卫保证同一时刻至多一个在途保存，直接清空即可。
+        inFlightSaveRef.current = null
       }
-    } catch (cause) {
-      toast.error(cause instanceof Error ? cause.message : '保存失败')
-    } finally {
-      setSaving(false)
-    }
+    })()
+    inFlightSaveRef.current = flight
+    await flight
   }, [loadFiles, saving])
 
   // 自动保存：输入停止 700ms 后静默保存（Proma 同节奏）。
@@ -282,6 +303,11 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   }, [saveDraft])
 
   const flushPendingSave = useCallback(async (): Promise<void> => {
+    // 在途保存等待其落盘（切换文件不丢末段键入）；空闲时立即触发一次保存。
+    if (inFlightSaveRef.current) {
+      await inFlightSaveRef.current
+      return
+    }
     await saveDraft({ silent: true })
   }, [saveDraft])
 

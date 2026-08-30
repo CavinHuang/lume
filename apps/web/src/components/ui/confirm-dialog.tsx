@@ -61,7 +61,8 @@ export function ConfirmDialog({
             disabled={loading}
             onClick={() => {
               onConfirm()
-              onOpenChange(false)
+              // loading 语义下由父层在异步完成后关窗，让 spinner 真正可见。
+              if (!loading) onOpenChange(false)
             }}
           >
             {loading && <Loader2 className="size-3.5 animate-spin" />}
