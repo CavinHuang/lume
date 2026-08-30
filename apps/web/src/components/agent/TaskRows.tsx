@@ -138,12 +138,15 @@ export default function TaskRows({
   rows = TASK_ROWS,
   labels,
   className,
+  autoOpenKey,
   onToggleRow,
 }: {
   variant?: string;
   rows?: TaskRow[];
   labels?: Partial<TaskRowsLabels>;
   className?: string;
+  /* 打开面板时自动展开的行 key；缺省保留演示编排（tick===2 时展开 "index" 行） */
+  autoOpenKey?: string;
   onToggleRow?: (key: string, open: boolean) => void;
 }) {
   const tick = useTick(TICKS);
@@ -192,7 +195,7 @@ export default function TaskRows({
       }${className ? ` ${className}` : ""}`}
     >
       {rows.map((row, i) => {
-        const open = manualOpen[row.key] ?? (row.key === "index" && tick === 2);
+        const open = manualOpen[row.key] ?? (autoOpenKey !== undefined ? row.key === autoOpenKey : row.key === "index" && tick === 2);
         return (
           <div
             key={row.key}
