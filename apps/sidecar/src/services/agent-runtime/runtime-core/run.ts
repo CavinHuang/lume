@@ -1191,7 +1191,8 @@ async function createRuntimeCoreSessionImpl(
   const automationExecution = isAutomationExecution(input.messageMetadata);
   let mainTaskRuntimeRef: { getTouchedTasks: () => { id: string; subject: string; status: "pending" | "in_progress" | "completed" }[] } | undefined
   let turnsSinceTaskToolUse = 0
-  const TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"]);
+  // 双清单系统共用提醒计数：任一清单工具被使用即视为已维护状态
+  const LIST_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TodoWrite"]);
   const TASK_REMINDER_THRESHOLD = 6;
   // 完成门控自动推进预算：防止模型反复敷衍导致门控与收尾无限拉锯（对齐 ZCode 验证器迭代预算）
   const MAX_TASK_GATE_ROUNDS = 3;
@@ -1504,22 +1505,33 @@ async function createRuntimeCoreSessionImpl(
       // 计划任务不提醒：自动化 run 的收尾节奏由其自身编排决定
       if (automationExecution) return undefined;
       try {
-        const taskToolUsed = toolsUsedLastTurn.some((name) => TASK_TOOL_NAMES.has(name));
-        if (taskToolUsed) {
+        const listToolUsed = toolsUsedLastTurn.some((name) => LIST_TOOL_NAMES.has(name));
+        if (listToolUsed) {
           turnsSinceTaskToolUse = 0;
           return undefined;
         }
         turnsSinceTaskToolUse += 1;
         if (turnsSinceTaskToolUse < TASK_REMINDER_THRESHOLD) return undefined;
-        const unfinished = (mainTaskRuntimeRef?.getTouchedTasks() ?? []).filter((task) => task.status !== "completed");
-        if (unfinished.length === 0) return undefined;
         // 注入后重置计数，避免每轮重复打扰（下次再攒满阈值才提醒）
         turnsSinceTaskToolUse = 0;
-        const preview = unfinished
-          .slice(0, 5)
-          .map((task) => `${task.status === "in_progress" ? "[~]" : "[ ]"} ${task.subject}`)
-          .join("\n");
-        return `[task reminder] 当前任务清单仍有 ${unfinished.length} 项未完成，且已多轮未更新任务状态。如正在处理某项：先 TaskUpdate 将它置为唯一的 in_progress；完成一项立即标记 completed；全部完成后提交最终状态。\n${preview}`;
+        // 双清单覆盖：持久 Task 优先，其次会话内 TodoWrite 清单（对齐 ZCode 单清单提醒语义）
+        const unfinishedTasks = (mainTaskRuntimeRef?.getTouchedTasks() ?? []).filter((task) => task.status !== "completed");
+        if (unfinishedTasks.length > 0) {
+          const preview = unfinishedTasks
+            .slice(0, 5)
+            .map((task) => `${task.status === "in_progress" ? "[~]" : "[ ]"} ${task.subject}`)
+            .join("\n");
+          return `[task reminder] 当前任务清单仍有 ${unfinishedTasks.length} 项未完成，且已多轮未更新任务状态。如正在处理某项：先 TaskUpdate 将它置为唯一的 in_progress；完成一项立即标记 completed；全部完成后提交最终状态。\n${preview}`;
+        }
+        const unfinishedTodos = (currentTodoState?.todos ?? []).filter((todo) => todo.status !== "completed");
+        if (unfinishedTodos.length > 0) {
+          const preview = unfinishedTodos
+            .slice(0, 5)
+            .map((todo) => `${todo.status === "in_progress" ? "[~]" : "[ ]"} ${todo.content}`)
+            .join("\n");
+          return `[todo reminder] TodoWrite 已多轮未更新，当前清单仍有 ${unfinishedTodos.length} 项未完成。请继续按清单推进：开始一项时将它设为唯一的 in_progress，完成并验证后立即标记 completed；全部完成后提交全量完成状态。\n${preview}`;
+        }
+        return undefined;
       } catch (error) {
         log.warn("task reminder 注入失败", { error: error instanceof Error ? error.message : String(error) });
         return undefined;
