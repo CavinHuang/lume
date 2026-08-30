@@ -3552,16 +3552,6 @@ ipcMain.on('lume:browser-guest-mounted', (event, bootstrapUrl) => {
   }
 })
 
-// Task 83：Web MCP 主进程侧。
-//
-// guest-preload qe() 通过 contextBridge.exposeInMainWorld('__lumeWebMcpModelContext', shim)
-// 注入 main-world 句柄，并在 shim onToolsChanged 回调中 ipcRenderer.send
-// ('lume:browser-page-event', { type:'webmcp_changed', version:1 })。此处监听该通道，
-// 转发给 browser-runtime（反查 sender→tab，emit browser:webmcp-changed 让 agent 刷新 webmcp:list）。
-ipcMain.on('lume:browser-page-event', (event, payload) => {
-  browserRuntime?.handlePageEvent(event.sender, payload)
-})
-
 // guest-preload qe() 启动时 sendSync('lume:get-browser-webmcp-enabled') 询问开关。
 // 默认 true（BrowserRuntime.descriptor() 已默认暴露 webmcp capability；后续如需 settings
 // 开关，可在此读 browserRuntime?.getSettings()）。未注册时 sendSync 返回 undefined → qe() 视为关闭。

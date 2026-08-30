@@ -15,7 +15,7 @@ import { electronMockStub } from '../scripts/test-electron-mock'
 
 await mock.module('electron', () => electronMockStub)
 
-const { listWebMcpTools, invokeWebMcpTool, handleBrowserPageEvent } = await import('./browser-runtime')
+const { listWebMcpTools, invokeWebMcpTool } = await import('./browser-runtime')
 
 // BrowserTab 是非导出类型；函数仅读 tab.generation + tab.webContents.executeJavaScript，
 // 以结构化 fake + cast 满足。
@@ -125,36 +125,3 @@ describe('invokeWebMcpTool contextIsolation fallback', () => {
   })
 })
 
-describe('handleBrowserPageEvent', () => {
-  test('webmcp_changed 载荷 → emit browser:webmcp-changed（含 tabId + generation）', () => {
-    const events: Array<{ method: string; params: Record<string, unknown> }> = []
-    handleBrowserPageEvent(
-      { tabId: 'tab-7', generation: 3 },
-      { type: 'webmcp_changed', version: 1 },
-      (event) => events.push(event),
-    )
-    expect(events).toHaveLength(1)
-    expect(events[0]?.method).toBe('browser:webmcp-changed')
-    expect(events[0]?.params).toEqual({ tabId: 'tab-7', generation: 3 })
-  })
-
-  test('tab 缺失（sender 未匹配）→ 不 emit（不抛错）', () => {
-    const events: Array<{ method: string; params: Record<string, unknown> }> = []
-    handleBrowserPageEvent(undefined, { type: 'webmcp_changed', version: 1 }, (event) => events.push(event))
-    expect(events).toHaveLength(0)
-  })
-
-  test('非 webmcp_changed 载荷 → 忽略（向前兼容其它 page-event 类型）', () => {
-    const events: Array<{ method: string; params: Record<string, unknown> }> = []
-    handleBrowserPageEvent({ tabId: 'tab-7', generation: 3 }, { type: 'something_else' }, (event) => events.push(event))
-    expect(events).toHaveLength(0)
-  })
-
-  test('非法载荷结构 → 忽略', () => {
-    const events: Array<{ method: string; params: Record<string, unknown> }> = []
-    handleBrowserPageEvent({ tabId: 'tab-7', generation: 3 }, null, (event) => events.push(event))
-    handleBrowserPageEvent({ tabId: 'tab-7', generation: 3 }, 'nope', (event) => events.push(event))
-    handleBrowserPageEvent({ tabId: 'tab-7', generation: 3 }, { type: 123 }, (event) => events.push(event))
-    expect(events).toHaveLength(0)
-  })
-})

@@ -92,8 +92,9 @@ function startReactOverlay(pendingMessage?: unknown): void {
 // 设计要点（对齐 Codex qe()，键名 __lumeWebMcpModelContext 替代 __codexWebMcpModelContext）：
 // - 开关：主进程 sync IPC `lume:get-browser-webmcp-enabled`（Task 83 main.ts 处理；
 //   未配置/返回非 true 时默认关闭）。
-// - shim：createWebMcpShim({locationLike: location, onToolsChanged → ipcRenderer.send
-//   'lume:browser-page-event' {type:'webmcp_changed', version:1})}）。
+// - shim：createWebMcpShim({locationLike: location})。工具变更通知推送链
+//   （lume:browser-page-event → browser:webmcp-changed）已移除——无任何消费方，
+//   消费侧始终按需拉取 webmcp:list。
 // - 暴露：contextBridge.exposeInMainWorld('__lumeWebMcpModelContext', shim) +
 //   Object.defineProperty(document/navigator, 'modelContext', {configurable:false,
 //   enumerable:false, writable:false})。
@@ -109,9 +110,6 @@ export function qe(): void {
 
   const shim = createWebMcpShim({
     locationLike: { origin: window.location.origin, href: window.location.href },
-    onToolsChanged: () => {
-      ipcRenderer.send('lume:browser-page-event', { type: 'webmcp_changed', version: 1 })
-    },
   })
 
   try {

@@ -441,12 +441,6 @@ export class BrowserRuntime {
 
   getSettings(): BrowserSettings { return { ...this.settings } }
 
-  // main.ts lume:browser-page-event handler 的转发目标。
-  // 通过 tabForContents 反查 sender 对应的 tab，再委托给模块级 handleBrowserPageEvent。
-  handlePageEvent(sender: Electron.WebContents, payload: unknown): void {
-    handleBrowserPageEvent(this.tabForContents(sender), payload, this.options.emit)
-  }
-
   authorizeGuestMount(ownerWebContentsId: number, bootstrapUrl: string, requestedPartition: string): { token: string; partition: string } | null {
     const token = guestMountTokenFromUrl(bootstrapUrl)
     const grant = token ? this.guestMounts.get(token) : undefined
@@ -648,7 +642,6 @@ export class BrowserRuntime {
       tab.handoff = undefined
       tab.generation += 1
       tab.inputSequence += 1
-      this.options.emit({ method: "browser:lease-revoked", params: { tabId: tab.tabId, generation: tab.generation } })
     }
   }
 
@@ -1577,9 +1570,6 @@ export class BrowserRuntime {
     try {
       if (!wc.debugger.isAttached()) wc.debugger.attach("1.3")
       void wc.debugger.sendCommand("Page.enable").catch(() => undefined)
-      wc.debugger.on("detach", (_event, reason) => {
-        this.options.emit({ method: "browser:debugger-detached", params: { tabId: tab.tabId, generation: tab.generation, reason } })
-      })
       wc.debugger.on("message", (_event, method, params) => {
         if (method === "Page.javascriptDialogOpening") {
           tab.dialogOpen = true
@@ -3145,7 +3135,6 @@ export class BrowserRuntime {
   }
 
   private showAgentCursor(tab: BrowserTab, x: number, y: number, pulse: boolean): void {
-    this.options.emit({ method: "browser:agent-cursor", params: { tabId: tab.tabId, x, y, visible: this.settings.agentCursorVisible, pulse } })
     if (!this.settings.agentCursorVisible) return
     const parent = this.options.getWindow()
     if (!parent || parent.isDestroyed()) return
@@ -3165,7 +3154,7 @@ export class BrowserRuntime {
   private updateCursorOverlay(x: number, y: number, pulse: boolean): void {
     if (!this.cursorOverlay || this.cursorOverlay.webContents.isLoading() || this.cursorOverlay.webContents.isDestroyed()) return
     void this.cursorOverlay.webContents.executeJavaScript(createCursorUpdateScript(x, y, pulse), true).catch(() => {
-      this.options.emit({ method: "browser:cursor-error", params: { code: "cursor_update_failed" } })
+      // 覆盖层可能已销毁;cursor-error 事件自始无渲染层消费方
     })
   }
 
@@ -4231,7 +4220,6 @@ export class BrowserRuntime {
     const result = await dialog.showMessageBox(win, { type: "warning", buttons: ["共享当前标签", "取消"], defaultId: 1, cancelId: 1, title: "允许 Agent 控制当前登录标签？", message: `Origin：${origin}`, detail: "Profile：Lume 全局登录 Profile。共享保留 Cookie 与站点存储；其网络隔离弱于 Agent task partition，私网请求仍会被 best-effort 拦截。" })
     if (result.response !== 0) throw browserError("action_denied")
     tab.shareable = true
-    this.options.emit({ method: "browser:tab-share-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     return publicTab(tab)
   }
 
@@ -4277,7 +4265,6 @@ export class BrowserRuntime {
     tab.generation += 1
     tab.inputSequence += 1
     this.hideAgentCursor()
-    this.options.emit({ method: "browser:lease-revoked", params: { tabId, generation: tab.generation } })
     return publicTab(tab)
   }
 
@@ -4323,7 +4310,6 @@ export class BrowserRuntime {
     tab.agentLease = { browserSessionId: context.browserSessionId, browserTurnId: context.browserTurnId, generation: tab.generation }
     tab.agentControlState = "active"
     void this.setTabSuspended(tab, false)
-    this.options.emit({ method: "browser:tab-share-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
     return publicTab(tab)
   }
 
@@ -4868,26 +4854,6 @@ export async function invokeWebMcpTool(tab: BrowserTab, params: Record<string, u
   const encodedResult = JSON.stringify(value)
   if (encodedResult && encodedResult.length > 1_000_000) throw browserError("browser_internal_error")
   return { result: value ?? null }
-}
-
-// 处理 guest-preload 经 main.ts 转发的 page-event（lume:browser-page-event 通道）。
-//
-// 当前仅处理 webmcp_changed（Task 83）：guest-preload qe() 在 shim onToolsChanged 回调中
-// ipcRenderer.send('lume:browser-page-event', { type:'webmcp_changed', version:1 })。main.ts
-// 监听该通道并调用 BrowserRuntime.handlePageEvent，最终委托到这里。命中后 emit
-// browser:webmcp-changed（含 tabId + generation），agent 端可据此知道需要刷新 webmcp:list。
-//
-// tab 为 undefined（sender 未匹配到任何运行时 tab）时静默忽略——guest 可能在 tab 关闭后
-// 仍发出最后一次通知。非 webmcp_changed 类型一并忽略（向前兼容未来新增 page-event 类型）。
-export function handleBrowserPageEvent(
-  tab: { tabId: string; generation: number } | undefined,
-  payload: unknown,
-  emit: (event: { method: string; params: Record<string, unknown> }) => void,
-): void {
-  if (!isRecord(payload) || typeof payload.type !== "string") return
-  if (payload.type !== "webmcp_changed") return
-  if (!tab) return
-  emit({ method: "browser:webmcp-changed", params: { tabId: tab.tabId, generation: tab.generation } })
 }
 
 function sanitizeWebMcpTool(value: unknown): Record<string, unknown> {

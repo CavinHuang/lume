@@ -70,22 +70,6 @@ describe('qe() Web MCP 注入', () => {
     expect(navDesc?.writable).toBe(false)
   })
 
-  test('开关 true → onToolsChanged 触发 ipcRenderer.send webmcp_changed (version:1)', () => {
-    ipcRendererSendSyncReturns['lume:get-browser-webmcp-enabled'] = true
-    qe()
-
-    // 取最新 shim（contextBridgeExposures 每次 qe() 都会刷新）
-    const shim = contextBridgeExposures.get('__lumeWebMcpModelContext') as {
-      registerTool: (tool: unknown) => void
-    }
-    // 注册工具 → 内部 onToolsChanged → ipcRenderer.send('lume:browser-page-event', ...)
-    shim.registerTool({ name: 'demo', execute: async () => null })
-
-    const event = ipcRendererSentMessages.find((m) => m.channel === 'lume:browser-page-event')
-    expect(event).toBeDefined()
-    expect(event!.args[0]).toEqual({ type: 'webmcp_changed', version: 1 })
-  })
-
   test('开关 true → shim.locationLike 来自当前 location（origin/href）', () => {
     ipcRendererSendSyncReturns['lume:get-browser-webmcp-enabled'] = true
     qe()
