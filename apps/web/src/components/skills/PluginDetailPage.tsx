@@ -502,6 +502,13 @@ function InfoRow({ label, value }: { label: string; value: ReactNode }) {
   )
 }
 
+/** prompt 内容 → 分类图标（documents/pdf/spreadsheets），规则与 ZCode `hmt` 一致 */
+function classifyPromptIcon(text: string): 'pdf' | 'spreadsheets' | 'documents' {
+  if (/\bpdf\b/iu.test(text)) return 'pdf'
+  if (/\b(?:csv|xlsx|excel)\b/iu.test(text)) return 'spreadsheets'
+  return 'documents'
+}
+
 /** 推荐位：渐变面板（可叠 hero 图）+ 技能生成的示例 prompt 胶囊，规格取自 ZCode `_mt`/`I4` */
 function HeroPanel({
   pluginName,
@@ -517,7 +524,7 @@ function HeroPanel({
   const [imageFailed, setImageFailed] = useState(false)
   const showImage = Boolean(heroImage) && !imageFailed
   const prompts = skills.slice(0, 4).map((skill) => ({
-    icon: <Sparkles size={16} />,
+    kind: classifyPromptIcon(skill.description || skill.name),
     label: pluginName,
     prompt: skill.description || skill.name,
   }))
@@ -553,9 +560,12 @@ function HeroPanel({
               title={prompt.prompt}
               className="group/prompt flex w-fit max-w-2xl cursor-pointer items-center gap-2.5 rounded-3xl bg-black/75 px-3.5 py-2.5 text-left text-[14px] text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
             >
-              <span className="flex size-7 shrink-0 items-center justify-center rounded-full bg-white/15 text-white/80">
-                {prompt.icon}
-              </span>
+              <img
+                src={`/prompt-icons/${prompt.kind}.png`}
+                alt=""
+                aria-hidden="true"
+                className="size-7 shrink-0 object-contain"
+              />
               <span className="shrink-0 font-medium text-white/70">{prompt.label}</span>
               <span className="min-w-0 whitespace-normal">{prompt.prompt}</span>
               <span
