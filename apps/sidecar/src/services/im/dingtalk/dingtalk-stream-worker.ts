@@ -122,6 +122,7 @@ export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInpu
   const clientSecret = input.account.token ?? "";
   let client: DingtalkStreamClient | null = null;
   let running = false;
+  let generation = 0;
 
   return {
     start() {
@@ -132,6 +133,8 @@ export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInpu
         return;
       }
       running = true;
+      generation += 1;
+      const gen = generation;
       const streamClient = (input.createClient ?? defaultCreateClient)(clientId, clientSecret);
       client = streamClient;
       // SDK 回调签名同步返回 EventAckData;异步路由 fire-and-forget,立即 ack 避免服务端 60s 重试
@@ -157,12 +160,14 @@ export function createDingtalkStreamWorker(input: CreateDingtalkStreamWorkerInpu
         return { status: EventAck.SUCCESS };
       });
       void streamClient.connect().catch((error) => {
+        if (gen !== generation || !running) return;
         log.error("DWClient 启动失败", { accountId: input.account.id, error: error instanceof Error ? error.message : String(error) });
         running = false;
         void input.updateAccount?.(input.account.id, { status: "error", lastError: redactSensitiveText(error instanceof Error ? error.message : String(error)) });
       });
     },
     stop() {
+      generation += 1;
       running = false;
       client?.disconnect();
       client = null;
