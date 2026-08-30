@@ -90,7 +90,7 @@ export function createTaskTools(input: {
 
   const taskCreate: ToolDefinition = {
     name: 'TaskCreate',
-    description: 'Create a persistent task item. Use TaskUpdate to add dependencies or claim it.',
+    description: 'Create a persistent task item that survives across turns. Use TaskUpdate to add dependencies or claim it; set activeForm to a present-progressive label shown to the user while the task executes.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -98,13 +98,13 @@ export function createTaskTools(input: {
       properties: {
         subject: { type: 'string', minLength: 1 },
         description: { type: 'string' },
-        activeForm: { type: 'string' },
+        activeForm: { type: 'string', description: 'Present-progressive label shown to the user while this task is executing (e.g. "Verifying dependencies")' },
       },
     },
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
     isEnabled: () => true,
-    async prompt() { return 'Create a persistent task item.' },
+    async prompt() { return 'Create a persistent cross-turn task item.' },
     async call(raw): Promise<ToolResult> {
       try {
         const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}

@@ -654,7 +654,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       ? (lume.attemptRunId === parentRunId ? Number(lume.attemptsInRun ?? 0) : 0) + 1
       : 1;
     if (parentRunId && attemptsInRun > MAX_TASK_CLAIMS_PER_RUN) {
-      throw new Error(`同一父 Run 中最多认领同一 Task ${MAX_TASK_CLAIMS_PER_RUN} 次；请在新 Run 中改派或调整策略`);
+      throw new Error(`同一父 Run 中最多认领同一 Task ${MAX_TASK_CLAIMS_PER_RUN} 次，本轮已无法继续认领该 Task。请停止重试，向用户说明该任务多次执行未完成及当前卡点，建议用户检查任务定义后在新对话中继续。`);
     }
     const token = randomUUID();
     task.status = "in_progress";

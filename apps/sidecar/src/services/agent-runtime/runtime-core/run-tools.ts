@@ -343,7 +343,7 @@ export function buildRuntimeCoreTools(input: {
     ...AgentTool,
     name: "Delegate",
     description:
-      "Delegate a task to an INDEPENDENT, sidebar-visible child session. Use for long-running or important tasks that should be tracked as their own conversation. The child session appears under the parent in the sidebar. Returns the child's final result. Only one level of delegation is allowed. Set run_in_background=true to start the child asynchronously and return immediately with a delegationId; later collect results with WaitForDelegations.",
+      "Delegate a task to an INDEPENDENT, sidebar-visible child session. Use for long-running or important tasks that should be tracked as their own conversation. The child session appears under the parent in the sidebar. Returns the child's final result. Only one level of delegation is allowed. Set run_in_background=true to start the child asynchronously and return immediately with a delegationId; later collect results with WaitForDelegations. If you have claimed a main-agent Task (TaskUpdate in_progress) for this work, pass its task_ref to link the delegation to the Task.",
     inputSchema: {
       type: "object",
       properties: {
