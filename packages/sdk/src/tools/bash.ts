@@ -26,6 +26,10 @@ import { isReadOnlyShellInput } from '../utils/shell-read-only.js'
 import { spawnWithProcessSandbox, terminateProcessTree } from '../utils/process-sandbox.js'
 
 const MAX_OUTPUT_BYTES = 50 * 1024 * 1024
+// 显式后台任务的落盘上限:后台长任务(服务器/watcher)的日志量级与前台命令完全
+// 不同,50MB 超限即杀会让长驻任务静默死掉。放宽到 1GB,保留上限作为失控兜底
+// (超限仍记 output_limit 并终止进程)。
+const BACKGROUND_MAX_OUTPUT_BYTES = 1024 * 1024 * 1024
 const MAX_RESULT_CHARS = 100_000
 const PREVIEW_CHARS = 4_000
 // Result previews keep the tail within both bounds (errors live at the end).
@@ -56,6 +60,15 @@ const INTERACTIVE_PROMPT_PATTERNS = [
 export function looksLikeInteractivePrompt(output: string): boolean {
   const lastLine = output.trimEnd().split(/\r?\n/).pop() ?? ''
   return INTERACTIVE_PROMPT_PATTERNS.some((pattern) => pattern.test(lastLine))
+}
+
+/** 首 token 为 sleep 的命令是在刻意等待,不参与自动转后台(见 call 内注释)。 */
+export function isDeliberateWaitCommand(command: string): boolean {
+  return command.trim().split(/\s+/u)[0] === 'sleep'
+}
+
+function resolveOutputLimitBytes(input: { run_in_background?: boolean }): number {
+  return input.run_in_background === true ? BACKGROUND_MAX_OUTPUT_BYTES : MAX_OUTPUT_BYTES
 }
 
 type ShellTask = Awaited<ReturnType<typeof startShellTask>>
@@ -90,6 +103,11 @@ export const BashTool = defineTool({
     const timeoutMs = input.timeout === undefined
       ? undefined
       : Math.min(Number(input.timeout), 600_000)
+    // 显式 run_in_background 的命令是 detached 的:timeout 只表达"前台愿意
+    // 等多久",不再作为后台击杀 deadline——`run_in_background + timeout` 组合
+    // 否则会杀掉本该长驻的 dev server/watcher(与 #381 同一矛盾,本改动补完
+    // 显式 timeout 这一半)。自动转后台路径不受影响:timeout 仍是工作 deadline。
+    const commandTimeoutMs = input.run_in_background === true ? undefined : timeoutMs
     const purpose = typeof input.purpose === 'string' && input.purpose.trim() ? input.purpose.trim() : undefined
     const verificationError = purpose?.toLowerCase() === 'verification'
       ? getVerificationPipelineError(command)
@@ -134,7 +152,7 @@ export const BashTool = defineTool({
       }
     }
 
-    const task = await startShellTask({ command, timeoutMs, purpose, context })
+    const task = await startShellTask({ command, timeoutMs: commandTimeoutMs, purpose, context, outputLimitBytes: resolveOutputLimitBytes(input) })
     if (input.run_in_background) return promoteToBackground(task, input.description, context)
 
     const initial = await Promise.race([
@@ -142,6 +160,13 @@ export const BashTool = defineTool({
       delay(PROGRESS_THRESHOLD_MS).then(() => null),
     ])
     if (initial) return finishForegroundTask(task, initial)
+
+    // sleep 是刻意的等待:带显式 timeout 时前台等到结束或被击杀即可,自动转
+    // 后台只会多出一条通知再唤醒一轮;无 timeout 时仍照常转后台,防止回合被
+    // 无 deadline 的 sleep 无限阻塞。
+    if (timeoutMs !== undefined && isDeliberateWaitCommand(command)) {
+      return finishForegroundTask(task, await task.done)
+    }
 
     context.emitEvent?.({
       type: 'system',
@@ -164,6 +189,7 @@ async function startShellTask(input: {
   timeoutMs?: number
   purpose?: string
   context: ToolContext
+  outputLimitBytes: number
 }) {
   if (input.context.artifactsRoot && input.context.sessionId) {
     return startDurableShellTask(input)
@@ -176,11 +202,13 @@ async function startDirectShellTask({
   timeoutMs,
   purpose,
   context,
+  outputLimitBytes,
 }: {
   command: string
   timeoutMs?: number
   purpose?: string
   context: ToolContext
+  outputLimitBytes: number
 }) {
   const outputDirectory = context.artifactsRoot ? join(context.artifactsRoot, 'tool-results') : tmpdir()
   await mkdir(outputDirectory, { recursive: true })
@@ -244,7 +272,7 @@ async function startDirectShellTask({
 
   const appendOutput = (stream: 'stdout' | 'stderr', chunk: Buffer) => {
     if (settled) return
-    const remaining = MAX_OUTPUT_BYTES - outputBytes
+    const remaining = outputLimitBytes - outputBytes
     const accepted = remaining > 0 ? chunk.subarray(0, remaining) : Buffer.alloc(0)
     outputBytes += accepted.length
     if (accepted.length > 0) {
@@ -400,11 +428,13 @@ async function startDurableShellTask({
   timeoutMs,
   purpose,
   context,
+  outputLimitBytes,
 }: {
   command: string
   timeoutMs?: number
   purpose?: string
   context: ToolContext
+  outputLimitBytes: number
 }) {
   const jobsRoot = processJobsRootForArtifacts(context.artifactsRoot)!
   await mkdir(jobsRoot, { recursive: true })
@@ -452,7 +482,7 @@ async function startDurableShellTask({
     cwd: context.cwd,
     // #381:undefined 时省略字段——worker setTimeout(fn, undefined) 会立即击杀
     ...(timeoutMs !== undefined ? { timeoutMs } : {}),
-    maxOutputBytes: MAX_OUTPUT_BYTES,
+    maxOutputBytes: outputLimitBytes,
     processToken,
     statePath: join(jobDir, 'state.json'),
     resultFile,
@@ -742,6 +772,8 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
       `${automatic ? 'Command exceeded the foreground budget and is continuing in the background' : 'Background process started'}: ${job.id}`,
       `Output is being written to: ${task.outputFile}`,
       'You will be notified when it completes. Do not poll ProcessOutput.',
+      // 自动转后台意味着模型没预期到命令长跑:就地教它下次怎么表达,避免反复超预算
+      ...(automatic ? ['For long-running servers or watchers, pass run_in_background up front.'] : []),
     ].join('\n'),
     _meta: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)), task: { id: job.id, status: 'running', kind: 'shell', autoBackgrounded: automatic } },
   }
