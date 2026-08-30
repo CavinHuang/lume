@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { readFileSync, writeFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -9,7 +10,7 @@ import {
   updateProcessJob,
   type ProcessJob,
 } from "@lume/agent-sdk";
-import { stopRunningProcessJobsForCodingRun, stopRunningProcessJobsForThread } from "./background-process-recovery";
+import { stopRunningProcessJobsForCodingRun, stopRunningProcessJobsForThread, suppressCodingRunBackgroundNotifications } from "./background-process-recovery";
 
 function runningExecution(): Record<string, unknown> {
   return {
@@ -88,5 +89,40 @@ describe("stopRunningProcessJobsForThread", () => {
     expect(stopped.map((job) => job.id).sort()).toEqual([a.id, b.id].sort());
     expect(getProcessJob(a.id)?.notified).toBe(true);
     expect(getProcessJob(b.id)?.notified).toBe(true);
+  });
+});
+
+describe("suppressCodingRunBackgroundNotifications", () => {
+  test("pre-consumes notification right of the reverted run's running jobs", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-revert-suppress-"));
+    const target = seedJob(root, "task_s1", "run-1");
+    seedJob(root, "task_s2", "run-2");
+
+    const suppressed = suppressCodingRunBackgroundNotifications("thread-1", "run-1", "test", root);
+
+    expect(suppressed).toBe(1);
+    expect(getProcessJob(target.id)?.notified).toBe(true);
+    // 预消费后,后续 stop 守卫仍按 runId 精确停止(markNotified 不影响 stop 判定)
+    const stopped = stopRunningProcessJobsForCodingRun("thread-1", "run-1", "test", root);
+    expect(stopped.map((job) => job.id)).toEqual([target.id]);
+  });
+});
+
+describe("sticky notified merge", () => {
+  test("worker terminal write does not roll back consumed notification right", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-revert-sticky-"));
+    const job = seedJob(root, "task_t1", "run-1");
+    updateProcessJob(job.id, { notified: true });
+
+    // 模拟 worker 的读-合并-写:重写 state.json 丢弃 notified 并推进 updatedAt
+    const statePath = join(root, job.id, "state.json");
+    const state = JSON.parse(readFileSync(statePath, "utf8")) as Record<string, unknown>;
+    delete state.notified;
+    state.updatedAt = Date.now() + 5;
+    writeFileSync(statePath, JSON.stringify(state, null, 2), "utf8");
+
+    expect(getProcessJob(job.id)?.notified).toBe(true);
   });
 });

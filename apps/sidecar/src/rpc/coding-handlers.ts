@@ -23,7 +23,7 @@ import {
   revertCodingFileFromCheckpoint,
   revertCodingRun,
 } from "../services/agent-runtime/runtime-core/coding-run-checkpoint-service";
-import { stopRunningProcessJobsForCodingRun } from "../services/agent/background-process-recovery";
+import { stopRunningProcessJobsForCodingRun, suppressCodingRunBackgroundNotifications } from "../services/agent/background-process-recovery";
 import {
   codingChangeSetInputSchema,
   codingDiffActionInputSchema,
@@ -311,6 +311,16 @@ export function createCodingHandlers(): Record<string, RpcHandler> {
       );
       if (isAgentRuntimeSessionActive(input.threadId)) {
         throw new Error("Coding Run 尚未结束，无法撤销文件改动");
+      }
+      // TOCTOU 收口(后台任务侧):还原前置预消费该 Run 在途任务的通知权,
+      // 防还原窗口内自然终态的任务把针对旧文件状态的结果注入线程
+      try {
+        const suppressed = suppressCodingRunBackgroundNotifications(input.threadId, input.runId, "coding run revert window");
+        if (suppressed > 0) {
+          log.warn("revert suppressed notifications of the reverted run's background jobs", { threadId: input.threadId, runId: input.runId, count: suppressed });
+        }
+      } catch (error) {
+        log.warn("failed to suppress background notifications before revert", { threadId: input.threadId, runId: input.runId, errorMessage: error instanceof Error ? error.message : String(error) });
       }
       const result = await revertCodingRun({
         sessionDir: getRuntimeCoreSessionDir(input.threadId),

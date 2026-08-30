@@ -594,6 +594,7 @@ describe("BashTool #381 background timeout semantics", () => {
     // 命令继续跑完并发成功通知——对齐 ZCode budget=timeout 语义
     const result = await BashTool.call({ command, timeout: 2_000 }, context);
     expect(String(result.content)).toContain("exceeded the foreground budget");
+    expect(String(result.content)).toContain("pass run_in_background up front");
     const taskId = String(result.content).match(/task_\d+/)?.[0];
     expect(taskId).toBeTruthy();
 
@@ -636,7 +637,8 @@ describe("BashTool #381 background timeout semantics", () => {
     expect(isDeliberateWaitCommand("sleep 30")).toBeTrue();
     expect(isDeliberateWaitCommand("  sleep  30")).toBeTrue();
     expect(isDeliberateWaitCommand("sleep 5 && make test")).toBeTrue();
-    expect(isDeliberateWaitCommand("Start-Sleep -Seconds 5")).toBeFalse();
+    expect(isDeliberateWaitCommand("Start-Sleep -Seconds 5")).toBeTrue();
+    expect(isDeliberateWaitCommand("start-sleep -seconds 5")).toBeTrue();
     expect(isDeliberateWaitCommand("echo sleep")).toBeFalse();
   });
 

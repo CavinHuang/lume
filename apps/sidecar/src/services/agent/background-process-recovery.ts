@@ -44,6 +44,32 @@ export function startBackgroundProcessRecovery(): () => void {
 }
 
 /**
+ * 还原前置预消费:revert 文件还原可耗时秒级,窗口内自然终态的后台任务其
+ * 通知已在还原前的文件状态上投出——预先消费通知权,使窗口内/后的完成事件
+ * (含恢复补投)不再注入线程。返回预消费数量。
+ */
+export function suppressCodingRunBackgroundNotifications(
+  threadId: string,
+  runId: string,
+  reason: string,
+  jobsRootOverride?: string,
+): number {
+  const root = jobsRootOverride ?? join(getAgentFileContextsDir(), threadId, "artifacts", "process-jobs");
+  if (!existsSync(root)) return 0;
+  let suppressed = 0;
+  for (const job of loadProcessJobs(root)) {
+    if (job.status !== "running") continue;
+    if (!job.runId || job.runId !== runId) continue;
+    try {
+      if (markProcessJobNotified(job.id)) suppressed += 1;
+    } catch {
+      // 单条失败不阻断 revert 主流程
+    }
+  }
+  return suppressed;
+}
+
+/**
  * Coding Run 撤销（REVERT_CODING_RUN）的对齐守卫:被撤销 Run 启动的仍在运行的
  * 后台任务一并停止,并预先消费其通知权——它们的完成事件针对的是已回滚的文件
  * 状态,继续投递会诱导模型基于过期结果行动。其他 Run / 手动起的后台任务不受影响。
