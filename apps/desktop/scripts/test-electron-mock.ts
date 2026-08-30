@@ -150,6 +150,10 @@ export const electronMockStub = {
     sender = { id: 0, isDestroyed() { return false }, send() {} }
   },
   app: { isPackaged: false, getPath() { return '' } },
+  nativeTheme: {
+    shouldUseDarkColors: false,
+    on() {},
+  },
   safeStorage: {
     encryptString() { return Buffer.alloc(0) },
     decryptString() { return '' },
