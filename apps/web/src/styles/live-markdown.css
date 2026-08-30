@@ -158,6 +158,59 @@
   display: inline-block;
   vertical-align: -0.1em;
 }
+.live-markdown-editor .live-markdown-math-inline .katex,
+.live-markdown-editor .live-markdown-math-block .katex {
+  font-size: 1.21em;
+  line-height: 1.2;
+}
+/* ink-mde 的 `.cm-line span { display: inline }` 特异性会压过 KaTeX 的结构
+ * span 显示规则；在 widget 内恢复 KaTeX 布局原语——vlist 驱动上下标、
+ * 分数、根号、矩阵与积分的排版，缺失则公式塌陷。 */
+.live-markdown-editor .ink-mde .cm-line .katex .base,
+.live-markdown-editor .ink-mde .cm-line .katex .strut,
+.live-markdown-editor .ink-mde .cm-line .katex .vlist > span > span,
+.live-markdown-editor .ink-mde .cm-line .katex .mfrac .frac-line,
+.live-markdown-editor .ink-mde .cm-line .katex .mspace,
+.live-markdown-editor .ink-mde .cm-line .katex .llap > .fix,
+.live-markdown-editor .ink-mde .cm-line .katex .rlap > .fix,
+.live-markdown-editor .ink-mde .cm-line .katex .clap > .fix,
+.live-markdown-editor .ink-mde .cm-line .katex .rule,
+.live-markdown-editor .ink-mde .cm-line .katex .overline .overline-line,
+.live-markdown-editor .ink-mde .cm-line .katex .underline .underline-line,
+.live-markdown-editor .ink-mde .cm-line .katex .hline,
+.live-markdown-editor .ink-mde .cm-line .katex .hdashline,
+.live-markdown-editor .ink-mde .cm-line .katex .nulldelimiter,
+.live-markdown-editor .ink-mde .cm-line .katex .mtable .vertical-separator,
+.live-markdown-editor .ink-mde .cm-line .katex .mtable .arraycolsep,
+.live-markdown-editor .ink-mde .cm-line .katex .cd-vert-arrow,
+.live-markdown-editor .ink-mde .cm-line .katex .cd-label-left,
+.live-markdown-editor .ink-mde .cm-line .katex .cd-label-right {
+  display: inline-block !important;
+}
+.live-markdown-editor .ink-mde .cm-line .katex .vlist-t {
+  display: inline-table !important;
+}
+.live-markdown-editor .ink-mde .cm-line .katex .vlist-r {
+  display: table-row !important;
+}
+.live-markdown-editor .ink-mde .cm-line .katex .vlist,
+.live-markdown-editor .ink-mde .cm-line .katex .vlist-s {
+  display: table-cell !important;
+}
+.live-markdown-editor .ink-mde .cm-line .katex .vlist > span,
+.live-markdown-editor .ink-mde .cm-line .katex .overlay,
+.live-markdown-editor .ink-mde .cm-line .katex .stretchy {
+  display: block !important;
+}
+.live-markdown-editor .ink-mde .cm-line .katex .vbox,
+.live-markdown-editor .ink-mde .cm-line .katex .hbox,
+.live-markdown-editor .ink-mde .cm-line .katex .thinbox {
+  display: inline-flex !important;
+}
+.live-markdown-editor .live-markdown-math-inline .katex .vlist,
+.live-markdown-editor .live-markdown-math-block .katex .vlist {
+  line-height: 1.2;
+}
 .live-markdown-editor .live-markdown-raw-html-block {
   display: block;
   min-height: 1.625em;

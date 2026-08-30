@@ -301,8 +301,9 @@ function isProjectInstructionsEnabled(workspaceSlug?: string): boolean {
 
 function isObsidianVaultIntegrationEnabled(): boolean {
   try {
-    const config = getObsidianVaultConfig();
-    return config.enabled && config.candidates.length > 0;
+    // 与 Proma 的 obsidianEnabled 同语义：只看开关；尚未添加任何 vault 时
+    // 仍注入工作流引导（additionalDirectories 为空无副作用）。
+    return getObsidianVaultConfig().enabled;
   } catch {
     // 发现失败只意味着没有 vault 段，绝不阻塞 prompt 构建。
     return false;

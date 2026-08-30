@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react'
-import { useAtomValue, useSetAtom } from 'jotai'
+import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { ChevronsUpDown, CircleHelp, FilePlus, Folder, FolderOpen, Loader2, Plus, RotateCcw, Trash2 } from 'lucide-react'
 import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import { toast } from 'sonner'
@@ -18,7 +18,7 @@ import {
   setObsidianVaultFocus,
   writeObsidianVaultFile,
 } from '@/lib/desktop-api'
-import { obsidianVaultOpenRequestAtom } from '@/atoms'
+import { obsidianVaultEditorAtom, obsidianVaultOpenRequestAtom } from '@/atoms'
 import { Button } from '@/components/ui/button'
 import { ConfirmDialog } from '@/components/ui/confirm-dialog'
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from '@/components/ui/context-menu'
@@ -100,13 +100,18 @@ function displayDocumentTitle(filename: string): string {
 export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   const openRequest = useAtomValue(obsidianVaultOpenRequestAtom)
   const setOpenRequest = useSetAtom(obsidianVaultOpenRequestAtom)
+  const [editorSnapshot, setEditorSnapshot] = useAtom(obsidianVaultEditorAtom)
+  // 仅在首次挂载时读取快照：面板在右面板/全页 tab 之间切换即卸载，
+  // 重进时恢复打开的 vault、笔记与草稿（Proma 全局 atoms 语义）。
+  const restoredRef = useRef(editorSnapshot)
   const [config, setConfig] = useState<ObsidianVaultConfig | null>(null)
-  const [vaultPath, setVaultPath] = useState<string | null>(null)
+  const [vaultPath, setVaultPath] = useState<string | null>(() => restoredRef.current.vaultPath || null)
   const [entries, setEntries] = useState<ObsidianVaultFileEntry[] | null>(null)
   const [visibleFolders, setVisibleFolders] = useState<Set<string>>(new Set())
-  const [selectedFile, setSelectedFile] = useState<{ path: string; read: ObsidianVaultReadResult } | null>(null)
-  const [draft, setDraft] = useState('')
+  const [selectedFile, setSelectedFile] = useState<{ path: string; read: ObsidianVaultReadResult } | null>(() => restoredRef.current.selectedFile)
+  const [draft, setDraft] = useState(() => restoredRef.current.draft)
   const [saving, setSaving] = useState(false)
+  const [fileLoading, setFileLoading] = useState(false)
   const [conflict, setConflict] = useState(false)
   const [renameName, setRenameName] = useState('')
   const [deleteTarget, setDeleteTarget] = useState<string | null>(null)
@@ -124,6 +129,7 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   const threadRef = useRef(threadId)
   const draftRef = useRef(draft)
   const readRequestRef = useRef(0)
+  const externalNoticeRef = useRef<string | null>(null)
   const treeWidthRef = useRef(treeWidth)
   const dragCleanupRef = useRef<(() => void) | null>(null)
   selectedFileRef.current = selectedFile
@@ -157,6 +163,11 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   }, [treeAction])
 
   useEffect(() => () => { dragCleanupRef.current?.() }, [])
+
+  // 打开状态写入全局 atom：tab 切换卸载后重进可恢复 vault、笔记与草稿。
+  useEffect(() => {
+    setEditorSnapshot({ vaultPath: vaultPath ?? '', selectedFile, draft })
+  }, [vaultPath, selectedFile, draft, setEditorSnapshot])
 
   const reportFocus = useCallback((focus: { kind: 'file' | 'folder'; relativePath: string } | null): void => {
     const thread = threadRef.current
@@ -266,6 +277,7 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
 
   const openFileIn = useCallback(async (vault: string, relativePath: string): Promise<void> => {
     const requestId = ++readRequestRef.current
+    setFileLoading(true)
     setSelectedFile({ path: relativePath, read: { relativePath, content: '', sha256: '', modifiedAt: 0 } })
     setDraft('')
     setRenameName(displayDocumentTitle(relativePath.split('/').pop() ?? relativePath))
@@ -281,6 +293,8 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
       if (requestId !== readRequestRef.current) return
       setSelectedFile(null)
       toast.error(cause instanceof Error ? cause.message : '无法打开笔记')
+    } finally {
+      if (requestId === readRequestRef.current) setFileLoading(false)
     }
   }, [reportFocus])
 
@@ -320,7 +334,8 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   }, [])
 
   useEffect(() => {
-    if (vaultPath) void loadFiles(vaultPath, true)
+    // 恢复已打开笔记时不闪文件树加载态。
+    if (vaultPath) void loadFiles(vaultPath, !restoredRef.current.selectedFile)
   }, [vaultPath, loadFiles])
 
   // Agent 工具会绕过本组件直接改写 Vault 文件；只轮询当前打开的笔记、
@@ -338,11 +353,14 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
       try {
         const next = await readObsidianVaultFile(vault, relativePath)
         if (cancelled || selectedFileRef.current?.path !== relativePath || next.sha256 === sha256) return
-        setSelectedFile({ path: relativePath, read: next })
-        // 草稿未动则静默采纳磁盘内容；草稿已动时保留草稿，不覆盖。
+        // 草稿未动：静默采纳磁盘内容并更新基线。草稿已动：保留旧基线不动——
+        // 保存时的 expectedSha256 仍是旧值，必然走冲突路径，由用户选择重开或放弃
+        // （Proma 保留旧 saveBase 的语义）；外部 sha 只提示一次。
         if (draftRef.current === selectedFileRef.current?.read.content) {
+          setSelectedFile({ path: relativePath, read: next })
           setDraft(next.content)
-        } else {
+        } else if (externalNoticeRef.current !== next.sha256) {
+          externalNoticeRef.current = next.sha256
           toast.message('笔记已被外部修改；本地草稿未保存')
         }
       } catch {
@@ -606,7 +624,14 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
                 </div>
               ))}
         </div>
-        <Popover open={switcherOpen} onOpenChange={setSwitcherOpen}>
+        <Popover
+          open={switcherOpen}
+          onOpenChange={(open) => {
+            setSwitcherOpen(open)
+            // 每次打开时刷新候选：运行中新建 Obsidian vault / 设置里刚添加的文件夹即时可见。
+            if (open) { void getObsidianVaultConfig().then(setConfig).catch(() => undefined) }
+          }}
+        >
           <PopoverTrigger
             render={
               <button
@@ -691,14 +716,20 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
               </Tooltip>
             </div>
             <div className="min-h-0 flex-1">
-              <VaultLiveMarkdownEditor
-                key={`${selectedFile.path}:${editorReopenVersion}`}
-                vaultPath={vaultPath ?? ''}
-                relativePath={selectedFile.path}
-                value={draft}
-                onChange={setDraft}
-                onSave={() => { void saveDraft() }}
-              />
+              {fileLoading ? (
+                <div className="flex h-full items-center justify-center gap-2 text-[11px] text-foreground/45">
+                  <Loader2 className="size-3.5 animate-spin" />正在加载笔记
+                </div>
+              ) : (
+                <VaultLiveMarkdownEditor
+                  key={`${selectedFile.path}:${editorReopenVersion}`}
+                  vaultPath={vaultPath ?? ''}
+                  relativePath={selectedFile.path}
+                  value={draft}
+                  onChange={setDraft}
+                  onSave={() => { void saveDraft() }}
+                />
+              )}
             </div>
           </div>
         ) : (

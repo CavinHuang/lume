@@ -48,7 +48,7 @@ export const VaultLiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle
   }, [])
 
   const savePastedImage = React.useCallback(async (file: File): Promise<string | null> => {
-    if (file.size > MAX_PASTED_IMAGE_BYTES) return null
+    if (file.size <= 0 || file.size > MAX_PASTED_IMAGE_BYTES) return null
     try {
       const result = await saveObsidianVaultPastedImage({
         vaultPath: locationRef.current.vaultPath,
