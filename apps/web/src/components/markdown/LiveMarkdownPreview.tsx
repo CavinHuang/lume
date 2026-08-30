@@ -1,13 +1,15 @@
 import { createRoot, type Root } from 'react-dom/client'
 import katex from 'katex'
+import DOMPurify from 'dompurify'
 import { RangeSetBuilder, StateEffect, StateField, type Extension, type EditorState } from '@codemirror/state'
 import { Decoration, EditorView, ViewPlugin, WidgetType, type DecorationSet } from '@codemirror/view'
 import { CodeBlock, highlightCode, highlightToTokens, MermaidBlock, type HighlightTokensResult } from '@lume/ui'
 import { writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { mermaidSvgToPngDataUrl } from '@/lib/mermaid-image'
 import { shouldRenderMermaidCodeBlock } from '@/lib/mermaid-detection'
+import { findInlineLiveMarkdownPreviews, findRawHtmlBlockEnd, getDisplayMathClosingDelimiter } from './live-markdown-preview-syntax'
 
-type PreviewKind = 'code' | 'table' | 'mermaid' | 'thematic-break' | 'math'
+type PreviewKind = 'code' | 'table' | 'mermaid' | 'thematic-break' | 'math' | 'raw-html'
 
 export type ResolveLiveMarkdownImageSrc = (src: string) => Promise<string | null>
 export type SaveLiveMarkdownPastedImage = (file: File) => Promise<string | null>
@@ -27,8 +29,20 @@ interface FencedCodeBlock {
 }
 
 const shikiRefreshEffect = StateEffect.define<string>()
+const enterTableSourceEditEffect = StateEffect.define<number>()
 const shikiTokenCache = new Map<string, HighlightTokensResult>()
 const SHIKI_CACHE_LIMIT = 160
+
+/**
+ * 表格对被动选中（含初始光标）保持渲染，仅在用户显式点击预览后才切回源码。
+ */
+function shouldRenderLiveMarkdownBlockPreview(
+  kind: 'table' | 'other',
+  hasActiveSelectionInBlock: boolean,
+  isExplicitlyEditingTable = false,
+): boolean {
+  return kind === 'table' ? !isExplicitlyEditingTable : !hasActiveSelectionInBlock
+}
 
 function currentShikiTheme(): string {
   return document.documentElement.classList.contains('dark') ? 'github-dark' : 'github-light'
@@ -154,6 +168,7 @@ const liveMarkdownShikiHighlight: Extension = [
 interface PreviewState {
   activeLines: Set<number>
   blocks: PreviewBlock[]
+  editingTableFrom: number | null
   decorations: DecorationSet
 }
 
@@ -231,6 +246,7 @@ class TableWidget extends LiveMarkdownBlockWidget {
       table.appendChild(tr)
     })
     wrapper.appendChild(table)
+    wrapper.dataset.liveMarkdownBlockKind = 'table'
     this.observeSize(wrapper, view)
     return wrapper
   }
@@ -293,17 +309,57 @@ class MathWidget extends LiveMarkdownBlockWidget {
 }
 
 class InlineMathWidget extends WidgetType {
-  constructor(private readonly latex: string) { super() }
-  override eq(other: InlineMathWidget): boolean { return this.latex === other.latex }
+  constructor(private readonly latex: string, private readonly from: number) { super() }
+  override eq(other: InlineMathWidget): boolean { return this.latex === other.latex && this.from === other.from }
   override toDOM(): HTMLElement {
     const element = document.createElement('span')
     element.className = 'live-markdown-math-inline'
+    element.dataset.liveMarkdownInlineFrom = String(this.from)
+    element.setAttribute('aria-label', '点击编辑公式')
     try {
       element.innerHTML = katex.renderToString(this.latex, { throwOnError: false })
     } catch {
       element.textContent = this.latex
     }
     return element
+  }
+  override ignoreEvent(): boolean { return false }
+}
+
+/** Raw HTML 在阅读态保持可用，但先经 DOMPurify 处理，避免 Markdown 文件执行脚本。 */
+class RawHtmlBlockWidget extends LiveMarkdownBlockWidget {
+  constructor(private readonly html: string, private readonly from: number) { super() }
+  override eq(other: RawHtmlBlockWidget): boolean { return this.from === other.from && this.html === other.html }
+  override toDOM(view: EditorView): HTMLElement {
+    const wrapper = document.createElement('div')
+    wrapper.className = 'live-markdown-raw-html-block'
+    wrapper.dataset.liveMarkdownBlockFrom = String(this.from)
+    wrapper.innerHTML = DOMPurify.sanitize(this.html, {
+      USE_PROFILES: { html: true },
+      FORBID_TAGS: ['style'],
+      FORBID_ATTR: ['style'],
+    })
+    for (const link of Array.from(wrapper.querySelectorAll('a'))) {
+      link.target = '_blank'
+      link.rel = 'noreferrer noopener'
+    }
+    this.observeSize(wrapper, view)
+    return wrapper
+  }
+}
+
+/** CommonMark angle autolinks are not interpreted by ink-mde, so retain their normal link behavior. */
+class AngleAutolinkWidget extends WidgetType {
+  constructor(private readonly href: string) { super() }
+  override eq(other: AngleAutolinkWidget): boolean { return this.href === other.href }
+  override toDOM(): HTMLElement {
+    const link = document.createElement('a')
+    link.className = 'live-markdown-autolink'
+    link.href = this.href
+    link.target = '_blank'
+    link.rel = 'noreferrer noopener'
+    link.textContent = this.href
+    return link
   }
   override ignoreEvent(): boolean { return false }
 }
@@ -373,25 +429,6 @@ function isTableSeparator(line: string): boolean {
   return cells.length >= 2 && cells.every((cell) => /^:?-{3,}:?$/.test(cell))
 }
 
-interface InlineImagePreview { from: number; to: number; src: string; alt: string; title: string }
-
-/** 行内图片语法（含尖括号 URL），与 Proma 的 live-markdown-preview-syntax 同一正则。 */
-function findInlineImages(line: string): InlineImagePreview[] {
-  const imagePattern = /!\[([^\]]*)\]\((?:<([^>]+)>|([^\s)]+))(?:\s+(?:"([^"]*)"|'([^']*)'|\(([^)]*)\)))?\)/g
-  const previews: InlineImagePreview[] = []
-  let match: RegExpExecArray | null
-  while ((match = imagePattern.exec(line)) !== null) {
-    previews.push({
-      from: match.index,
-      to: match.index + match[0]!.length,
-      src: match[2] ?? match[3] ?? '',
-      alt: match[1] ?? '',
-      title: match[4] ?? match[5] ?? match[6] ?? '',
-    })
-  }
-  return previews
-}
-
 function buildBlocks(state: EditorState): PreviewBlock[] {
   const blocks: PreviewBlock[] = []
   const lines = Array.from({ length: state.doc.lines }, (_, index) => state.doc.line(index + 1).text)
@@ -417,15 +454,25 @@ function buildBlocks(state: EditorState): PreviewBlock[] {
       }
       continue
     }
-    if (line.trim() === '$$') {
+    const closingDelimiter = getDisplayMathClosingDelimiter(line)
+    if (closingDelimiter) {
       let closing = number + 1
-      while (closing <= lines.length && (lines[closing - 1] ?? '').trim() !== '$$') closing += 1
+      while (closing <= lines.length && (lines[closing - 1] ?? '').trim() !== closingDelimiter) closing += 1
       if (closing <= lines.length) {
         const from = state.doc.line(number).from
         const to = state.doc.line(closing).to
         blocks.push({ kind: 'math', from, to, decoration: Decoration.replace({ widget: new MathWidget(lines.slice(number, closing - 1).join('\n'), from), block: true }) })
         number = closing
       }
+      continue
+    }
+    const rawHtmlEnd = findRawHtmlBlockEnd(lines, number - 1)
+    if (rawHtmlEnd !== null) {
+      const from = state.doc.line(number).from
+      const to = state.doc.line(rawHtmlEnd + 1).to
+      const html = lines.slice(number - 1, rawHtmlEnd + 1).join('\n')
+      blocks.push({ kind: 'raw-html', from, to, decoration: Decoration.replace({ widget: new RawHtmlBlockWidget(html, from), block: true }) })
+      number = rawHtmlEnd + 1
       continue
     }
     if (/^ {0,3}([-*_])(?:\s*\1){2,}\s*$/.test(line)) {
@@ -448,33 +495,30 @@ function buildBlocks(state: EditorState): PreviewBlock[] {
   return blocks
 }
 
-function buildDecorations(state: EditorState, blocks: PreviewBlock[], lines: Set<number>, resolveImageSrc?: ResolveLiveMarkdownImageSrc): DecorationSet {
+function buildDecorations(state: EditorState, blocks: PreviewBlock[], lines: Set<number>, editingTableFrom: number | null, resolveImageSrc?: ResolveLiveMarkdownImageSrc): DecorationSet {
   const entries: Array<{ from: number; to: number; decoration: Decoration }> = []
   const protectedRanges = blocks.map((block) => ({ from: block.from, to: block.to }))
   for (const block of blocks) {
     const first = state.doc.lineAt(block.from).number
     const last = state.doc.lineAt(block.to).number
-    if (![...lines].some((line) => line >= first && line <= last)) entries.push(block)
+    // 表格仅在用户主动点击预览后进入源码，避免初始光标刚好落在首行时阅读态消失。
+    const hasActiveSelectionInBlock = [...lines].some((line) => line >= first && line <= last)
+    const isExplicitlyEditingTable = block.kind === 'table' && editingTableFrom === block.from
+    if (shouldRenderLiveMarkdownBlockPreview(block.kind === 'table' ? 'table' : 'other', hasActiveSelectionInBlock, isExplicitlyEditingTable)) entries.push(block)
   }
   for (let number = 1; number <= state.doc.lines; number += 1) {
     if (lines.has(number)) continue
     const line = state.doc.line(number)
-    const pattern = /(^|[^\\])\$([^$\n]+)\$/g
-    let match: RegExpExecArray | null
-    while ((match = pattern.exec(line.text)) !== null) {
-      const markerOffset = match.index + match[1]!.length
-      const from = line.from + markerOffset
-      const to = from + match[0]!.length - match[1]!.length
-      if (protectedRanges.some((range) => from >= range.from && to <= range.to)) continue
-      entries.push({ from, to, decoration: Decoration.replace({ widget: new InlineMathWidget(match[2]!) }) })
-    }
-    // 仅在提供解析器时渲染图片，未接入 Vault 的使用方保持纯文本展示。
-    if (!resolveImageSrc) continue
-    for (const preview of findInlineImages(line.text)) {
+    for (const preview of findInlineLiveMarkdownPreviews(line.text)) {
       const from = line.from + preview.from
       const to = line.from + preview.to
       if (protectedRanges.some((range) => from >= range.from && to <= range.to)) continue
-      entries.push({ from, to, decoration: Decoration.replace({ widget: new InlineImageWidget(preview.src, preview.alt, preview.title, from, resolveImageSrc) }) })
+      const widget = preview.kind === 'math'
+        ? new InlineMathWidget(preview.content, from)
+        : preview.kind === 'image'
+          ? new InlineImageWidget(preview.src, preview.alt, preview.title, from, resolveImageSrc)
+          : new AngleAutolinkWidget(preview.content)
+      entries.push({ from, to, decoration: Decoration.replace({ widget }) })
     }
   }
   entries.sort((left, right) => left.from - right.from || left.to - right.to)
@@ -494,13 +538,20 @@ export function createLiveMarkdownBlockPreview(
     create: (state) => {
       const lines = activeLines(state)
       const blocks = buildBlocks(state)
-      return { activeLines: lines, blocks, decorations: buildDecorations(state, blocks, lines, resolveImageSrc) }
+      return { activeLines: lines, blocks, editingTableFrom: null, decorations: buildDecorations(state, blocks, lines, null, resolveImageSrc) }
     },
     update: (value, transaction) => {
       const lines = activeLines(transaction.state)
-      if (!transaction.docChanged && sameLines(lines, value.activeLines)) return value
+      const enterSourceEdit = transaction.effects.find((effect) => effect.is(enterTableSourceEditEffect))
+      let editingTableFrom = enterSourceEdit ? enterSourceEdit.value : value.editingTableFrom
       const blocks = transaction.docChanged ? buildBlocks(transaction.state) : value.blocks
-      return { activeLines: lines, blocks, decorations: buildDecorations(transaction.state, blocks, lines, resolveImageSrc) }
+      if (editingTableFrom !== null) {
+        const table = blocks.find((block) => block.kind === 'table' && block.from === editingTableFrom)
+        const selectionRemainsInTable = table && transaction.state.selection.ranges.every((range) => range.from >= table.from && range.to <= table.to)
+        if (!selectionRemainsInTable) editingTableFrom = null
+      }
+      if (!transaction.docChanged && sameLines(lines, value.activeLines) && editingTableFrom === value.editingTableFrom) return value
+      return { activeLines: lines, blocks, editingTableFrom, decorations: buildDecorations(transaction.state, blocks, lines, editingTableFrom, resolveImageSrc) }
     },
     provide: (field) => EditorView.decorations.from(field, (value) => value.decorations),
   }),
@@ -528,14 +579,16 @@ export function createLiveMarkdownBlockPreview(
       if (target?.closest('button, a, input, select, textarea, [role="button"]')) return true
       const from = Number(block?.dataset.liveMarkdownBlockFrom ?? inline?.dataset.liveMarkdownInlineFrom)
       if (!Number.isSafeInteger(from)) return false
+      // Replacement widget 没有可供 CodeMirror 命中的文本位置；默认命中会跳到邻行。
+      // 直接选中其源码起点，下一次 decorations 更新便会展示该行的公式标记。
       event.preventDefault()
-      view.dispatch({ selection: { anchor: from } })
+      view.dispatch({
+        selection: { anchor: from },
+        effects: block?.dataset.liveMarkdownBlockKind === 'table' ? enterTableSourceEditEffect.of(from) : undefined,
+      })
       view.focus()
       return true
     },
   }),
   ]
 }
-
-/** Default extension for consumers that do not need local-media resolution. */
-export const liveMarkdownBlockPreview = createLiveMarkdownBlockPreview()

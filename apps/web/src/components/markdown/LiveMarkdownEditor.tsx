@@ -39,6 +39,8 @@ const markdownSyntaxMarkerNames = new Set([
   'HeaderMark',
   'LinkMark',
   'QuoteMark',
+  // ink-mde 使用 GFM parser；隐藏 ~~ 定界符，让删除线呈现与 Obsidian Live Preview 一致。
+  'StrikethroughMark',
 ])
 const hiddenMarkdownSyntax = Decoration.replace({ class: 'live-markdown-syntax-hidden' })
 const pendingListHeading = Decoration.mark({ class: 'live-markdown-pending-list-heading' })
@@ -301,7 +303,18 @@ export const LiveMarkdownEditor = React.forwardRef<LiveMarkdownEditorHandle, Liv
   React.useEffect(() => {
     const instance = instanceRef.current
     if (!instance || instance.getDoc() === value) return
+    // 外部刷新文档（例如 Agent 改写打开中的 Vault 笔记）时，
+    // 不能把长文档里的阅读者弹回顶部。
+    const scroller = hostRef.current?.querySelector<HTMLElement>('.cm-scroller')
+    const scrollTop = scroller?.scrollTop
+    const scrollLeft = scroller?.scrollLeft
     instance.update(value)
+    if (scroller && scrollTop !== undefined && scrollLeft !== undefined) {
+      requestAnimationFrame(() => {
+        scroller.scrollTop = scrollTop
+        scroller.scrollLeft = scrollLeft
+      })
+    }
   }, [value])
 
   return <div ref={hostRef} className={cn('live-markdown-editor vault-ink-mde h-full min-h-0', className)} />
