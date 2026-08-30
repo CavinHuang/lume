@@ -17,11 +17,11 @@ export function TabContent() {
   const activeTab = tabs.find((t) => t.id === activeTabId)
 
   if (!activeTab) {
-    return (
-      <div className="flex-1 flex items-center justify-center text-foreground/30 text-sm">
-        点击左侧「新会话」开始
-      </div>
-    )
+    // 启动时持久化的 activeTabId 对应的标签尚未入列：选中的会话直接加载，否则直接进欢迎页，不再显示占位提示
+    if (activeTabId && !activeTabId.startsWith('__')) {
+      return <AgentView threadId={activeTabId} />
+    }
+    return <WelcomeView />
   }
 
   if (activeTab.type === 'welcome') {

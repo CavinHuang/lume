@@ -4,6 +4,7 @@ import { cn } from '@/lib/utils'
 import {
   PERMISSION_OPTIONS,
   TONE_CLASS,
+  TONE_TEXT_CLASS,
   type PermissionModeIconKey,
   type PermissionModeValue,
   type PermissionOption,
@@ -59,8 +60,8 @@ export function PermissionModePicker({ value, onChange }: PermissionModePickerPr
         className={composerControlTriggerClassName}
         title={`权限模式: ${current.label}`}
       >
-        <CurrentIcon size={14} />
-        <span className="lume-composer-control-label">{current.label}</span>
+        <CurrentIcon size={14} className={TONE_TEXT_CLASS[current.tone]} />
+        <span className={cn('lume-composer-control-label', TONE_TEXT_CLASS[current.tone])}>{current.label}</span>
         <ChevronDown size={12} className={composerControlChevronClassName} />
       </Button>
 

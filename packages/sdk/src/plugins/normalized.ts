@@ -62,6 +62,9 @@ export interface NormalizedPlugin {
   manifestFormat: PluginManifestFormat;
   displayName?: string;
   description?: string;
+  author?: string;
+  /** 市场分类（manifest 声明，如 生产力/开发者工具） */
+  category?: string;
   capabilities: PluginManifestCapabilities;
   permissions: PluginPermissions;
   marketplace?: PluginMarketplaceManifest;
@@ -144,6 +147,7 @@ function normalizeLumeManifest(
     manifestFormat: format,
     displayName: manifest.displayName,
     description: manifest.description,
+    ...(manifest.author ? { author: manifest.author } : {}),
     capabilities: {
       skills: (manifest.skills ?? []).map((root) => ({
         pluginId: manifest.name,

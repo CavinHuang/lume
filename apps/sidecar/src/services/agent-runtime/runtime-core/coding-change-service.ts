@@ -5,6 +5,8 @@ import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path
 import { Worker } from "node:worker_threads";
 import { createLogger } from "../../infra/logger";
 import type {
+  AgentWorkspaceGitInfo,
+  AgentWorkspaceGitLogCommit,
   CodingBinaryDiffPayload,
   CodingBlameResult,
   CodingDiffActionInput,
@@ -1454,6 +1456,101 @@ export async function discoverCodingRoots(
     });
   }
   return [...discovered.values()];
+}
+
+/** 项目目录 Git 概要（输入框项目条展示）：目录不存在/非 Git 仓库返回 isGitRepo=false */
+export async function getWorkspaceGitSummary(workspaceRoot: string): Promise<AgentWorkspaceGitInfo> {
+  const [root] = await discoverCodingRoots([workspaceRoot]);
+  if (!root || root.repository.kind !== "git") return { isGitRepo: false };
+  const [branch, branches, dirtyStatus] = await Promise.all([
+    Promise.resolve(root.repository.branch?.name),
+    listLocalBranches(root.path),
+    runGitCommand(["status", "--porcelain", "-z"], root.path),
+  ]);
+  const dirtyFiles = dirtyStatus ? dirtyStatus.split("\0").filter(Boolean).length : 0;
+  return {
+    isGitRepo: true,
+    ...(branch ? { branch } : {}),
+    ...(branches ? { branches } : {}),
+    dirtyFiles,
+  };
+}
+
+async function listLocalBranches(gitRoot: string): Promise<string[] | undefined> {
+  const output = await runGitCommand(["branch", "--format=%(refname:short)"], gitRoot);
+  return output?.split("\n").map((line) => line.trim()).filter(Boolean);
+}
+
+/** 提交历史（Git 图谱用）：按日期序取最近 limit 条，含引用装饰与父提交 */
+export async function getWorkspaceGitLog(workspaceRoot: string, limit: number): Promise<AgentWorkspaceGitLogCommit[]> {
+  const [root] = await discoverCodingRoots([workspaceRoot]);
+  if (!root || root.repository.kind !== "git") return [];
+  // 记录内用 NUL 分隔字段、记录间用 0x01，避免提交主题里的任意字符破坏解析
+  // --all：展示全部分支（含远程）的提交，否则只画 HEAD 可达历史，看不到分支分叉
+  const output = await runGitCommand([
+    "log",
+    "--all",
+    "-n",
+    String(limit),
+    "--date-order",
+    "--format=%H%x00%h%x00%s%x00%an%x00%aI%x00%D%x00%P%x01",
+  ], root.path);
+  if (!output) return [];
+  return output
+    .split("\x01")
+    .map((record) => record.replace(/^\n/, ""))
+    .filter(Boolean)
+    .map(parseGitLogRecord)
+    .filter((commit): commit is AgentWorkspaceGitLogCommit => commit !== null);
+}
+
+function parseGitLogRecord(record: string): AgentWorkspaceGitLogCommit | null {
+  const [hash, shortHash, subject, author, date, refs, parents] = record.split("\0");
+  if (!hash || !shortHash || !subject) return null;
+  return {
+    hash,
+    shortHash,
+    subject,
+    author: author ?? "",
+    date: date ?? "",
+    refs: (refs ?? "")
+      .split(",")
+      .map((ref) => ref.trim())
+      .filter(Boolean)
+      // "HEAD -> main" 需拆成 HEAD 与 main 两个引用（参考稿同时展示二者）
+      .flatMap((ref) => {
+        if (ref.startsWith("HEAD -> ")) {
+          const target = ref.slice("HEAD -> ".length);
+          return target ? ["HEAD", target] : ["HEAD"];
+        }
+        return [ref];
+      }),
+    parents: (parents ?? "").split(" ").filter(Boolean),
+  };
+}
+
+const GIT_BRANCH_NAME_PATTERN = /^[^\s~^:?*\[\\]+$/;
+
+/** 检出分支（create=true 时新建）；失败返回 ok=false 与原因，不抛错 */
+export async function checkoutWorkspaceBranch(
+  workspaceRoot: string,
+  branchName: string,
+  create: boolean,
+): Promise<{ ok: boolean; error?: string }> {
+  const name = branchName.trim();
+  if (!name || name.startsWith("-") || name.includes("..") || !GIT_BRANCH_NAME_PATTERN.test(name)) {
+    return { ok: false, error: "无效的分支名" };
+  }
+  const [root] = await discoverCodingRoots([workspaceRoot]);
+  if (!root || root.repository.kind !== "git") return { ok: false, error: "当前项目不是 Git 仓库" };
+  if (!create) {
+    const branches = await listLocalBranches(root.path);
+    if (!branches?.includes(name)) return { ok: false, error: "分支不存在" };
+  }
+  const output = await runGitCommand(create ? ["checkout", "-b", name] : ["checkout", name], root.path);
+  return output === null
+    ? { ok: false, error: "切换失败：可能存在未提交的冲突更改" }
+    : { ok: true };
 }
 
 function rootIdForPath(path: string): string {

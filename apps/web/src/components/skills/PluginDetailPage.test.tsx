@@ -26,7 +26,7 @@ function plugin(input: Partial<PluginMarketItem> = {}): PluginMarketItem {
     capabilities: {
       skillCount: 1,
       hookEvents: [],
-      mcpServerNames: [],
+      mcpServerNames: ['image_search'],
       commandToolNames: ['browser'],
     },
     permissions: {
@@ -56,7 +56,13 @@ function detail(item = plugin()): GetMarketDetailResult {
         version: item.version,
         displayName: item.displayName,
         description: item.description,
+        author: 'Z.ai',
+        root: 'C:/plugins/cache/browser/26.623.101652',
       },
+      skills: [
+        { name: 'browser-navigate', description: 'Open URLs and navigate pages.' },
+        { name: 'browser-snapshot', description: 'Capture an accessibility snapshot.' },
+      ],
       permissionSummary: item.permissions,
       permissionsHash: 'hash-1',
       installState: item.installState,
@@ -69,7 +75,7 @@ function detail(item = plugin()): GetMarketDetailResult {
 }
 
 describe('PluginDetailPage', () => {
-  test('renders independent detail page with horizontal tabs and README', () => {
+  test('renders single-scroll detail page with breadcrumb and README', () => {
     const html = renderToStaticMarkup(
       <PluginDetailPage
         detail={detail()}
@@ -84,37 +90,23 @@ describe('PluginDetailPage', () => {
       />,
     )
 
-    expect(html).toContain('插件')
+    expect(html).toContain('插件市场')
     expect(html).toContain('Browser')
-    expect(html).toContain('概览')
-    expect(html).toContain('README')
-    expect(html).toContain('设置')
+    expect(html).toContain('MCP 服务器')
+    expect(html).toContain('plugin-detail-hero')
+    expect(html).toContain('browser-navigate')
+    expect(html).toContain('Open URLs and navigate pages.')
+    expect(html).toContain('开发者')
+    expect(html).toContain('Z.ai')
+    expect(html).toContain('根路径')
+    expect(html).toContain('C:/plugins/cache/browser/26.623.101652')
+    expect(html).toContain('高级信息')
     expect(html).not.toContain('Setup')
     expect(html).toContain('data-plugin-detail-shell="full-width"')
     expect(html).toContain('flex-1')
-    expect(html).toContain('data-plugin-detail-tabs="horizontal"')
-    expect(html).toContain('data-x-markdown="true"')
-    expect(html).toContain('在对话中试用')
-  })
-
-  test('renders README empty state when README is missing', () => {
-    const noReadme = detail()
-    delete noReadme.readme
-    const html = renderToStaticMarkup(
-      <PluginDetailPage
-        detail={noReadme}
-        loading={false}
-        error={null}
-        busy={false}
-        onBack={() => {}}
-        onInstall={() => {}}
-        onUninstall={() => {}}
-        onToggleEnable={() => {}}
-        onTryInChat={() => {}}
-      />,
-    )
-
-    expect(html).toContain('未找到 README.md')
+    expect(html).not.toContain('data-plugin-detail-tabs')
+    expect(html).not.toContain('权限审核')
+    expect(html).toContain('立即试用')
   })
 
   test('renders marketplace media, links, and explicit setup copy', () => {
@@ -150,7 +142,6 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('data-plugin-marketplace-icon="true"')
     expect(html).toContain('data-plugin-marketplace-media="true"')
     expect(html).toContain('https://example.com/browser')
-    expect(html).toContain('./README.md')
     expect(html).toContain('确认浏览器授权')
     expect(html).toContain('在 Lume 授权弹窗里确认 Chrome 请求。')
   })
@@ -256,7 +247,7 @@ describe('PluginDetailPage', () => {
     expect(html).toContain('v26.623.101651')
     expect(html).toContain('可更新版本')
     expect(html).toContain('回滚到 v26.623.101650')
-    expect(html).toContain('卸载')
+    expect(html).toContain('title="更多操作"')
   })
 
   test('uses inspected update state for setup copy when market item is stale', () => {
@@ -279,10 +270,10 @@ describe('PluginDetailPage', () => {
       />,
     )
 
-    expect(html).toContain('当前已安装，发现可更新版本')
+    expect(html).toContain('有更新')
     expect(html).not.toContain('安装后才能启用和配置连接。')
     expect(html).toContain('确认权限并更新')
-    expect(html).toContain('卸载')
+    expect(html).toContain('title="更多操作"')
   })
 
   test('shows enable action instead of try-in-chat for installed disabled plugins', () => {

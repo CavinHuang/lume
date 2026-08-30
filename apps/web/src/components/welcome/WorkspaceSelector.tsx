@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Box, ChevronDown, FolderOpen, MessageCircle, Plus, Search } from 'lucide-react'
+import { ChevronDown, FolderOpen, MessageCircle, Plus, Search } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import type { AgentWorkspace } from '@lume/shared'
 
@@ -44,21 +44,20 @@ export function WorkspaceSelector({
         type="button"
         onClick={() => setOpen((v) => !v)}
         className={cn(
-          'inline-flex h-9 min-w-[168px] items-center gap-2 rounded-lg border px-3 text-[13px] transition-colors',
+          'inline-flex h-7 items-center gap-1.5 rounded-md px-2 text-[12.5px] transition-colors',
           open
-            ? 'border-[color:color-mix(in_oklab,var(--brand)_24%,var(--border-strong))] bg-[color:color-mix(in_oklab,var(--brand)_7%,var(--surface-1))] text-[var(--text-1)]'
-            : 'border-[color:color-mix(in_oklab,var(--border-strong)_70%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-1)_96%,transparent)] text-[var(--text-2)] hover:border-[color:color-mix(in_oklab,var(--brand)_20%,var(--border-strong))] hover:text-[var(--text-1)]',
+            ? 'bg-[var(--surface-2)] text-[var(--text-1)]'
+            : 'text-[var(--text-2)] hover:bg-[var(--surface-2)] hover:text-[var(--text-1)]',
         )}
         title="选择项目或普通会话"
       >
-        <Box size={15} className="shrink-0 text-[var(--text-2)]" />
-        <span className="shrink-0 text-[var(--text-2)]">项目：</span>
-        <span className="min-w-0 flex-1 truncate font-semibold text-[var(--text-1)]">{selected?.name ?? '普通会话'}</span>
-        <ChevronDown size={13} className="shrink-0 text-[var(--text-3)]" />
+        {selected ? <FolderOpen size={13} className="shrink-0 text-[var(--text-3)]" /> : <MessageCircle size={13} className="shrink-0 text-[var(--text-3)]" />}
+        <span className="min-w-0 max-w-[200px] truncate text-[var(--text-1)]">{selected?.name ?? '普通会话'}</span>
+        <ChevronDown size={12} className="shrink-0 text-[var(--text-3)]" />
       </Button>
 
       {open && (
-        <div className="absolute left-0 top-full z-50 mt-3 w-72 overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_74%,transparent)] bg-[var(--surface-1)] shadow-[0_28px_52px_-34px_hsl(var(--shadow-panel)/0.48)]">
+        <div className="absolute bottom-full left-0 z-50 mb-2 w-72 overflow-hidden rounded-[1.4rem] border border-[color:color-mix(in_oklab,var(--border-strong)_74%,transparent)] bg-[var(--surface-1)] shadow-[0_28px_52px_-34px_hsl(var(--shadow-panel)/0.48)]">
           <div className="border-b border-[color:color-mix(in_oklab,var(--border-strong)_48%,transparent)] p-3">
             <div className="flex items-center gap-2 rounded-full border border-[color:color-mix(in_oklab,var(--border-strong)_54%,transparent)] bg-[color:color-mix(in_oklab,var(--surface-2)_80%,transparent)] px-3 py-2">
               <Search size={13} className="text-[var(--text-3)]" />

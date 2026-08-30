@@ -1,20 +1,27 @@
-import { XMarkdown } from '@ant-design/x-markdown'
-import { DIFF_AWARE_MARKDOWN_COMPONENTS } from '@/components/markdown/DiffAwareMarkdownPre'
 import {
-  ArrowLeft,
-  CheckCircle2,
+  ArrowRight,
+  ChevronRight,
   ExternalLink,
   Loader2,
+  MoreHorizontal,
   Power,
   RotateCcw,
-  ShieldCheck,
+  Server,
+  Sparkles,
   Trash2,
 } from 'lucide-react'
+import type { GetMarketDetailResult } from '@lume/shared'
 import type { ReactNode } from 'react'
-import type { GetMarketDetailResult, PluginMarketplaceAsset } from '@lume/shared'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { cn } from '@/lib/utils'
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from '@/components/ui/dropdown-menu'
+import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { PLUGIN_SOURCE_LABELS } from './plugin-market-ui-state'
 import { PluginLogo } from './PluginLogo'
 import {
@@ -23,7 +30,6 @@ import {
   buildPluginSetupItems,
   formatPluginEnableState,
   formatPluginInstallState,
-  formatReadmeMeta,
   formatRiskLabel,
 } from './plugin-detail-state'
 
@@ -58,17 +64,19 @@ export function PluginDetailPage({
   onInstallPackage,
   onRollback,
 }: PluginDetailPageProps) {
+  const [installDialogOpen, setInstallDialogOpen] = useState(false)
   const item = detail?.item.kind === 'plugin' ? detail.item.plugin : null
   const inspected = detail?.inspect?.kind === 'plugin' ? detail.inspect : null
-  const readme = detail?.readme
+  const pluginSkills = inspected?.skills ?? []
   const pluginName = item?.displayName ?? item?.name ?? '插件详情'
   const permissionRows = item ? buildPermissionRows(item) : []
   const diagnostics = item ? dedupeDiagnostics(detail?.diagnostics, item.diagnostics) : []
   const installState = inspected?.installState ?? item?.installState ?? 'not-installed'
   const enableState = inspected?.enableState ?? item?.enableState ?? 'not-installed'
   const effectiveItem = item ? { ...item, installState, enableState } : null
-  const setupItems = effectiveItem ? buildPluginSetupItems(effectiveItem) : []
   const marketplace = item?.marketplace
+  // 配置区仅展示插件显式声明的 setup 步骤（可操作），不渲染推断出的信息清单
+  const setupItems = marketplace?.setup?.length && effectiveItem ? buildPluginSetupItems(effectiveItem) : []
   const marketplaceMedia = marketplace?.hero ?? marketplace?.thumbnail
   const marketplaceWebsite = safeExternalUrl(marketplace?.website)
   const installedLike = installState === 'installed' || installState === 'update-available'
@@ -85,360 +93,491 @@ export function PluginDetailPage({
   const currentVersion = item?.installedVersion ?? item?.version ?? ''
   const rollbackVersion = item?.rollbackVersion
 
+  const renderPrimaryAction = () => {
+    if (updateAvailable) {
+      return (
+        <Button
+          type="button"
+          disabled={!canUpdate || busy}
+          onClick={() => setInstallDialogOpen(true)}
+          data-plugin-detail-install-action={canUpdate && !busy ? 'enabled' : 'disabled'}
+          className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
+        >
+          {busy ? <Loader2 size={15} className="animate-spin" /> : null}
+          {updateAction?.label ?? '确认权限并更新'}
+        </Button>
+      )
+    }
+    if (installedLike && enabled) {
+      return (
+        <Button
+          type="button"
+          disabled={busy}
+          onClick={onTryInChat}
+          data-plugin-detail-header-action="try"
+          className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
+        >
+          <Sparkles size={14} />
+          立即试用
+        </Button>
+      )
+    }
+    if (installedLike) {
+      return (
+        <Button
+          type="button"
+          disabled={busy}
+          onClick={onToggleEnable}
+          data-plugin-detail-header-action="enable"
+          className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
+        >
+          <Power size={15} />
+          启用
+        </Button>
+      )
+    }
+    return (
+      <Button
+        type="button"
+        disabled={!canInstall || busy}
+        onClick={() => setInstallDialogOpen(true)}
+        data-plugin-detail-install-action={canInstall && !busy ? 'enabled' : 'disabled'}
+        className="h-9 gap-1.5 rounded-lg bg-[var(--text-1)] px-4 text-[13px] font-semibold text-[var(--background)] hover:opacity-90"
+      >
+        {busy ? <Loader2 size={15} className="animate-spin" /> : null}
+        确认权限并安装
+      </Button>
+    )
+  }
+
   return (
     <div
       data-plugin-detail-shell="full-width"
       className="h-full min-h-0 min-w-0 flex-1 overflow-y-auto bg-[var(--background)]"
     >
-      <main className="mx-auto w-full max-w-[1230px] px-5 py-6 sm:px-6 lg:px-8">
-        <div className="mb-6 flex items-center gap-2 text-[13px] text-[var(--text-3)]">
-          <Button
-            variant="ghost"
-            type="button"
-            onClick={onBack}
-            className="h-8 gap-2 rounded-[8px] px-2 text-[13px] text-[var(--text-2)]"
-          >
-            <ArrowLeft size={15} />
-            插件
-          </Button>
-          <span>/</span>
-          <span className="min-w-0 truncate text-[var(--text-1)]">{pluginName}</span>
-        </div>
+      <nav className="flex items-center gap-1.5 px-5 pt-5 text-[13px] text-[var(--text-3)]">
+        <button
+          type="button"
+          onClick={onBack}
+          className="rounded px-0.5 transition-colors hover:text-[var(--text-1)]"
+        >
+          插件市场
+        </button>
+        <ChevronRight size={14} />
+        <span className="min-w-0 truncate text-[var(--text-1)]">{pluginName}</span>
+      </nav>
 
+      <main className="mx-auto w-full max-w-[820px] px-6 pb-12 pt-6">
         {loading ? (
           <div role="status" className="flex min-h-[320px] items-center justify-center gap-2 text-[13px] text-[var(--text-3)]">
             <Loader2 size={16} className="animate-spin" />
             正在读取插件详情...
           </div>
         ) : error && !item ? (
-          <section role="alert" className="rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-5 text-[13px] leading-6 text-[var(--lume-danger)]">
+          <section role="alert" className="mt-8 rounded-lg border border-[color:color-mix(in_oklab,var(--lume-danger)_28%,var(--border))] bg-[color:color-mix(in_oklab,var(--lume-danger)_7%,var(--surface-1))] p-5 text-[13px] leading-6 text-[var(--lume-danger)]">
             {error}
           </section>
         ) : item ? (
-          <div className="space-y-6">
-            <header className="space-y-4">
-              <div className="grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
-                <div className="min-w-0">
-                  <div className="mb-4 flex size-12 items-center justify-center overflow-hidden rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)] text-[var(--text-1)]">
-                    <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-full" />
-                  </div>
-                  <h1 className="truncate text-[26px] font-semibold leading-8 text-[var(--text-1)]">{pluginName}</h1>
-                  <p className="mt-2 max-w-[680px] text-[14px] leading-6 text-[var(--text-2)]">
-                    {item.description ?? '暂无描述。'}
-                  </p>
-                </div>
-
-                <div className="flex flex-wrap items-center gap-2 md:justify-end">
-                  {updateAvailable ? (
-                    <Button
-                      type="button"
-                      disabled={!canUpdate || busy}
-                      onClick={onInstall}
-                      data-plugin-detail-install-action={canUpdate && !busy ? 'enabled' : 'disabled'}
-                      className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
-                    >
-                      {busy ? <Loader2 size={15} className="animate-spin" /> : <Power size={15} />}
-                      {updateAction?.label ?? '确认权限并更新'}
-                    </Button>
-                  ) : installedLike && enabled ? (
-                    <Button
-                      type="button"
-                      disabled={busy}
-                      onClick={onTryInChat}
-                      data-plugin-detail-header-action="try"
-                      className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
-                    >
-                      <ExternalLink size={15} />
-                      在对话中试用
-                    </Button>
-                  ) : installedLike ? (
-                    <Button
-                      type="button"
-                      disabled={busy}
-                      onClick={onToggleEnable}
-                      data-plugin-detail-header-action="enable"
-                      className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
-                    >
-                      <Power size={15} />
-                      启用
-                    </Button>
-                  ) : (
-                    <Button
-                      type="button"
-                      disabled={!canInstall || busy}
-                      onClick={onInstall}
-                      data-plugin-detail-install-action={canInstall && !busy ? 'enabled' : 'disabled'}
-                      className="h-9 gap-2 rounded-[8px] px-4 text-[13px] font-semibold"
-                    >
-                      {busy ? <Loader2 size={15} className="animate-spin" /> : <Power size={15} />}
-                      确认权限并安装
-                    </Button>
+          <div className="space-y-8">
+            <header className="space-y-3">
+              <div className="flex size-16 items-center justify-center overflow-hidden rounded-2xl bg-[color:color-mix(in_oklab,var(--text-1)_6%,transparent)]">
+                <PluginLogo src={marketplace?.icon?.url} alt={`${pluginName} 图标`} className="size-10" />
+              </div>
+              <div className="flex min-w-0 items-center justify-between gap-3">
+                <h1 className="min-w-0 truncate text-2xl font-semibold tracking-tight text-[var(--text-1)]">{pluginName}</h1>
+                <div className="flex shrink-0 items-center gap-1.5">
+                  {installedLike && (
+                    <DropdownMenu>
+                      <DropdownMenuTrigger
+                        render={
+                          <Button
+                            variant="outline"
+                            type="button"
+                            size="icon"
+                            disabled={busy}
+                            className="size-8 rounded-lg text-[var(--text-2)] hover:text-[var(--text-1)]"
+                            title="更多操作"
+                          />
+                        }
+                      >
+                        <MoreHorizontal size={16} />
+                      </DropdownMenuTrigger>
+                      <DropdownMenuContent align="end" className="min-w-[128px]">
+                        <DropdownMenuItem onSelect={onToggleEnable}>
+                          <Power size={14} />
+                          {enabled ? '禁用' : '启用'}
+                        </DropdownMenuItem>
+                        <DropdownMenuSeparator />
+                        <DropdownMenuItem destructive onSelect={onUninstall}>
+                          <Trash2 size={14} />
+                          卸载
+                        </DropdownMenuItem>
+                      </DropdownMenuContent>
+                    </DropdownMenu>
                   )}
+                  {renderPrimaryAction()}
                 </div>
               </div>
-
-              <div className="flex flex-wrap items-center gap-2">
-                <Badge>{PLUGIN_SOURCE_LABELS[item.sourceType]}</Badge>
-                <Badge>{formatPluginInstallState(installState)}</Badge>
-                <Badge>{formatPluginEnableState(enableState)}</Badge>
-                <Badge>v{item.version}</Badge>
-              </div>
-
-              {(marketplaceWebsite || marketplace?.docs) && (
-                <div className="flex flex-wrap items-center gap-2 text-[12px] text-[var(--text-3)]">
-                  {marketplaceWebsite && (
-                    <a
-                      href={marketplaceWebsite}
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-1 rounded-[6px] border border-[var(--border)] px-2 py-1 text-[var(--text-2)] hover:text-[var(--text-1)]"
-                    >
-                      网站
-                      <ExternalLink size={12} />
-                    </a>
-                  )}
-                  {marketplace?.docs && (
-                    <span className="rounded-[6px] border border-[var(--border)] px-2 py-1">
-                      文档 {marketplace.docs}
-                    </span>
-                  )}
-                </div>
-              )}
+              <p className="max-w-[760px] text-[14px] leading-6 text-[var(--text-3)]">
+                {item.description ?? '暂无描述。'}
+              </p>
             </header>
 
             {error && (
-              <section className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4 text-[13px] leading-6 text-[var(--lume-warning)]">
+              <section className="rounded-lg bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-4 text-[13px] leading-6 text-[var(--lume-warning)]">
                 {error}
               </section>
             )}
 
-            <Tabs defaultValue="overview" className="gap-5">
-              <TabsList
-                variant="line"
-                data-plugin-detail-tabs="horizontal"
-                className="w-full justify-start border-b border-[var(--border)]"
-              >
-                <TabsTrigger value="overview" className="max-w-none flex-none px-0 text-[14px]">
-                  概览
-                </TabsTrigger>
-                <TabsTrigger value="readme" className="max-w-none flex-none px-0 text-[14px]">
-                  README
-                </TabsTrigger>
-                <TabsTrigger value="setup" className="max-w-none flex-none px-0 text-[14px]">
-                  设置
-                </TabsTrigger>
-              </TabsList>
+            {(marketplaceMedia || pluginSkills.length > 0) && (
+              <HeroPanel
+                pluginName={pluginName}
+                skills={pluginSkills}
+                heroImage={marketplaceMedia?.url}
+                onTry={onTryInChat}
+              />
+            )}
 
-              <TabsContent value="overview" keepMounted>
-                <section className="space-y-5">
-                  {marketplaceMedia && <MarketplaceMedia media={marketplaceMedia} pluginName={pluginName} />}
-                  <div className="grid gap-3 sm:grid-cols-3">
-                    <SummaryStat label="安装状态" value={formatPluginInstallState(installState)} />
-                    <SummaryStat label="启用状态" value={formatPluginEnableState(enableState)} />
-                    {updateAvailable ? (
-                      <>
-                        <SummaryStat label="当前版本" value={`v${currentVersion}`} />
-                        <SummaryStat label="可更新版本" value={`v${item.version}`} />
-                      </>
-                    ) : (
-                      <SummaryStat label="版本" value={`v${item.version}`} />
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 text-[14px] font-semibold text-[var(--text-1)]">
-                    <ShieldCheck size={18} className="text-[var(--lume-success)]" />
-                    权限审核
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {item.permissions.riskLabels.length > 0 ? (
-                      item.permissions.riskLabels.map((risk) => (
-                        <Badge key={risk} tone="warning">
-                          {formatRiskLabel(risk)}
-                        </Badge>
-                      ))
-                    ) : (
-                      <Badge tone="success">低风险</Badge>
-                    )}
-                  </div>
-                  <div className="space-y-3">
-                    {permissionRows.map((row) => (
-                      <div
-                        key={row.label}
-                        className="grid gap-2 rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 md:grid-cols-[120px_minmax(0,1fr)]"
-                      >
-                        <span className="font-semibold text-[var(--text-1)]">{row.label}</span>
-                        <span className="break-all text-[var(--text-2)]">{row.value}</span>
-                      </div>
+            {item.capabilities.mcpServerNames.length > 0 && (
+              <DetailSection title="MCP 服务器" count={item.capabilities.mcpServerNames.length}>
+                <ul className="mt-1 divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_35%,transparent)]">
+                  {item.capabilities.mcpServerNames.map((serverName) => (
+                    <CapabilityRow key={serverName} icon={<Server size={16} />} name={serverName} />
+                  ))}
+                </ul>
+              </DetailSection>
+            )}
+
+            {item.capabilities.skillCount > 0 && (
+              <DetailSection title="技能" count={item.capabilities.skillCount}>
+                {pluginSkills.length > 0 ? (
+                  <ul className="mt-1 divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_35%,transparent)]">
+                    {pluginSkills.map((skill) => (
+                      <CapabilityRow
+                        key={skill.name}
+                        icon={<Sparkles size={16} />}
+                        name={skill.name}
+                        description={skill.description}
+                      />
                     ))}
-                  </div>
-                  {inspected && (
-                    <div className="rounded-[8px] bg-[var(--surface-2)] px-3 py-2 text-[12px] leading-5 text-[var(--text-2)]">
-                      权限 hash：<span className="font-mono">{inspected.permissionsHash}</span>
-                    </div>
-                  )}
-                  {diagnostics.length > 0 ? (
-                    <ul className="space-y-2 text-[13px] leading-6 text-[var(--lume-warning)]">
-                      {diagnostics.map((diagnostic, index) => (
-                        <li
-                          key={`${diagnostic.code}-${index}`}
-                          className="rounded-[8px] bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-3"
-                        >
-                          {diagnostic.message}
-                        </li>
-                      ))}
-                    </ul>
-                  ) : (
-                    <EmptyPanel title="暂无诊断信息" description="当前插件未返回需要处理的问题。" />
-                  )}
-                </section>
-              </TabsContent>
-
-              <TabsContent value="readme" keepMounted>
-                {readme ? (
-                  <section className="space-y-3">
-                    <div className="text-[12px] text-[var(--text-3)]">{formatReadmeMeta(readme)}</div>
-                    <XMarkdown components={DIFF_AWARE_MARKDOWN_COMPONENTS} className="x-markdown text-[15px] leading-8 text-[var(--text-1)]">
-                      {readme.markdown}
-                    </XMarkdown>
-                  </section>
+                  </ul>
                 ) : (
-                  <EmptyPanel title="未找到 README.md" description="该插件没有提供 README。" />
+                  <p className="flex items-center gap-2 px-2 py-2.5 text-[14px] text-[var(--text-3)]">
+                    <Sparkles size={16} />
+                    该插件包含 {item.capabilities.skillCount} 个技能
+                  </p>
                 )}
-              </TabsContent>
+              </DetailSection>
+            )}
 
-              <TabsContent value="setup" keepMounted>
+            <DetailSection title="信息">
+              <dl className="mt-3 space-y-2.5">
+                {inspected?.normalized.author && <InfoRow label="开发者" value={inspected.normalized.author} />}
+                <InfoRow label="类别" value={PLUGIN_SOURCE_LABELS[item.sourceType]} />
+                <InfoRow label="版本" value={item.version} />
+                {marketplaceWebsite && (
+                  <InfoRow
+                    label="网站"
+                    value={(
+                      <a
+                        href={marketplaceWebsite}
+                        target="_blank"
+                        rel="noreferrer"
+                        title={`网站: ${marketplaceWebsite}`}
+                        aria-label={`网站: ${marketplaceWebsite}`}
+                        className="inline-flex items-center gap-1 rounded-md text-[14px] text-[var(--text-1)] transition-colors hover:text-[var(--lume-accent)]"
+                      >
+                        <ExternalLink size={14} />
+                      </a>
+                    )}
+                  />
+                )}
+              </dl>
+            </DetailSection>
+
+            {setupItems.length > 0 && (
+              <DetailSection title="配置与安装">
                 <div className="space-y-3">
                   {setupItems.map((setup) => (
                     <div
                       key={setup.title}
-                      className="flex gap-3 rounded-[8px] border border-[var(--border)] bg-[var(--surface-1)] p-4"
+                      className="flex gap-3 rounded-lg border border-[var(--border)] bg-[var(--surface-1)] p-5"
                     >
-                      <CheckCircle2
-                        size={18}
-                        className={cn(
-                          'mt-0.5 shrink-0',
-                          setup.status === 'done'
-                            ? 'text-[var(--lume-success)]'
-                            : setup.status === 'attention'
-                              ? 'text-[var(--lume-warning)]'
-                              : 'text-[var(--text-3)]',
-                        )}
-                      />
-                      <div className="min-w-0">
-                        <div className="text-[13px] font-semibold text-[var(--text-1)]">{setup.title}</div>
-                        <div className="mt-1 text-[12px] leading-5 text-[var(--text-3)]">{setup.description}</div>
-                        {setup.installer && onInstallPackage && setup.id ? (
-                          <Button type="button" disabled={busy} className="mt-2 h-8 text-[12px]" onClick={() => onInstallPackage(setup.id!)}>
-                            安装 Native Host
-                          </Button>
-                        ) : (setup.artifact || setup.artifacts?.length || setup.download) && onPreparePackage && setup.id ? (
-                          <Button type="button" variant="outline" disabled={busy} className="mt-2 h-8 text-[12px]" onClick={() => onPreparePackage(setup.id!)}>
-                            {setup.targetApp?.kind === 'chrome' ? '保存 Chrome 扩展包' : setup.targetApp?.kind === 'obsidian' ? '导出 Obsidian 插件包' : '保存配套包'}
-                          </Button>
-                        ) : null}
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[14px] font-semibold text-[var(--text-1)]">{setup.title}</div>
+                        <div className="mt-1.5 text-[13px] leading-5 text-[var(--text-3)]">{setup.description}</div>
                       </div>
+                      {setup.installer && onInstallPackage && setup.id ? (
+                        <Button type="button" disabled={busy} className="h-8 shrink-0 text-[12px]" onClick={() => onInstallPackage(setup.id!)}>
+                          安装 Native Host
+                        </Button>
+                      ) : (setup.artifact || setup.artifacts?.length || setup.download) && onPreparePackage && setup.id ? (
+                        <Button type="button" variant="outline" disabled={busy} className="h-8 shrink-0 text-[12px]" onClick={() => onPreparePackage(setup.id!)}>
+                          {setup.targetApp?.kind === 'chrome' ? '保存 Chrome 扩展包' : setup.targetApp?.kind === 'obsidian' ? '导出 Obsidian 插件包' : '保存配套包'}
+                        </Button>
+                      ) : null}
                     </div>
                   ))}
                 </div>
-              </TabsContent>
-            </Tabs>
+              </DetailSection>
+            )}
 
-            {installedLike && (
-              <div className="flex flex-wrap justify-end gap-2 border-t border-[var(--border)] pt-5">
+            <details className="group border-t border-[color:color-mix(in_oklab,var(--border-strong)_22%,transparent)] pt-4">
+              <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 text-[13px] text-[var(--text-3)] transition-colors hover:text-[var(--text-1)] [&::-webkit-details-marker]:hidden">
+                <ChevronRight size={14} className="transition-transform group-open:rotate-90" />
+                高级信息
+              </summary>
+              <div className="mt-3 space-y-3">
+                {inspected?.normalized.root && (
+                  <div className="rounded-lg border border-[color:color-mix(in_oklab,var(--border-strong)_36%,transparent)] px-3.5 py-3 text-[12.5px] leading-5">
+                    <div className="text-[var(--text-3)]">根路径</div>
+                    <div className="mt-0.5 break-all font-mono text-[var(--text-2)]">{inspected.normalized.root}</div>
+                  </div>
+                )}
+                <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)] text-[13px]">
+                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
+                    <span className="text-[var(--text-3)]">安装状态</span>
+                    <span className="text-[var(--text-2)]">{formatPluginInstallState(installState)}</span>
+                  </div>
+                  <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
+                    <span className="text-[var(--text-3)]">启用状态</span>
+                    <span className="text-[var(--text-2)]">{formatPluginEnableState(enableState)}</span>
+                  </div>
+                  {updateAvailable && (
+                    <>
+                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
+                        <span className="text-[var(--text-3)]">当前版本</span>
+                        <span className="font-mono text-[var(--text-2)]">v{currentVersion}</span>
+                      </div>
+                      <div className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2.5 leading-5">
+                        <span className="text-[var(--text-3)]">可更新版本</span>
+                        <span className="font-mono text-[var(--text-2)]">v{item.version}</span>
+                      </div>
+                    </>
+                  )}
+                </div>
                 {rollbackVersion && onRollback && (
                   <Button
                     variant="ghost"
                     type="button"
                     disabled={busy}
                     onClick={onRollback}
-                    className="h-9 gap-2 rounded-[8px] border border-[var(--border)] px-4 text-[13px] font-semibold"
+                    className="h-8 gap-2 rounded-lg border border-[var(--border)] px-3 text-[12.5px] font-semibold text-[var(--text-2)]"
                   >
-                    <RotateCcw size={15} />
+                    <RotateCcw size={14} />
                     回滚到 v{rollbackVersion}
                   </Button>
                 )}
-                <Button
-                  variant="ghost"
-                  type="button"
-                  disabled={busy}
-                  onClick={onToggleEnable}
-                  className="h-9 gap-2 rounded-[8px] border border-[var(--border)] px-4 text-[13px] font-semibold"
-                >
-                  <Power size={15} />
-                  {enabled ? '禁用' : '启用'}
-                </Button>
-                <Button
-                  variant="ghost"
-                  type="button"
-                  disabled={busy}
-                  onClick={onUninstall}
-                  className="h-9 gap-2 rounded-[8px] border border-[color:color-mix(in_oklab,var(--lume-danger)_32%,var(--border))] px-4 text-[13px] font-semibold text-[var(--lume-danger)]"
-                >
-                  <Trash2 size={15} />
-                  卸载
-                </Button>
+                {diagnostics.length > 0 ? (
+                  <ul className="space-y-2 text-[13px] leading-6 text-[var(--lume-warning)]">
+                    {diagnostics.map((diagnostic, index) => (
+                      <li
+                        key={`${diagnostic.code}-${index}`}
+                        className="rounded-lg bg-[color:color-mix(in_oklab,var(--lume-warning)_9%,var(--surface-1))] p-3"
+                      >
+                        {diagnostic.message}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <div className="text-[12.5px] text-[var(--text-3)]">当前插件未返回需要处理的问题。</div>
+                )}
               </div>
-            )}
+            </details>
           </div>
         ) : (
-          <EmptyPanel title="暂无插件详情" description="返回插件市场后重新选择一个插件。" />
+          <div className="mt-8 rounded-lg border border-dashed border-[var(--border)] p-8 text-center">
+            <div className="text-[14px] font-semibold text-[var(--text-1)]">暂无插件详情</div>
+            <div className="mt-2 text-[13px] leading-6 text-[var(--text-3)]">返回插件市场后重新选择一个插件。</div>
+          </div>
         )}
       </main>
+
+      {item && (
+        <Dialog open={installDialogOpen} onOpenChange={setInstallDialogOpen}>
+          <DialogContent className="w-[calc(100%-2rem)] sm:max-w-[520px]">
+            <DialogTitle className="text-[15px] font-semibold text-[var(--text-1)]">
+              {updateAvailable ? `确认权限并更新到 v${item.version}` : '确认权限并安装'}
+            </DialogTitle>
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {item.permissions.riskLabels.length > 0 ? (
+                  item.permissions.riskLabels.map((risk) => (
+                    <span
+                      key={risk}
+                      className="rounded-md bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] px-2 py-1 text-[12px] font-medium text-[var(--lume-warning)]"
+                    >
+                      {formatRiskLabel(risk)}
+                    </span>
+                  ))
+                ) : (
+                  <span className="rounded-md bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] px-2 py-1 text-[12px] font-medium text-[var(--lume-success)]">
+                    低风险
+                  </span>
+                )}
+              </div>
+              <div className="divide-y divide-[color:color-mix(in_oklab,var(--border-strong)_18%,transparent)]">
+                {permissionRows.map((row) => (
+                  <div key={row.label} className="grid grid-cols-[130px_minmax(0,1fr)] gap-3 py-2 text-[12.5px] leading-5">
+                    <span className="text-[var(--text-3)]">{row.label}</span>
+                    <span className="break-all text-[var(--text-2)]">{row.value}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" type="button" disabled={busy} onClick={() => setInstallDialogOpen(false)}>
+                取消
+              </Button>
+              <Button
+                type="button"
+                disabled={busy}
+                onClick={() => {
+                  setInstallDialogOpen(false)
+                  onInstall()
+                }}
+                data-plugin-detail-confirm-action={busy ? 'disabled' : 'enabled'}
+              >
+                {busy ? <Loader2 size={14} className="animate-spin" /> : null}
+                {updateAvailable ? '确认更新' : '确认安装'}
+              </Button>
+            </div>
+          </DialogContent>
+        </Dialog>
+      )}
     </div>
   )
 }
 
-function MarketplaceMedia({ media, pluginName }: { media: PluginMarketplaceAsset; pluginName: string }) {
+function DetailSection({
+  title,
+  count,
+  children,
+}: {
+  title: string
+  count?: number
+  children: ReactNode
+}) {
+  return (
+    <section>
+      <div className="flex items-baseline gap-2 border-b border-[var(--border)] pb-2">
+        <h2 className="text-[16px] font-semibold text-[var(--text-1)]">{title}</h2>
+        {typeof count === 'number' && <span className="text-[14px] text-[var(--text-3)]">{count}</span>}
+      </div>
+      <div className="mt-1">{children}</div>
+    </section>
+  )
+}
+
+function CapabilityRow({
+  icon,
+  name,
+  description,
+}: {
+  icon: ReactNode
+  name: string
+  description?: string
+}) {
+  return (
+    <li className="flex min-w-0 items-center gap-3 py-2.5">
+      <span className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-[color:color-mix(in_oklab,var(--text-1)_5%,transparent)] text-[var(--text-3)]">
+        {icon}
+      </span>
+      <div className="min-w-0 flex-1">
+        <div className="truncate text-[14px] font-medium text-[var(--text-1)]">{name}</div>
+        {description ? (
+          <div className="mt-0.5 line-clamp-1 text-[14px] text-[var(--text-3)]">{description}</div>
+        ) : null}
+      </div>
+    </li>
+  )
+}
+
+function InfoRow({ label, value }: { label: string; value: ReactNode }) {
+  return (
+    <div className="grid grid-cols-[8rem_minmax(0,1fr)] items-baseline gap-3">
+      <dt className="text-[14px] text-[var(--text-3)]">{label}</dt>
+      <dd className="min-w-0 truncate text-[14px] text-[var(--text-1)]">{value}</dd>
+    </div>
+  )
+}
+
+/** prompt 内容 → 分类图标（documents/pdf/spreadsheets），规则与 ZCode `hmt` 一致 */
+function classifyPromptIcon(text: string): 'pdf' | 'spreadsheets' | 'documents' {
+  if (/\bpdf\b/iu.test(text)) return 'pdf'
+  if (/\b(?:csv|xlsx|excel)\b/iu.test(text)) return 'spreadsheets'
+  return 'documents'
+}
+
+/** 推荐位：渐变面板（可叠 hero 图）+ 技能生成的示例 prompt 胶囊，规格取自 ZCode `_mt`/`I4` */
+function HeroPanel({
+  pluginName,
+  skills,
+  heroImage,
+  onTry,
+}: {
+  pluginName: string
+  skills: Array<{ name: string; description?: string }>
+  heroImage?: string
+  onTry: () => void
+}) {
+  const [imageFailed, setImageFailed] = useState(false)
+  const showImage = Boolean(heroImage) && !imageFailed
+  const prompts = skills.slice(0, 4).map((skill) => ({
+    kind: classifyPromptIcon(skill.description || skill.name),
+    label: pluginName,
+    prompt: skill.description || skill.name,
+  }))
   return (
     <div
-      data-plugin-marketplace-media="true"
-      className="overflow-hidden rounded-[8px] border border-[var(--border)] bg-[var(--surface-2)]"
+      className="relative min-h-72 overflow-hidden rounded-3xl sm:aspect-[3/1] sm:min-h-0"
+      style={{ background: 'linear-gradient(150deg, #0e1420 0%, #17233a 55%, #2c4666 100%)' }}
+      data-testid="plugin-detail-hero"
     >
-      {media.url ? (
+      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+        <div className="absolute left-[-12%] top-[18%] size-[42rem] rounded-full bg-cyan-300/20 blur-3xl" />
+        <div className="absolute right-[-18%] bottom-[-14%] size-[36rem] rounded-full bg-blue-400/20 blur-3xl" />
+      </div>
+      {showImage && (
         <img
-          src={media.url}
-          alt={`${pluginName} thumbnail`}
-          className="h-auto max-h-[260px] w-full object-cover"
+          src={heroImage}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          data-plugin-marketplace-media="true"
+          className="absolute inset-0 size-full select-none object-cover opacity-80"
+          onError={() => setImageFailed(true)}
         />
-      ) : (
-        <div className="px-4 py-8 text-center text-[12px] text-[var(--text-3)]">
-          {media.path}
+      )}
+      <div aria-hidden="true" className="absolute inset-0 bg-black/15" />
+      {prompts.length > 0 && (
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-4 p-5 sm:p-8">
+          {prompts.map((prompt) => (
+            <button
+              key={prompt.prompt}
+              type="button"
+              onClick={onTry}
+              title={prompt.prompt}
+              className="group/prompt flex w-fit max-w-2xl cursor-pointer items-center gap-2.5 rounded-3xl bg-black/75 px-3.5 py-2.5 text-left text-[14px] text-white shadow-lg backdrop-blur-md transition-colors hover:bg-black/85 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white/70"
+            >
+              <img
+                src={`/prompt-icons/${prompt.kind}.png`}
+                alt=""
+                aria-hidden="true"
+                className="size-7 shrink-0 object-contain"
+              />
+              <span className="shrink-0 font-medium text-white/70">{prompt.label}</span>
+              <span className="min-w-0 whitespace-normal">{prompt.prompt}</span>
+              <span
+                aria-hidden="true"
+                className="flex size-9 shrink-0 items-center justify-center rounded-full bg-white/15 transition-colors group-hover/prompt:bg-white/25"
+              >
+                <ArrowRight size={16} />
+              </span>
+            </button>
+          ))}
         </div>
       )}
-    </div>
-  )
-}
-
-function Badge({ children, tone = 'default' }: { children: ReactNode; tone?: 'default' | 'warning' | 'success' }) {
-  return (
-    <span
-      className={cn(
-        'rounded-[5px] px-2 py-1 text-[12px] font-medium',
-        tone === 'warning'
-          ? 'bg-[color:color-mix(in_oklab,var(--lume-warning)_12%,var(--surface-1))] text-[var(--lume-warning)]'
-          : tone === 'success'
-            ? 'bg-[color:color-mix(in_oklab,var(--lume-success)_10%,var(--surface-1))] text-[var(--lume-success)]'
-            : 'bg-[var(--surface-2)] text-[var(--text-2)]',
-      )}
-    >
-      {children}
-    </span>
-  )
-}
-
-function SummaryStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-[8px] bg-[var(--surface-2)] px-3 py-2">
-      <div className="text-[12px] leading-5 text-[var(--text-3)]">{label}</div>
-      <div className="mt-1 truncate text-[13px] font-semibold leading-5 text-[var(--text-1)]">{value}</div>
-    </div>
-  )
-}
-
-function EmptyPanel({ title, description }: { title: string; description: string }) {
-  return (
-    <div className="rounded-[8px] border border-dashed border-[var(--border)] p-8 text-center">
-      <div className="text-[14px] font-semibold text-[var(--text-1)]">{title}</div>
-      <div className="mt-2 text-[13px] leading-6 text-[var(--text-3)]">{description}</div>
     </div>
   )
 }

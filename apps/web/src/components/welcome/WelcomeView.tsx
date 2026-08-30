@@ -22,6 +22,7 @@ import { ThinkingLevelPicker } from '@/components/agent/ThinkingLevelPicker'
 import { CreateWorkspaceDialog } from '@/components/workspace/CreateWorkspaceDialog'
 import { WelcomeModelPicker } from './WelcomeModelPicker'
 import { WorkspaceSelector } from './WorkspaceSelector'
+import { WorkspaceBranchPicker } from './WorkspaceBranchPicker'
 import {
   AGENT_IPC_CHANNELS,
   DESKTOP_CONTEXT_IPC_CHANNELS,
@@ -660,6 +661,7 @@ export function WelcomeView({
             onCreateWorkspaceClick={() => setCreateWorkspaceOpen(true)}
           />
         }
+        workspaceBranchPicker={<WorkspaceBranchPicker workspaceId={selectedWorkspaceId} />}
         composerModelPicker={
           <WelcomeModelPicker
             variant="composer"
@@ -674,7 +676,7 @@ export function WelcomeView({
           />
         }
         thinkingLevelPicker={
-          <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} />
+          <ThinkingLevelPicker value={thinkingLevel} onChange={handleThinkingLevelChange} menuAlign="right" />
         }
         permissionModePicker={
           <PermissionModePicker value={permissionMode} onChange={handlePermissionModeChange} />
