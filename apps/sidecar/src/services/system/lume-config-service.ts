@@ -11,6 +11,7 @@ import {
   type LumeConfigFile,
   type LumeConfigImAccountApprovalPolicy,
   type LumeConfigImApprovalPolicy,
+  type LumeConfigObsidianSection,
   type LumeConfigPluginEnablement,
   type LumeConfigPluginMarketSourceRef,
   type LumeConfigPermissionApprovalRoutes,
@@ -465,6 +466,16 @@ function normalizeWebSearchSection(value: unknown): LumeConfigWebSearchSection {
   return { strategy, ...(Object.keys(providers).length > 0 ? { providers } : {}) };
 }
 
+function normalizeObsidianSection(value: unknown): LumeConfigObsidianSection {
+  if (!isPlainObject(value)) {
+    return { enabled: true, extraVaults: [] };
+  }
+  return {
+    enabled: typeof value.enabled === "boolean" ? value.enabled : true,
+    extraVaults: normalizeUniqueStringArray(value.extraVaults)
+  };
+}
+
 export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
   const providers = config.providers ?? {};
   const enabledProviders = WEB_SEARCH_PROVIDER_KEYS.filter((provider) => providers[provider]?.enabled === true);
@@ -490,7 +501,7 @@ export function syncWebSearchEnvVars(config: LumeConfigWebSearchSection): void {
 
 
 export const KNOWN_LUME_SECTION_KEYS: readonly string[] = [
-  "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch",
+  "models", "agent", "providers", "mcp", "memory", "skills", "plugins", "permissions", "hooks", "webSearch", "obsidian",
   // 顶层文件段(LumeConfigFile),normalizeLumeConfigFile 消费
   "version", "workspaces",
 ];
@@ -659,6 +670,10 @@ function normalizeSectionSet(value: unknown): LumeConfigSectionSet {
     next.webSearch = normalizeWebSearchSection(value.webSearch);
   }
 
+  if (isPlainObject(value.obsidian)) {
+    next.obsidian = normalizeObsidianSection(value.obsidian);
+  }
+
   return next;
 }
 
@@ -819,6 +834,7 @@ function normalizeLumeConfigFile(input: unknown): LumeConfigFile {
       ...(DEFAULT_LUME_WEB_SEARCH),
       ...(base.webSearch ?? {})
     },
+    obsidian: normalizeObsidianSection(base.obsidian),
     workspaces
   };
 }
@@ -1167,6 +1183,13 @@ export function getEffectiveLumeConfig(workspaceSlug?: string): LumeEffectiveCon
         ...(file.webSearch?.providers ?? {}),
         ...(overlay?.webSearch?.providers ?? {})
       }
+    },
+    obsidian: {
+      enabled: overlay?.obsidian?.enabled ?? file.obsidian?.enabled ?? true,
+      extraVaults: [
+        ...(file.obsidian?.extraVaults ?? []),
+        ...(overlay?.obsidian?.extraVaults ?? [])
+      ]
     }
   };
   syncWebSearchEnvVars(effective.webSearch ?? {});

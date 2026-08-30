@@ -474,9 +474,9 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
     ...(required.length ? { required } : {}),
     additionalProperties: false,
   })
-  if (name === "open") return object({ url: { type: "string", description: "HTTP(S) URL to open in a new Agent-owned tab." } }, ["url"])
+  if (name === "open") return object({ url: { type: "string", description: "HTTP(S) URL, or file:// URL inside the current task workspace, to open in a new Agent-owned tab." } }, ["url"])
   if (name === "switch_tab") return object({ tab_id: { type: "string", description: "Agent-owned tab_id returned by list_tabs or open." } }, ["tab_id"])
-  if (name === "navigate") return object({ url: { type: "string", description: "HTTP(S) URL to load in the locked Agent tab." } }, ["url"])
+  if (name === "navigate") return object({ url: { type: "string", description: "HTTP(S) URL, or file:// URL inside the current task workspace, to load in the locked Agent tab." } }, ["url"])
   if (name === "snapshot") return object({
     interactive_only: { type: "boolean", default: false, description: "Return only interactive nodes and their semantic ancestors." },
     scope_ref: { type: "string", pattern: "^@?e[1-9][0-9]*$", description: "Return only the subtree rooted at a ref from the previous snapshot." },
@@ -545,9 +545,9 @@ function toolSchema(name: BrowserToolName): ToolInputSchema {
 function describeTool(name: BrowserToolName): string {
   return ({
     list_tabs: "List only tabs owned by this Agent task and show the locked active tab.",
-    open: "Open a URL in a new Agent-owned in-app browser tab and lock subsequent browser tools to it.",
+    open: "Open an HTTP(S) URL or a task-authorized local file:// preview in a new Agent-owned in-app browser tab and lock subsequent browser tools to it.",
     switch_tab: "Explicitly switch the Agent's locked browser target to another Agent-owned tab.",
-    navigate: "Navigate the locked Agent tab to a URL, then return a fresh interactive snapshot.",
+    navigate: "Navigate the locked Agent tab to an HTTP(S) URL or task-authorized local file:// preview, then return a fresh interactive snapshot.",
     back: "Go back in the locked Agent tab, then return a fresh interactive snapshot.",
     forward: "Go forward in the locked Agent tab, then return a fresh interactive snapshot.",
     reload: "Reload the locked Agent tab, then return a fresh interactive snapshot.",

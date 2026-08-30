@@ -10,7 +10,7 @@ import {
   statSync,
   writeFileSync
 } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { basename, isAbsolute, join, resolve } from "node:path";
 import type { AgentThreadMeta, AgentWorkspace } from "@lume/shared";
 import {
   getAgentFileContextArtifactsPath,
@@ -242,6 +242,21 @@ function ensureResolvedDirs(root: string): Pick<ResolvedAgentWorkdir, "filesRoot
   return { filesRoot, plansRoot, artifactsRoot };
 }
 
+/**
+ * 线程绑定的活动 worktree 路径。本函数只做同步存在性守卫（本模块被 RPC 高频
+ * 调用，不得 exec git）；主仓库根漂移的深度校验由 run 入口的
+ * clearInvalidThreadWorktree 完成，失效时清除绑定并回退默认 cwd。
+ */
+function resolveActiveWorktreePath(thread: Pick<AgentThreadMeta, "activeWorktree">): string | undefined {
+  const path = thread.activeWorktree?.path;
+  if (!path || !isAbsolute(path)) return undefined;
+  try {
+    return statSync(path).isDirectory() ? path : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 export function resolveAgentWorkdirForMeta(
   thread: AgentThreadMeta,
   workspace?: AgentWorkspace
@@ -256,6 +271,21 @@ export function resolveAgentWorkdirForMeta(
 
   if (!workspace.projectPath?.trim()) {
     throw new Error(`项目未绑定本地目录: ${workspace.name}`);
+  }
+
+  // 活动 worktree 优先于项目根：diff/checkpoint/沙箱边界随 agentCwd/projectRoot
+  // 自然落到 worktree，线程私有目录 lumeWorkDir 不变。
+  const activeWorktreePath = resolveActiveWorktreePath(thread);
+  if (activeWorktreePath) {
+    return {
+      agentCwd: activeWorktreePath,
+      lumeWorkDir,
+      projectRoot: activeWorktreePath,
+      fileContextId,
+      filesRoot,
+      plansRoot,
+      artifactsRoot
+    };
   }
 
   const projectRoot = assertExistingDirectory(workspace.projectPath);

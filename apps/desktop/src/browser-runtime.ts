@@ -2,6 +2,7 @@ import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto"
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 import { rename as renamePromise, unlink as unlinkPromise, writeFile as writeFilePromise } from "node:fs/promises"
 import { join, resolve } from "node:path"
+import { fileURLToPath } from "node:url"
 import { app, BrowserWindow, clipboard, dialog, ipcMain, nativeImage, nativeTheme, session, shell, type IpcMainEvent } from "electron"
 import {
   BROWSER_PROTOCOL_MAX_SUPPORTED,
@@ -51,6 +52,7 @@ import { dispatchBrowserClick, dispatchBrowserKey, dispatchBrowserText, focusBro
 import { BrowserActionQueue } from "./browser-action-queue"
 import { BrowserInputLedger } from "./browser-input-ledger"
 import { detectBrowserActionEffect, type BrowserActionEffect, type BrowserActionEffectSnapshot } from "./browser-action-effect"
+import { createPreviewProtocolResponse, createPreviewScopeRegistry, previewScopeKindForPath, previewScopeUrl, previewTokenFromUrl } from "./file-protocol"
 
 type BrowserEvent = { method: string; params: Record<string, unknown> }
 type BrowserRuntimeOptions = {
@@ -96,6 +98,8 @@ type BrowserTab = BrowserTabDescriptor & {
   mountToken?: string
   mountWaiters: Array<{ resolve: (contents: Electron.WebContents) => void; reject: (error: Error) => void; timer: ReturnType<typeof setTimeout> }>
   viewportQueue: Promise<void>
+  localFilePreviews?: Map<string, string>
+  activeLocalFilePreview?: { sourceUrl: string; token: string; previewUrl: string }
 }
 
 type BrowserGuestMountGrant = {
@@ -125,6 +129,7 @@ type SessionPolicy = {
   downloadHandler?: (...args: any[]) => void
   networkGuard?: BrowserNetworkGuard
   networkReady?: Promise<void>
+  previewProtocolRegistered?: true
 }
 
 type BrowserDownloadWaiter = {
@@ -267,6 +272,7 @@ const REGISTERED_BROWSER_RUNTIME_METHODS = new Set(BROWSER_API_REGISTRY.map((ent
 
 export class BrowserRuntime {
   private readonly tabs = new Map<string, BrowserTab>()
+  private readonly previewScopes = createPreviewScopeRegistry()
   private readonly guestMounts = new Map<string, BrowserGuestMountGrant>()
   private readonly sessionPolicies = new WeakMap<Electron.Session, SessionPolicy>()
   private readonly ownedSessionPolicies = new Set<SessionPolicy>()
@@ -395,7 +401,7 @@ export class BrowserRuntime {
   descriptor(): BrowserRuntimeDescriptor {
     const capabilities = [
       { id: "tabs", description: "Create, close, switch and inspect in-app tabs." },
-      { id: "navigation", description: "Navigate and control ordinary HTTP(S) pages." },
+      { id: "navigation", description: "Navigate and control HTTP(S) pages and task-authorized local file previews." },
       { id: "locator-actions", description: "Use the constrained snapshot and locator input facade." },
       { id: "semanticSnapshot", description: "Read a compact accessibility-tree snapshot with stable element references." },
       { id: "agentScript", description: "Run a bounded, confirmed Agent script in an isolated world on its task-owned tab." },
@@ -512,7 +518,7 @@ export class BrowserRuntime {
       for (const waiter of waiters) { clearTimeout(waiter.timer); waiter.resolve(contents) }
       const targetUrl = tab.pendingUrl || tab.url
       tab.pendingUrl = undefined
-      if (targetUrl) void contents.loadURL(targetUrl).catch(() => undefined)
+      if (targetUrl) void this.loadTabUrl(tab, targetUrl, contents).catch(() => undefined)
       this.syncTabColorScheme(tab)
       if (tab.scrollPosition) {
         contents.once("did-finish-load", () => {
@@ -544,6 +550,7 @@ export class BrowserRuntime {
 
   private markGuestGone(tab: BrowserTab, contents: Electron.WebContents, details: { reason?: string; exitCode?: number } = {}): void {
     if (tab.webContents !== contents) return
+    this.revokeActiveLocalFilePreview(tab)
     tab.webContents = null
     tab.guestState = "gone"
     tab.lifecycle = "crashed"
@@ -606,6 +613,7 @@ export class BrowserRuntime {
         if (!shouldInstallAdvancedCdpPolicy(tab.partition)) continue
         const contents = tab.webContents
         const browserSession = contents?.session ?? session.fromPartition(tab.partition)
+        this.revokeActiveLocalFilePreview(tab)
         if (contents) closeWebContentsAfterRenderer(contents)
         // 与 closeTab 同款清理：挂起的 download/fileChooser/mount waiter 不应等超时（#412）
         this.clearTabWaiters(tabId)
@@ -1254,6 +1262,7 @@ export class BrowserRuntime {
     for (const tab of this.tabs.values()) {
       this.clearTabWaiters(tab.tabId)
       for (const waiter of tab.mountWaiters.splice(0)) { clearTimeout(waiter.timer); waiter.reject(browserError("browser_unavailable")) }
+      this.revokeActiveLocalFilePreview(tab)
       if (tab.webContents) closeWebContentsSafely(tab.webContents)
     }
     this.tabs.clear()
@@ -1267,6 +1276,7 @@ export class BrowserRuntime {
       policy.session.webRequest.onBeforeRequest(null)
       if (policy.downloadHandler) policy.session.off("will-download", policy.downloadHandler)
       void policy.networkGuard?.close()
+      policy.session.protocol.unhandle("lume-file")
     }
     this.ownedSessionPolicies.clear()
     this.backendGeneration += 1
@@ -1282,7 +1292,9 @@ export class BrowserRuntime {
         }
         if (!existing.agentLease || existing.agentLease.browserSessionId !== context.browserSessionId || existing.agentLease.browserTurnId !== context.browserTurnId) throw browserError("action_denied")
       }
-      if (!existing.url && typeof params.url === "string" && params.url.trim()) void this.navigate(existing, params.url, context).catch(() => undefined)
+      if (!existing.url && typeof params.url === "string" && params.url.trim()) {
+        void this.navigate(existing, params.url, context, false, BROWSER_HANDLER_WAIT_CAP_MS, params.__authorizedFilePreviewPath).catch(() => undefined)
+      }
       this.rememberTab(existing)
       return publicTab(existing)
     }
@@ -1340,7 +1352,9 @@ export class BrowserRuntime {
     this.ensureSessionPolicy(session.fromPartition(partition), partition, isolatedAgent || advancedCdp)
     const initialUrl = typeof params.url === "string" && params.url.trim() ? params.url : undefined
     if (initialUrl) {
-      const normalized = normalizeNavigableUrl(initialUrl)
+      const localFilePreview = this.resolveLocalFilePreview(initialUrl, params.__authorizedFilePreviewPath, context)
+      const normalized = localFilePreview?.sourceUrl ?? normalizeNavigableUrl(initialUrl)
+      if (localFilePreview) this.rememberLocalFilePreview(tab, localFilePreview)
       tab.url = normalized
       tab.pendingUrl = normalized
       tab.securityState = securityStateForUrl(normalized)
@@ -1406,15 +1420,25 @@ export class BrowserRuntime {
         if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
       })
     })
-    wc.on("will-navigate", (event, url) => {
-      if (!isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)) event.preventDefault()
+    const handleGuestNavigation = (event: Electron.Event, url: string): void => {
+      const localPreviewNavigation = this.isAllowedLocalPreviewNavigation(tab, url, wc.id)
+      const allowed = localPreviewNavigation || isAllowedNavigation(url, agent, this.settings, tab.approvedPrivateOrigins)
+      if (!localPreviewNavigation && allowed) this.revokeActiveLocalFilePreview(tab)
+      if (!allowed) event.preventDefault()
+    }
+    wc.on("will-navigate", handleGuestNavigation)
+    wc.on("will-redirect", (event, url, _isInPlace, isMainFrame) => {
+      if (isMainFrame === false) return
+      handleGuestNavigation(event, url)
     })
     wc.on("did-navigate", (_event, url) => {
       if (guestMountTokenFromUrl(url)) return
       this.referenceGrants.invalidateTab(tab.tabId)
       this.hideAgentCursor()
-      this.closeAuthSessionsForTab(tab.tabId, safeOrigin(url) === safeOrigin(tab.url) ? "page_changed" : "origin_changed")
-      tab.url = stripUrl(url)
+      const displayUrl = this.displayUrlForNavigation(tab, url)
+      if (!this.isOwnedLocalPreviewRequest(tab, url, wc.id)) this.revokeActiveLocalFilePreview(tab)
+      this.closeAuthSessionsForTab(tab.tabId, safeOrigin(displayUrl) === safeOrigin(tab.url) ? "page_changed" : "origin_changed")
+      tab.url = displayUrl
       tab.securityState = securityStateForUrl(tab.url)
       tab.isLoading = wc.isLoading()
       tab.lifecycle = tab.visible ? "active" : "background"
@@ -1446,7 +1470,7 @@ export class BrowserRuntime {
       if (guestMountTokenFromUrl(url)) return
       this.referenceGrants.invalidateTab(tab.tabId)
       this.closeAuthSessionsForTab(tab.tabId, "page_changed")
-      tab.url = stripUrl(url)
+      tab.url = this.displayUrlForNavigation(tab, url)
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
       // in-page 导航（pushState/hash）不替换文档：backendNodeId 与语义引用在同一文档内保持有效，
@@ -1475,9 +1499,10 @@ export class BrowserRuntime {
     wc.on("did-fail-load", (_event, errorCode, errorDescription, validatedURL, isMainFrame) => {
       if (!isMainFrame || errorCode === -3) return
       tab.isLoading = false
-      tab.loadError = { errorCode, errorDescription: errorDescription.slice(0, 300), url: stripUrl(validatedURL) }
+      const displayUrl = this.displayUrlForNavigation(tab, validatedURL)
+      tab.loadError = { errorCode, errorDescription: errorDescription.slice(0, 300), url: displayUrl }
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
-      this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "load_failed", errorCode, errorDescription: errorDescription.slice(0, 300), url: stripUrl(validatedURL), recoverable: true } })
+      this.options.emit({ method: "browser:tab-error", params: { tabId: tab.tabId, code: "load_failed", errorCode, errorDescription: errorDescription.slice(0, 300), url: displayUrl, recoverable: true } })
     })
     wc.on("page-favicon-updated", (_event, favicons) => {
       const faviconUrl = favicons.find((value) => /^https?:|^data:image\//i.test(value))
@@ -1625,6 +1650,8 @@ export class BrowserRuntime {
   private ensureSessionPolicy(browserSession: Electron.Session, partition: string, agent: boolean): void {
     if (this.sessionPolicies.has(browserSession)) return
     const policy: SessionPolicy = { session: browserSession, partition, agent, disposed: false }
+    browserSession.protocol.handle("lume-file", (request) => createPreviewProtocolResponse(this.previewScopes, request))
+    policy.previewProtocolRegistered = true
     this.sessionPolicies.set(browserSession, policy)
     this.ownedSessionPolicies.add(policy)
     browserSession.setPermissionRequestHandler((contents, permission, callback, details) => {
@@ -1687,10 +1714,17 @@ export class BrowserRuntime {
     }
     policy.downloadHandler = downloadHandler
     browserSession.on("will-download", downloadHandler)
-    browserSession.webRequest.onBeforeRequest({ urls: ["*://*/*", "ws://*/*", "wss://*/*"] }, (details, callback) => {
-      const claimedGlobalTab = [...this.tabs.values()].find((tab) => tab.webContents?.id === details.webContentsId && Boolean(tab.agentLease))
-      const guarded = policy.agent || Boolean(claimedGlobalTab)
-      callback({ cancel: policy.disposed || (guarded && !isAllowedNavigation(details.url, true, this.settings, claimedGlobalTab?.approvedPrivateOrigins)) })
+    browserSession.webRequest.onBeforeRequest({ urls: ["*://*/*", "ws://*/*", "wss://*/*", "lume-file://preview/*"] }, (details, callback) => {
+      const requestTab = [...this.tabs.values()].find((tab) => tab.webContents?.id === details.webContentsId)
+      const guarded = policy.agent || Boolean(requestTab?.agentLease)
+      const localPreviewRequest = requestTab ? this.isOwnedLocalPreviewRequest(requestTab, details.url, details.webContentsId) : false
+      const isPreviewRequest = details.url.startsWith("lume-file://preview/")
+      callback({
+        cancel: policy.disposed
+          || (isPreviewRequest
+            ? !localPreviewRequest
+            : guarded && !isAllowedNavigation(details.url, true, this.settings, requestTab?.approvedPrivateOrigins)),
+      })
     })
     if (!agent) return
     const guard = new BrowserNetworkGuard({
@@ -1856,6 +1890,78 @@ export class BrowserRuntime {
     return [...this.tabs.values()].find((tab) => tab.webContents === contents)
   }
 
+  private resolveLocalFilePreview(url: string, authorizedPath: unknown, context: BrowserRequestContext): { sourceUrl: string; absolutePath: string } | null {
+    let parsed: URL
+    try { parsed = new URL(url) } catch { return null }
+    if (parsed.protocol !== "file:") return null
+    if (context.actor !== "agent" || !context.capability?.startsWith("browser-broker-v1:") || typeof authorizedPath !== "string") throw browserError("invalid_url")
+    try {
+      const requestedPath = realpathSync(fileURLToPath(parsed))
+      const absolutePath = realpathSync(resolve(authorizedPath))
+      if (pathIdentity(requestedPath) !== pathIdentity(absolutePath) || !previewScopeKindForPath(absolutePath)) throw browserError("invalid_url")
+      return { sourceUrl: stripUrl(parsed.toString()), absolutePath }
+    } catch (error) {
+      if ((error as { code?: unknown })?.code === "invalid_url") throw error
+      throw browserError("invalid_url")
+    }
+  }
+
+  private rememberLocalFilePreview(tab: BrowserTab, preview: { sourceUrl: string; absolutePath: string }): void {
+    const previews = tab.localFilePreviews ?? (tab.localFilePreviews = new Map())
+    previews.delete(preview.sourceUrl)
+    previews.set(preview.sourceUrl, preview.absolutePath)
+    while (previews.size > 20) previews.delete(previews.keys().next().value!)
+  }
+
+  private async loadTabUrl(tab: BrowserTab, displayUrl: string, contents: Electron.WebContents): Promise<void> {
+    const absolutePath = tab.localFilePreviews?.get(displayUrl)
+    if (!absolutePath) {
+      this.revokeActiveLocalFilePreview(tab)
+      await contents.loadURL(normalizeNavigableUrl(displayUrl))
+      return
+    }
+    const policy = this.sessionPolicies.get(contents.session)
+    if (!policy?.previewProtocolRegistered) throw browserError("browser_unavailable")
+    const kind = previewScopeKindForPath(absolutePath)
+    if (!kind) throw browserError("invalid_url")
+    this.revokeActiveLocalFilePreview(tab)
+    const scope = this.previewScopes.create({
+      kind,
+      ownerWebContentsId: contents.id,
+      absolutePath,
+      ttlMs: 24 * 60 * 60_000,
+    })
+    const previewUrl = previewScopeUrl(scope)
+    tab.activeLocalFilePreview = { sourceUrl: displayUrl, token: scope.token, previewUrl }
+    await contents.loadURL(previewUrl)
+  }
+
+  private revokeActiveLocalFilePreview(tab: BrowserTab): void {
+    if (!tab.activeLocalFilePreview) return
+    this.previewScopes.revoke(tab.activeLocalFilePreview.token)
+    tab.activeLocalFilePreview = undefined
+  }
+
+  private isOwnedLocalPreviewRequest(tab: BrowserTab, url: string, webContentsId: number): boolean {
+    const token = previewTokenFromUrl(url)
+    return Boolean(token && tab.activeLocalFilePreview?.token === token && this.previewScopes.owns(token, webContentsId))
+  }
+
+  private isAllowedLocalPreviewNavigation(tab: BrowserTab, url: string, webContentsId: number): boolean {
+    if (!this.isOwnedLocalPreviewRequest(tab, url, webContentsId)) return false
+    try {
+      const target = new URL(url)
+      const entry = new URL(tab.activeLocalFilePreview!.previewUrl)
+      return target.origin === entry.origin && target.pathname === entry.pathname && target.search === entry.search
+    } catch { return false }
+  }
+
+  private displayUrlForNavigation(tab: BrowserTab, url: string): string {
+    return this.isOwnedLocalPreviewRequest(tab, url, tab.webContents?.id ?? -1)
+      ? tab.activeLocalFilePreview!.sourceUrl
+      : stripUrl(url)
+  }
+
   /** 非输入类动作（对话框/凭据填充/上传）的 effect 捕获：与输入类动作同样区分 dispatched 与页面 effect */
   private async withActionEffect<T extends object>(tab: BrowserTab, agent: boolean, run: () => Promise<T>): Promise<T & { effect: BrowserActionEffect }> {
     const before = await this.captureActionEffect(tab)
@@ -1877,23 +1983,28 @@ export class BrowserRuntime {
       this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
       return {}
     }
-    if (method === "navigate") return this.navigate(tab, String(params.url ?? ""), context, params.__policyRequired === true)
+    if (method === "navigate") return this.navigate(tab, String(params.url ?? ""), context, params.__policyRequired === true, BROWSER_HANDLER_WAIT_CAP_MS, params.__authorizedFilePreviewPath)
     await this.waitForGuest(tab)
     if (method === "back") {
       if (tab.navigationIndex <= 0) return undefined
       tab.pendingNavigationIndex = tab.navigationIndex - 1
       const contents = browserContents(tab)
-      if (contents.canGoBack()) return contents.goBack()
-      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!).catch(() => { tab.pendingNavigationIndex = undefined })
+      const targetUrl = tab.navigationStack[tab.pendingNavigationIndex]!
+      if (!tab.localFilePreviews?.has(targetUrl) && contents.canGoBack()) return contents.goBack()
+      return this.loadTabUrl(tab, targetUrl, contents).catch(() => { tab.pendingNavigationIndex = undefined })
     }
     if (method === "forward") {
       if (tab.navigationIndex < 0 || tab.navigationIndex >= tab.navigationStack.length - 1) return undefined
       tab.pendingNavigationIndex = tab.navigationIndex + 1
       const contents = browserContents(tab)
-      if (contents.canGoForward()) return contents.goForward()
-      return contents.loadURL(tab.navigationStack[tab.pendingNavigationIndex]!).catch(() => { tab.pendingNavigationIndex = undefined })
+      const targetUrl = tab.navigationStack[tab.pendingNavigationIndex]!
+      if (!tab.localFilePreviews?.has(targetUrl) && contents.canGoForward()) return contents.goForward()
+      return this.loadTabUrl(tab, targetUrl, contents).catch(() => { tab.pendingNavigationIndex = undefined })
     }
-    if (method === "reload") return browserContents(tab).reload()
+    if (method === "reload") {
+      const contents = browserContents(tab)
+      return tab.localFilePreviews?.has(tab.url) ? this.loadTabUrl(tab, tab.url, contents) : contents.reload()
+    }
     if (method === "dialog:handle") {
       if (!tab.dialogInfo || params.dialogId !== tab.dialogInfo.id) throw browserError("stale_target")
       return this.withActionEffect(tab, context.actor === "agent", async () => {
@@ -1990,19 +2101,22 @@ export class BrowserRuntime {
     throw browserError("unsupported")
   }
 
-  private async navigate(tab: BrowserTab, url: string, context: BrowserRequestContext, privateOriginApproved = false, timeoutMs = BROWSER_HANDLER_WAIT_CAP_MS): Promise<BrowserTabDescriptor> {
+  private async navigate(tab: BrowserTab, url: string, context: BrowserRequestContext, privateOriginApproved = false, timeoutMs = BROWSER_HANDLER_WAIT_CAP_MS, authorizedFilePreviewPath?: unknown): Promise<BrowserTabDescriptor> {
+    const localFilePreview = this.resolveLocalFilePreview(url, authorizedFilePreviewPath, context)
     if (privateOriginApproved && isPrivateUrl(url)) {
       const origin = safeOrigin(url)
       if (origin) (tab.approvedPrivateOrigins ??= new Set()).add(origin)
     }
-    if (!isAllowedNavigation(url, context.actor === "agent", this.settings, tab.approvedPrivateOrigins)) throw browserError(isPrivateUrl(url) ? "private_origin_confirmation_required" : "invalid_url")
+    if (!localFilePreview && !isAllowedNavigation(url, context.actor === "agent", this.settings, tab.approvedPrivateOrigins)) throw browserError(isPrivateUrl(url) ? "private_origin_confirmation_required" : "invalid_url")
+    if (localFilePreview) this.rememberLocalFilePreview(tab, localFilePreview)
+    const normalized = localFilePreview?.sourceUrl ?? normalizeNavigableUrl(url)
     const contents = tab.webContents
     const policy = this.sessionPolicies.get(contents?.session ?? session.fromPartition(tab.partition))
     if (policy?.networkReady) {
       try { await policy.networkReady } catch { throw browserError("browser_unavailable") }
     }
     if (!contents || contents.isDestroyed()) {
-      tab.url = normalizeNavigableUrl(url)
+      tab.url = normalized
       tab.pendingUrl = tab.url
       tab.securityState = securityStateForUrl(tab.url)
       tab.lastOpenedAt = new Date().toISOString()
@@ -2016,7 +2130,7 @@ export class BrowserRuntime {
     let navigationTimer: NodeJS.Timeout | undefined
     try {
       await Promise.race([
-        contents.loadURL(normalizeNavigableUrl(url)),
+        this.loadTabUrl(tab, normalized, contents),
         new Promise<never>((_, reject) => {
           navigationTimer = setTimeout(() => reject(browserError("navigation_timeout")), timeoutMs)
         }),
@@ -4047,6 +4161,7 @@ export class BrowserRuntime {
       return { released: true }
     }
     const contents = tab.webContents
+    this.revokeActiveLocalFilePreview(tab)
     tab.webContents = null
     tab.guestState = "unmounted"
     this.options.emit({ method: "browser:tab-changed", params: publicTab(tab) as unknown as Record<string, unknown> })
@@ -4214,6 +4329,7 @@ export class BrowserRuntime {
     }
     const contents = tab.webContents
     const browserSession = contents && !contents.isDestroyed() ? contents.session : session.fromPartition(tab.partition)
+    this.revokeActiveLocalFilePreview(tab)
     tab.webContents = null
     this.tabs.delete(tabId)
     this.disposeOwnedSessionIfUnused(tab.partition, browserSession)
@@ -4376,6 +4492,7 @@ export class BrowserRuntime {
     browserSession.webRequest.onBeforeRequest(null)
     if (policy.downloadHandler) browserSession.off("will-download", policy.downloadHandler)
     void policy.networkGuard?.close()
+    browserSession.protocol.unhandle("lume-file")
     this.ownedSessionPolicies.delete(policy)
     this.sessionPolicies.delete(browserSession)
     void browserSession.clearStorageData().catch(() => undefined)
@@ -4586,6 +4703,8 @@ function publicTab(tab: BrowserTab): BrowserTabDescriptor {
     mountToken: _mountToken,
     mountWaiters: _mountWaiters,
     viewportQueue: _viewportQueue,
+    localFilePreviews: _localFilePreviews,
+    activeLocalFilePreview: _activeLocalFilePreview,
     ...result
   } = tab
   return {
@@ -4883,6 +5002,11 @@ function normalizeNavigableUrl(value: string): string {
   const normalized = stripUrl(value.trim())
   if (!normalized || !isAllowedNavigation(normalized, false)) throw browserError("invalid_url")
   return normalized
+}
+
+function pathIdentity(value: string): string {
+  const normalized = resolve(value)
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized
 }
 
 function isAllowedNavigation(value: string, agent: boolean, settings?: BrowserSettings, approvedPrivateOrigins?: Set<string>): boolean {

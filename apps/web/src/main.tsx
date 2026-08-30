@@ -14,6 +14,8 @@ import {
 } from './lib/theme-mode'
 import { isChatFontScale, readStoredChatFontScale, setChatFontScale } from './lib/chat-font-scale'
 import './index.css'
+import 'katex/dist/katex.min.css'
+import './styles/live-markdown.css'
 import { PierreDiffProvider } from './components/diff/PierreDiffProvider'
 import { BrowserWebviewPoolProvider } from './components/browser/BrowserWebviewPool'
 

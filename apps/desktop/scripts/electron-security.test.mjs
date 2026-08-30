@@ -39,6 +39,7 @@ import {
   isAllowedPreviewFrameNavigation,
   parseSingleRange,
   PREVIEW_PROTOCOL_MAX_MEDIA_BYTES,
+  previewScopeKindForPath,
   previewScopeUrl,
   resolvePreviewProtocolRequest,
 } from "../src/file-protocol.ts";
@@ -213,6 +214,13 @@ test("HTML preview resolution stays inside its directory and static allowlist", 
   assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/../secret.txt`, "GET").kind, "forbidden");
   assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/.env`, "GET").kind, "forbidden");
   assert.equal(resolvePreviewProtocolRequest(registry, `lume-file://preview/${scope.token}/README`, "GET").kind, "forbidden");
+});
+
+test("browser local previews use directory scopes only for HTML entries", () => {
+  assert.equal(previewScopeKindForPath("C:\\workspace\\preview.html"), "html-directory");
+  assert.equal(previewScopeKindForPath("/workspace/preview.HTM"), "html-directory");
+  assert.equal(previewScopeKindForPath("/workspace/image.png"), "media-file");
+  assert.equal(previewScopeKindForPath("/workspace/secret.txt"), null);
 });
 
 test("HTML navigation bridge leaves fragments local and emits only typed link messages", () => {

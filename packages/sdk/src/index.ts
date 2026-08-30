@@ -38,6 +38,7 @@ export {
 export type {
   LumeCapabilityReference,
 } from './capability-references.js'
+export { writeFileAtomic } from './utils/fs-atomic.js'
 
 // --------------------------------------------------------------------------
 // Core Engine

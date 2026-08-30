@@ -15,6 +15,7 @@ const buildDesktopRuntimeScript = resolve(desktopRoot, "scripts", "build.ts");
 const buildSidecarBundleScript = resolve(desktopRoot, "..", "..", "scripts", "build-sidecar-bundle.mjs");
 const buildNativesBinaryScript = resolve(desktopRoot, "..", "..", "scripts", "build-natives-binary.mjs");
 const buildRipgrepResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-ripgrep-resources.mjs");
+const buildOfficeCliResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-officecli-resources.mjs");
 const buildNodeReplResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-node-repl-resources.mjs");
 const buildDesktopHostResourcesScript = resolve(desktopRoot, "..", "..", "scripts", "build-desktop-host-resources.mjs");
 
@@ -87,6 +88,19 @@ const ripgrepResourcesResult = spawnSync(
 if (ripgrepResourcesResult.status !== 0) {
   // 临时 workaround：ripgrep 下载失败（HTTP 400）+ 系统无 rg → dev 继续（ripgrep 仅供 sidecar 搜索，灵动岛 UI 不依赖）
   console.warn("[desktop-dev] ripgrep resources unavailable; continuing without bundled rg (dev-only, search degraded, island UI unaffected)");
+}
+
+const officeCliResourcesResult = spawnSync(
+  "node",
+  [buildOfficeCliResourcesScript],
+  {
+    cwd: resolve(desktopRoot, "..", ".."),
+    stdio: "inherit",
+  },
+);
+if (officeCliResourcesResult.status !== 0) {
+  // dev 软失败：OfficeCLI 缺失时 Office 高保真预览回退到渲染层内置查看器，不影响其他功能
+  console.warn("[desktop-dev] officecli resources unavailable; continuing without bundled officecli (Office preview falls back to builtin viewers)");
 }
 
 const desktopBuildResult = spawnSync("bun", [buildDesktopRuntimeScript], {

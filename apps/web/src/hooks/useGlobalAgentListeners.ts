@@ -440,6 +440,14 @@ export function useGlobalAgentListeners() {
           )))
           break
         }
+        // 线程活动 worktree 变化（含 run 入口失效自愈清除）：整条 meta 覆盖，
+        // Changes 面板的选择器与 diff 数据随之跟随。
+        case AGENT_IPC_CHANNELS.THREAD_WORKTREE_UPDATED: {
+          const updated = params as AgentThreadMeta
+          if (!updated?.id) break
+          setThreads((prev) => prev.map((t) => t.id === updated.id ? updated : t))
+          break
+        }
       }
     })
     // sidecar 推送的建议变更信号 → bump 版本号 → 消费方（建议列表 / Banner，

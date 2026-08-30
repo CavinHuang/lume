@@ -20,7 +20,7 @@ const SIDECAR_STABLE_BROWSER_ERROR_CODES: ReadonlySet<string> = new Set(
   STABLE_BROWSER_ERROR_CODES.filter((code) => code !== "browser_internal_error" && code !== "incompatible_protocol"),
 )
 import { classifyBrowserAction } from "./browser-action-policy"
-import { resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
+import { resolveAuthorizedBrowserPreviewPath, resolveAuthorizedBrowserUploadPaths } from "../agent/agent-files-service"
 
 export interface BrowserMainTransport { request(request: BrowserActionRequest): Promise<unknown>; isAvailable?: () => boolean }
 
@@ -261,11 +261,15 @@ export class BrowserBroker {
       const authorizedUploadFiles = input.method === "playwright_file_chooser_set_files"
         ? authorizeBrowserUploadFiles(input.threadId, normalized.params.files)
         : undefined
+      const localFilePreviewPath = backend === "iab"
+        ? authorizeBrowserLocalFilePreview(input.threadId, normalized.method, commandParams.url)
+        : undefined
       const params = {
         ...commandParams,
         ...(normalized.method === "ensure" && input.threadId ? { ownerThreadId: input.threadId } : {}),
         ...(normalized.method === "claim" ? this.referenceGrantForClaim(backend, context, tabId, normalized.params) : {}),
         ...(authorizedUploadFiles ? { files: authorizedUploadFiles.browserDownloadRefs, __authorizedFiles: authorizedUploadFiles.authorizedPaths } : {}),
+        ...(localFilePreviewPath ? { __authorizedFilePreviewPath: localFilePreviewPath } : {}),
         ...(confirmationToken ? { __policyRequired: true, __policyConfirmation: confirmationToken, __policyBindingHash: bindingHash } : {}),
       }
       const method = backend === "extension" && input.method === "tab_browser_auth_request"
@@ -690,6 +694,19 @@ function authorizeBrowserUploadFiles(threadId: string | undefined, value: unknow
   if (!threadId) throw new Error("action_denied")
   try {
     return { browserDownloadRefs, authorizedPaths: resolveAuthorizedBrowserUploadPaths(threadId, unresolved) }
+  } catch {
+    throw new Error("action_denied")
+  }
+}
+
+function authorizeBrowserLocalFilePreview(threadId: string | undefined, method: string, value: unknown): string | undefined {
+  if ((method !== "ensure" && method !== "navigate") || typeof value !== "string") return undefined
+  let isFileUrl = false
+  try { isFileUrl = new URL(value).protocol === "file:" } catch { return undefined }
+  if (!isFileUrl) return undefined
+  if (!threadId) throw new Error("action_denied")
+  try {
+    return resolveAuthorizedBrowserPreviewPath(threadId, value)
   } catch {
     throw new Error("action_denied")
   }

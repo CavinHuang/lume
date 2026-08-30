@@ -13,6 +13,7 @@ import {
 } from "./agent-thread-manager";
 import { getAgentWorkspace } from "./agent-workspace-manager";
 import { resolveAgentThreadWorkdir } from "./agent-workdir-resolver";
+import { clearInvalidThreadWorktree, setThreadWorktree } from "./agent-worktree-service";
 import { resolveThreadAttachmentPath, toThreadRelativePath } from "./agent-files-service";
 import {
   buildBuiltinAgents,
@@ -47,6 +48,8 @@ export function installRuntimeHostPorts(): void {
     getThreadSDKMessages: getAgentThreadSDKMessages,
     getWorkspace: getAgentWorkspace,
     resolveThreadWorkdir: resolveAgentThreadWorkdir,
+    clearInvalidThreadWorktree,
+    bindThreadWorktree: (threadId, worktreePath) => setThreadWorktree({ threadId, worktreePath }),
     resolveThreadAttachmentPath,
     toThreadRelativePath,
     buildBuiltinAgents,

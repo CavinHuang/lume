@@ -68,11 +68,14 @@ function findElectronBinary() {
 
 function electronFixtureMain(modulePath, guestPreloadPath) {
   return `
-import { app, BrowserWindow, ipcMain } from 'electron'
+import { app, BrowserWindow, ipcMain, protocol } from 'electron'
 import { createServer } from 'node:http'
 import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { pathToFileURL } from 'node:url'
 import { BrowserRuntime } from 'file:///${modulePath}'
+
+protocol.registerSchemesAsPrivileged([{ scheme: 'lume-file', privileges: { standard: true, secure: true, supportFetchAPI: true, stream: true, corsEnabled: true } }])
 
 const resultPath = process.env.LUME_BROWSER_E2E_RESULT
 const configRoot = process.env.LUME_BROWSER_E2E_CONFIG
@@ -207,7 +210,7 @@ app.whenReady().then(async () => {
     credentialStorage: { isEncryptionAvailable: () => true, encryptString: value => Buffer.from(value), decryptString: value => value.toString() },
   })
   runtime.setAgentPluginEnabled(true)
-  const context = { actor: 'agent', browserSessionId: 'fixture-session', browserTurnId: 'fixture-turn', capability: 'browser' }
+  const context = { actor: 'agent', browserSessionId: 'fixture-session', browserTurnId: 'fixture-turn', capability: 'browser-broker-v1:fixture' }
   const call = (method, params = {}) => runtime.dispatch({ requestId: crypto.randomUUID(), context, method, params })
   const userContext = { actor: 'user', browserSessionId: 'renderer', browserTurnId: 'renderer' }
   const userCall = (method, params = {}) => runtime.dispatch({ requestId: crypto.randomUUID(), context: userContext, method, params })
@@ -278,6 +281,26 @@ app.whenReady().then(async () => {
     await call('navigate', { tabId: 'fixture-tab', url: origin + '/' })
     const navigatedUrl = await call('url', { tabId: 'fixture-tab' })
     check(navigatedUrl.startsWith(origin), 'fixture navigation failed: ' + JSON.stringify(navigatedUrl))
+    const localPreviewPath = join(configRoot, 'local-preview.html')
+    writeFileSync(localPreviewPath, '<!doctype html><title>Local preview</title><main id="local-preview">Local file preview</main>')
+    const localPreviewUrl = pathToFileURL(localPreviewPath).toString()
+    await call('ensure', { tabId: 'local-preview-tab', url: localPreviewUrl, __authorizedFilePreviewPath: localPreviewPath })
+    const localPreviewView = await mountTab('local-preview-tab')
+    await waitUntil(() => localPreviewView.getURL().startsWith('lume-file://preview/'))
+    const localPreviewInternalUrl = localPreviewView.getURL()
+    check(await call('url', { tabId: 'local-preview-tab' }) === localPreviewUrl, 'local preview did not preserve its file URL')
+    check(localPreviewView.getURL().startsWith('lume-file://preview/'), 'local preview loaded the raw file URL')
+    check(await call('locator:innerText', { tabId: 'local-preview-tab', locator: { version: 1, steps: [{ kind: 'css', selector: '#local-preview' }] } }) === 'Local file preview', 'local preview content was not readable')
+    check(await localPreviewView.executeJavaScript(\`fetch(\${JSON.stringify(localPreviewInternalUrl)}).then(response => response.status).catch(() => 0)\`) === 200, 'local preview owner could not read its scoped URL')
+    await call('ensure', { tabId: 'preview-owner-probe', url: origin + '/' })
+    const previewOwnerProbe = await mountTab('preview-owner-probe')
+    check(await previewOwnerProbe.executeJavaScript(\`fetch(\${JSON.stringify(localPreviewInternalUrl)}).then(response => response.status).catch(() => 0)\`) !== 200, 'another tab read a preview scope it does not own')
+    await localPreviewView.executeJavaScript(\`location.href = \${JSON.stringify(origin + '/')}\`)
+    await waitUntil(() => localPreviewView.getURL().startsWith(origin))
+    check(await localPreviewView.executeJavaScript(\`fetch(\${JSON.stringify(localPreviewInternalUrl)}).then(response => response.status).catch(() => 0)\`) !== 200, 'remote navigation left the local preview scope usable')
+    await checkRejects(() => call('navigate', { tabId: 'local-preview-tab', url: localPreviewUrl }), 'invalid_url', 'local preview accepted an unbound file URL')
+    await userCall('close', { tabId: 'preview-owner-probe' })
+    await userCall('close', { tabId: 'local-preview-tab' })
     const guestUserAgent = await view.executeJavaScript('navigator.userAgent')
     check(!guestUserAgent.includes('Electron') && guestUserAgent.includes('Chrome/'), 'guest user agent still advertises the embedded runtime: ' + guestUserAgent)
     setStage('popup-policy')

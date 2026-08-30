@@ -24,6 +24,7 @@ export * from "./github-release";
 export * from "./general-settings";
 export * from "./ui-state";
 export * from "./lume-config";
+export * from "./obsidian-vault";
 export * from "./system-config";
 export * from "./routine";
 export * from "./data-management";

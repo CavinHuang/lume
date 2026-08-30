@@ -58,6 +58,7 @@ import {
   submitAskUserQuestionAnswers,
 } from "../services/agent/agent-service";
 import { resolveAgentDefaultStrategy } from "../services/channel/model-selection";
+import { listWorktrees, setThreadWorktree } from "../services/agent/agent-worktree-service";
 import {
   getAgentThreadPath,
   getWorkspaceResourcesDirectory,
@@ -142,6 +143,8 @@ import {
   agentUpdateQueuedMessageInputSchema,
   agentUpdateThreadTitleInputSchema,
   agentUpdateThreadModelSelectionInputSchema,
+  agentListThreadWorktreesInputSchema,
+  agentSetThreadWorktreeInputSchema,
   pendingInteractiveInputSchema,
   mcpCallToolDiagnosticInputSchema,
   mcpListResourcesInputSchema,
@@ -725,6 +728,32 @@ export function createAgentHandlers(
         AGENT_IPC_CHANNELS.UPDATE_THREAD_TITLE,
       );
       return updateAgentThreadMeta(input.threadId, { title: input.title });
+    },
+    [AGENT_IPC_CHANNELS.LIST_THREAD_WORKTREES]: async (params) => {
+      const input = validateInput(
+        agentListThreadWorktreesInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.LIST_THREAD_WORKTREES,
+      );
+      const thread = getAgentThreadMeta(input.threadId);
+      if (!thread) throw new Error(`Agent 线程不存在: ${input.threadId}`);
+      const workspace = thread.workspaceId ? getAgentWorkspace(thread.workspaceId) : undefined;
+      if (!workspace?.projectPath) {
+        return { worktrees: [], activeWorktree: thread.activeWorktree };
+      }
+      return {
+        worktrees: await listWorktrees(workspace.projectPath),
+        activeWorktree: thread.activeWorktree,
+      };
+    },
+    [AGENT_IPC_CHANNELS.SET_THREAD_WORKTREE]: async (params) => {
+      const input = validateInput(
+        agentSetThreadWorktreeInputSchema,
+        params,
+        AGENT_IPC_CHANNELS.SET_THREAD_WORKTREE,
+      );
+      // 绑定/解绑的 THREAD_WORKTREE_UPDATED 广播在 service 内单点完成。
+      return setThreadWorktree(input);
     },
     [AGENT_IPC_CHANNELS.UPDATE_THREAD_MODEL_SELECTION]: async (params) => {
       const input = validateInput(

@@ -70,6 +70,16 @@ export const SETTINGS_NAV_ITEMS: Array<{
   { id: 'updates', label: '版本与更新', icon: RefreshCw },
 ]
 
+export const SETTINGS_NAV_GROUPS: Array<{
+  label: string
+  items: SettingsViewTab[]
+}> = [
+  { label: '基础设置', items: ['general', 'appearance', 'models', 'workspaces', 'shortcuts'] },
+  { label: 'Agent 能力', items: ['agents', 'skills', 'browser', 'desktop-assistant', 'memory', 'reading', 'permissions'] },
+  { label: '网络与连接', items: ['integrations', 'im-integrations', 'web-search', 'voice-input'] },
+  { label: '数据与维护', items: ['data', 'logs', 'archive', 'updates'] },
+]
+
 export const SETTINGS_PAGE_TITLES: Record<SettingsViewTab, string> = {
   general: '通用设置',
   appearance: '外观',
@@ -106,7 +116,7 @@ export const SETTINGS_PAGE_SUBTITLES: Record<SettingsViewTab, string> = {
   'desktop-assistant': '管理跨应用上下文、Computer Use、主动建议和本地活动记录',
   shortcuts: '管理键盘快捷键与常用操作',
   integrations: '管理 MCP 服务发现与连接状态',
-  'im-integrations': '管理 IM 平台与邮箱连接器',
+  'im-integrations': '管理 Obsidian Vault、IM 平台与邮箱连接器',
   'web-search': '配置网络搜索后端、API Key 和搜索策略',
   'voice-input': '配置语音输入的识别服务凭证、语言与结果输出方式',
   updates: '管理 Lume 的版本检查、下载与安装体验',

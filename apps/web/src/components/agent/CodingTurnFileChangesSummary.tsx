@@ -3,7 +3,8 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useSetAtom } from 'jotai'
 import { FileDiff, Loader2, TriangleAlert } from 'lucide-react'
 import { AGENT_IPC_CHANNELS, type CodingDiffPayload, type RuntimeCodingFileChange, type RuntimeCodingReport } from '@lume/shared'
-import { codingReviewPanelActionAtom } from '@/atoms'
+import { codingReviewPanelActionAtom, obsidianVaultOpenRequestAtom, rightPanelWorkspaceActionAtom } from '@/atoms'
+import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { PierreDiffView } from '@/components/diff/PierreDiffView'
 import { Button } from '@/components/ui/button'
@@ -61,6 +62,19 @@ export function CodingTurnFileChangesSummary({
   const visibleChanges = showAllChanges ? changes : changes.slice(0, INITIAL_FILE_LIMIT)
   const hiddenChangeCount = changes.length - visibleChanges.length
   const warning = codingReportWarning(report)
+  const openRightPanel = useSetAtom(rightPanelWorkspaceActionAtom)
+  const setVaultOpenRequest = useSetAtom(obsidianVaultOpenRequestAtom)
+
+  const openVaultFocus = (): void => {
+    const attribution = report.vaultFocus
+    if (!attribution) return
+    openRightPanel({ type: 'activate-function', threadId, function: 'vault' })
+    setVaultOpenRequest({
+      vaultPath: attribution.vaultPath,
+      ...(attribution.focus.kind === 'file' ? { filePath: attribution.focus.relativePath } : { folderPath: attribution.focus.relativePath }),
+      token: Date.now(),
+    })
+  }
 
   useEffect(() => {
     setShowAllChanges(false)
@@ -104,7 +118,7 @@ export function CodingTurnFileChangesSummary({
     })
   }, [codingReviewPanelAction, report.gitActions, report.phase, report.recommendedVerificationCommands, report.review, report.verificationRecords, threadId])
 
-  if (changes.length === 0 && !warning) return null
+  if (changes.length === 0 && !warning && !report.vaultFocus) return null
 
   const canReviewDiff = Boolean(report.runId || effectiveReport.changeSet || report.fileChanges)
   const openChange = async (change: RuntimeCodingFileChange) => {
@@ -129,7 +143,34 @@ export function CodingTurnFileChangesSummary({
     })
   }
 
+  const vaultFocus = report.vaultFocus
+  // Proma 同款标签：只显示末段名称（文件夹带 /），完整路径放 Tooltip。
+  const vaultFocusLabel = vaultFocus
+    ? `${vaultFocus.focus.relativePath.split('/').filter(Boolean).pop() || vaultFocus.displayName}${vaultFocus.focus.kind === 'folder' ? '/' : ''}`
+    : ''
   return (
+    <div className="flex max-w-[640px] flex-col gap-1.5">
+      {vaultFocus && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <button
+                type="button"
+                onClick={openVaultFocus}
+                aria-label={`打开本轮 Obsidian 上下文 ${vaultFocusLabel}`}
+                className="flex w-fit items-center gap-1.5 rounded-full border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_68%,transparent)] px-2.5 py-1 text-[11px] text-[var(--lume-text-secondary)] transition-colors hover:border-[var(--lume-border-strong)] hover:text-[var(--lume-text-primary)]"
+              >
+                <ObsidianIcon size={12} className="shrink-0" />
+                <span className="max-w-[240px] truncate">{vaultFocusLabel}</span>
+              </button>
+            }
+          />
+          <TooltipContent side="top">
+            <p>本轮获得的 Obsidian {vaultFocus.focus.kind === 'file' ? '文件' : '文件夹'}线索；不代表 Agent 已读取或编辑</p>
+            <p className="max-w-80 break-all text-[11px] opacity-70">{vaultFocus.vaultPath}/{vaultFocus.focus.relativePath}</p>
+          </TooltipContent>
+        </Tooltip>
+      )}
     <Card data-coding-file-changes-summary="true" size="sm" className="max-w-[640px] gap-0 py-0">
       {changes.length > 0 && <CardHeader className="flex min-h-9 flex-row items-center border-b px-3 py-1.5">
         <CardTitle className="flex min-w-0 items-center gap-2 text-[13px]">
@@ -175,6 +216,7 @@ export function CodingTurnFileChangesSummary({
         </div>
       )}
     </Card>
+    </div>
   )
 }
 
