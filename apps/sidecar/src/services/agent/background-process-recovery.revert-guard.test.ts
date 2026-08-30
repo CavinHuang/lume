@@ -9,7 +9,7 @@ import {
   updateProcessJob,
   type ProcessJob,
 } from "@lume/agent-sdk";
-import { stopRunningProcessJobsForCodingRun } from "./background-process-recovery";
+import { stopRunningProcessJobsForCodingRun, stopRunningProcessJobsForThread } from "./background-process-recovery";
 
 function runningExecution(): Record<string, unknown> {
   return {
@@ -73,5 +73,20 @@ describe("stopRunningProcessJobsForCodingRun", () => {
     expect(getProcessJob("task_4")?.status).toBe("running");
     // 恢复注册表,避免污染其他用例
     updateProcessJob("task_4", { status: "completed" });
+  });
+});
+
+describe("stopRunningProcessJobsForThread", () => {
+  test("stops all running jobs of the thread regardless of runId", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-subagent-seal-"));
+    const a = seedJob(root, "task_a", "run-1");
+    const b = seedJob(root, "task_b", undefined);
+
+    const stopped = stopRunningProcessJobsForThread("thread-1", "subagent run terminal", root);
+
+    expect(stopped.map((job) => job.id).sort()).toEqual([a.id, b.id].sort());
+    expect(getProcessJob(a.id)?.notified).toBe(true);
+    expect(getProcessJob(b.id)?.notified).toBe(true);
   });
 });

@@ -56,11 +56,35 @@ export function stopRunningProcessJobsForCodingRun(
   jobsRootOverride?: string,
 ): ProcessJob[] {
   const root = jobsRootOverride ?? join(getAgentFileContextsDir(), threadId, "artifacts", "process-jobs");
+  return stopProcessJobsMatching(root, (job) => Boolean(job.runId && job.runId === runId), threadId, reason);
+}
+
+/**
+ * 子代理收口对齐(ZCode subagentBackgroundBashMaxMs / notification seal 的
+ * Lume 等价物):子代理子线程到达终态时,其仍在运行的后台命令一并停止并
+ * 预消费通知权——子代理已退场,完成事件无接收方,且孤儿长驻进程不应跨
+ * 回合存活。仅作用于子代理专用子线程,主线程任务不受影响。
+ */
+export function stopRunningProcessJobsForThread(
+  threadId: string,
+  reason: string,
+  jobsRootOverride?: string,
+): ProcessJob[] {
+  const root = jobsRootOverride ?? join(getAgentFileContextsDir(), threadId, "artifacts", "process-jobs");
+  return stopProcessJobsMatching(root, () => true, threadId, reason);
+}
+
+function stopProcessJobsMatching(
+  root: string,
+  predicate: (job: ProcessJob) => boolean,
+  threadId: string,
+  reason: string,
+): ProcessJob[] {
   if (!existsSync(root)) return [];
   const stopped: ProcessJob[] = [];
   for (const job of loadProcessJobs(root)) {
     if (job.status !== "running") continue;
-    if (!job.runId || job.runId !== runId) continue;
+    if (!predicate(job)) continue;
     try {
       const stoppedOk = stopPersistedWorker(job);
       updateProcessJob(job.id, {
@@ -81,17 +105,17 @@ export function stopRunningProcessJobsForCodingRun(
         },
       });
       stopped.push(job);
-      log.warn("stopped background job of reverted coding run", {
+      log.warn("stopped background job", {
         threadId,
-        runId,
         reason,
         jobId: job.id,
+        jobRunId: job.runId,
         workerKilled: stoppedOk,
       });
     } catch (error) {
-      log.warn("failed to stop background job of reverted coding run", {
+      log.warn("failed to stop background job", {
         threadId,
-        runId,
+        reason,
         jobId: job.id,
         errorMessage: error instanceof Error ? error.message : String(error),
       });
