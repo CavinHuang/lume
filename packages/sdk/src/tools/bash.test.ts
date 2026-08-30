@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
+import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, isDeliberateWaitCommand, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearProcessJobs, ProcessOutputTool } from "./process-job-registry";
 import {
@@ -517,13 +517,13 @@ describe("BashTool shell invocation", () => {
 });
 
 describe("BashTool #381 background timeout semantics", () => {
-  test("explicit timeout still terminates a background command", async () => {
+  test("explicit timeout does not terminate an explicitly backgrounded command", async () => {
     clearProcessJobs();
     const root = await mkdtemp(join(tmpdir(), "lume-bash-bg-timeout-"));
     // 按实际解析的 shell 选命令(本机 Windows 可能配置了 POSIX bash,平台判断不可靠)
     const command = /(?:^|[\\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
-      ? "Start-Sleep -Seconds 30"
-      : "sleep 30";
+      ? "Start-Sleep -Seconds 2; Write-Output done"
+      : "sleep 2; printf done";
 
     const context = {
       cwd: root,
@@ -531,15 +531,24 @@ describe("BashTool #381 background timeout semantics", () => {
       artifactsRoot: join(root, "artifacts"),
       emitEvent: () => {},
     };
-    // worker spawn+到时击杀有秒级延迟,600ms 太紧会与 worker 启动竞态,用 2s;
-    // Windows taskkill 树杀耗时可到数十秒,等待给足余量
-    const started = await BashTool.call({ command, run_in_background: true, timeout: 2000 }, context);
+    // 语义对齐"detached":显式 run_in_background 时 timeout 不再是后台击杀
+    // deadline(旧行为会在 2s 击杀并记 timed_out);命令应自然跑完并成功。
+    const started = await BashTool.call({ command, run_in_background: true, timeout: 500 }, context);
     const taskId = String(started.content).match(/task_\d+/)?.[0];
     expect(taskId).toBeTruthy();
 
-    const completed = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 60_000 }, context);
-    expect(completed._meta?.execution).toMatchObject({ outcome: "timed_out", terminationReason: "timeout" });
-  }, 90_000);
+    const completed = await ProcessOutputTool.call({ task_id: taskId, block: true, timeout: 30_000 }, context);
+    expect(completed._meta?.execution).toMatchObject({ outcome: "succeeded", terminationReason: "completed" });
+    expect(completed.content).toContain("done");
+  }, 60_000);
+
+  test("classifies deliberate wait commands for auto-background exclusion", () => {
+    expect(isDeliberateWaitCommand("sleep 30")).toBeTrue();
+    expect(isDeliberateWaitCommand("  sleep  30")).toBeTrue();
+    expect(isDeliberateWaitCommand("sleep 5 && make test")).toBeTrue();
+    expect(isDeliberateWaitCommand("Start-Sleep -Seconds 5")).toBeFalse();
+    expect(isDeliberateWaitCommand("echo sleep")).toBeFalse();
+  });
 });
 
 /**
