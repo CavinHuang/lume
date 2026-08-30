@@ -16,6 +16,7 @@ import {
   Sparkles,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
 import type {
   LumeSidebarFooterActionId,
   LumeSidebarTopActionId,
@@ -351,6 +352,8 @@ function renderIcon(icon: string, size: number) {
   switch (icon) {
     case 'square-pen':
       return <SquarePen size={size} />
+    case 'obsidian':
+      return <ObsidianIcon size={size} />
     case 'box':
       return <Box size={size} />
     case 'book-open':

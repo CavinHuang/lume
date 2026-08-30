@@ -7,6 +7,7 @@ import { routeInboundImMessage, type InboundImRouteMessage } from "./im-message-
 import { createImAccount } from "./im-config-manager";
 import { getImThreadBindingByPeer, upsertImThreadBinding } from "./im-thread-binding-store";
 import { resetImSeenMessageCacheForTest } from "./im-seen-message-store";
+import { decryptSecret } from "../infra/secret-crypto";
 
 let testAccountId = "";
 
@@ -117,6 +118,29 @@ describe("im 会话命令路由", () => {
     expect(sent[0]).toContain("已停止");
   });
 
+  test("命令回复前刷新当前消息携带的 contextToken", async () => {
+    upsertImThreadBinding({
+      provider: "feishu",
+      accountId,
+      peerKind: "dm",
+      peerId: "oc_user",
+      threadId: "thread-token",
+      contextToken: "ctx-old"
+    });
+    const replyTokens: string[] = [];
+
+    await routeInboundImMessage(msg({ text: "/help", contextToken: "ctx-fresh" }), {
+      getThreadMeta: () => ({} as never),
+      sendBoundTextMessage: async (input) => {
+        replyTokens.push(decryptSecret(input.binding.contextToken ?? ""));
+        return { ok: true };
+      }
+    });
+
+    expect(replyTokens).toEqual(["ctx-fresh"]);
+    expect(decryptSecret(getImThreadBindingByPeer(msg())?.contextToken ?? "")).toBe("ctx-fresh");
+  });
+
   test("/model <n> <m> 写入线程级模型覆盖", async () => {
     bind("thread-y");
     const sent: string[] = [];
@@ -174,7 +198,7 @@ describe("im 会话命令路由", () => {
     expect(stoppedIds).toEqual(["thread-old"]);
   });
 
-  test("#598 /list 列出同 peer 历史线程（排除当前绑定与别的 peer）", async () => {
+  test("#598 /list 列出同 peer 历史线程（隔离群聊/私聊并排除当前绑定）", async () => {
     bind("thread-cur");
     const sent: string[] = [];
     await routeInboundImMessage(msg({ text: "/list" }), {
@@ -184,16 +208,22 @@ describe("im 会话命令路由", () => {
         return { ok: true };
       },
       listThreads: () => [
-        { id: "thread-cur", title: "当前", createdAt: 1, updatedAt: 100, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
-        { id: "thread-h1", title: "旧对话一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
-        { id: "thread-h2", title: "旧对话二", createdAt: 1, updatedAt: 200, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
-        { id: "thread-x", title: "别的 peer", createdAt: 1, updatedAt: 400, source: { type: "im", provider: "feishu", accountId, peerId: "other" } }
+        { id: "thread-cur", title: "当前", createdAt: 1, updatedAt: 100, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } },
+        { id: "thread-h1", title: "旧对话一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } },
+        { id: "thread-h2", title: "旧对话二", createdAt: 1, updatedAt: 200, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } },
+        { id: "thread-archived", title: "已归档", status: "archived", createdAt: 1, updatedAt: 600, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } },
+        { id: "thread-trashed", title: "回收站", status: "trashed", createdAt: 1, updatedAt: 550, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } },
+        { id: "thread-group", title: "同 ID 群聊", createdAt: 1, updatedAt: 500, source: { type: "im", provider: "feishu", accountId, peerKind: "group", peerId: "oc_user" } },
+        { id: "thread-x", title: "别的 peer", createdAt: 1, updatedAt: 400, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "other" } }
       ]
     });
     expect(sent[0]).toContain("旧对话一");
     expect(sent[0]).toContain("旧对话二");
     expect(sent[0]).not.toContain("当前");
+    expect(sent[0]).not.toContain("同 ID 群聊");
     expect(sent[0]).not.toContain("别的 peer");
+    expect(sent[0]).not.toContain("已归档");
+    expect(sent[0]).not.toContain("回收站");
     // 按最近更新排序
     expect((sent[0] ?? "").indexOf("旧对话一")).toBeLessThan((sent[0] ?? "").indexOf("旧对话二"));
   });
@@ -213,8 +243,9 @@ describe("im 会话命令路由", () => {
         return true;
       },
       listThreads: () => [
-        { id: "thread-h1", title: "旧一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } },
-        { id: "thread-h2", title: "旧二", createdAt: 1, updatedAt: 200, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } }
+        { id: "thread-archived", title: "已归档", status: "archived", createdAt: 1, updatedAt: 400, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } },
+        { id: "thread-h1", title: "旧一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } },
+        { id: "thread-h2", title: "旧二", createdAt: 1, updatedAt: 200, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } }
       ]
     });
     expect(getImThreadBindingByPeer(msg())?.threadId).toBe("thread-h2");
@@ -233,7 +264,7 @@ describe("im 会话命令路由", () => {
         return { ok: true };
       },
       listThreads: () => [
-        { id: "thread-h1", title: "旧一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerId: "oc_user" } }
+        { id: "thread-h1", title: "旧一", createdAt: 1, updatedAt: 300, source: { type: "im", provider: "feishu", accountId, peerKind: "dm", peerId: "oc_user" } }
       ]
     });
     expect(sent[0]).toContain("序号超出范围");

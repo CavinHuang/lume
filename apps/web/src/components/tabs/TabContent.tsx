@@ -7,6 +7,7 @@ import { ProactiveHub } from '@/components/proactive/ProactiveHub'
 import { ReadingView } from '@/components/reading/ReadingView'
 import { SkillsMarketView } from '@/components/skills/SkillsMarketView'
 import { WelcomeView } from '@/components/welcome/WelcomeView'
+import { VaultRightPanelWorkspace } from '@/components/right-panel/VaultRightPanelWorkspace'
 import { BrowserTabView } from './BrowserTabView'
 import { TodoView } from '@/components/todo/TodoView'
 
@@ -50,6 +51,10 @@ export function TabContent() {
 
   if (activeTab.type === 'skills') {
     return <SkillsMarketView />
+  }
+
+  if (activeTab.type === 'vault') {
+    return <VaultRightPanelWorkspace />
   }
 
   if (activeTab.type === 'reading') {
