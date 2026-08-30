@@ -345,7 +345,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       if (task.status === "completed" && requestedStatus !== "pending") throw new Error("Completed Tasks cannot be overwritten");
       const ownerChange = Object.prototype.hasOwnProperty.call(mutationInput, "owner");
       const sensitive = requestedStatus === "in_progress" || requestedStatus === "completed" || requestedStatus === "pending" || ownerChange;
-      this.assertFence(task, mutationInput, sensitive);
+      this.assertFence(task, mutationInput, sensitive, context);
 
       const changed = new Map<string, StoredTask>();
       const updateTask = (item: StoredTask) => {
@@ -410,7 +410,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       const task = tasks.get(requireText(input.taskId, "taskId"));
       if (!task) throw new Error(`Task not found: ${input.taskId}`);
       if (task.status !== "in_progress") throw new Error("Only an in_progress Task can be stopped");
-      this.assertFence(task, input, true);
+      this.assertFence(task, input, true, context);
       const oldToken = this.claimToken(task);
       const executorRef = this.executorBinding(task);
       cancellation = { taskId: task.id, claimToken: oldToken, ...(executorRef ? { executorRef } : {}) };
@@ -442,7 +442,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       const task = tasks.get(requireText(input.taskId, "taskId"));
       if (!task) throw new Error(`Task not found: ${input.taskId}`);
       if (task.status !== "in_progress") throw new Error("Only an in_progress Task can bind an executor");
-      this.assertFence(task, input, true);
+      this.assertFence(task, input, true, context);
       if (this.executorBinding(task)) throw new Error("Task claim already has an active executor");
       const lume = serviceMetadata(task);
       lume.executorRef = input.executorRef;
@@ -671,11 +671,22 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     task.metadata = { ...metadataObject(task.metadata), _lume: lume };
   }
 
-  private assertFence(task: StoredTask, input: Record<string, unknown>, sensitive: boolean): void {
+  private assertFence(task: StoredTask, input: Record<string, unknown>, sensitive: boolean, context: TaskStoreContext): void {
     if (!sensitive) return;
-    if (typeof input.expectedRevision !== "number" || input.expectedRevision !== task.revision) throw new Error(`Task revision conflict: expected ${String(input.expectedRevision)}, current ${task.revision}`);
+    // 同 actor 串行路径宽容（LLM 不必先读 revision 再写）：缺省 expectedRevision
+    // 视为按当前 revision 提交；显式传入但不匹配仍报错，跨代理并发 fencing 语义不变。
+    if (typeof input.expectedRevision !== "number") input.expectedRevision = task.revision;
+    if (input.expectedRevision !== task.revision) throw new Error(`Task revision conflict: expected ${String(input.expectedRevision)}, current ${task.revision}`);
     const token = this.claimToken(task);
-    if (task.status === "in_progress" && (!token || input.claimToken !== token)) throw new Error("Task claim token is missing or expired");
+    if (task.status === "in_progress") {
+      if (!token) throw new Error("Task claim token is missing or expired");
+      // 缺省 claimToken 时复用当前 actor 自己的活跃认领；跨 actor 仍必须显式携带
+      if (typeof input.claimToken !== "string") {
+        const claim = serviceMetadata(task).claim as Record<string, unknown> | undefined;
+        if (claim && claim.actor === context.actorId) input.claimToken = token;
+      }
+      if (input.claimToken !== token) throw new Error("Task claim token is missing or expired");
+    }
   }
 
   private applyMetadataPatch(task: StoredTask, patch: unknown): void {

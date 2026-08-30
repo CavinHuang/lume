@@ -32,6 +32,16 @@ function emitTaskProgress(input: {
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
 }, notification: TaskStoreNotification): void {
   const active = notification.tasks.find((task) => task.status === "in_progress");
+  const completedCount = notification.tasks.filter((task) => task.status === "completed").length;
+  // 派生规则：有人在跑 → in_progress；全部完成 → completed；
+  // 有已完成产出但工作未完 → in_progress（不能回落 pending，否则 UI 永远看不到执行中）
+  const status = active
+    ? "in_progress"
+    : notification.tasks.length > 0 && completedCount === notification.tasks.length
+      ? "completed"
+      : completedCount > 0
+        ? "in_progress"
+        : "pending";
   input.emitRuntimeEvent?.({
     id: `task.progress:${notification.taskListId}:${notification.sequence}`,
     type: "task.progress",
@@ -40,7 +50,7 @@ function emitTaskProgress(input: {
     taskListId: notification.taskListId,
     sequence: notification.sequence,
     origin: notification.origin,
-    status: active ? "in_progress" : notification.tasks.every((task) => task.status === "completed") ? "completed" : "pending",
+    status,
     currentTaskId: active?.id,
     tasks: notification.tasks,
     message: notification.message,
