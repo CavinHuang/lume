@@ -1,4 +1,5 @@
 import { createLogger } from "../../infra/logger";
+import { stopRunningProcessJobsForThread } from "../../agent/background-process-recovery";
 import { existsSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { getAgentConfigDir } from "../../infra/config-paths";
 import { backupCorruptFile } from "../../infra/corrupt-file-backup";
@@ -318,6 +319,26 @@ class SubagentRunRegistry {
 
     if (next.status && this.terminalStatuses.has(next.status) && !next.endedAt) {
       next.endedAt = Date.now();
+      // 子代理收口:终态即停止其子线程仍在运行的后台命令并预消费通知权
+      // (对齐 ZCode subagent notification seal)。失败仅告警,不得影响状态迁移。
+      if (next.childThreadId) {
+        try {
+          const stoppedJobs = stopRunningProcessJobsForThread(next.childThreadId, "subagent run terminal");
+          if (stoppedJobs.length > 0) {
+            log.warn("stopped running background jobs of finished subagent", {
+              runId,
+              childThreadId: next.childThreadId,
+              count: stoppedJobs.length,
+            });
+          }
+        } catch (error) {
+          log.warn("failed to stop background jobs of finished subagent", {
+            runId,
+            childThreadId: next.childThreadId,
+            errorMessage: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     }
 
     this.runs.set(runId, next);
