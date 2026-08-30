@@ -1188,6 +1188,7 @@ async function createRuntimeCoreSessionImpl(
   }
 
   // 主线程 Task 运行时（完成门控/轮次提醒据此读取本 run 触碰过的任务快照）
+  const automationExecution = isAutomationExecution(input.messageMetadata);
   let mainTaskRuntimeRef: { getUnfinishedTouchedTasks: () => { id: string; subject: string; status: "pending" | "in_progress" | "completed" }[] } | undefined
   let turnsSinceTaskToolUse = 0
   const TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"]);
@@ -1353,7 +1354,9 @@ async function createRuntimeCoreSessionImpl(
     if (coding) return coding;
     const todoBlocker = getTodoCompletionBlocker(currentTodoState);
     if (todoBlocker) return todoBlocker;
-    // Task 持久任务门控：只看本 run 触碰过的任务，历史陈旧 pending 不劫持收尾
+    // Task 持久任务门控：只看本 run 触碰过的任务，历史陈旧 pending 不劫持收尾；
+    // 计划任务不受门控（自动化收尾节奏由其自身编排决定）
+    if (automationExecution) return undefined;
     return getTaskCompletionBlocker(mainTaskRuntimeRef?.getUnfinishedTouchedTasks() ?? []);
   };
   const enableFileCheckpointing = input.permissionMode !== "plan";
@@ -1488,22 +1491,29 @@ async function createRuntimeCoreSessionImpl(
     // runtimeMetadata，canUseTool 直接从定义组装 descriptor（#541 双载体合一）
     ...(input.userMessage?.trim() ? { completionGuard } : {}),
     turnRuntimeContext: async ({ toolsUsedLastTurn }) => {
-      const taskToolUsed = toolsUsedLastTurn.some((name) => TASK_TOOL_NAMES.has(name));
-      if (taskToolUsed) {
+      // 计划任务不提醒：自动化 run 的收尾节奏由其自身编排决定
+      if (automationExecution) return undefined;
+      try {
+        const taskToolUsed = toolsUsedLastTurn.some((name) => TASK_TOOL_NAMES.has(name));
+        if (taskToolUsed) {
+          turnsSinceTaskToolUse = 0;
+          return undefined;
+        }
+        turnsSinceTaskToolUse += 1;
+        if (turnsSinceTaskToolUse < TASK_REMINDER_THRESHOLD) return undefined;
+        const unfinished = mainTaskRuntimeRef?.getUnfinishedTouchedTasks() ?? [];
+        if (unfinished.length === 0) return undefined;
+        // 注入后重置计数，避免每轮重复打扰（下次再攒满阈值才提醒）
         turnsSinceTaskToolUse = 0;
+        const preview = unfinished
+          .slice(0, 5)
+          .map((task) => `${task.status === "in_progress" ? "[~]" : "[ ]"} ${task.subject}`)
+          .join("\n");
+        return `[task reminder] 当前任务清单仍有 ${unfinished.length} 项未完成，且已多轮未更新任务状态。如正在处理某项：先 TaskUpdate 将它置为唯一的 in_progress；完成一项立即标记 completed；全部完成后提交最终状态。\n${preview}`;
+      } catch (error) {
+        log.warn("task reminder 注入失败", { error: error instanceof Error ? error.message : String(error) });
         return undefined;
       }
-      turnsSinceTaskToolUse += 1;
-      if (turnsSinceTaskToolUse < TASK_REMINDER_THRESHOLD) return undefined;
-      const unfinished = mainTaskRuntimeRef?.getUnfinishedTouchedTasks() ?? [];
-      if (unfinished.length === 0) return undefined;
-      // 注入后重置计数，避免每轮重复打扰（下次再攒满阈值才提醒）
-      turnsSinceTaskToolUse = 0;
-      const preview = unfinished
-        .slice(0, 5)
-        .map((task) => `${task.status === "in_progress" ? "[~]" : "[ ]"} ${task.subject}`)
-        .join("\n");
-      return `[task reminder] 当前任务清单仍有 ${unfinished.length} 项未完成，且已多轮未更新任务状态。如正在处理某项：先 TaskUpdate 将它置为唯一的 in_progress；完成一项立即标记 completed；全部完成后提交最终状态。\n${preview}`;
     },
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
