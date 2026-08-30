@@ -659,4 +659,15 @@ describe("agent-prompt-builder", () => {
       rmSync(vault, { recursive: true, force: true });
     }
   });
+
+  test("Obsidian 开关开启但零候选时仍注入 Vault 工作流段（Proma 的 obsidianEnabled 语义）", () => {
+    const yamlPath = join(tempConfigDir, "lume.yaml");
+    writeFileSync(yamlPath, "obsidian:\n  enabled: true\n", "utf-8");
+    try {
+      expect(buildSystemPromptAppend({ sessionId: "s-no-vault", availableTools: [] })).toContain("## Obsidian Vault");
+      expect(buildDynamicContext({ sessionId: "s-no-vault" })).not.toContain("<user_vault_context>");
+    } finally {
+      writeFileSync(yamlPath, "obsidian:\n  enabled: false\n", "utf-8");
+    }
+  });
 });
