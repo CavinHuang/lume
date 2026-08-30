@@ -7,6 +7,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { fileURLToPath } from "node:url";
 import type {
   ObsidianVaultDeleteInput,
   ObsidianVaultFileEntry,
@@ -231,8 +232,10 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
 
     let candidate: string;
     try {
+      // file: 经 fileURLToPath 归一化（处理 Windows 盘符），裸 pathname 的
+      // /D:/... 形态在 win32 relative 下恒判越界（Proma 同款缺陷，此处修复）。
       candidate = source.toLowerCase().startsWith("file:")
-        ? decodeURIComponent(new URL(source).pathname)
+        ? resolve(fileURLToPath(new URL(source)))
         : resolve(dirname(note.absolutePath), decodeURIComponent(source));
     } catch {
       return null;

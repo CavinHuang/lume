@@ -336,18 +336,19 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
         if (cancelled) return
         setConfig(next)
         if (next.enabled && next.candidates.length > 0) {
-          setVaultPath((current) => {
-            // 快照恢复的 vault 已不在授权集（被移除/注销）：清空编辑区回到未选状态。
-            if (current && !next.candidates.some((vault) => vault.path === current)) {
-              ++readRequestRef.current
-              setFileLoading(false)
-              setSelectedFile(null)
-              setDraft('')
-              reportFocus(null)
-              return null
-            }
-            return current ?? next.candidates[0]!.path
-          })
+          const current = vaultPathRef.current
+          // 快照恢复的 vault 已不在授权集（被移除/注销）：清空编辑区回到未选状态。
+          // 副作用在 updater 外执行，保持 state updater 纯函数。
+          if (current && !next.candidates.some((vault) => vault.path === current)) {
+            ++readRequestRef.current
+            setFileLoading(false)
+            setSelectedFile(null)
+            setDraft('')
+            reportFocus(null)
+            setVaultPath(null)
+          } else {
+            setVaultPath(current ?? next.candidates[0]!.path)
+          }
         }
       })
       .catch((cause) => toast.error(cause instanceof Error ? cause.message : '无法读取 Vault 配置'))

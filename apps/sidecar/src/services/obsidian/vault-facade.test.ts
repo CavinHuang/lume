@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import { createVaultFileSystem } from "./vault-facade";
 
 function formatLocalDate(date: Date): string {
@@ -233,6 +234,8 @@ describe("vault-facade", () => {
       expect(fs.resolveMedia("notes/a.md", "missing.png")).toBeNull();
       expect(fs.resolveMedia("notes/a.md", "../../outside.png")).toBeNull();
       expect(fs.resolveMedia("notes/a.md", "")).toBeNull();
+      // file: 绝对 URL 经 fileURLToPath 归一化后须在 Windows 同样可解析。
+      expect(fs.resolveMedia("notes/a.md", `${pathToFileURL(join(root, "notes", "pic.png")).href}?v=1`)).toBe(realpathSync(join(root, "notes", "pic.png")));
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
