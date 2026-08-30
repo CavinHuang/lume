@@ -23,6 +23,7 @@ import {
   revertCodingFileFromCheckpoint,
   revertCodingRun,
 } from "../services/agent-runtime/runtime-core/coding-run-checkpoint-service";
+import { stopRunningProcessJobsForCodingRun } from "../services/agent/background-process-recovery";
 import {
   codingChangeSetInputSchema,
   codingDiffActionInputSchema,
@@ -332,6 +333,17 @@ export function createCodingHandlers(): Record<string, RpcHandler> {
       // 复查并告警（最小替代 in-flight 注册表，#572 review P2）
       if (isAgentRuntimeSessionActive(input.threadId)) {
         log.warn("revert completed while a new coding session became active; new-run writes may have been overwritten by restored snapshots", { threadId: input.threadId, runId: input.runId });
+      }
+      // 后台任务守卫:被撤销 Run 启动的仍在运行的后台命令一并停止并抑制其
+      // 完成通知——它们的结果针对已回滚的文件状态,继续投递会诱导模型基于
+      // 过期输出行动。失败只告警,不阻断 revert 结果返回。
+      try {
+        const stoppedJobs = stopRunningProcessJobsForCodingRun(input.threadId, input.runId, "coding run reverted");
+        if (stoppedJobs.length > 0) {
+          log.warn("revert stopped running background jobs of the reverted run", { threadId: input.threadId, runId: input.runId, count: stoppedJobs.length });
+        }
+      } catch (error) {
+        log.warn("failed to stop background jobs of reverted run", { threadId: input.threadId, runId: input.runId, errorMessage: error instanceof Error ? error.message : String(error) });
       }
       return result;
     },
