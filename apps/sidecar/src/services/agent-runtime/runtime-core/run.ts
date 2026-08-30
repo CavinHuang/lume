@@ -1193,6 +1193,9 @@ async function createRuntimeCoreSessionImpl(
   let turnsSinceTaskToolUse = 0
   const TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"]);
   const TASK_REMINDER_THRESHOLD = 6;
+  // 完成门控自动推进预算：防止模型反复敷衍导致门控与收尾无限拉锯（对齐 ZCode 验证器迭代预算）
+  const MAX_TASK_GATE_ROUNDS = 3;
+  let taskGateRoundsUsed = 0;
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     filesRoot: input.filesRoot,
@@ -1358,7 +1361,14 @@ async function createRuntimeCoreSessionImpl(
     // 计划任务不受门控（自动化收尾节奏由其自身编排决定）
     if (automationExecution) return undefined;
     const touchedTasks = (mainTaskRuntimeRef?.getTouchedTasks() ?? []).filter((task) => task.status === "in_progress");
-    return getTaskCompletionBlocker(touchedTasks);
+    if (touchedTasks.length === 0) return undefined;
+    if (taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS) return undefined;
+    taskGateRoundsUsed += 1;
+    const lastRoundNote = taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS
+      ? "
+（这是最后一次自动推进，其后 run 将结束——请如实说明剩余任务的真实状态，不要虚假标记完成。）"
+      : "";
+    return getTaskCompletionBlocker(touchedTasks) + lastRoundNote;
   };
   const enableFileCheckpointing = input.permissionMode !== "plan";
   // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
