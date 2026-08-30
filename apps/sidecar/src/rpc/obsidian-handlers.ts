@@ -7,6 +7,7 @@
  */
 
 import {
+  OBSIDIAN_VAULT_INTERNAL_CHANNELS,
   OBSIDIAN_VAULT_IPC_CHANNELS,
   type ObsidianVaultConfig,
   type ObsidianVaultFocus,
@@ -155,8 +156,8 @@ export function createObsidianVaultHandlers(): Record<string, RpcHandler> {
       }
       return { ok: true as const };
     },
-    [OBSIDIAN_VAULT_IPC_CHANNELS.RESOLVE_MEDIA]: async (params) => {
-      const input = validateInput(resolveMediaInputSchema, params, OBSIDIAN_VAULT_IPC_CHANNELS.RESOLVE_MEDIA);
+    [OBSIDIAN_VAULT_INTERNAL_CHANNELS.RESOLVE_MEDIA]: async (params) => {
+      const input = validateInput(resolveMediaInputSchema, params, OBSIDIAN_VAULT_INTERNAL_CHANNELS.RESOLVE_MEDIA);
       return { path: withVaultFileSystem(input.vaultPath, (fs) => fs.resolveMedia(input.relativePath, input.src)) };
     },
     [OBSIDIAN_VAULT_IPC_CHANNELS.SAVE_PASTED_IMAGE]: async (params) => {

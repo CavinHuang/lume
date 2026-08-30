@@ -288,6 +288,8 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   const openFileIn = useCallback(async (vault: string, relativePath: string): Promise<void> => {
     const requestId = ++readRequestRef.current
     setFileLoading(true)
+    // 换文件重置外部修改提示去重：提示语义按当前打开的笔记生效。
+    externalNoticeRef.current = null
     setSelectedFile({ path: relativePath, read: { relativePath, content: '', sha256: '', modifiedAt: 0 } })
     setDraft('')
     setRenameName(displayDocumentTitle(relativePath.split('/').pop() ?? relativePath))
@@ -356,8 +358,10 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   }, [])
 
   useEffect(() => {
-    // 恢复已打开笔记时不闪文件树加载态。
-    if (vaultPath) void loadFiles(vaultPath, !restoredRef.current.selectedFile)
+    // 恢复已打开笔记时不闪文件树加载态；快照仅消费一次，后续切换 vault 照常显示加载态。
+    const restoring = restoredRef.current.selectedFile !== null
+    restoredRef.current = { vaultPath: '', selectedFile: null, draft: '' }
+    if (vaultPath) void loadFiles(vaultPath, !restoring)
   }, [vaultPath, loadFiles])
 
   // Agent 工具会绕过本组件直接改写 Vault 文件；只轮询当前打开的笔记、
@@ -766,6 +770,8 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
         title="删除 Vault 笔记？"
         description={deleteTarget ? `“${deleteTarget}”将从 Vault 中永久删除，此操作无法撤销。` : ''}
         confirmLabel="删除"
+        loading={deleting}
+        loadingLabel="删除中"
         onConfirm={() => void submitDelete()}
       />
       <Dialog open={newFolderParent !== null} onOpenChange={(open) => { if (!open) setNewFolderParent(null) }}>

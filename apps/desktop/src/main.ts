@@ -94,7 +94,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
-import { IM_IPC_CHANNELS, MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES, toLumeRpcErrorEnvelope } from '@lume/shared'
+import { IM_IPC_CHANNELS, MAX_RPC_MESSAGE_BYTES, OBSIDIAN_VAULT_INTERNAL_CHANNELS, RPC_ERROR_CODES, toLumeRpcErrorEnvelope } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -2773,7 +2773,7 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
       // Vault 笔记内图片：sidecar 校验授权与越界后只回绝对路径（不经渲染层），
       // 这里登记为带 token 的 media-file 作用域；TTL 与 Proma 的 proma-file 对齐为 1h。
       if (!context.ownerWebContentsId) throw new Error('preview scope owner is missing')
-      const resolved = await sidecarHost.call('obsidian:resolve-media', {
+      const resolved = await sidecarHost.call(OBSIDIAN_VAULT_INTERNAL_CHANNELS.RESOLVE_MEDIA, {
         vaultPath: payload.vaultPath,
         relativePath: payload.noteRelativePath,
         src: payload.src,

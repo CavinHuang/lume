@@ -99,6 +99,13 @@ export const OBSIDIAN_VAULT_IPC_CHANNELS = {
   RENAME_FILE: "obsidian:rename-file",
   DELETE_FILE: "obsidian:delete-file",
   SET_FOCUS: "obsidian:set-focus",
-  RESOLVE_MEDIA: "obsidian:resolve-media",
   SAVE_PASTED_IMAGE: "obsidian:save-pasted-image",
+} as const
+
+/**
+ * 仅 desktop 主进程消费的内部通道：resolve-media 返回授权根内的绝对路径，
+ * 不进 renderer 公开 allowlist（公开集由 *_IPC_CHANNELS 派生，此对象不在其中）。
+ */
+export const OBSIDIAN_VAULT_INTERNAL_CHANNELS = {
+  RESOLVE_MEDIA: "obsidian:resolve-media",
 } as const
