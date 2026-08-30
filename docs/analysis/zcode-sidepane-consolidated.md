@@ -89,3 +89,20 @@ SidePane 是 ZCode 右侧的多 tab 面板,**15 种 tab 类型**:
 3. 终端:若对齐,需引入 host 进程 node-pty + ChannelServer 传输 + stash 注册表(当前 Lume 终端在别处)。
 4. Git/CodeViewer:只读 git 面板 + 4 作用域 + watch 自动刷新 + Shiki/diffs-worker 渲染是独立子系统,建议独立 PR。
 5. 性能三闸(220ms settling/96px 宽度/非激活跳过)是 SidePane 手感的关键,重写时不可省。
+
+---
+
+# 第二轮深入逆向(6 报告,详见同名 Q*.md 文件)
+
+| 报告 | 覆盖 | 核心结论 |
+|---|---|---|
+| Q1-subagent-panels | subagent-session/directory/selection-side-chat | 三入口共用通用 V4 会话视图 L$;subagent=readOnly+文件rewind(CAS),无 composer;selection=可写+closeSession 杀运行时;目录=父快照 running ∪ listSessionSubagents 游标分页(20/页,上限100);V4 订阅带 ack+30s keep-warm;剪枝=主面板上报 validChildSessionIds→bde 回落 directory |
+| Q2-whiteboard/trajectory/devtools | 白板=纯内存 canvas 涂鸦(zustand 无持久化,橡皮=画白线,加入聊天=PNG 经可取消 CustomEvent);轨迹=请求级 LLM 时间线(来源 pill/历史切片去重/CSS Highlight 搜索/纯手动刷新);开发者工具=半成品(token 摘要有真数据,逐轮表+网络日志的 nkt/rkt 数组无写入点) |
+| Q3-repowiki-generation | 生成在 host 进程 agentLane:"repo-wiki"(非 sidecar);两段式 tool-use LLM(catalog 6轮12调用/page 5轮8调用,候选页校验上限60);持久化 ~/.zcode/v2/repo-wiki/<sha256-12>/;manifestHash 跳过+任务完成后自动增量重生成;进程重启 running→cancelled |
+| Q4-plan-detail | 显示 ExitPlanMode 调用的 plan markdown;双通道(payload 快照+父会话快照实时解析,容错部分 JSON 且白名单含 plan);planFilePath 仅展示不读文件;审批在会话内 renderContext='plan_approval' 不在面板;纯手动打开(toolCallId 幂等);父会话结束不关闭 |
+| Q5-git-execution-closedloop | git 执行在 host 进程(非 main/sidecar):裸 spawn git CLI 硬编码闭集(~20 组命令);剥离 16 个 GIT_* 变量;15s/20s/10min 三档超时三级杀灭;512KB/1MB 输出上限;partial commit 临时索引;untracked 超限永久降级;AI commit message 强校验 Conventional |
+| Q6-codeview-xt-catalogtree | Xt=<diffs-container> Shadow DOM 薄壳;token 化在 Worker 池(默认8,LRU,按语言调度,失败降级主线程);行号纯 CSS data 属性;无虚拟化(类已备无 Provider)/无搜索高亮/无体积闸门(120k 规则在调用方);chunk=代码呈现共享库(diffs 渲染器+worker池+全套 mermaid+git树模型+wiki助手) |
+
+## 逆向覆盖度宣告
+
+壳层三层 + 15 种 tab + 交互面 + 数据源闭环 + 专用 chunk 已全覆盖;唯一未展开的深潜点是 V4 store 内部帧→快照归约与 gitService 服务端之外的 fileWatcherService 实现(均为通用基础设施,非面板特有)。
