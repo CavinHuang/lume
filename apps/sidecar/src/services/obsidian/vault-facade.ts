@@ -18,8 +18,8 @@ import type {
   ObsidianVaultWriteResult,
 } from "@lume/shared";
 import { writeFileAtomic } from "@lume/agent-sdk";
-import { detectImageMediaType } from "../agent/agent-files-service";
 import { assertVaultRoot } from "./vault-registry";
+import { isValidImageBytes } from "./image-content-validation";
 
 const MAX_VAULT_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_VAULT_FILES = 5_000;
@@ -255,8 +255,8 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
     if (!normalizedBase64 || normalizedBase64.length > MAX_VAULT_PASTED_IMAGE_BASE64_CHARS || normalizedBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalizedBase64)) return { src: null };
 
     const data = Buffer.from(normalizedBase64, "base64");
-    // 声明 MIME 必须与魔数识别一致，拒绝改后缀的任意字节。
-    if (data.length === 0 || data.length > MAX_VAULT_PASTED_IMAGE_BYTES || detectImageMediaType(data) !== input.mimeType) return { src: null };
+    // 声明 MIME 必须命中完整图片结构签名，拒绝改后缀/多态文件（Proma 同校验）。
+    if (!isValidImageBytes(input.mimeType, data) || data.length > MAX_VAULT_PASTED_IMAGE_BYTES) return { src: null };
 
     const note = getSafeVaultTarget(root, input.noteRelativePath);
     const directory = dirname(note.relativePath);

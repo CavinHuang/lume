@@ -158,6 +158,18 @@
   display: inline-block;
   vertical-align: -0.1em;
 }
+.live-markdown-editor .live-markdown-raw-html-block {
+  display: block;
+  min-height: 1.625em;
+}
+.live-markdown-editor .live-markdown-raw-html-block center {
+  display: block;
+}
+.live-markdown-editor .live-markdown-autolink {
+  color: var(--brand);
+  text-decoration: underline;
+  text-underline-offset: 0.16em;
+}
 .live-markdown-editor .live-markdown-image {
   display: inline-block;
   max-width: 100%;

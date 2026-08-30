@@ -11,7 +11,19 @@ function formatLocalDate(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
-const PNG_MAGIC_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
+/** 结构合法的最小 PNG：签名 + 13 字节 IHDR chunk + 空 IEND chunk，共 45 字节。 */
+function makePngBase64(): string {
+  const signature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const ihdr = Buffer.alloc(25);
+  ihdr.writeUInt32BE(13, 0);
+  ihdr.write("IHDR", 4, "ascii");
+  const iend = Buffer.alloc(12);
+  iend.write("IEND", 4, "ascii");
+  return Buffer.concat([signature, ihdr, iend]).toString("base64");
+}
+
+/** 仅有前缀魔数、缺少 chunk 结构的 PNG 字节：深度校验必须拒绝。 */
+const PNG_SIGNATURE_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x01, 0x02]).toString("base64");
 
 describe("vault-facade", () => {
   function makeVault(): string {
@@ -224,19 +236,21 @@ describe("vault-facade", () => {
     }
   });
 
-  test("savePastedImage 落盘笔记同目录 assets 并校验魔数", () => {
+  test("savePastedImage 落盘笔记同目录 assets 并校验图片结构", () => {
     const root = makeVault();
     try {
       const fs = createVaultFileSystem(root);
-      const saved = fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: PNG_MAGIC_BASE64 });
+      const pngBase64 = makePngBase64();
+      const saved = fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: pngBase64 });
       expect(saved.src?.startsWith("assets/pasted-image-") && saved.src.endsWith(".png")).toBe(true);
-      expect(statSync(join(root, "notes", saved.src!)).size).toBe(8);
+      expect(statSync(join(root, "notes", saved.src!)).size).toBe(45);
 
-      // 声明 MIME 与魔数不一致时拒绝。
-      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/gif", base64: PNG_MAGIC_BASE64 })).toEqual({ src: null });
+      // 声明 MIME 与图片结构不符时拒绝：仅前缀魔数、深度结构不完整、类型错标。
+      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: PNG_SIGNATURE_BASE64 })).toEqual({ src: null });
+      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/gif", base64: pngBase64 })).toEqual({ src: null });
       expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: Buffer.from("not-an-image").toString("base64") })).toEqual({ src: null });
 
-      const rootSaved = fs.savePastedImage({ noteRelativePath: "root-note.md", mimeType: "image/png", base64: PNG_MAGIC_BASE64 });
+      const rootSaved = fs.savePastedImage({ noteRelativePath: "root-note.md", mimeType: "image/png", base64: pngBase64 });
       expect(rootSaved.src?.startsWith("assets/")).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });

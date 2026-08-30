@@ -115,6 +115,7 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   const [newFolderName, setNewFolderName] = useState('')
   const [switcherOpen, setSwitcherOpen] = useState(false)
   const [helpOpen, setHelpOpen] = useState(false)
+  const [editorReopenVersion, setEditorReopenVersion] = useState(0)
   const [treeAction, setTreeAction] = useState<{ type: 'expand' | 'collapse'; version: number }>({ type: 'collapse', version: 0 })
   const [treeWidth, setTreeWidth] = useState(220)
   const focusSequence = useRef(Date.now())
@@ -285,8 +286,12 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
 
   const openFile = useCallback(async (relativePath: string): Promise<void> => {
     if (!vaultPath) return
-    await flushPendingSave()
+    // 显式点击已选中的笔记是外部写冲突后的恢复路径：不冲洗待存草稿，
+    // 直接放弃本地草稿并从磁盘重挂载（Proma 的 reopenVersion 语义）。
+    const reopenCurrentFile = selectedFileRef.current?.path === relativePath
+    if (!reopenCurrentFile) await flushPendingSave()
     await openFileIn(vaultPath, relativePath)
+    if (reopenCurrentFile) setEditorReopenVersion((version) => version + 1)
   }, [flushPendingSave, openFileIn, vaultPath])
 
   // 编辑区滚轮转发：落在标题栏/留白上的滚动交给 CodeMirror 内容区（Proma 同款）。
@@ -317,6 +322,38 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
   useEffect(() => {
     if (vaultPath) void loadFiles(vaultPath, true)
   }, [vaultPath, loadFiles])
+
+  // Agent 工具会绕过本组件直接改写 Vault 文件；只轮询当前打开的笔记、
+  // 不扫整棵树，外部改动无需任何操作即反映到编辑器（Proma 同语义）。
+  useEffect(() => {
+    const relativePath = selectedFile?.path
+    const sha256 = selectedFile?.read.sha256
+    const vault = vaultPath
+    if (!relativePath || !sha256 || !vault) return
+    let cancelled = false
+    let checking = false
+    const checkCurrentFile = async (): Promise<void> => {
+      if (checking || cancelled || selectedFileRef.current?.path !== relativePath) return
+      checking = true
+      try {
+        const next = await readObsidianVaultFile(vault, relativePath)
+        if (cancelled || selectedFileRef.current?.path !== relativePath || next.sha256 === sha256) return
+        setSelectedFile({ path: relativePath, read: next })
+        // 草稿未动则静默采纳磁盘内容；草稿已动时保留草稿，不覆盖。
+        if (draftRef.current === selectedFileRef.current?.read.content) {
+          setDraft(next.content)
+        } else {
+          toast.message('笔记已被外部修改；本地草稿未保存')
+        }
+      } catch {
+        // 并发的重命名/删除由既有列表刷新与打开错误路径处理；轻量检查保持静默。
+      } finally {
+        checking = false
+      }
+    }
+    const timer = window.setInterval(() => { void checkCurrentFile() }, 1_000)
+    return () => { cancelled = true; window.clearInterval(timer) }
+  }, [selectedFile?.path, selectedFile?.read.sha256, vaultPath])
 
   // 回合 chip 等外部请求：切 vault 并直接打开目标文件/文件夹。
   useEffect(() => {
@@ -655,7 +692,7 @@ export function VaultRightPanelWorkspace({ threadId }: { threadId?: string }) {
             </div>
             <div className="min-h-0 flex-1">
               <VaultLiveMarkdownEditor
-                key={selectedFile.path}
+                key={`${selectedFile.path}:${editorReopenVersion}`}
                 vaultPath={vaultPath ?? ''}
                 relativePath={selectedFile.path}
                 value={draft}
