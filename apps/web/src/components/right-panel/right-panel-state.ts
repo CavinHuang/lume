@@ -1,26 +1,17 @@
 import type { LumeRuntimeEvent, RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 
-export type RightPanelFunction = 'browser' | 'files' | 'chat' | 'vault'
+export type RightPanelFunction = 'files' | 'chat' | 'vault'
 
-export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['browser', 'files', 'vault']
+export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault']
 
 export interface ThreadRightPanelWorkspace {
   tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>
 }
 
 export type RightPanelTabState =
-  | BrowserTabState
   | FilesTabState
   | ChatTabState
   | VaultTabState
-
-export interface BrowserTabState {
-  type: 'browser'
-  url: string
-  addressInput: string
-  zoom: number
-  deviceToolbarVisible: boolean
-}
 
 export interface FilesTabState {
   type: 'files'
@@ -81,10 +72,6 @@ export function createEmptyRightPanelWorkspace(): ThreadRightPanelWorkspace {
 }
 
 export function createDefaultRightPanelTab(type: RightPanelFunction): RightPanelTabState {
-  if (type === 'browser') {
-    return { type, url: '', addressInput: '', zoom: 1, deviceToolbarVisible: false }
-  }
-
   return { type }
 }
 
@@ -158,20 +145,6 @@ export function migrateLegacyRightPanelHints(input: {
 function sanitizeRightPanelTab(type: RightPanelFunction, value: unknown): RightPanelTabState | null {
   if (!isRecord(value) || value.type !== type) {
     return null
-  }
-
-  if (type === 'browser') {
-    return {
-      type,
-      url: typeof value.url === 'string' ? value.url : '',
-      addressInput: typeof value.addressInput === 'string' ? value.addressInput : '',
-      zoom: typeof value.zoom === 'number' && Number.isFinite(value.zoom) && value.zoom >= 0.25 && value.zoom <= 3
-        ? value.zoom
-        : 1,
-      deviceToolbarVisible: typeof value.deviceToolbarVisible === 'boolean'
-        ? value.deviceToolbarVisible
-        : false,
-    }
   }
 
   return { type }

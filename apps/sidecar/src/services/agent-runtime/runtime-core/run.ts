@@ -21,7 +21,6 @@ import {
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
-  AgentBrowserAuthRequest,
   AgentDesktopActionRequest,
   AgentSendInput,
   AgentToolPermissionRequest,
@@ -30,7 +29,6 @@ import type {
   RuntimeCodingReport,
   FileReferenceBinding,
 } from "@lume/shared";
-import { isBuiltinBrowserToolName } from "@lume/shared";
 import { createHash } from "node:crypto";
 import { writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
@@ -71,7 +69,6 @@ import { buildRuntimeUserMessageInput } from "./message-attachment-input";
 import { ToolRuntime } from "../tools/tool-runtime";
 import { resolvePlanningExecutionContext } from "../../planning/planning-execution-context";
 import {
-  isBundledBrowserRuntimeAvailable,
   SidecarPluginManager,
 } from "../plugins/plugin-manager.js";
 import type { RegisteredPlugin } from "../plugins/plugin-registry.js";
@@ -219,7 +216,6 @@ export interface MessageInputFields {
   messageParts?: AgentSendInput["messageParts"];
   messageAttachments?: AgentSendInput["messageAttachments"];
   commentAttachments?: AgentSendInput["commentAttachments"];
-  browserAttachments?: AgentSendInput["browserAttachments"];
   messageMetadata?: Record<string, unknown>;
 }
 
@@ -236,7 +232,6 @@ export interface RuntimeEmitters {
     durationMs: number;
   }) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
-  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
   emitTodoUpdated?: Parameters<typeof createTodoTool>[0]["onTodoUpdated"];
@@ -664,10 +659,7 @@ async function assembleSessionContext({
   initialTodoState: Awaited<ReturnType<typeof readLatestTodoState>>;
   subagentDefinition: AgentDefinition | undefined;
 }) {
-  const runtimeSkills = toolset.availableToolNames.some(isBuiltinBrowserToolName)
-    && !input.browserAttachments?.length
-    ? surfaceSkills.filter((skill) => skill.name !== "browser:browser")
-    : surfaceSkills;
+  const runtimeSkills = surfaceSkills;
   const enabledPlugins = buildEnabledPluginContext(
     registeredPlugins,
     { ...pluginAssembly, skills: runtimeSkills },
@@ -736,10 +728,7 @@ async function assembleSessionContext({
     userMessage: input.userMessage ?? "",
     messageAttachments: input.messageAttachments,
     commentAttachments: input.commentAttachments,
-    browserAttachments: input.browserAttachments,
     availableTools: toolset.availableToolNames,
-    browserRuntimeAvailable: isBundledBrowserRuntimeAvailable(),
-    browserContinuity: input.messageMetadata?.browserContinuity,
     enabledPlugins,
     tokenBudget: contextTokenBudget,
     toolSchemaFingerprint,
@@ -1209,7 +1198,6 @@ async function createRuntimeCoreSessionImpl(
     emitSdkMessage: input.emitSdkMessage,
     emitRuntimeEvent: input.emitRuntimeEvent,
     emitAskUserQuestion: input.emitAskUserQuestion,
-    emitBrowserAuthRequest: input.emitBrowserAuthRequest,
     emitDesktopActionRequest: input.emitDesktopActionRequest,
     emitToolPermissionRequest,
     emitTodoUpdated: handleTodoUpdated,

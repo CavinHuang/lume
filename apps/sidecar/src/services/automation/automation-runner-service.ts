@@ -352,9 +352,6 @@ async function executeJob(job: AutomationJob, trigger: "schedule" | "manual", sc
         onAskUserQuestion: () => {
           waitingForUser = true;
         },
-        onBrowserAuthRequest: () => {
-          waitingForUser = true;
-        },
         onToolPermissionRequest: () => {
           waitingForApproval = true;
         }

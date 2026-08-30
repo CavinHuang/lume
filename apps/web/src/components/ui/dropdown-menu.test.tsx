@@ -12,7 +12,7 @@ import {
 
 describe('DropdownMenuContent', () => {
   test('is a forwardRef component so callers can attach a ref to Menu.Popup', () => {
-    // BrowserShell 的 Portal 菜单需要稳定 ref，供定位、焦点和碰撞处理使用。
+    // Portal 菜单的业务消费方需要稳定 ref，供定位、焦点和碰撞处理使用。
     expect(
       (DropdownMenuContent as unknown as { $$typeof?: symbol }).$$typeof,
     ).toBe(Symbol.for('react.forward_ref'))

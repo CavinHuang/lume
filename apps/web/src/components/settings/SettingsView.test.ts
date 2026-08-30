@@ -9,7 +9,6 @@ describe('SettingsView metadata', () => {
       'models',
       'agents',
       'skills',
-      'browser',
       'workspaces',
       'memory',
       'reading',

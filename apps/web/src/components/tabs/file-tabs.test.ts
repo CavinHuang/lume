@@ -1,6 +1,5 @@
 import { describe, expect, test } from 'bun:test'
 import { buildFileTab, buildThreadPlanFileTab, upsertTab } from './file-tabs'
-import { normalizeUrl } from './BrowserTabView'
 import type { Tab } from '@/atoms'
 
 describe('file-tabs', () => {
@@ -43,14 +42,5 @@ describe('file-tabs', () => {
       threadId: 'thread-1',
       workspaceSlug: 'workspace-1',
     })
-  })
-})
-
-describe('normalizeUrl', () => {
-  test('prefers http for localhost-style addresses and https for external hosts', () => {
-    expect(normalizeUrl('localhost:3000')).toBe('http://localhost:3000')
-    expect(normalizeUrl('127.0.0.1:5173')).toBe('http://127.0.0.1:5173')
-    expect(normalizeUrl('example.com')).toBe('https://example.com')
-    expect(normalizeUrl('https://openai.com')).toBe('https://openai.com')
   })
 })

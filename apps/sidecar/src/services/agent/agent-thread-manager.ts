@@ -788,17 +788,6 @@ function deleteAgentThreadLocked(id: string): void {
   clearToolPermissionSession(id);
   cancelPendingAskUserQuestionBySession(id);
   clearPermissionDenials(id);
-  // #613:级联回收线程名下全部 agent tab(含 handoff),防 workspace store
-  // 孤儿记录永久留存。惰性动态 import 同 node-repl 回收先例,防模块环。
-  void import("../browser/browser-broker-holder")
-    .then((module) => module.getActiveBrowserBroker()?.dispatch({
-      method: "prune_thread_tabs",
-      params: { threadId: id },
-      threadId: id,
-      browserSessionId: `browser-tools:${id}`,
-      browserTurnId: `browser-tools:${id}`
-    }).catch(() => undefined))
-    .catch(() => undefined);
   if (cleanupPending) {
     planningStore.advanceOperation(operationId, { phase: "cleanup_pending", status: "partial", recoverable: true, threadId: id, error: "thread file cleanup pending" });
   } else {

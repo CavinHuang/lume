@@ -182,7 +182,6 @@ describe("runtime-core run loop", () => {
       onComplete: () => undefined,
       onError: () => undefined,
       onAskUserQuestion: () => undefined,
-      onBrowserAuthRequest: () => undefined,
       onToolPermissionRequest: () => undefined
     }, observer);
 

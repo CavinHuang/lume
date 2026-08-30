@@ -2,17 +2,14 @@ import { listChannels } from '@/lib/desktop-api/channel'
 import { getEffectiveLumeConfig, updateAgentFollowUpQueueMode, updateAgentThinkingLevel } from '@/lib/desktop-api/lume-config'
 import { useEditor, EditorContent } from '@tiptap/react'
 import { cn } from '@/lib/utils'
-import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, Globe, X, Mic, Check } from 'lucide-react'
+import { Send, Square, FileText, Plus, LoaderCircle, MessageSquareText, MonitorOff, X, Mic, Check } from 'lucide-react'
 import { toast } from 'sonner'
 import { useAtom, useAtomValue, useSetAtom, useStore } from 'jotai'
 import { useCallback, useEffect, useMemo, useRef, useState, type DragEvent as ReactDragEvent, type KeyboardEvent as ReactKeyboardEvent } from 'react'
 import {
   agentSend,
-  browserRuntime,
-  createBrowserReferenceGrant,
   getThreadMessages,
   listAgentMessageQueue,
-  onBrowserEvent,
   onSidecarEvent,
   openFileDialog,
   promoteQueuedAgentMessageToGuidance,
@@ -20,12 +17,11 @@ import {
   reorderAgentMessageQueue,
   resumeAgentQueue,
   retryQueuedAgentMessage,
-  revokeBrowserReferenceGrant,
   sidecarCall,
   updateQueuedAgentMessage,
 } from '@/lib/desktop-api'
 import { invoke } from '@/lib/desktop-runtime/core'
-import { activeTabIdAtom, agentBrowserAttachmentsAtom, agentBrowserAttachmentsFamily, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom, quotedSelectionMapAtom, quotedSelectionFamily } from '@/atoms'
+import { activeTabIdAtom, agentDiffCommentDraftsAtom, agentDiffCommentDraftsFamily, agentInputDraftAtom, agentInputDraftFamily, agentInputHistoryAtom, agentInputHistoryFamily, agentMessageQueueAtom, agentPlanModePhaseFamily, agentQueueInterruptedAtom, agentQueueInterruptedFamily, agentRuntimeEventsAtom, agentRuntimeEventsFamily, agentStreamingStatesAtom, agentThreadPermissionModesAtom, agentThreadsAtom, agentWorkspacesAtom, currentWorkspaceIdAtom, queuedAttachmentPreviewUrlAtom, settingsInitialTabAtom, tabsAtom, quotedSelectionMapAtom, quotedSelectionFamily } from '@/atoms'
 import { isEmptyDraft, prependHistory, removeDraft, sanitizeDraftJSON, upsertDraft, type AgentInputDraftJSON } from '@/lib/agent-input-draft-state'
 import { buildQuotedSelectionBlock } from '@/lib/quoted-selection'
 import { QuotedSelectionChip } from './QuotedSelectionChip'
@@ -37,9 +33,6 @@ import {
   DESKTOP_CONTEXT_IPC_CHANNELS,
   LUME_CONFIG_IPC_CHANNELS,
   type AgentMessage,
-  type AgentBrowserAttachment,
-  type AgentBrowserAnnotationAttachment,
-  type AgentBrowserTabAttachment,
   type AgentMessageAttachmentInput,
   type AgentDiffCommentAttachment,
   type AgentSavedFile,
@@ -51,16 +44,12 @@ import {
   type LumeRuntimeEvent,
   type AgentFollowUpMode,
   type AgentQueuedMessage,
-  type BrowserTabDescriptor,
-  type BrowserAnnotationSessionSnapshot,
 } from '@lume/shared'
 import { appendRuntimeEvent, removeRuntimeEvents } from '@/hooks/runtime-event-state'
 import { threadMessagesCache } from './thread-messages-cache'
 import { useModelMetaVersion } from '@/lib/model-meta-context'
 import { formatFileRefMention, parseFileRefDragData } from './file-ref-drag'
-import { browserAnnotationPreview, browserAnnotationTargetLabel, browserTabFromAttachment, createAgentSuggestionRenderer, invalidateBrowserSuggestionCache, sameBrowserTab } from './agent-input-browser-mention'
 import { serializeAgentEditorMessage } from './agent-editor-message-parts'
-import { buildDirectBrowserAnnotationPayload, parseBrowserAnnotationDirectRequest, projectBrowserAnnotationSnapshot, resolveBrowserAnnotationBatchText, resolveBrowserAnnotationSubmission, serializeBrowserAnnotationDirectRequest, type BrowserAnnotationDirectRequest } from './browser-annotation-submit'
 import { ModelPicker } from './ModelPicker'
 import { PermissionModePicker } from './PermissionModePicker'
 import { ThinkingLevelPicker } from './ThinkingLevelPicker'
@@ -87,7 +76,6 @@ import {
   upsertAgentMessageQueueSnapshot,
 } from './agent-message-queue-state'
 import { type QuotedSelection } from '@/atoms'
-import { type MentionItem } from './slash-command-state'
 import { createCapabilityReferencePasteHandler, createSuggestionRenderer } from './editor-mention-suggestions'
 import { createPromptEditorExtensions } from './prompt-editor-extensions'
 import { extractClipboardFiles, handleAttachmentPaste } from './editor-attachment-paste'
@@ -167,9 +155,6 @@ export function AgentInput({
   const workspaceSlugRef = useRef<string | null>(null)
   const defaultPermissionModeRef = useRef<PermissionModeValue>('default')
   const threadPermissionModesRef = useRef(threadPermissionModes)
-  // #607：浏览器面板外的全局感知——agent 正在控制哪个站点（dispatching 事件无 threadId，全局态即可）
-  const [agentBrowserActivity, setAgentBrowserActivity] = useState<{ url?: string } | null>(null)
-  const agentBrowserIdleTimerRef = useRef<number | null>(null)
   const autoSelectedPlanModeRef = useRef(false)
   // #670 行为告知:thinkingLevel 会随消息发送。未配置(config 无值)且用户未在
   // 输入框显式选择过时,不携带该字段——此前本地默认 'off' 硬塞进请求,把 sidecar
@@ -212,8 +197,6 @@ export function AgentInput({
       return next
     })
   }, [setQuotedSelectionMap, threadId])
-  const browserAttachments: AgentBrowserAttachment[] = useAtomValue(agentBrowserAttachmentsFamily(threadId)) ?? []
-  const setBrowserAttachments = useSetAtom(agentBrowserAttachmentsAtom)
   const setDraftState = useSetAtom(agentInputDraftAtom)
   const isNavigatingHistoryRef = useRef(false) // true = 当前编辑器内容由程序填充（恢复/回溯），不应存为草稿
   const historyIndexRef = useRef(-1) // -1 = 未回溯（显示草稿）；0..n = 回溯到 history[index]
@@ -226,105 +209,6 @@ export function AgentInput({
   const historyRef = useRef(history)
   historyRef.current = history
 
-  useEffect(() => {
-    const addBrowserTab = (event: Event) => {
-      const descriptor = (event as CustomEvent<BrowserTabDescriptor>).detail
-      if (!descriptor?.tabId || !descriptor.providerTabId || !descriptor.url) return
-      if (descriptor.ownerThreadId && descriptor.ownerThreadId !== threadId) return
-      const attachment: AgentBrowserTabAttachment = {
-        id: `browser-tab:${descriptor.providerTabId}:${descriptor.generation}`,
-        origin: 'browser-tab',
-        tabId: descriptor.tabId,
-        providerTabId: descriptor.providerTabId,
-        title: descriptor.title || descriptor.url,
-        url: descriptor.url,
-        generation: descriptor.generation,
-        ...(descriptor.ownerThreadId ? { ownerThreadId: descriptor.ownerThreadId } : {}),
-      }
-      setBrowserAttachments((current) => {
-        const existing = current[threadId] ?? []
-        return {
-          ...current,
-          [threadId]: [...existing.filter((item) => item.id !== attachment.id && !(item.origin === 'browser-tab' && item.tabId === attachment.tabId)), attachment],
-        }
-      })
-    }
-    window.addEventListener('lume:add-browser-tab-to-chat', addBrowserTab)
-    const addBrowserAttachment = (event: Event) => {
-      const detail = (event as CustomEvent<{ threadId?: string; attachment?: AgentBrowserAttachment }>).detail
-      if (!detail?.attachment || (detail.threadId && detail.threadId !== threadId)) return
-      setBrowserAttachments((current) => ({
-        ...current,
-        [threadId]: [...(current[threadId] ?? []).filter((item) => item.id !== detail.attachment!.id), detail.attachment!],
-      }))
-    }
-    window.addEventListener('lume:add-browser-attachment-to-chat', addBrowserAttachment)
-    return () => {
-      window.removeEventListener('lume:add-browser-tab-to-chat', addBrowserTab)
-      window.removeEventListener('lume:add-browser-attachment-to-chat', addBrowserAttachment)
-    }
-  }, [setBrowserAttachments, threadId])
-
-  useEffect(() => {
-    let disposed = false
-    let stop: (() => void) | undefined
-    void onBrowserEvent((event) => {
-      if (event.method === 'browser:backend-state' || event.method === 'browser:backend-changed') {
-        invalidateBrowserSuggestionCache()
-        return
-      }
-      if (event.method === 'browser:annotation-state' && event.params.threadId === threadId && Array.isArray(event.params.comments)) {
-        const snapshot = event.params as unknown as BrowserAnnotationSessionSnapshot
-        setBrowserAttachments((current) => {
-          return { ...current, [threadId]: projectBrowserAnnotationSnapshot(current[threadId] ?? [], snapshot) }
-        })
-        return
-      }
-      if (event.method === 'browser:annotation-direct-submit' && event.params.threadId === threadId && event.params.attachment && typeof event.params.attachment === 'object') {
-        const attachment = event.params.attachment as AgentBrowserAttachment
-        const tab = browserTabFromAttachment(attachment)
-        void browserRuntime<{ comments?: AgentBrowserAnnotationAttachment[] }>({ method: 'annotation:screenshot:prepare', params: { tabId: tab.tabId, threadId } })
-          .then((snapshot) => queueDirectAnnotation(snapshot.comments?.find((item) => item.id === attachment.id) ?? attachment as AgentBrowserAnnotationAttachment))
-          .catch((error) => console.error('[AgentInput] 直接批注截图准备失败，保留批注作为降级回退:', error))
-        return
-      }
-      if (event.method === 'browser:annotation-batch-submit' && event.params.threadId === threadId) {
-        pendingBatchSnapshotRef.current = event.params as unknown as BrowserAnnotationSessionSnapshot
-        if (!localSendingRef.current) window.requestAnimationFrame(() => sendNowRef.current())
-        return
-      }
-      if (event.method === 'browser:agent-dispatching') {
-        // 动作间隙防闪烁：短暂空闲视为连续控制（与 BrowserShell 内胶囊同参数）
-        if (agentBrowserIdleTimerRef.current !== null) {
-          window.clearTimeout(agentBrowserIdleTimerRef.current)
-          agentBrowserIdleTimerRef.current = null
-        }
-        if (event.params.active === true) {
-          setAgentBrowserActivity({ url: typeof event.params.url === 'string' ? event.params.url : undefined })
-        } else {
-          agentBrowserIdleTimerRef.current = window.setTimeout(() => {
-            agentBrowserIdleTimerRef.current = null
-            setAgentBrowserActivity(null)
-          }, 800)
-        }
-        return
-      }
-      if (event.method !== 'browser:tab-changed' && event.method !== 'browser:workspace-changed') return
-      const ownerThreadId = typeof event.params.ownerThreadId === 'string' ? event.params.ownerThreadId : undefined
-      invalidateBrowserSuggestionCache(ownerThreadId ?? threadId)
-    }).then((unlisten) => {
-      if (disposed) unlisten()
-      else stop = unlisten
-    })
-    return () => {
-      disposed = true
-      stop?.()
-      if (agentBrowserIdleTimerRef.current !== null) {
-        window.clearTimeout(agentBrowserIdleTimerRef.current)
-        agentBrowserIdleTimerRef.current = null
-      }
-    }
-  }, [threadId])
   const [confirmState, setConfirmState] = useState<{
     open: boolean
     title: string
@@ -355,10 +239,6 @@ export function AgentInput({
   const [desktopContextPermissionRequestLoading, setDesktopContextPermissionRequestLoading] = useState(false)
   const [localDesktopContextTarget, setLocalDesktopContextTarget] = useState<DesktopContextTarget | undefined>()
   const sendNowRef = useRef<() => void>(() => undefined)
-  const directAnnotationRef = useRef<AgentBrowserAnnotationAttachment | null>(null)
-  const pendingDirectRequestsRef = useRef<BrowserAnnotationDirectRequest[]>([])
-  const activeDirectRequestRef = useRef<BrowserAnnotationDirectRequest | null>(null)
-  const pendingBatchSnapshotRef = useRef<BrowserAnnotationSessionSnapshot | null>(null)
   const stopNowRef = useRef<() => void>(() => undefined)
   const lastEscapeAtRef = useRef(0)
   const pendingSubmissionRef = useRef<{ id: string; identity: string } | null>(null)
@@ -371,36 +251,6 @@ export function AgentInput({
   pendingAttachmentsRef.current = pendingAttachments
   const attachmentPasteInProgressRef = useRef(false)
 
-  useEffect(() => {
-    if (localSending || (pendingDirectRequestsRef.current.length === 0 && !pendingBatchSnapshotRef.current)) return
-    const frame = window.requestAnimationFrame(() => sendNowRef.current())
-    return () => window.cancelAnimationFrame(frame)
-  }, [localSending])
-
-  const directQueueStorageKey = `lume:browser-annotation-direct:${threadId}`
-  const persistDirectQueue = useCallback((queue: BrowserAnnotationDirectRequest[]) => {
-    pendingDirectRequestsRef.current = queue
-    try { localStorage.setItem(directQueueStorageKey, JSON.stringify(queue.map((request) => serializeBrowserAnnotationDirectRequest(request)))) } catch { /* storage is an optimization; the main session remains the fallback */ }
-  }, [directQueueStorageKey])
-  const queueDirectAnnotation = useCallback((annotation: AgentBrowserAnnotationAttachment) => {
-    if (activeDirectRequestRef.current?.annotation.id === annotation.id || pendingDirectRequestsRef.current.some((request) => request.annotation.id === annotation.id)) return
-    const request: BrowserAnnotationDirectRequest = { version: 1, threadId, tabId: annotation.tab.tabId, annotation, attempts: 0, createdAt: new Date().toISOString() }
-    persistDirectQueue([...pendingDirectRequestsRef.current, request])
-    if (!localSendingRef.current) window.requestAnimationFrame(() => sendNowRef.current())
-  }, [persistDirectQueue, threadId])
-
-  useEffect(() => {
-    try {
-      const parsed = JSON.parse(localStorage.getItem(directQueueStorageKey) ?? '[]') as unknown
-      pendingDirectRequestsRef.current = Array.isArray(parsed)
-        ? parsed.map((item) => parseBrowserAnnotationDirectRequest(typeof item === 'string' ? item : JSON.stringify(item))).filter((item): item is BrowserAnnotationDirectRequest => Boolean(item))
-        : []
-    } catch { pendingDirectRequestsRef.current = [] }
-  }, [directQueueStorageKey])
-
-  useEffect(() => {
-    if (!localSending && (pendingDirectRequestsRef.current.length > 0 || directAnnotationRef.current)) window.requestAnimationFrame(() => sendNowRef.current())
-  }, [localSending])
   const debouncedSend = useMemo(
     () => createDebouncedAgentInputSend(() => { sendNowRef.current() }),
     [threadId],
@@ -583,58 +433,9 @@ export function AgentInput({
   }, [])
 
   const slashCommandExecuteRef = useRef<(id: string) => void>(() => {})
-  const browserReferenceSelectRef = useRef<(item: MentionItem) => Promise<boolean>>(async () => false)
-  const browserReferenceSelectionSequenceRef = useRef(0)
   const handleSlashCommandExecuteStable = useCallback((id: string) => {
     slashCommandExecuteRef.current(id)
   }, [])
-  const handleBrowserReferenceSelectStable = useCallback((item: MentionItem) => browserReferenceSelectRef.current(item), [])
-  browserReferenceSelectRef.current = async (item) => {
-    const candidate = item.browserCandidate
-    if (!candidate) return false
-    const selectionSequence = ++browserReferenceSelectionSequenceRef.current
-    try {
-      const grant = await createBrowserReferenceGrant({ ...candidate, threadId, access: 'control' })
-      if (selectionSequence !== browserReferenceSelectionSequenceRef.current) {
-        void revokeBrowserReferenceGrant({ backend: candidate.backend, threadId, referenceGrantId: grant.referenceGrantId }).catch(() => undefined)
-        return false
-      }
-      const previous = browserAttachments
-        .map(browserTabFromAttachment)
-        .find((tab) => (tab.backend ?? 'iab') === candidate.backend && tab.tabId === candidate.tabId)
-      if (previous?.referenceGrantId) {
-        void revokeBrowserReferenceGrant({
-          backend: previous.backend ?? 'iab',
-          threadId,
-          referenceGrantId: previous.referenceGrantId,
-        }).catch(() => undefined)
-      }
-      const attachment: AgentBrowserTabAttachment = {
-        id: `browser-tab:${candidate.backend}:${candidate.providerTabId ?? candidate.tabId}:${candidate.generation ?? 'current'}`,
-        origin: 'browser-tab',
-        backend: candidate.backend,
-        browserId: candidate.browserId,
-        referenceGrantId: grant.referenceGrantId,
-        access: 'control',
-        tabId: candidate.tabId,
-        ...(candidate.providerTabId ? { providerTabId: candidate.providerTabId } : {}),
-        title: candidate.title,
-        url: candidate.url,
-        ...(candidate.generation ? { generation: candidate.generation } : {}),
-        ...(candidate.lastOpenedAt ? { lastOpenedAt: candidate.lastOpenedAt } : {}),
-        ...(candidate.ownerThreadId ? { ownerThreadId: candidate.ownerThreadId } : {}),
-      }
-      setBrowserAttachments((current) => ({
-        ...current,
-        [threadId]: [...(current[threadId] ?? []).filter((existing) => !sameBrowserTab(existing, candidate.backend, candidate.tabId)), attachment],
-      }))
-      return true
-    } catch (error) {
-      console.error('[AgentInput] 创建浏览器引用授权失败:', error)
-      toast.error('网页引用失败，页面可能已变化或浏览器连接已断开')
-      return false
-    }
-  }
   const handleLocalSuggestionEscape = useCallback(() => {
     if (!streamingRef.current) return
     lastEscapeAtRef.current = Date.now()
@@ -644,8 +445,8 @@ export function AgentInput({
 
   const editor = useEditor({
     extensions: createPromptEditorExtensions({
-      placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent、连接账户、网页或文件',
-      agentSuggestion: createAgentSuggestionRenderer(threadId, getWorkspaceSlug, setMentionSuggestionOpen, handleBrowserReferenceSelectStable, handleLocalSuggestionEscape),
+      placeholder: '输入任务… 使用 / 选择动作、技能或插件，@ 引用 Agent、连接账户或文件',
+      agentSuggestion: createSuggestionRenderer('@', threadId, '@', getWorkspaceSlug, setMentionSuggestionOpen, undefined, handleLocalSuggestionEscape),
       capabilitySuggestion: createSuggestionRenderer('/', threadId, '/', getWorkspaceSlug, setMentionSuggestionOpen, handleSlashCommandExecuteStable, handleLocalSuggestionEscape),
       planningTodoSuggestion: createSuggestionRenderer('&', threadId, '&', getWorkspaceSlug, setMentionSuggestionOpen, undefined, handleLocalSuggestionEscape, getWorkspaceId),
     }),
@@ -680,7 +481,6 @@ export function AgentInput({
           }),
           onSettled: () => {
             attachmentPasteInProgressRef.current = false
-            if (!localSendingRef.current && (pendingDirectRequestsRef.current.length > 0 || pendingBatchSnapshotRef.current)) window.requestAnimationFrame(() => sendNowRef.current())
           },
         })) return true
 
@@ -852,7 +652,6 @@ export function AgentInput({
   const hasComposerPayload = editorText.trim().length > 0
     || pendingAttachments.length > 0
     || commentAttachments.length > 0
-    || browserAttachments.length > 0
   const submitState = deriveAgentInputSubmitState({
     hasText: hasComposerPayload,
     streaming,
@@ -895,24 +694,18 @@ export function AgentInput({
         delete next[threadId]
         return next
       })
-      setBrowserAttachments((prev) => {
-        const next = { ...prev }
-        delete next[threadId]
-        return next
-      })
       toast.success('已清空对话')
     } catch (error) {
       console.error('[AgentInput] 清空对话失败:', error)
       toast.error('清空失败')
     }
-  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues, setCommentDrafts, setBrowserAttachments])
+  }, [threadId, setRuntimeEvents, setStreamingStates, setMessageQueues, setCommentDrafts])
 
   const handleSlashCommandExecute = useCallback((id: string) => {
     if (!editor) return
     const actionHasConflictingPayload = editor.getText().trim() !== `/${id}`
       || pendingAttachments.length > 0
       || commentAttachments.length > 0
-      || browserAttachments.length > 0
       || Boolean(selectedDesktopContextTarget)
     if (actionHasConflictingPayload) {
       toast.error('请先清空正文、附件和当前应用上下文，再执行该动作')
@@ -992,7 +785,7 @@ export function AgentInput({
       })()
       return
     }
-  }, [editor, threadId, threads, doClear, pendingAttachments.length, commentAttachments.length, browserAttachments.length, selectedDesktopContextTarget, streaming])
+  }, [editor, threadId, threads, doClear, pendingAttachments.length, commentAttachments.length, selectedDesktopContextTarget, streaming])
 
   slashCommandExecuteRef.current = handleSlashCommandExecute
 
@@ -1002,24 +795,11 @@ export function AgentInput({
       toast.info('正在读取粘贴的附件，请稍候')
       return
     }
-    const activeDirectRequest = activeDirectRequestRef.current ?? pendingDirectRequestsRef.current.shift() ?? null
-    if (activeDirectRequest) {
-      activeDirectRequestRef.current = activeDirectRequest
-      directAnnotationRef.current = activeDirectRequest.annotation
-      persistDirectQueue(pendingDirectRequestsRef.current)
-    }
-    const directAttachment = directAnnotationRef.current
-    directAnnotationRef.current = null
     const serialized = serializeAgentEditorMessage(editor.getJSON(), applyAgentRoleMentions)
     const rawText = serialized.userMessage
-    const batchSnapshot = pendingBatchSnapshotRef.current
-    pendingBatchSnapshotRef.current = null
-    const sourceBrowserAttachments = batchSnapshot
-      ? projectBrowserAnnotationSnapshot(browserAttachments, batchSnapshot)
-      : browserAttachments
-    if (!directAttachment && !rawText && pendingAttachments.length === 0 && commentAttachments.length === 0 && sourceBrowserAttachments.length === 0) return
+    if (!rawText && pendingAttachments.length === 0 && commentAttachments.length === 0) return
 
-    const queueEdit = directAttachment ? null : editingQueuedMessageRef.current
+    const queueEdit = editingQueuedMessageRef.current
     if (queueEdit) {
       setLocalSending(true)
       try {
@@ -1055,29 +835,17 @@ export function AgentInput({
     }
 
     setLocalSending(true)
-    const dropActiveDirect = () => {
-      const active = activeDirectRequestRef.current
-      if (!active) return
-      activeDirectRequestRef.current = null
-      directAnnotationRef.current = null
-      persistDirectQueue(pendingDirectRequestsRef.current)
-    }
-    const annotationSubmission = resolveBrowserAnnotationSubmission({ attachments: sourceBrowserAttachments, directAttachment })
-    const effectiveBrowserAttachments = directAttachment ? [directAttachment] : annotationSubmission.attachments
-    const effectiveCommentAttachments = directAttachment ? [] : commentAttachments
-    const effectivePendingAttachments = directAttachment ? [] : pendingAttachments
-    const baseText = directAttachment ? annotationSubmission.text : resolveBrowserAnnotationBatchText({ rawText, hasSnapshot: Boolean(batchSnapshot), hasCodeComments: commentAttachments.length > 0, hasBrowserAttachments: effectiveBrowserAttachments.length > 0 })
     // 划线引用：peek（不删）构建 text；删除延迟到发送成功后（commitQuotedSelection），失败时引用保留可重试
-    const quotedSelectionSnapshot = directAttachment ? null : peekQuotedSelection()
+    const quotedSelectionSnapshot = peekQuotedSelection()
     const quotedBlock = quotedSelectionSnapshot ? buildQuotedSelectionBlock(quotedSelectionSnapshot) : ''
-    const text = quotedBlock + baseText
+    const text = quotedBlock + rawText
     // messageParts 须与 userMessage 一致（sidecar 校验 parts 拼接 == userMessage）；引用 prepend 为 text part
     const hasStructuredParts = serialized.messageParts.some((part) => part.type === 'capability_ref' || part.type === 'planning_todo_ref')
     const messageParts = quotedBlock && hasStructuredParts
       ? [{ type: 'text' as const, text: quotedBlock }, ...serialized.messageParts]
       : serialized.messageParts
-    let sendMessageMetadata = directAttachment ? undefined : effectiveMessageMetadata
-    if (!directAttachment && selectedDesktopContextTarget) {
+    let sendMessageMetadata = effectiveMessageMetadata
+    if (selectedDesktopContextTarget) {
       const state = await refreshAgentInputDesktopContextState(sidecarCall, selectedDesktopContextTarget)
       if (state.status !== 'ready') {
         setDesktopContextCaptureMessage(state.message)
@@ -1104,9 +872,8 @@ export function AgentInput({
     const submissionIdentity = JSON.stringify({
       userMessage: text,
       messageParts,
-      attachments: effectivePendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
-      commentAttachments: effectiveCommentAttachments,
-      browserAttachments: effectiveBrowserAttachments,
+      attachments: pendingAttachments.map(({ id, filename, mediaType, size }) => ({ id, filename, mediaType, size })),
+      commentAttachments,
       ...(sendThinkingLevelForIdentity ? { thinkingLevel } : {}),
       permissionMode,
       workspaceId: workspaceIdRef.current,
@@ -1124,11 +891,11 @@ export function AgentInput({
     pendingSubmissionRef.current = { id: clientSubmissionId, identity: submissionIdentity }
     let messageAttachments: AgentMessageAttachmentInput[] = []
     try {
-      if (effectivePendingAttachments.length > 0) {
+      if (pendingAttachments.length > 0) {
         const savedFiles = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, {
           threadId,
           clientSubmissionId,
-          files: effectivePendingAttachments.map((attachment) => ({
+          files: pendingAttachments.map((attachment) => ({
             id: attachment.id,
             filename: attachment.filename,
             mediaType: attachment.mediaType,
@@ -1138,7 +905,7 @@ export function AgentInput({
             ...(attachment.stagedAttachmentId ? { stagedAttachmentId: attachment.stagedAttachmentId } : {}),
           })),
         })
-        messageAttachments = effectivePendingAttachments.map((attachment, index) => {
+        messageAttachments = pendingAttachments.map((attachment, index) => {
           const saved = savedFiles.find((file) => file.id === attachment.id) ?? savedFiles[index]
           return {
             id: attachment.id,
@@ -1154,7 +921,7 @@ export function AgentInput({
       // renderer 瞬态:把 pending 图片附件的 objectURL 存入 atom,供队列行首图缩略。
       // 不进 sidecar(messageAttachment.id === pendingAttachment.id,见构造处 id: attachment.id)。
       const pendingImagePreviews: Record<string, string> = {}
-      for (const pending of effectivePendingAttachments) {
+      for (const pending of pendingAttachments) {
         if (pending.previewUrl && isImageAttachment({ filename: pending.filename, mediaType: pending.mediaType })) {
           pendingImagePreviews[pending.id] = pending.previewUrl
         }
@@ -1162,25 +929,9 @@ export function AgentInput({
       if (Object.keys(pendingImagePreviews).length > 0) {
         setQueuedAttachmentPreviewUrls((prev) => ({ ...prev, ...pendingImagePreviews }))
       }
-      for (const attachment of effectiveBrowserAttachments) {
-        const screenshotRef = attachment.origin === 'browser-annotation' ? attachment.screenshotRef : undefined
-        if (!screenshotRef) continue
-        try {
-          const screenshot = await browserRuntime<{ data: string; mediaType: string; size: number }>({ method: 'annotation:screenshot:read', params: { tabId: browserTabFromAttachment(attachment).tabId, threadId, screenshotRef } })
-          const id = `browser-annotation-screenshot:${attachment.id}`
-          const filename = (attachment.origin === 'browser-annotation' ? attachment.screenshot?.filename : undefined)?.replace(/[^a-zA-Z0-9._-]/g, '_') || `${attachment.id.replace(/[^a-zA-Z0-9_-]/g, '_')}.png`
-          const saved = await sidecarCall<AgentSavedFile[]>(AGENT_IPC_CHANNELS.SAVE_FILES_TO_THREAD, { threadId, clientSubmissionId, files: [{ id, filename, mediaType: screenshot.mediaType, size: screenshot.size, data: screenshot.data }] })
-          const file = saved[0]
-          messageAttachments.push({ id, filename, mediaType: screenshot.mediaType, size: screenshot.size, threadPath: file?.threadPath ?? filename, ...(file?.ref ? { fileRef: file.ref } : {}) })
-        } catch (error) {
-          if (directAttachment) throw error
-          /* structured annotation context remains usable when optional pixels are unavailable */
-        }
-      }
     } catch (error) {
       console.error('[AgentInput] 文件上传失败:', error)
       toast.error('文件上传失败')
-      dropActiveDirect()
       setLocalSending(false)
       return
     }
@@ -1190,55 +941,35 @@ export function AgentInput({
     // thinkingLevel;否则让 sidecar 走 config 缺省语义(未配置按 medium 执行)
     const sendThinkingLevel = thinkingLevelTouchedRef.current || configThinkingLevelRef.current !== undefined
     try {
-      const result = await agentSend(directAttachment
-        ? { ...buildDirectBrowserAnnotationPayload({ threadId, annotation: directAttachment, ...(messageAttachments[0] ? { screenshot: messageAttachments[0] } : {}) }), clientSubmissionId }
-        : {
-            threadId,
-            userMessage: text,
-            clientSubmissionId,
-            ...(hasStructuredParts ? { messageParts } : {}),
-            ...(sendThinkingLevel ? { thinkingLevel } : {}),
-            followUpQueueMode,
-            permissionMode,
-            ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
-            ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
-            ...(effectiveBrowserAttachments.length > 0 ? { browserAttachments: effectiveBrowserAttachments } : {}),
-            ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
-            ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
-          })
+      const result = await agentSend({
+        threadId,
+        userMessage: text,
+        clientSubmissionId,
+        ...(hasStructuredParts ? { messageParts } : {}),
+        ...(sendThinkingLevel ? { thinkingLevel } : {}),
+        followUpQueueMode,
+        permissionMode,
+        ...(messageAttachments.length > 0 ? { messageAttachments } : {}),
+        ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
+        ...(sendMessageMetadata ? { messageMetadata: sendMessageMetadata } : {}),
+        ...(workspaceIdRef.current ? { workspaceId: workspaceIdRef.current } : {}),
+      })
       pendingSubmissionRef.current = null
       // P2-2: 发送成功后才删除引用（失败/early return 时保留 chip 供重试）
       if (quotedSelectionSnapshot) commitQuotedSelection(quotedSelectionSnapshot.capturedAt)
-      if (!directAttachment) editor.commands.clearContent()
-      if (!directAttachment) setEditorText('')
-      if (!directAttachment) pushHistoryEntry(sentJson)
-      if (!directAttachment) clearDraftState()
-      if (!directAttachment) setCommentDrafts((prev) => {
+      editor.commands.clearContent()
+      setEditorText('')
+      pushHistoryEntry(sentJson)
+      clearDraftState()
+      setCommentDrafts((prev) => {
         if (!prev[threadId]) return prev
         const next = { ...prev }
         delete next[threadId]
         return next
       })
-      if (!directAttachment) setBrowserAttachments((prev) => {
-        if (!prev[threadId]) return prev
-        const next = { ...prev }
-        delete next[threadId]
-        return next
-      })
-      if (directAttachment) setBrowserAttachments((prev) => ({
-        ...prev,
-        [threadId]: (prev[threadId] ?? []).filter((item) => item.id !== directAttachment.id),
-      }))
-      if (directAttachment) {
-        void browserRuntime({ method: 'annotation:delete', params: { tabId: directAttachment.tab.tabId, threadId, annotationId: directAttachment.id } }).catch(() => undefined)
-        activeDirectRequestRef.current = null
-      } else {
-        const sessionTabs = new Set(effectiveBrowserAttachments.filter((item): item is AgentBrowserAnnotationAttachment => item.origin === 'browser-annotation' && item.tab.ownerThreadId === threadId).map((item) => item.tab.tabId))
-        for (const sessionTabId of sessionTabs) void browserRuntime({ method: 'annotation:clear', params: { tabId: sessionTabId, threadId } }).catch(() => undefined)
-      }
-      if (!directAttachment) (debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
-      if (!directAttachment) editor.commands.focus('end')
-      if (!directAttachment) onMessageMetadataConsumed()
+      ;(debouncedSaveDraft as unknown as { cancel?: () => void }).cancel?.()
+      editor.commands.focus('end')
+      onMessageMetadataConsumed()
       if (shouldReleaseAgentInputLocalSendingAfterDispatch(result.mode)) {
         setLocalSending(false)
       }
@@ -1252,11 +983,8 @@ export function AgentInput({
           createdAt,
           text,
           ...(messageAttachments.length > 0 ? { attachments: messageAttachments } : {}),
-          ...(effectiveCommentAttachments.length > 0 ? { commentAttachments: effectiveCommentAttachments } : {}),
-          ...(effectiveBrowserAttachments.length > 0 ? { browserAttachments: effectiveBrowserAttachments } : {}),
-          ...(!directAttachment && hasStructuredParts
-            ? { messageParts }
-            : {}),
+          ...(commentAttachments.length > 0 ? { commentAttachments } : {}),
+          ...(hasStructuredParts ? { messageParts } : {}),
         }))
         setStreamingStates((prev) => ({ ...prev, [threadId]: 'streaming' }))
       } else {
@@ -1269,7 +997,7 @@ export function AgentInput({
           })
         toast.success('已加入队列')
       }
-      if (!directAttachment && pendingAttachments.length > 0) {
+      if (pendingAttachments.length > 0) {
         onClearPendingAttachments()
       }
     } catch (error) {
@@ -1277,7 +1005,6 @@ export function AgentInput({
       toast.error('发送失败')
       setStreamingStates((prev) => ({ ...prev, [threadId]: 'idle' }))
       setLocalSending(false)
-      dropActiveDirect()
       pendingSubmissionRef.current = null
     }
   }, [
@@ -1288,7 +1015,6 @@ export function AgentInput({
     onMessageMetadataConsumed,
     pendingAttachments,
     commentAttachments,
-    browserAttachments,
     effectiveMessageMetadata,
     messageMetadata,
     desktopContextTarget,
@@ -1300,7 +1026,6 @@ export function AgentInput({
     setCommentDrafts,
     peekQuotedSelection,
     commitQuotedSelection,
-    setBrowserAttachments,
     streaming,
     thinkingLevel,
     followUpQueueMode,
@@ -1309,7 +1034,6 @@ export function AgentInput({
     selectedDesktopContextTarget,
     clearDraftState,
     pushHistoryEntry,
-    persistDirectQueue,
   ])
   sendNowRef.current = () => { void handleSend() }
 
@@ -1524,24 +1248,6 @@ export function AgentInput({
     })
   }, [configWorkspaceSlug])
 
-  const handleRemoveBrowserAttachment = useCallback((attachment: AgentBrowserAttachment) => {
-    const tab = browserTabFromAttachment(attachment)
-    if (attachment.origin === 'browser-annotation') {
-      void browserRuntime({ method: 'annotation:delete', params: { tabId: tab.tabId, threadId, annotationId: attachment.id } }).catch(() => undefined)
-    }
-    if (tab.referenceGrantId) {
-      void revokeBrowserReferenceGrant({
-        backend: tab.backend ?? 'iab',
-        threadId,
-        referenceGrantId: tab.referenceGrantId,
-      }).catch(() => undefined)
-    }
-    setBrowserAttachments((prev) => ({
-      ...prev,
-      [threadId]: (prev[threadId] ?? []).filter((item) => item.id !== attachment.id),
-    }))
-  }, [setBrowserAttachments, threadId])
-
   const handlePermissionModeChange = (value: PermissionModeValue) => {
     autoSelectedPlanModeRef.current = false
     setPermissionMode(value)
@@ -1708,24 +1414,12 @@ export function AgentInput({
         ? 'bg-[var(--lume-accent-soft)]'
         : 'hover:bg-[var(--surface-3)]',
     )
-  const displayedBrowserAttachments = editingQueuedMessage?.item.browserAttachments ?? browserAttachments
-  const displayedBrowserAnnotations = displayedBrowserAttachments.filter((attachment) => attachment.origin === 'browser-annotation')
-  const displayedOtherBrowserAttachments = displayedBrowserAttachments.filter((attachment) => attachment.origin !== 'browser-annotation')
-
   return (
     <div className="px-3 pb-4 pt-2">
       <SuggestionBanner threadId={threadId} workspaceSlug={configWorkspaceSlug} />
       <PendingResumeBanner threadId={threadId} />
       <div className="mx-auto w-full max-w-[920px] px-4">
         <div>
-          {agentBrowserActivity && (
-            <div className="mb-2 flex animate-in fade-in slide-in-from-top-1 items-center gap-2 rounded-lg bg-[var(--lume-accent-soft)] px-2.5 py-1.5 duration-200 motion-reduce:animate-none">
-              <span className="size-2 shrink-0 animate-pulse rounded-full bg-[var(--lume-accent)] motion-reduce:animate-none" />
-              <span className="truncate text-ui text-[var(--lume-text-secondary)]">
-                Agent 正在控制浏览器{agentBrowserActivity.url ? ` · ${displayBrowserActivityHost(agentBrowserActivity.url)}` : ''}
-              </span>
-            </div>
-          )}
           <LumeComposer
             tone={composerState.tone}
             className="rounded-[1.45rem]"
@@ -1808,8 +1502,7 @@ export function AgentInput({
             topContent={
               editingQueuedMessage?.item.messageAttachments?.length
               || editingQueuedMessage?.item.commentAttachments?.length
-              || editingQueuedMessage?.item.browserAttachments?.length
-              || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0 || browserAttachments.length > 0))
+              || (!editingQueuedMessage && (pendingAttachments.length > 0 || commentAttachments.length > 0))
               || (!editingQueuedMessage && quotedSelection)
                 ? (
                     <div className="space-y-2 px-3 pb-2 pt-3">
@@ -1858,69 +1551,6 @@ export function AgentInput({
                           )}
                         </div>
                       ))}
-                      {displayedBrowserAnnotations.length > 0 && (
-                        <div tabIndex={0} aria-label={`${displayedBrowserAnnotations.length} 条网页注释`} className="group/browser-annotations relative flex w-fit max-w-full items-center gap-2 rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-3 py-2 text-xs font-medium outline-none focus-visible:ring-2 focus-visible:ring-ring/50">
-                          <div className="invisible absolute bottom-full left-0 z-50 w-[min(480px,calc(100vw-32px))] pb-2 opacity-0 transition-[opacity,visibility] group-hover/browser-annotations:visible group-hover/browser-annotations:opacity-100 group-focus-within/browser-annotations:visible group-focus-within/browser-annotations:opacity-100">
-                            <div className="overflow-hidden rounded-xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_18px_42px_-24px_hsl(var(--lume-shadow-panel)/0.72)]">
-                              {displayedBrowserAnnotations.map((annotation, index) => (
-                                <div key={annotation.id} className={cn('px-4 py-3', index > 0 && 'border-t border-[var(--lume-border-subtle)]')}>
-                                  <div className="flex items-center gap-2">
-                                    <div aria-hidden="true" className="flex h-6 w-8 shrink-0 items-center overflow-hidden rounded-md border border-[var(--lume-border-subtle)] bg-background px-1 text-[4px] leading-[5px] text-muted-foreground">
-                                      <span className="line-clamp-3 break-all">{browserAnnotationPreview(annotation)}</span>
-                                    </div>
-                                    <code className="rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2 py-0.5 text-[11px] font-normal text-muted-foreground">
-                                      {browserAnnotationTargetLabel(annotation)}
-                                    </code>
-                                  </div>
-                                  <p className="mt-2 whitespace-pre-wrap break-words text-sm font-normal leading-5 text-foreground">{annotation.body}</p>
-                                </div>
-                              ))}
-                            </div>
-                          </div>
-                          <MessageSquareText size={13} className="shrink-0 text-[var(--lume-accent)]" />
-                          <span>{displayedBrowserAnnotations.length} 条注释</span>
-                          {!editingQueuedMessage && (
-                            <Button
-                              type="button"
-                              variant="ghost"
-                              size="icon-xs"
-                              className="-mr-1 opacity-0 transition-opacity group-hover/browser-annotations:opacity-100 group-focus-within/browser-annotations:opacity-100"
-                              aria-label="移除全部网页批注"
-                              onClick={() => displayedBrowserAnnotations.forEach(handleRemoveBrowserAttachment)}
-                            >
-                              <X size={12} />
-                            </Button>
-                          )}
-                        </div>
-                      )}
-                      {displayedOtherBrowserAttachments.map((attachment) => {
-                        const tab = attachment.origin === 'browser-tab' ? attachment : attachment.tab
-                        return (
-                          <div key={attachment.id} className="flex items-center gap-2 rounded-lg border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-rail)] px-2.5 py-1.5 text-xs">
-                            <Globe size={13} className="shrink-0 text-[var(--lume-accent)]" />
-                            <span className="min-w-0 flex-1 truncate">
-                              {attachment.origin === 'browser-design-change'
-                                ? 'Design Tweaks · '
-                                : tab.backend === 'extension'
-                                  ? 'Chrome · '
-                                  : '内置浏览器 · '}
-                              {tab.title || tab.url}
-                              {attachment.origin === 'browser-design-change' && attachment.body && ` · ${attachment.body}`}
-                            </span>
-                            {!editingQueuedMessage && (
-                              <Button
-                                type="button"
-                                variant="ghost"
-                                size="icon-xs"
-                                aria-label="移除浏览器附件"
-                                onClick={() => handleRemoveBrowserAttachment(attachment)}
-                              >
-                                <X size={12} />
-                              </Button>
-                            )}
-                          </div>
-                        )
-                      })}
                     </div>
                   )
                 : undefined
@@ -2188,11 +1818,3 @@ function createPendingAttachmentId(): string {
     : `attachment:${Date.now()}:${Math.random().toString(36).slice(2)}`
 }
 
-// #607：感知条只显示站点 host，URL 解析失败退回原文
-function displayBrowserActivityHost(url: string): string {
-  try {
-    return new URL(url).hostname
-  } catch {
-    return url
-  }
-}

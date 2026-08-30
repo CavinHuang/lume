@@ -1,4 +1,4 @@
-import { FileDiff, FolderOpen, Globe } from 'lucide-react'
+import { FileDiff, FolderOpen } from 'lucide-react'
 import type { ComponentType } from 'react'
 import type { RightPanelFunction } from './right-panel-state'
 import { ObsidianIcon } from '@/components/obsidian/obsidian-brand'
@@ -19,7 +19,6 @@ const LAUNCHER_ITEMS: Array<{
   shortcut?: string
   Icon: ComponentType<{ size?: number | string; className?: string }>
 }> = [
-  { type: 'browser', label: '浏览器', shortcut: '⌘T', Icon: Globe },
   { type: 'files', label: '文件', shortcut: '⌘P', Icon: FolderOpen },
   { type: 'vault', label: 'Obsidian Vault', Icon: ObsidianIcon },
 ]

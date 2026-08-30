@@ -53,11 +53,9 @@ pub struct RuntimeOptions {
     pub response_meta_trace: bool,
     pub module_dirs: Vec<PathBuf>,
     pub trusted_code_paths: Vec<PathBuf>,
-    pub trusted_source_hashes: Vec<String>,
     pub trust_all_imported_code: bool,
     pub untrusted_env_allowlist: Vec<String>,
     pub disable_analytics: bool,
-    pub disable_ambient_network: bool,
     pub manifest: RuntimeManifest,
     pub artifact_directory: PathBuf,
     pub codex_home: PathBuf,
@@ -129,19 +127,12 @@ impl RuntimeOptions {
             response_meta_trace: parse_bool_env("NODE_REPL_TRACE_META", false),
             module_dirs: split_paths(env::var_os("NODE_REPL_NODE_MODULE_DIRS")),
             trusted_code_paths: split_paths(env::var_os("NODE_REPL_TRUSTED_CODE_PATHS")),
-            trusted_source_hashes: split_hashes(
-                env::var("NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S").ok(),
-            ),
             trust_all_imported_code: parse_bool_env("NODE_REPL_TRUST_ALL_CODE", false),
             untrusted_env_allowlist: split_loose(
                 env::var("NODE_REPL_UNTRUSTED_ENV_ALLOWLIST").ok(),
             ),
             disable_analytics: !matches!(
                 env::var("NODE_REPL_DISABLE_ANALYTICS").as_deref(),
-                Ok("0")
-            ),
-            disable_ambient_network: !matches!(
-                env::var("BROWSER_USE_DISABLE_AMBIENT_NETWORK").as_deref(),
                 Ok("0")
             ),
             manifest,
@@ -1246,10 +1237,6 @@ fn configure_kernel_env(command: &mut Command, options: &RuntimeOptions) -> Resu
         join_paths(&options.trusted_code_paths),
     );
     command.env(
-        "NODE_REPL_TRUSTED_BROWSER_CLIENT_SHA256S",
-        options.trusted_source_hashes.join(","),
-    );
-    command.env(
         "NODE_REPL_TRUST_ALL_CODE",
         if options.trust_all_imported_code {
             "1"
@@ -1264,14 +1251,6 @@ fn configure_kernel_env(command: &mut Command, options: &RuntimeOptions) -> Resu
     command.env(
         "NODE_REPL_DISABLE_ANALYTICS",
         if options.disable_analytics { "1" } else { "0" },
-    );
-    command.env(
-        "BROWSER_USE_DISABLE_AMBIENT_NETWORK",
-        if options.disable_ambient_network {
-            "1"
-        } else {
-            "0"
-        },
     );
     command.env(
         "LUME_CUA_KERNEL_CONFIG",
@@ -1431,20 +1410,6 @@ fn split_loose(value: Option<String>) -> Vec<String> {
         .collect()
 }
 
-fn split_hashes(value: Option<String>) -> Vec<String> {
-    split_loose(value)
-        .into_iter()
-        .filter_map(|entry| {
-            let trimmed = entry
-                .strip_prefix("sha256:")
-                .unwrap_or(&entry)
-                .to_ascii_lowercase();
-            (trimmed.len() == 64 && trimmed.chars().all(|ch| ch.is_ascii_hexdigit()))
-                .then_some(trimmed)
-        })
-        .collect()
-}
-
 fn join_paths(paths: &[PathBuf]) -> std::ffi::OsString {
     env::join_paths(paths).unwrap_or_default()
 }
@@ -1469,7 +1434,7 @@ fn tail(value: &str, max: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_kernel_env_entries, parse_version_tuple, split_hashes, tail};
+    use super::{collect_kernel_env_entries, parse_version_tuple, tail};
 
     #[test]
     fn kernel_env_allowlist_only_passes_declared_entries() {
@@ -1528,13 +1493,6 @@ mod tests {
         assert_eq!(parse_version_tuple("v22.22.0").unwrap(), (22, 22, 0));
         assert_eq!(parse_version_tuple("24.1.2-nightly").unwrap(), (24, 1, 2));
         assert_eq!(parse_version_tuple("23").unwrap(), (23, 0, 0));
-    }
-
-    #[test]
-    fn filters_and_normalizes_source_hashes() {
-        let valid = "A".repeat(64);
-        let hashes = split_hashes(Some(format!("sha256:{valid},bad;{}", "b".repeat(64))));
-        assert_eq!(hashes, vec!["a".repeat(64), "b".repeat(64)]);
     }
 
     #[test]

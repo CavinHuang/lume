@@ -1,5 +1,4 @@
 import type {
-  AgentBrowserAttachment,
   AgentDiffCommentAttachment,
   AgentMessageAttachmentInput,
   AgentTraceContext,
@@ -52,7 +51,6 @@ export interface LumeRunInput {
   chatType?: string;
   messageAttachments?: AgentMessageAttachmentInput[];
   commentAttachments?: AgentDiffCommentAttachment[];
-  browserAttachments?: AgentBrowserAttachment[];
   messageMetadata?: Record<string, unknown>;
   traceContext?: AgentTraceContext;
 }

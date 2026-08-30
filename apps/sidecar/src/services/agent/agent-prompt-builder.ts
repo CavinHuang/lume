@@ -21,7 +21,6 @@ import {
   buildExecutionPolicySections
 } from "./prompt/sections/static-policy-sections";
 import {
-  buildBrowserFirstSection,
   buildPlanModeSection,
   buildUncertaintySection
 } from "./prompt/sections/interaction-policy-sections";
@@ -413,11 +412,6 @@ export function buildSystemPromptAppend(ctx: SystemPromptContext): string {
   sections.push(buildSafetySection());
 
   const availableTools = new Set((ctx.availableTools ?? []).map((item) => canonicalizeAgentToolName(item)));
-  const browserFirstSection = buildBrowserFirstSection(availableTools);
-  if (browserFirstSection) {
-    sections.push(browserFirstSection);
-  }
-
   sections.push(...buildMemorySections({
     availableTools,
     citationsMode: ctx.memoryCitationsMode

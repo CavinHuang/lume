@@ -76,7 +76,6 @@ async function buildAgentPluginList(): Promise<{
 
 export interface PluginHandlersDeps {
   writeNotification: NotificationWriter;
-  notifyBrowserPluginState?: () => void;
 }
 
 export function createPluginHandlers(
@@ -125,8 +124,6 @@ export function createPluginHandlers(
       );
       const result =
         await createDefaultPluginMarketService().installMarketItem(input);
-      if (input.itemId === "browser" || input.itemId === "lume-chrome")
-        deps.notifyBrowserPluginState?.();
       return result;
     },
     [AGENT_IPC_CHANNELS.UPDATE_PLUGIN]: async (params) => {
@@ -137,8 +134,6 @@ export function createPluginHandlers(
       );
       const result =
         await createDefaultPluginMarketService().updatePlugin(input);
-      if (input.pluginId === "browser" || input.pluginId === "lume-chrome")
-        deps.notifyBrowserPluginState?.();
       return result;
     },
     [AGENT_IPC_CHANNELS.UNINSTALL_PLUGIN]: async (params) => {
@@ -149,8 +144,6 @@ export function createPluginHandlers(
       );
       const result =
         await createDefaultPluginMarketService().uninstallPlugin(input);
-      if (input.pluginId === "browser" || input.pluginId === "lume-chrome")
-        deps.notifyBrowserPluginState?.();
       return result;
     },
     [AGENT_IPC_CHANNELS.SET_PLUGIN_ENABLEMENT]: async (params) => {
@@ -161,8 +154,6 @@ export function createPluginHandlers(
       );
       const result =
         await createDefaultPluginMarketService().setPluginEnablement(input);
-      if (input.pluginId === "browser" || input.pluginId === "lume-chrome")
-        deps.notifyBrowserPluginState?.();
       return result;
     },
     [AGENT_IPC_CHANNELS.SET_PLUGIN_ACTIVE_VERSION]: async (params) => {

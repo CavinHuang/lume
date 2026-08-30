@@ -97,9 +97,9 @@ describe('right-panel-files-state', () => {
     const withoutEntry = { ...state, activeItem: { kind: 'file', tabId: state.openTabs[0]!.id } as const }
     expect(withoutEntry.openTabs).toHaveLength(1)
 
-    const closed = closeFileTab(withoutEntry, withoutEntry.openTabs[0]!.id, ['files', 'browser'])
+    const closed = closeFileTab(withoutEntry, withoutEntry.openTabs[0]!.id, ['files', 'vault'])
     expect(closed.openTabs).toEqual([])
-    expect(closed.activeItem).toEqual({ kind: 'function', type: 'browser' })
+    expect(closed.activeItem).toEqual({ kind: 'function', type: 'files' })
   })
 
   test('closing the last file falls back only to an open function in fixed order', () => {
@@ -108,8 +108,8 @@ describe('right-panel-files-state', () => {
     expect(state.activeItem).toBeNull()
 
     state = openFileTab(state, ref('again.ts'))
-    state = closeFileTab(state, state.openTabs[0]!.id, ['files', 'browser'])
-    expect(state.activeItem).toEqual({ kind: 'function', type: 'browser' })
+    state = closeFileTab(state, state.openTabs[0]!.id, ['vault', 'files'])
+    expect(state.activeItem).toEqual({ kind: 'function', type: 'files' })
   })
 
   test('ignores a late image preview scope after its tab has closed', () => {
@@ -171,12 +171,12 @@ describe('right-panel-files-state', () => {
     const removed = createThreadFileWorkspace({ workspaceId: 'workspace-2', fileContextId: 'context-2' })
     const result = reconcileThreadFileWorkspaces(
       { keep, removed },
-      [{ id: 'keep', workspaceId: 'workspace-3', fileContextId: 'context-1', openFunctions: ['browser'] }],
+      [{ id: 'keep', workspaceId: 'workspace-3', fileContextId: 'context-1', openFunctions: ['vault'] }],
     )
 
     expect(result.workspaces.removed).toBeUndefined()
     expect(result.workspaces.keep!.openTabs.map((tab) => tab.ref?.source)).toEqual(['session'])
-    expect(result.workspaces.keep!.activeItem).toEqual({ kind: 'function', type: 'browser' })
+    expect(result.workspaces.keep!.activeItem).toEqual({ kind: 'function', type: 'vault' })
     expect(result.workspaces.keep!.directoryCache).toEqual({})
     expect(result.revokedScopeTokens).toEqual(['token-1', 'token-2'])
   })

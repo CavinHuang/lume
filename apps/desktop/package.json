@@ -20,11 +20,7 @@
     "test": "bun test ./src ./scripts && node --experimental-vm-modules --test ./scripts/node-repl-worker.suite.mjs",
     "test:node-repl-worker": "node --experimental-vm-modules --test ./scripts/node-repl-worker.suite.mjs",
     "test:unit": "bun run test",
-    "test:smoke": "bun test ./scripts/desktop-context-key.test.mjs ./scripts/desktop-package.test.mjs && node --experimental-vm-modules --test ./scripts/node-repl-worker.suite.mjs && bun test ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./src/desktop-host-supervisor.test.ts ./src/browser-workspace-store.test.ts ./src/agent-island-service.test.ts ./src/browser-annotation-session.test.ts ./src/browser-annotation-manager.test.ts ./src/voice-asr-service.test.ts ./src/voice-dictation-settings-service.test.ts ./src/desktop-core.voice-mic.test.ts",
-    "test:browser-e2e": "bun ./scripts/browser-runtime.e2e.mjs",
-    "test:browser-extension-smoke": "bun ./scripts/browser-extension-smoke.mjs",
-    "test:browser-import-live-smoke": "node ./scripts/browser-import-live-smoke.mjs",
-    "test:packaged-browser-extension-smoke": "bun ./scripts/browser-extension-smoke.mjs --packaged-lume",
+    "test:smoke": "bun test ./scripts/desktop-context-key.test.mjs ./scripts/desktop-package.test.mjs && node --experimental-vm-modules --test ./scripts/node-repl-worker.suite.mjs && bun test ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./src/desktop-host-supervisor.test.ts ./src/agent-island-service.test.ts ./src/voice-asr-service.test.ts ./src/voice-dictation-settings-service.test.ts ./src/desktop-core.voice-mic.test.ts",
     "test:packaged-smoke": "node ./scripts/packaged-desktop-smoke.mjs"
   },
   "devDependencies": {
@@ -53,8 +49,6 @@
     "files": [
       "dist/main/main.mjs",
       "dist/preload/preload.cjs",
-      "dist/preload/browser-auth-preload.cjs",
-      "dist/preload/browser-guest-preload.cjs",
       "assets"
     ],
     "extraResources": [

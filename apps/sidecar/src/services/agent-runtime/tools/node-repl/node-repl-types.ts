@@ -1,5 +1,5 @@
 export const NODE_REPL_MCP_INSTRUCTIONS =
-  'Use `js` only for browser JavaScript automation or an explicitly requested persistent JS session. Do not use it as a terminal, shell, git, file search, or file editing tool; use Read, Write, Edit, Bash, Glob, or Grep for repository work. Top-level bindings persist across calls within the thread runtime. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values. Browser automation: run `globalThis.agent ??= await setupBrowserRuntime()` once, then `globalThis.iab ??= await agent.browsers.get("iab")`; call `nodeRepl.write(await iab.documentation())` for the full browser API (tabs, playwright locators, cua, capabilities). `tab.screenshot()` auto-emits the image to you. Reuse existing globalThis.agent/iab/browser bindings across turns (they survive between messages; if lost after long idle, re-run the bootstrap guard). Agent tools: await tools.NAME(params) (or await tools.call("NAME", params)) invokes the agent\'s own tools with normal permission checks; await tools.documentation() lists them.';
+  'Use `js` only for an explicitly requested persistent JS session. Do not use it as a terminal, shell, git, file search, or file editing tool; use Read, Write, Edit, Bash, Glob, or Grep for repository work. Top-level bindings persist across calls within the thread runtime. Bare final expressions are not returned; call `nodeRepl.write(text)` to include output and use `JSON.stringify(value)` for structured values. Agent tools: await tools.NAME(params) (or await tools.call("NAME", params)) invokes the agent\'s own tools with normal permission checks; await tools.documentation() lists them.';
 
 export interface JsExecInput {
   title?: string;
@@ -23,40 +23,6 @@ export interface NodeReplExecutionResult {
   _meta?: Record<string, unknown>;
 }
 
-import type { BrowserAuthOption, BrowserLocator } from "@lume/shared";
-
-export interface NodeReplBrowserAuthRequest {
-  context?: {
-    threadId?: string;
-    browserSessionId?: string;
-    browserTurnId?: string;
-  };
-  tabId?: string;
-  generation?: number;
-  origin?: string;
-  reason?: string;
-  expires_at?: string;
-  fields?: Array<{
-    id?: string;
-    label?: string;
-    type?: string;
-    autocomplete?: string;
-    required?: boolean;
-    locator?: BrowserLocator;
-    frameLocator?: BrowserLocator;
-  }>;
-  options?: BrowserAuthOption[];
-  submit?:
-    | { kind: "click"; locator: BrowserLocator; frameLocator?: BrowserLocator }
-    | { kind: "press_enter"; fieldId?: string }
-    | { kind: "none" };
-}
-
-export interface NodeReplBrowserAuthResult {
-  status: "submitted" | "declined" | "cancelled" | "unavailable" | "expired" | "origin_changed" | "page_changed" | "locator_invalid" | "submission_failed";
-  selected_option?: string;
-}
-
 export interface NodeReplComputerUseRequest {
   method: string;
   params: Record<string, unknown>;
@@ -70,9 +36,7 @@ export interface NodeReplComputerUseResult {
 
 export interface NodeReplRuntimeExecOptions {
   sandbox?: SandboxSettings;
-  emitBrowserAuthRequest?: (request: NodeReplBrowserAuthRequest, signal: AbortSignal) => Promise<NodeReplBrowserAuthResult>;
   emitComputerUseRequest?: (request: NodeReplComputerUseRequest, signal: AbortSignal) => Promise<NodeReplComputerUseResult>;
-  browserRequest?: (request: { method: string; params: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
   toolRequest?: (request: { method: "tool_call" | "tool_list"; args: Record<string, unknown> }, signal: AbortSignal) => Promise<unknown>;
 }
 

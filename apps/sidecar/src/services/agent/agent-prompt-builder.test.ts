@@ -151,7 +151,7 @@ describe("agent-prompt-builder", () => {
   test("buildSystemPromptAppend 能力阶梯保留 memory/web 条件查找", () => {
     const prompt = buildSystemPromptAppend({
       sessionId: "session-capability-order",
-      availableTools: ["browser", "memory.search", "memory.read", "web_search", "web_fetch", "read", "write"]
+      availableTools: ["memory.search", "memory.read", "web_search", "web_fetch", "read", "write"]
     });
     expect(prompt).toContain("## 执行模式");
     expect(prompt).toContain("仅在需要且尚未加载先前上下文时才用记忆工具");
@@ -193,29 +193,6 @@ describe("agent-prompt-builder", () => {
       memoryCitationsMode: "off"
     });
     expect(prompt).toContain("引用已关闭");
-  });
-
-  test("同时具备内置浏览器工具与 web_search 时应注入 Browser-First 策略", () => {
-    // 生产池内浏览器工具实名是 mcp__browser__*，字面量 "browser" 从不出现在真实名单（#542）
-    const prompt = buildSystemPromptAppend({
-      sessionId: "session-browser-first",
-      availableTools: ["mcp__browser__snapshot", "mcp__browser__click", "WebSearch"]
-    });
-    expect(prompt).toContain("## 浏览器优先工具策略（强制）");
-    // 教学节正文只引用池内真实存在的工具实名（#711 review：不得指挥模型调用不存在的工具）
-    expect(prompt).toContain("mcp__browser__list_tabs");
-    expect(prompt).not.toContain("browser status");
-    expect(prompt).not.toContain("relay_status");
-    expect(prompt).not.toContain("start(mode=relay)");
-    expect(prompt).toContain("仅在以下情况才回退 WebSearch");
-  });
-
-  test("仅字面量 browser 而无实名浏览器工具时不应注入 Browser-First 策略", () => {
-    const prompt = buildSystemPromptAppend({
-      sessionId: "session-browser-first-literal",
-      availableTools: ["browser", "web_search"]
-    });
-    expect(prompt).not.toContain("## 浏览器优先工具策略");
   });
 
   test("automationExecution=true 时应注入无交互模式约束", () => {
@@ -375,7 +352,7 @@ describe("agent-prompt-builder", () => {
       workspaceName: "Dynamic Skill Workspace",
       workspaceSlug,
       agentCwd: "D:/workspace/projects/ai-projects/lume",
-      availableTools: ["Skill", "browser", "memory.search", "web_search", "read", "write"],
+      availableTools: ["Skill", "memory.search", "web_search", "read", "write"],
       userMessage: "help me create an execution plan"
     });
 

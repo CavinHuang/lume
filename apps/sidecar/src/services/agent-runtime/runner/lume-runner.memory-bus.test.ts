@@ -55,7 +55,6 @@ function createRuntimeEventCollector(): {
       onComplete: () => {},
       onError: () => {},
       onAskUserQuestion: () => {},
-      onBrowserAuthRequest: () => {},
       onToolPermissionRequest: () => {},
       onRuntimeEvent: (event) => runtimeEvents.push(event as unknown as Record<string, unknown>)
     }

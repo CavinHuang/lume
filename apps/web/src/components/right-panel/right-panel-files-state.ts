@@ -5,7 +5,6 @@ import { RIGHT_PANEL_FUNCTION_ORDER, type RightPanelFunction } from './right-pan
 export type RightPanelActiveItem =
   | { kind: 'function'; type: RightPanelFunction }
   | { kind: 'file'; tabId: string }
-  | { kind: 'browser'; tabId: string }
 
 export type RightPanelArtifactViewer = 'markdown' | 'image' | 'pdf' | 'video' | 'text' | 'structured' | 'unknown'
 

@@ -1,17 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import type {
   AgentAskUserQuestionRequest,
-  AgentBrowserAuthRequest,
   AgentPendingInteractiveState,
   AgentToolPermissionRequest,
 } from "@lume/shared"
 import {
   removePendingAskUserQuestion,
-  removePendingBrowserAuthRequest,
   removePendingToolPermission,
   removePendingToolPermissionEverywhere,
   upsertPendingAskUserQuestion,
-  upsertPendingBrowserAuthRequest,
   upsertPendingToolPermission,
 } from "./pending-interactive-state"
 
@@ -36,33 +33,6 @@ describe("pending interactive state helpers", () => {
     const merged = upsertPendingAskUserQuestion(next, second)
 
     expect(merged["parent-thread"]?.askUserQuestions?.map((item) => item.toolUseId)).toEqual(["ask-1", "ask-2"])
-  })
-
-  test("同一线程应能累计并删除 browserAuth 请求", () => {
-    const first: AgentBrowserAuthRequest = {
-      threadId: "parent-thread",
-      requestId: "auth-1",
-      origin: "https://accounts.example.test",
-      reason: "Sign in.",
-      expiresAt: "2026-07-03T12:00:00.000Z",
-      fields: [{ id: "password", label: "Password", type: "password", required: true }],
-    }
-    const second: AgentBrowserAuthRequest = {
-      threadId: "parent-thread",
-      requestId: "auth-2",
-      origin: "https://mfa.example.test",
-      reason: "Enter one-time code.",
-      expiresAt: "2026-07-03T12:01:00.000Z",
-      fields: [{ id: "otp", label: "Code", type: "text", autocomplete: "one-time-code", required: true }],
-    }
-
-    const next = upsertPendingBrowserAuthRequest({}, first)
-    const merged = upsertPendingBrowserAuthRequest(next, second)
-    const removed = removePendingBrowserAuthRequest(merged, "parent-thread", "auth-1")
-
-    expect(merged["parent-thread"]?.browserAuthRequests?.map((item) => item.requestId)).toEqual(["auth-1", "auth-2"])
-    expect(removed["parent-thread"]?.browserAuthRequests?.map((item) => item.requestId)).toEqual(["auth-2"])
-    expect(JSON.stringify(merged)).not.toContain("secret")
   })
 
   test("同一线程应能累计多个 tool permission 请求，并可按 requestId 删除", () => {

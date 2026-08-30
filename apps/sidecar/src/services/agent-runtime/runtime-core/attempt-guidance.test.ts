@@ -88,7 +88,7 @@ describe("runtime-core attempt guidance", () => {
       threadId,
       text: "参考这张注释",
       createdAt: 200,
-      attachmentsBrief: "<browser_attachments>注释: 按钮颜色改为红色</browser_attachments>"
+      attachmentsBrief: "<file_attachments>注释: 按钮颜色改为红色</file_attachments>"
     });
 
     const handler = createCanUseToolHandler(

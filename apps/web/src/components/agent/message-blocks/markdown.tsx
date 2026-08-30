@@ -6,7 +6,7 @@ import { DiffAwareMarkdownPre } from '@/components/markdown/DiffAwareMarkdownPre
 import { cn } from '@/lib/utils'
 import { parseAfterglowBlocks } from '@lume/shared'
 import { toast } from 'sonner'
-import { browserRuntime, openExternal, writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
+import { writeClipboardImage, writeClipboardText } from '@/lib/desktop-api'
 import { parseMessageThreadFileReference } from '../thread-file-links'
 import { useMessageFileReferenceBinding, useMessageFileReferenceProtocolVersion } from '../thread-file-env'
 import { AgentFileReference, type OpenThreadFile } from '../AgentFileReference'
@@ -18,7 +18,6 @@ import type { PlanPreviewView } from '../runtime-message-view'
 import { Button } from '@/components/ui/button'
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog'
 import { CopyFeedbackState, getAssistantCopyText, getCopyTextWithoutAfterglow, showTemporaryCopiedFeedback } from './copy-text'
-import { findThreadBrowserTabByUrl, THREAD_BROWSER_ACTIVATE_EVENT, type ThreadBrowserActivateDetail } from '@/components/right-panel/right-panel-browser-state'
 
 const MARKDOWN_STREAM_MIN_DELAY_MS = 50
 
@@ -450,32 +449,16 @@ export function MarkdownAnchor({
   if (reference && onOpenThreadFile) {
     return <AgentFileReference reference={reference} binding={binding} onOpen={onOpenThreadFile} />
   }
-  const browserUrl = typeof href === 'string' && /^https?:\/\//i.test(href) ? href : undefined
   const safeHref = typeof href === 'string' && isSafeExternalHref(href) ? href : undefined
   return (
     <a
       {...rest}
       href={safeHref}
-      onClick={browserUrl && threadId ? (event) => {
-        rest.onClick?.(event)
-        if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return
-        event.preventDefault()
-        void activateThreadBrowserUrl(threadId, browserUrl).then((activated) => {
-          if (!activated) return openExternal(browserUrl)
-        }).catch(() => undefined)
-      } : rest.onClick}
+      onClick={rest.onClick}
     >
       {children}
     </a>
   )
-}
-
-export async function activateThreadBrowserUrl(threadId: string, url: string): Promise<boolean> {
-  const tabs = await browserRuntime<import('@lume/shared').BrowserTabDescriptor[]>({ method: 'list' })
-  const tab = findThreadBrowserTabByUrl(tabs, threadId, url)
-  if (!tab) return false
-  window.dispatchEvent(new CustomEvent<ThreadBrowserActivateDetail>(THREAD_BROWSER_ACTIVATE_EVENT, { detail: { threadId, tab } }))
-  return true
 }
 
 export function normalizeMarkdownCodeProps(props: Record<string, unknown>): Record<string, unknown> {

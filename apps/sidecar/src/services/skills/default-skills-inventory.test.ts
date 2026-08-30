@@ -88,27 +88,6 @@ describe("default skills inventory", () => {
     expect(content).toContain("delete_theme");
   });
 
-  test("bundles an auto-invocable in-app-browser skill scoped to mcp browser tools", () => {
-    const { content, meta } = readDefaultSkill("in-app-browser");
-
-    expect(meta.slug).toBe("in-app-browser");
-    expect(meta.name).toBe("In-App 浏览器操作");
-    expect(meta.disableModelInvocation).toBeFalsy();
-    expect(meta.allowedTools).toEqual(["mcp__browser__*"]);
-    expect(content).toContain("[ref=e12]");
-    expect(content).toContain("`fill_secret`");
-    expect(content).toContain("user_takeover_required");
-    expect(content).toContain("重新 `snapshot` 后最多重试一次");
-    expect(content).not.toContain("等待明确指示后再继续");
-    expect(content).toContain("repeated_action_failure");
-    expect(content).toContain("navigation_timeout");
-    expect(content).toContain("confirmation_unavailable");
-    expect(content).toContain("dialog_blocking");
-    expect(content).toContain("`action_denied`");
-    expect(content).not.toContain("密码提交必须由用户完成");
-    expect(content).not.toContain("browser:browser");
-  });
-
   test("skill-creator teaches Alice-compatible storage paths", () => {
     const { content } = readDefaultSkill("skill-creator");
 
@@ -154,7 +133,6 @@ const ALICE_COMPATIBLE_GENERAL_SKILLS = [
   "code-review",
   "explain-code",
   "image-gen",
-  "in-app-browser",
   "skill-creator",
   "system-info",
   "ui-stylist"
@@ -171,7 +149,6 @@ const RUNTIME_BACKED_SKILL_TOOLS = new Set([
   "list_image_models",
   "lume_generate_share_card",
   "lume_reading_snapshot",
-  "mcp__browser__*",
   "personalize_ui",
   "read_file",
   "web_fetch",

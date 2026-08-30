@@ -209,50 +209,6 @@ describe("runtime-core run", () => {
     }
   });
 
-  test("Browser 执行器保持延迟可发现且不依赖预判路由", async () => {
-    const previousToolSearch = process.env.ENABLE_TOOL_SEARCH;
-    process.env.ENABLE_TOOL_SEARCH = "tst";
-    // #539 门控：browser 工具族仅在 bundled 运行时存在时装配，测试环境需模拟
-    const previousBundledDir = process.env.LUME_BUNDLED_PLUGINS_DIR;
-    const bundledRoot = mkdtempSync(join(tmpdir(), "lume-bundled-browser-"));
-    mkdirSync(join(bundledRoot, "browser", ".lume-plugin"), { recursive: true });
-    mkdirSync(join(bundledRoot, "browser", "scripts"), { recursive: true });
-    writeFileSync(join(bundledRoot, "browser", ".lume-plugin", "plugin.json"), "{}");
-    writeFileSync(join(bundledRoot, "browser", "scripts", "browser-client.mjs"), "");
-    process.env.LUME_BUNDLED_PLUGINS_DIR = bundledRoot;
-    let result: Awaited<ReturnType<typeof createRuntimeCoreSession>> | undefined;
-
-    try {
-      result = await createRuntimeCoreSession(createHookRuntimeSessionInput({
-        lumeSessionId: `browser-tool-${crypto.randomUUID()}`,
-        workspaceSlug: `browser-route-${crypto.randomUUID()}`,
-        permissionMode: "default",
-        userMessage: "打开百度搜索agent"
-      }));
-      await result.agent.getInitializationResult();
-
-      expect(result.session.getActiveToolNames()).not.toContain("mcp__node_repl__js");
-      expect(result.session.getActiveToolNames()).toContain("Bash");
-      expect(result.runtimeContext).not.toContain("Preferred capability route:");
-      // 固定浏览器策略文本已上移稳定 system prompt（prompt cache 可覆盖，不随回合重复进历史）
-      expect(result.systemPrompt).toContain("mcp__browser__list_tabs");
-      expect(result.systemPrompt).toContain("do not activate browser:browser");
-      expect(result.runtimeContext).not.toContain("mcp__browser__list_tabs");
-      const runtimeSkills = (result.agent as any).baseOptions.skills as Array<{ name: string }>;
-      expect(runtimeSkills.map((skill) => skill.name)).not.toContain("browser:browser");
-      const deferredTools = (result.agent as unknown as { deferredToolPool: ToolDefinition[] }).deferredToolPool;
-      expect(deferredTools.map((tool) => tool.name)).toContain("mcp__node_repl__js");
-    } finally {
-      // dispose 独立 try/catch：其失败不得跳过 env 恢复与临时目录清理
-      try { await result?.session.dispose(); } catch (error) { console.warn("[run.test] cleanup dispose failed:", error); }
-      if (previousToolSearch === undefined) delete process.env.ENABLE_TOOL_SEARCH;
-      else process.env.ENABLE_TOOL_SEARCH = previousToolSearch;
-      if (previousBundledDir === undefined) delete process.env.LUME_BUNDLED_PLUGINS_DIR;
-      else process.env.LUME_BUNDLED_PLUGINS_DIR = previousBundledDir;
-      rmSync(bundledRoot, { recursive: true, force: true });
-    }
-  });
-
   test("主线程暴露 Delegate 委派工具，子会话不能继续派生", async () => {
     const parent = await createRuntimeCoreSession(createHookRuntimeSessionInput({ permissionMode: "default", runId: "parent-run" }));
     expect(parent.session.getActiveToolNames()).toContain("Delegate");
@@ -1298,7 +1254,6 @@ describe("runtime-core run", () => {
         onComplete: () => {},
         onError: () => {},
         onAskUserQuestion: () => {},
-        onBrowserAuthRequest: () => {},
         onToolPermissionRequest: () => {}
       },
       {
@@ -1368,7 +1323,6 @@ describe("runtime-core run", () => {
         onComplete: () => {},
         onError: () => {},
         onAskUserQuestion: () => {},
-        onBrowserAuthRequest: () => {},
         onToolPermissionRequest: () => {}
       },
       {

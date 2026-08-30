@@ -28,7 +28,7 @@ describe("LumeRunObserver persist 标记 (#551)", () => {
       type: "tool_result",
       result: {
         tool_use_id: "tool-1",
-        tool_name: "browser",
+        tool_name: "tool_saver",
         content: [
           { type: "text", text: "screenshot saved" },
           { type: "image", data: "QkFTRTY0", mimeType: "image/png", _meta: { persist: false, ephemeral: "trusted_runtime" } }
@@ -120,20 +120,20 @@ describe("LumeRunObserver tool_call 终态与 usage 口径 (#256)", () => {
       message: {
         role: "assistant",
         content: [
-          { type: "tool_use", id: "tu-ok", name: "browser_navigate", input: { url: "https://a.dev" } },
-          { type: "tool_use", id: "tu-err", name: "browser_click", input: {} },
+          { type: "tool_use", id: "tu-ok", name: "web_navigate", input: { url: "https://a.dev" } },
+          { type: "tool_use", id: "tu-err", name: "app_click", input: {} },
         ],
       },
     } as unknown as SDKMessage);
     observer.recordSdkMessage({
       type: "tool_result",
       session_id: "thread-1",
-      result: { tool_use_id: "tu-ok", tool_name: "browser_navigate", output: "ok" },
+      result: { tool_use_id: "tu-ok", tool_name: "web_navigate", output: "ok" },
     } as unknown as SDKMessage);
     observer.recordSdkMessage({
       type: "tool_result",
       session_id: "thread-1",
-      result: { tool_use_id: "tu-err", tool_name: "browser_click", output: { code: "timeout" }, is_error: true },
+      result: { tool_use_id: "tu-err", tool_name: "app_click", output: { code: "timeout" }, is_error: true },
     } as unknown as SDKMessage);
     await observer.flush();
 
@@ -161,7 +161,7 @@ describe("LumeRunObserver tool_call 终态与 usage 口径 (#256)", () => {
       session_id: "thread-1",
       message: {
         role: "assistant",
-        content: [{ type: "tool_use", id: "tu-shot", name: "mcp__browser__screenshot", input: {} }],
+        content: [{ type: "tool_use", id: "tu-shot", name: "mcp__example__screenshot", input: {} }],
       },
     } as unknown as SDKMessage);
     observer.recordSdkMessage({
@@ -169,7 +169,7 @@ describe("LumeRunObserver tool_call 终态与 usage 口径 (#256)", () => {
       session_id: "thread-1",
       result: {
         tool_use_id: "tu-shot",
-        tool_name: "mcp__browser__screenshot",
+        tool_name: "mcp__example__screenshot",
         output: "[Image: image/jpeg]",
         content: [
           { type: "text", text: '{"ok":true}' },

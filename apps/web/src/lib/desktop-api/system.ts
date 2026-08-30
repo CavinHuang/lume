@@ -41,7 +41,7 @@ export interface ClearCacheResult {
   skipped: ClearCacheKey[]
 }
 
-async function clearBrowserCaches(input: ClearCacheInput): Promise<ClearCacheResult> {
+async function clearRendererCaches(input: ClearCacheInput): Promise<ClearCacheResult> {
   const result: ClearCacheResult = {
     cleared: [],
     skipped: [],
@@ -170,14 +170,14 @@ export const testSearchBackend = (input: TestSearchBackendInput) =>
   sidecarCall<TestSearchBackendResult>(GENERAL_SETTINGS_IPC_CHANNELS.TEST_SEARCH_BACKEND, input)
 
 export const clearCache = async (input: ClearCacheInput): Promise<ClearCacheResult> => {
-  const browserResult = await clearBrowserCaches(input)
+  const rendererResult = await clearRendererCaches(input)
   const sidecarResult = await sidecarCall<ClearCacheResult>(
     GENERAL_SETTINGS_IPC_CHANNELS.CLEAR_CACHE,
     { logs: input.logs, vectorIndex: input.vectorIndex, pluginsCache: input.pluginsCache }
   )
 
   return {
-    cleared: Array.from(new Set([...browserResult.cleared, ...sidecarResult.cleared])),
-    skipped: Array.from(new Set([...browserResult.skipped, ...sidecarResult.skipped])),
+    cleared: Array.from(new Set([...rendererResult.cleared, ...sidecarResult.cleared])),
+    skipped: Array.from(new Set([...rendererResult.skipped, ...sidecarResult.skipped])),
   }
 }

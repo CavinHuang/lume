@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   activeTabIdAtom,
   agentRuntimeEventsFamily,
@@ -12,16 +12,15 @@ import {
   currentWorkspaceIdAtom,
   rightPanelFileWorkspacesAtom,
   rightPanelFileTabsAtom,
-  rightPanelBrowserWorkspacesAtom,
   rightPanelLayoutAtom,
   rightPanelWorkspaceActionAtom,
   rightPanelWorkspacesAtom,
   tabsAtom,
 } from '@/atoms'
 import { PanelRightOpen } from 'lucide-react'
-import { browserRuntime, onBrowserEvent, revokeFilePreviewScope } from '@/lib/desktop-api'
+import { revokeFilePreviewScope } from '@/lib/desktop-api'
 import { onSidecarEvent } from '@/lib/desktop-api'
-import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, type BrowserTabDescriptor, type BrowserWorkspaceDescriptor, type FileSource } from '@lume/shared'
+import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, type FileSource } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import {
   createThreadFileWorkspace,
@@ -46,41 +45,25 @@ import { AgentMessages } from '../agent/AgentMessages'
 import { AgentInput } from '../agent/AgentInput'
 import { ThreadFileEnvProvider } from '../agent/thread-file-env'
 import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
-import { BrowserRightPanelTab } from './BrowserRightPanelTab'
 import { VaultRightPanelWorkspace } from './VaultRightPanelWorkspace'
-import {
-  activateBrowserTab,
-  browserTabFromDescriptor,
-  closeBrowserTab,
-  createBrowserTab,
-  sanitizeThreadBrowserWorkspace,
-  THREAD_BROWSER_ACTIVATE_EVENT,
-  type ThreadBrowserActivateDetail,
-  type ThreadBrowserWorkspace,
-} from './right-panel-browser-state'
 import { CodingReviewPanel } from './CodingReviewPanel'
 import { type CodingReviewPanelState } from '@/atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
-  browser: '浏览器', files: '文件', chat: '问答', vault: 'Obsidian Vault',
+  files: '文件', chat: '问答', vault: 'Obsidian Vault',
 }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
 
 export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
-  const [tabs, setTabs] = useAtom(tabsAtom)
-  const [activeTabId, setActiveTabId] = useAtom(activeTabIdAtom)
+  const tabs = useAtomValue(tabsAtom)
+  const activeTabId = useAtomValue(activeTabIdAtom)
   const persisted = useAtomValue(rightPanelWorkspacesAtom)
-  const setPersisted = useSetAtom(rightPanelWorkspacesAtom)
   const [runtime, setRuntime] = useAtom(rightPanelFileWorkspacesAtom)
   const [persistedFileTabs, setPersistedFileTabs] = useAtom(rightPanelFileTabsAtom)
-  const [persistedBrowserWorkspaces, setPersistedBrowserWorkspaces] = useAtom(rightPanelBrowserWorkspacesAtom)
-  const [agentBrowserWorkspaces, setAgentBrowserWorkspaces] = useState<Record<string, ThreadBrowserWorkspace>>({})
   const dispatch = useSetAtom(rightPanelWorkspaceActionAtom)
   const [layout, setLayout] = useAtom(rightPanelLayoutAtom)
   const [resizing, setResizing] = useState(false)
-  const browserWorkspaceRevisionRef = useRef<Record<string, number>>({})
-  const knownBrowserTabIdsRef = useRef<Record<string, Set<string>>>({})
   const threads = useAtomValue(agentThreadsAtom)
   const agentWorkspaces = useAtomValue(agentWorkspacesAtom)
   const currentWorkspaceId = useAtomValue(currentWorkspaceIdAtom)
@@ -176,215 +159,9 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
     })
   }, [binding, persistedFileTabs, setRuntime, threadId])
 
-  useEffect(() => {
-    if (!threadId) return
-    const onPopupOpened = (event: Event) => {
-      const detail = (event as CustomEvent<{ ownerThreadId?: string; popup?: BrowserTabDescriptor }>).detail
-      if (!detail?.popup || detail.ownerThreadId !== threadId) return
-      const tab = browserTabFromDescriptor(detail.popup)
-      void browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId: tab.id } }).then(() => {
-        setPersistedBrowserWorkspaces((current) => {
-          const workspace = sanitizeThreadBrowserWorkspace(current[threadId])
-          return {
-            ...current,
-            [threadId]: {
-              ...workspace,
-              tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab],
-              activeTabId: tab.id,
-            },
-          }
-        })
-        updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
-      }).catch(() => undefined)
-    }
-    window.addEventListener('lume:browser-popup-opened', onPopupOpened)
-    return () => window.removeEventListener('lume:browser-popup-opened', onPopupOpened)
-  }, [setPersistedBrowserWorkspaces, threadId, updateRuntime])
-
-  useEffect(() => {
-    if (!threadId) return
-    let cancelled = false
-    const legacy = sanitizeThreadBrowserWorkspace(persistedBrowserWorkspaces[threadId])
-    knownBrowserTabIdsRef.current[threadId] = new Set(legacy.tabs.map((tab) => tab.id))
-    void browserRuntime<BrowserWorkspaceDescriptor>({
-      method: 'workspace:import-legacy',
-      params: {
-        ownerThreadId: threadId,
-        tabs: legacy.tabs.filter((tab) => tab.profileKind !== 'agent'),
-        activeTabId: legacy.tabs.find((tab) => tab.id === legacy.activeTabId)?.profileKind === 'agent' ? undefined : legacy.activeTabId,
-      },
-    }).then(() => browserRuntime<BrowserWorkspaceDescriptor>({ method: 'workspace:get', params: { ownerThreadId: threadId } }))
-      .then(async (workspace) => ({ workspace, tabs: await browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }) }))
-      .then(({ workspace, tabs }) => {
-        if (cancelled) return
-        const threadTabs = tabs.filter((tab) => tab.ownerThreadId === threadId)
-        const descriptors = new Map(threadTabs.map((tab) => [tab.tabId, tab]))
-        const restoredTabs = workspace.orderedTabIds.flatMap((tabId) => descriptors.get(tabId) ? [browserTabFromDescriptor(descriptors.get(tabId)!)] : [])
-        const agentDescriptors = threadTabs.filter((tab) => tab.profileKind === 'agent')
-        const agentTabs = agentDescriptors.map(browserTabFromDescriptor)
-        const activeAgentTab = agentDescriptors.find((tab) => tab.visible)
-          ?? [...agentDescriptors].sort((left, right) => String(right.lastOpenedAt ?? '').localeCompare(String(left.lastOpenedAt ?? '')))[0]
-        const recentlyClosed = workspace.recentlyClosed.map((closed) => ({
-          id: closed.tabId,
-          url: closed.url,
-          title: closed.title,
-          createdAt: closed.closedAt,
-          lastOpenedAt: closed.closedAt,
-          zoomFactor: 1,
-        }))
-        setPersistedBrowserWorkspaces((current) => ({
-          ...current,
-          [threadId]: { tabs: restoredTabs, recentlyClosed, ...(workspace.activeTabId ? { activeTabId: workspace.activeTabId } : {}) },
-        }))
-        setAgentBrowserWorkspaces((current) => ({
-          ...current,
-          [threadId]: {
-            tabs: agentTabs,
-            recentlyClosed: [],
-            ...(activeAgentTab ? { activeTabId: activeAgentTab.tabId } : {}),
-          },
-        }))
-        knownBrowserTabIdsRef.current[threadId] = new Set(threadTabs.map((tab) => tab.tabId))
-      })
-      .catch(() => undefined)
-    return () => { cancelled = true }
-    // Renderer state is imported once per task; subsequent page state comes from runtime descriptors.
-  }, [threadId])
-
-  useEffect(() => {
-    let disposed = false
-    let stop: (() => void) | undefined
-    void onBrowserEvent((event) => {
-      if (event.method === 'browser:tab-changed') {
-        const descriptor = event.params as unknown as BrowserTabDescriptor
-        const ownerThreadId = descriptor.ownerThreadId
-        if (!ownerThreadId || ownerThreadId !== threadId || descriptor.profileKind !== 'agent') return
-        const knownTabIds = knownBrowserTabIdsRef.current[ownerThreadId] ?? new Set<string>()
-        const isNewTab = !knownTabIds.has(descriptor.tabId)
-        knownTabIds.add(descriptor.tabId)
-        knownBrowserTabIdsRef.current[ownerThreadId] = knownTabIds
-        const tab = browserTabFromDescriptor(descriptor)
-        setAgentBrowserWorkspaces((current) => {
-          const workspace = sanitizeThreadBrowserWorkspace(current[ownerThreadId])
-          return { ...current, [ownerThreadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
-        })
-        if (isNewTab) {
-          setLayout((current) => current.open && current.mode !== 'compact' ? current : { open: true, mode: 'normal' })
-          updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: descriptor.tabId } }))
-        }
-        return
-      }
-      if (event.method === 'browser:tab-closed') {
-        const ownerThreadId = typeof event.params.ownerThreadId === 'string' ? event.params.ownerThreadId : undefined
-        const tabId = typeof event.params.tabId === 'string' ? event.params.tabId : undefined
-        if (!ownerThreadId || !tabId || ownerThreadId !== threadId || event.params.profileKind !== 'agent') return
-        knownBrowserTabIdsRef.current[ownerThreadId]?.delete(tabId)
-        void browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }).then((tabs) => {
-          if (disposed) return
-          const agentTabs = tabs
-            .filter((tab) => tab.ownerThreadId === ownerThreadId && tab.profileKind === 'agent')
-            .map(browserTabFromDescriptor)
-          const fallbackTabId = agentTabs[0]?.id
-          setAgentBrowserWorkspaces((current) => {
-            const previousActiveTabId = current[ownerThreadId]?.activeTabId
-            const activeTabId = previousActiveTabId && agentTabs.some((tab) => tab.id === previousActiveTabId)
-              ? previousActiveTabId
-              : fallbackTabId
-            return {
-              ...current,
-              [ownerThreadId]: { tabs: agentTabs, recentlyClosed: [], ...(activeTabId ? { activeTabId } : {}) },
-            }
-          })
-          updateRuntime((current) => current.activeItem?.kind === 'browser' && current.activeItem.tabId === tabId
-            ? { ...current, activeItem: fallbackTabId ? { kind: 'browser', tabId: fallbackTabId } : null }
-            : current)
-        }).catch(() => undefined)
-        return
-      }
-      if (event.method !== 'browser:workspace-changed') return
-      const descriptor = event.params as unknown as BrowserWorkspaceDescriptor
-      if (!descriptor.ownerThreadId || descriptor.revision <= (browserWorkspaceRevisionRef.current[descriptor.ownerThreadId] ?? -1)) return
-      browserWorkspaceRevisionRef.current[descriptor.ownerThreadId] = descriptor.revision
-      const knownTabIds = knownBrowserTabIdsRef.current[descriptor.ownerThreadId] ?? new Set<string>()
-      const shouldRevealBrowser = descriptor.ownerThreadId === threadId
-        && Boolean(descriptor.activeTabId)
-        && !knownTabIds.has(descriptor.activeTabId!)
-      knownBrowserTabIdsRef.current[descriptor.ownerThreadId] = new Set(descriptor.orderedTabIds)
-      if (shouldRevealBrowser && descriptor.activeTabId) {
-        setLayout((current) => current.open && current.mode !== 'compact' ? current : { open: true, mode: 'normal' })
-        updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: descriptor.activeTabId! } }))
-      }
-      void browserRuntime<BrowserTabDescriptor[]>({ method: 'list' }).then((tabs) => {
-        if (disposed) return
-        const descriptors = new Map(tabs.filter((tab) => tab.ownerThreadId === descriptor.ownerThreadId).map((tab) => [tab.tabId, tab]))
-        const browserTabs = descriptor.orderedTabIds.flatMap((tabId) => descriptors.get(tabId) ? [browserTabFromDescriptor(descriptors.get(tabId)!)] : [])
-        setPersistedBrowserWorkspaces((current) => ({
-          ...current,
-          [descriptor.ownerThreadId]: {
-            tabs: browserTabs,
-            recentlyClosed: descriptor.recentlyClosed.map((closed) => ({ id: closed.tabId, url: closed.url, title: closed.title, createdAt: closed.closedAt, lastOpenedAt: closed.closedAt, zoomFactor: 1 })),
-            ...(descriptor.activeTabId ? { activeTabId: descriptor.activeTabId } : {}),
-          },
-        }))
-      }).catch(() => undefined)
-    }).then((dispose) => { if (disposed) dispose(); else stop = dispose })
-    return () => { disposed = true; stop?.() }
-  }, [setLayout, setPersistedBrowserWorkspaces, threadId, updateRuntime])
-
-  useEffect(() => {
-    if (!threadId) return
-    const activate = (event: Event) => {
-      const detail = (event as CustomEvent<ThreadBrowserActivateDetail>).detail
-      if (!detail || detail.threadId !== threadId || detail.tab.ownerThreadId !== threadId) return
-      const tab = browserTabFromDescriptor(detail.tab)
-      if (detail.tab.profileKind === 'agent') {
-        setAgentBrowserWorkspaces((current) => {
-          const workspace = sanitizeThreadBrowserWorkspace(current[threadId])
-          return { ...current, [threadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
-        })
-      } else {
-        setPersistedBrowserWorkspaces((current) => {
-          const workspace = sanitizeThreadBrowserWorkspace(current[threadId])
-          return { ...current, [threadId]: { ...workspace, tabs: [...workspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id } }
-        })
-        void browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId: tab.id } }).catch(() => undefined)
-      }
-      setLayout((current) => current.open && current.mode !== 'compact' ? current : { open: true, mode: 'normal' })
-      updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
-    }
-    window.addEventListener(THREAD_BROWSER_ACTIVATE_EVENT, activate)
-    return () => window.removeEventListener(THREAD_BROWSER_ACTIVATE_EVENT, activate)
-  }, [setLayout, setPersistedBrowserWorkspaces, threadId, updateRuntime])
-
-  useEffect(() => {
-    if (!threadId) return
-    const legacy = sanitizeRightPanelWorkspace(persisted[threadId] ?? createEmptyRightPanelWorkspace()).tabs.browser
-    const currentBrowser = sanitizeThreadBrowserWorkspace(persistedBrowserWorkspaces[threadId])
-    if (!legacy || legacy.type !== 'browser' || currentBrowser.tabs.length > 0) return
-    const tab = createBrowserTab({ url: legacy.url, zoomFactor: legacy.zoom })
-    setPersistedBrowserWorkspaces((current) => ({
-      ...current,
-      [threadId]: { tabs: [tab], activeTabId: tab.id, recentlyClosed: [] },
-    }))
-    setPersisted((current) => {
-      const workspace = sanitizeRightPanelWorkspace(current[threadId] ?? createEmptyRightPanelWorkspace())
-      const tabs = { ...workspace.tabs }
-      delete tabs.browser
-      return { ...current, [threadId]: { tabs } }
-    })
-    updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
-  }, [persisted, persistedBrowserWorkspaces, setPersisted, setPersistedBrowserWorkspaces, threadId, updateRuntime])
-
   if (!threadId || !layout.open) return null
 
   const persistedWorkspace = sanitizeRightPanelWorkspace(persisted[threadId] ?? createEmptyRightPanelWorkspace())
-  const persistedBrowserWorkspace = sanitizeThreadBrowserWorkspace(persistedBrowserWorkspaces[threadId])
-  const agentBrowserWorkspace = sanitizeThreadBrowserWorkspace(agentBrowserWorkspaces[threadId])
-  const browserWorkspace: ThreadBrowserWorkspace = {
-    tabs: [...persistedBrowserWorkspace.tabs, ...agentBrowserWorkspace.tabs.filter((tab) => !persistedBrowserWorkspace.tabs.some((item) => item.id === tab.id))],
-    recentlyClosed: persistedBrowserWorkspace.recentlyClosed,
-    ...(agentBrowserWorkspace.activeTabId || persistedBrowserWorkspace.activeTabId ? { activeTabId: agentBrowserWorkspace.activeTabId ?? persistedBrowserWorkspace.activeTabId } : {}),
-  }
   const openFunctions = getOpenRightPanelFunctions(persistedWorkspace.tabs)
   const storedRuntimeWorkspace = runtime[threadId]
   const runtimeWorkspace = storedRuntimeWorkspace
@@ -397,9 +174,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
         const restoredActiveId = !Array.isArray(restoredState) ? restoredState?.activeTabId : undefined
         const restored = createThreadFileWorkspace(
           binding,
-          browserWorkspace.activeTabId
-            ? { kind: 'browser', tabId: browserWorkspace.activeTabId }
-          : restoredTabs.find((tab) => tab.id === restoredActiveId)
+          restoredTabs.find((tab) => tab.id === restoredActiveId)
             ? { kind: 'file', tabId: restoredActiveId! }
             : restoredTabs.at(-1)
               ? { kind: 'file', tabId: restoredTabs.at(-1)!.id }
@@ -411,152 +186,10 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       })()
   const hasOpenTabs = firstOpenRightPanelTab(persistedWorkspace.tabs) !== null
     || runtimeWorkspace.openTabs.length > 0
-    || browserWorkspace.tabs.length > 0
     || Boolean(codingReview)
     || (runtimeWorkspace.activeItem?.kind === 'function' && runtimeWorkspace.activeItem.type === 'chat')
 
   const action = (value: Parameters<typeof dispatch>[0]) => dispatch(value)
-  const updateBrowserWorkspace = (next: ThreadBrowserWorkspace) => {
-    const agentTabs = next.tabs.filter((tab) => tab.profileKind === 'agent')
-    const persistedTabs = next.tabs.filter((tab) => tab.profileKind !== 'agent')
-    setAgentBrowserWorkspaces((current) => ({
-      ...current,
-      [threadId]: {
-        tabs: agentTabs,
-        recentlyClosed: [],
-        ...(agentTabs.some((tab) => tab.id === next.activeTabId) ? { activeTabId: next.activeTabId } : {}),
-      },
-    }))
-    setPersistedBrowserWorkspaces((current) => ({
-      ...current,
-      [threadId]: {
-        tabs: persistedTabs,
-        recentlyClosed: next.recentlyClosed.filter((tab) => tab.profileKind !== 'agent'),
-        ...(persistedTabs.some((tab) => tab.id === next.activeTabId) ? { activeTabId: next.activeTabId } : {}),
-      },
-    }))
-  }
-  const openBrowser = (url = '', insertAfterTabId?: string) => {
-    const tab = createBrowserTab({ url })
-    void browserRuntime<BrowserTabDescriptor>({ method: 'ensure', params: { tabId: tab.id, ownerThreadId: threadId, url } })
-      .then((descriptor) => browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId: tab.id } }).then(() => descriptor))
-      .then((descriptor) => {
-        const tabs = [...browserWorkspace.tabs]
-        const insertIndex = insertAfterTabId ? tabs.findIndex((item) => item.id === insertAfterTabId) + 1 : tabs.length
-        tabs.splice(insertIndex > 0 ? insertIndex : tabs.length, 0, browserTabFromDescriptor(descriptor))
-        updateBrowserWorkspace({ ...browserWorkspace, tabs, activeTabId: tab.id })
-        void browserRuntime({ method: 'workspace:reorder', params: { ownerThreadId: threadId, orderedTabIds: tabs.map((item) => item.id) } }).catch(() => undefined)
-        closeCodingReview({ type: 'deactivate', threadId })
-        updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
-      })
-      .catch(() => undefined)
-  }
-  const activateBrowser = (tabId: string) => {
-    void browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId } }).then(() => {
-      updateBrowserWorkspace(activateBrowserTab(browserWorkspace, tabId))
-      closeCodingReview({ type: 'deactivate', threadId })
-      updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId } }))
-    }).catch(() => undefined)
-  }
-  const closeBrowser = (tabId: string) => {
-    const next = closeBrowserTab(browserWorkspace, tabId)
-    void browserRuntime({ method: 'close', params: { tabId } }).then(() => {
-      updateBrowserWorkspace(next)
-      if (runtimeWorkspace.activeItem?.kind !== 'browser' || runtimeWorkspace.activeItem.tabId !== tabId) return
-      updateRuntime((current) => ({
-        ...current,
-        activeItem: next.activeTabId
-          ? { kind: 'browser', tabId: next.activeTabId }
-          : current.openTabs.at(-1)
-            ? { kind: 'file', tabId: current.openTabs.at(-1)!.id }
-            : firstOpenRightPanelTab(persistedWorkspace.tabs)
-              ? { kind: 'function', type: firstOpenRightPanelTab(persistedWorkspace.tabs)! }
-              : null,
-      }))
-    }).catch(() => undefined)
-  }
-  const duplicateBrowser = (tabId: string) => {
-    const source = browserWorkspace.tabs.find((tab) => tab.id === tabId)
-    if (!source) return
-    const duplicate = createBrowserTab({ url: source.url, title: source.title, zoomFactor: source.zoomFactor, viewport: source.viewport, navigationEntries: source.navigationEntries, navigationIndex: source.navigationIndex, scrollPosition: source.scrollPosition })
-    void browserRuntime<BrowserTabDescriptor>({ method: 'ensure', params: { ...duplicate, tabId: duplicate.id, ownerThreadId: threadId } })
-      .then((descriptor) => browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId: duplicate.id } }).then(() => descriptor))
-      .then((descriptor) => {
-        const index = browserWorkspace.tabs.findIndex((tab) => tab.id === tabId)
-        const tabs = [...browserWorkspace.tabs]
-        tabs.splice(index + 1, 0, browserTabFromDescriptor(descriptor))
-        updateBrowserWorkspace({ ...browserWorkspace, tabs, activeTabId: duplicate.id })
-        void browserRuntime({ method: 'workspace:reorder', params: { ownerThreadId: threadId, orderedTabIds: tabs.map((item) => item.id) } }).catch(() => undefined)
-        updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: duplicate.id } }))
-      }).catch(() => undefined)
-  }
-  const reloadBrowser = (tabId: string) => {
-    void browserRuntime({ method: 'reload', params: { tabId } }).catch(() => undefined)
-  }
-  const closeOtherBrowsers = (tabId: string) => {
-    const closing = browserWorkspace.tabs.filter((tab) => tab.id !== tabId)
-    void Promise.all(closing.map((tab) => browserRuntime({ method: 'close', params: { tabId: tab.id } })))
-      .then(() => browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId } }))
-      .then(() => {
-        const selected = browserWorkspace.tabs.find((tab) => tab.id === tabId)
-        updateBrowserWorkspace({ tabs: selected ? [selected] : [], activeTabId: selected?.id, recentlyClosed: closing.slice().reverse() })
-        updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId } }))
-      }).catch(() => undefined)
-  }
-  const closeBrowsersToRight = (tabId: string) => {
-    const index = browserWorkspace.tabs.findIndex((tab) => tab.id === tabId)
-    if (index < 0) return
-    const closing = browserWorkspace.tabs.slice(index + 1)
-    if (!closing.length) return
-    const tabs = browserWorkspace.tabs.slice(0, index + 1)
-    const activeWasClosed = closing.some((tab) => tab.id === browserWorkspace.activeTabId)
-    void Promise.all(closing.map((tab) => browserRuntime({ method: 'close', params: { tabId: tab.id } })))
-      .then(() => activeWasClosed ? browserRuntime({ method: 'workspace:activate', params: { ownerThreadId: threadId, tabId } }) : undefined)
-      .then(() => {
-        updateBrowserWorkspace({ ...browserWorkspace, tabs, activeTabId: activeWasClosed ? tabId : browserWorkspace.activeTabId, recentlyClosed: closing.slice().reverse() })
-        if (activeWasClosed) updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId } }))
-      }).catch(() => undefined)
-  }
-  const restoreBrowser = () => {
-    void browserRuntime<BrowserTabDescriptor | null>({ method: 'workspace:restore-closed', params: { ownerThreadId: threadId } }).then((descriptor) => {
-      if (!descriptor) return
-      const tab = browserTabFromDescriptor(descriptor)
-      updateBrowserWorkspace({ tabs: [...browserWorkspace.tabs.filter((item) => item.id !== tab.id), tab], activeTabId: tab.id, recentlyClosed: browserWorkspace.recentlyClosed.filter((item) => item.id !== tab.id) })
-      updateRuntime((current) => ({ ...current, activeItem: { kind: 'browser', tabId: tab.id } }))
-    }).catch(() => undefined)
-  }
-  const detachBrowser = (tabId: string): ThreadBrowserWorkspace => {
-    const tabs = browserWorkspace.tabs.filter((tab) => tab.id !== tabId)
-    const activeBrowserId = browserWorkspace.activeTabId === tabId ? tabs.at(-1)?.id : browserWorkspace.activeTabId
-    return { tabs, recentlyClosed: browserWorkspace.recentlyClosed, ...(activeBrowserId ? { activeTabId: activeBrowserId } : {}) }
-  }
-  const moveBrowserToMain = (tabId: string) => {
-    const tab = browserWorkspace.tabs.find((item) => item.id === tabId)
-    if (!tab) return
-    const source = detachBrowser(tabId)
-    updateBrowserWorkspace(source)
-    updateRuntime((current) => ({ ...current, activeItem: source.activeTabId ? { kind: 'browser', tabId: source.activeTabId } : null }))
-    setTabs((current) => [...current.filter((item) => item.id !== tabId), { id: tabId, type: 'browser', title: tab.title || '浏览器', browserUrl: tab.url, threadId }])
-    setActiveTabId(tabId)
-  }
-  const moveBrowserToThread = (tabId: string, targetThreadId: string) => {
-    const tab = browserWorkspace.tabs.find((item) => item.id === tabId)
-    if (!tab || targetThreadId === threadId) return
-    const source = detachBrowser(tabId)
-    void browserRuntime({ method: 'move-owner', params: { tabId, ownerThreadId: targetThreadId } }).then(() => {
-      setPersistedBrowserWorkspaces((current) => {
-        const target = sanitizeThreadBrowserWorkspace(current[targetThreadId])
-        return {
-          ...current,
-          [threadId]: source,
-          [targetThreadId]: { ...target, tabs: [...target.tabs.filter((item) => item.id !== tabId), tab], activeTabId: tabId },
-        }
-      })
-      if (runtimeWorkspace.activeItem?.kind === 'browser' && runtimeWorkspace.activeItem.tabId === tabId) {
-        updateRuntime((current) => ({ ...current, activeItem: source.activeTabId ? { kind: 'browser', tabId: source.activeTabId } : null }))
-      }
-    }).catch(() => undefined)
-  }
 
   const compact = layout.mode === 'compact'
   const resolvedMaxWidth = Math.max(360, Math.round(maxWidth))
@@ -599,17 +232,12 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
             <RightPanelTabBar
               workspace={persistedWorkspace}
               fileTabs={runtimeWorkspace.openTabs}
-              browserTabs={browserWorkspace.tabs}
               activeItem={runtimeWorkspace.activeItem}
               reviewOpen={Boolean(codingReview)}
               reviewActive={codingReview?.active}
               onActivateReview={() => closeCodingReview({ type: 'activate', threadId })}
               onCloseReview={() => closeCodingReview({ type: 'close', threadId })}
               onActivateFunction={(fn) => {
-                if (fn === 'browser') {
-                  openBrowser()
-                  return
-                }
                 closeCodingReview({ type: 'deactivate', threadId })
                 action({ type: 'activate-function', threadId, function: fn, binding })
               }}
@@ -617,25 +245,9 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                 closeCodingReview({ type: 'deactivate', threadId })
                 updateRuntime((current) => ({ ...current, activeItem: { kind: 'file', tabId } }))
               }}
-              onActivateBrowser={activateBrowser}
               onCloseFunction={(fn) => action({ type: 'close-function', threadId, function: fn })}
               onCloseFile={(tabId) => action({ type: 'close-file', threadId, tabId })}
-              onCloseBrowser={closeBrowser}
-              onNewBrowserToRight={(tabId) => openBrowser('', tabId)}
-              onReloadBrowser={reloadBrowser}
-              onDuplicateBrowser={duplicateBrowser}
-              onCloseOtherBrowsers={closeOtherBrowsers}
-              onCloseBrowsersToRight={closeBrowsersToRight}
-              onMoveBrowserToMain={moveBrowserToMain}
-              onMoveBrowserToThread={moveBrowserToThread}
-              browserThreadTargets={threads.filter((item) => item.id !== threadId).map((item) => ({ id: item.id, label: item.title || '未命名任务' }))}
-              canRestoreBrowser={browserWorkspace.recentlyClosed.length > 0}
-              onRestoreBrowser={restoreBrowser}
               onOpenFunction={(fn) => {
-                if (fn === 'browser') {
-                  openBrowser()
-                  return
-                }
                 closeCodingReview({ type: 'deactivate', threadId })
                 action({ type: 'activate-function', threadId, function: fn, binding })
               }}
@@ -643,13 +255,11 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
             {hasOpenTabs ? (
               <RightPanelActiveContent
                 runtime={runtimeWorkspace}
-                browserWorkspace={browserWorkspace}
                 workspaceSlug={workspaceSlug}
                 workspaceProjectPath={agentWorkspace?.projectPath}
                 fileContextId={binding.fileContextId}
                 openFunctions={openFunctions}
                 onRuntimeChange={updateRuntime}
-                onBrowserWorkspaceChange={updateBrowserWorkspace}
                 threadId={threadId}
                 codingReview={codingReview}
                 onOpenCodingFile={workspaceSlug ? (path) => {
@@ -685,7 +295,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                     review: report.review,
                   })
                 } : undefined}
-                onOpen={(fn) => fn === 'browser' ? openBrowser() : action({ type: 'activate-function', threadId, function: fn, binding })}
+                onOpen={(fn) => action({ type: 'activate-function', threadId, function: fn, binding })}
               />
             )}
           </>
@@ -695,15 +305,13 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   )
 }
 
-function RightPanelActiveContent({ runtime, browserWorkspace, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, onBrowserWorkspaceChange, threadId, codingReview, onOpenCodingFile }: {
+function RightPanelActiveContent({ runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, codingReview, onOpenCodingFile }: {
   runtime: ThreadFileWorkspace
-  browserWorkspace: ThreadBrowserWorkspace
   workspaceSlug?: string
   workspaceProjectPath?: string
   fileContextId?: string
   openFunctions: RightPanelFunction[]
   onRuntimeChange: (workspace: ThreadFileWorkspaceUpdate) => void
-  onBrowserWorkspaceChange: (workspace: ThreadBrowserWorkspace) => void
   threadId: string
   codingReview?: CodingReviewPanelState
   onOpenCodingFile?: (path: string) => void
@@ -713,20 +321,6 @@ function RightPanelActiveContent({ runtime, browserWorkspace, workspaceSlug, wor
   }
   const active = runtime.activeItem
   if (!active) return <PlaceholderRightPanelTab label="" />
-  if (active.kind === 'browser') {
-    const browserTab = browserWorkspace.tabs.find((tab) => tab.id === active.tabId)
-    if (!browserTab) return <PlaceholderRightPanelTab label="浏览器标签已关闭" />
-    return (
-      <BrowserRightPanelTab
-        threadId={threadId}
-        tab={browserTab}
-        onChange={(next) => onBrowserWorkspaceChange({
-          ...browserWorkspace,
-          tabs: browserWorkspace.tabs.map((item) => item.id === next.id ? next : item),
-        })}
-      />
-    )
-  }
   if (active.kind === 'file' || active.type === 'files') {
     return <FilesRightPanelWorkspace threadId={threadId} workspace={runtime} workspaceSlug={workspaceSlug} workspaceProjectPath={workspaceProjectPath} fileContextId={fileContextId} openFunctions={openFunctions} onWorkspaceChange={onRuntimeChange} />
   }

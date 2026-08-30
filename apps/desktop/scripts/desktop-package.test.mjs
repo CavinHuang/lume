@@ -24,8 +24,6 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
   assert.deepEqual(pkg.build.files, [
     'dist/main/main.mjs',
     'dist/preload/preload.cjs',
-    'dist/preload/browser-auth-preload.cjs',
-    'dist/preload/browser-guest-preload.cjs',
     'assets',
   ])
   assert.equal(pkg.dependencies?.['electron-updater'], undefined)
@@ -79,16 +77,6 @@ test('packaged desktop smoke uses an isolated profile and verifies the renderer'
   assert.match(source, /--user-data-dir=/)
   assert.match(source, /DevToolsActivePort/)
   assert.match(source, /document\.readyState/)
-})
-
-test('live Chrome import smoke reports only aggregate encrypted-database compatibility', () => {
-  assert.equal(pkg.scripts['test:browser-import-live-smoke'], 'node ./scripts/browser-import-live-smoke.mjs')
-  const source = readFileSync(resolve(DESKTOP_ROOT, 'scripts/browser-import-live-smoke.mjs'), 'utf8')
-  assert.match(source, /Chrome must remain open/)
-  assert.match(source, /readChromeCookieRows/)
-  assert.match(source, /SELECT password_value FROM logins/)
-  assert.doesNotMatch(source, /row\.(origin_url|username_value|host_key|name)/)
-  assert.doesNotMatch(source, /decryptChromeValue|importChromeProfile/)
 })
 
 test('Windows installer lets users choose the installation directory', () => {

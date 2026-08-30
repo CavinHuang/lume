@@ -16,7 +16,6 @@ import {
 } from "@lume/agent-sdk";
 import type {
   AgentAskUserQuestionRequest,
-  AgentBrowserAuthRequest,
   AgentDesktopActionRequest,
   AgentSendInput,
   AgentToolPermissionRequest,
@@ -292,7 +291,6 @@ export async function runSidecarSubagent(input: {
   permissionMode?: AgentSendInput["permissionMode"];
   onRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
-  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
@@ -442,7 +440,6 @@ export async function runSidecarSubagent(input: {
       },
       onRuntimeEvent: input.onRuntimeEvent,
       onAskUserQuestion: input.emitAskUserQuestion ?? (() => undefined),
-      onBrowserAuthRequest: input.emitBrowserAuthRequest ?? (() => undefined),
       onDesktopActionRequest: input.emitDesktopActionRequest,
       onToolPermissionRequest:
         input.emitToolPermissionRequest ?? (() => undefined),
@@ -699,7 +696,6 @@ export async function runTaskLinkedSubagent(input: {
   permissionMode?: AgentSendInput["permissionMode"];
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
   emitAskUserQuestion?: (request: AgentAskUserQuestionRequest) => void;
-  emitBrowserAuthRequest?: (request: AgentBrowserAuthRequest) => void;
   emitDesktopActionRequest?: (request: AgentDesktopActionRequest) => void;
   emitToolPermissionRequest?: (request: AgentToolPermissionRequest) => void;
 }): Promise<ToolResult> {
@@ -811,7 +807,6 @@ export async function runTaskLinkedSubagent(input: {
         progressReporter,
         permissionMode: input.permissionMode,
         emitAskUserQuestion: input.emitAskUserQuestion,
-        emitBrowserAuthRequest: input.emitBrowserAuthRequest,
         emitDesktopActionRequest: input.emitDesktopActionRequest,
         emitToolPermissionRequest: input.emitToolPermissionRequest,
       }),

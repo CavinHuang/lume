@@ -88,165 +88,6 @@ const agentDiffCommentAttachmentSchema = z
   })
   .strict();
 
-const agentBrowserTabAttachmentSchema = z
-  .object({
-    id: z.string().trim().min(1).max(256),
-    origin: z.literal("browser-tab"),
-    backend: z.enum(["iab", "extension"]).optional(),
-    browserId: z.string().trim().min(1).max(128).optional(),
-    referenceGrantId: z.string().trim().min(1).max(256).optional(),
-    access: z.literal("control").optional(),
-    tabId: z.string().trim().min(1).max(256),
-    providerTabId: z.string().trim().min(1).max(256).optional(),
-    title: z.string().max(512),
-    url: z.string().url().max(8192),
-    generation: z.number().int().min(1).optional(),
-    lastOpenedAt: z.string().datetime().optional(),
-    ownerThreadId: z.string().trim().min(1).max(256).optional(),
-  })
-  .strict();
-
-const agentBrowserAnchorSchema = z
-  .object({
-    kind: z.enum(["element", "text", "region"]),
-    url: z.string().url().max(8192),
-    generation: z.number().int().min(1),
-    framePath: z.array(z.string().max(2048)).max(16),
-    frameUrl: z.string().url().max(8192).optional(),
-    selector: z.string().max(8192).optional(),
-    role: z.string().max(256).optional(),
-    name: z.string().max(1024).optional(),
-    title: z.string().max(1024).optional(),
-    domPath: z.string().max(8192).optional(),
-    textQuote: z
-      .object({
-        exact: z.string().max(32_000),
-        prefix: z.string().max(1000).optional(),
-        suffix: z.string().max(1000).optional(),
-      })
-      .strict()
-      .optional(),
-    textRange: z
-      .object({
-        startPath: z.string().max(8192).optional(),
-        startOffset: z.number().int().min(0).max(1_000_000).optional(),
-        endPath: z.string().max(8192).optional(),
-        endOffset: z.number().int().min(0).max(1_000_000).optional(),
-      })
-      .strict()
-      .optional(),
-    selectedContent: z.string().max(20_000).optional(),
-    immediateText: z.string().max(20_000).optional(),
-    nearbyText: z.string().max(20_000).optional(),
-    viewport: z
-      .object({
-        width: z.number().finite().nonnegative(),
-        height: z.number().finite().nonnegative(),
-        deviceScaleFactor: z.number().finite().positive().optional(),
-        scrollX: z.number().finite().nonnegative().optional(),
-        scrollY: z.number().finite().nonnegative().optional(),
-      })
-      .strict()
-      .optional(),
-    markerPoint: z
-      .object({ x: z.number().finite(), y: z.number().finite() })
-      .strict()
-      .optional(),
-    fixed: z.boolean().optional(),
-    scrollContainer: z
-      .object({
-        selector: z.string().max(8192).optional(),
-        domPath: z.string().max(8192).optional(),
-      })
-      .strict()
-      .optional(),
-    rect: z
-      .object({
-        x: z.number().finite(),
-        y: z.number().finite(),
-        width: z.number().finite().nonnegative(),
-        height: z.number().finite().nonnegative(),
-      })
-      .strict(),
-  })
-  .strict();
-
-// 设计变更单条声明：对齐 Codex A.6，property 限定 CSS 属性名格式，值截断参照 sanitizeStyles
-const agentBrowserDesignDeclarationSchema = z
-  .object({
-    property: z.string().regex(/^[a-zA-Z][a-zA-Z0-9-]{0,127}$/),
-    value: z.string().max(4096),
-    previousValue: z.string().max(4096),
-    placeholderValue: z.string().max(4096).optional(),
-  })
-  .strict();
-
-const agentBrowserAttachmentSchema = z.discriminatedUnion("origin", [
-  agentBrowserTabAttachmentSchema,
-  z
-    .object({
-      id: z.string().trim().min(1).max(256),
-      origin: z.literal("browser-annotation"),
-      tab: agentBrowserTabAttachmentSchema,
-      anchor: agentBrowserAnchorSchema,
-      body: z.string().trim().min(1).max(20_000),
-      screenshotRef: z.string().max(4096).optional(),
-      additionalAnchors: z.array(agentBrowserAnchorSchema).max(20).optional(),
-      createdAt: z.string().datetime().optional(),
-      theme: z.string().max(128).optional(),
-      screenshot: z
-        .object({
-          ref: z.string().max(4096).optional(),
-          filename: z.string().trim().min(1).max(255).optional(),
-          mode: z.enum(["off", "necessary", "always"]).optional(),
-          width: z.number().int().positive().optional(),
-          height: z.number().int().positive().optional(),
-          deviceScaleFactor: z.number().finite().positive().optional(),
-        })
-        .strict()
-        .optional(),
-      // Task 91：PR diff 评审字段（对齐 Codex resolved/thread/unread/author）。全可选，向后兼容。
-      reviewThreadId: z.string().max(256).optional(),
-      inReplyToId: z.string().max(256).optional(),
-      isResolved: z.boolean().optional(),
-      resolvedAt: z.string().max(64).optional(),
-      resolvedBy: z.enum(["user", "agent"]).optional(),
-      author: z
-        .object({
-          kind: z.enum(["user", "agent"]),
-          name: z.string().max(256).optional(),
-        })
-        .strict()
-        .optional(),
-      readAt: z.string().max(64).optional(),
-    })
-    .strict(),
-  z
-    .object({
-      id: z.string().trim().min(1).max(256),
-      origin: z.literal("browser-design-change"),
-      tab: agentBrowserTabAttachmentSchema,
-      anchor: agentBrowserAnchorSchema,
-      originalStyles: z.record(z.string().max(128), z.string().max(4096)),
-      proposedStyles: z.record(z.string().max(128), z.string().max(4096)),
-      declarations: z
-        .array(agentBrowserDesignDeclarationSchema)
-        .max(64)
-        .optional(),
-      groupId: z.string().max(256).optional(),
-      text: z
-        .object({
-          previousValue: z.string().max(4096),
-          value: z.string().max(4096),
-        })
-        .strict()
-        .optional(),
-      body: z.string().trim().min(1).max(20_000).optional(),
-      screenshotRef: z.string().max(4096).optional(),
-    })
-    .strict(),
-]);
-
 export const agentSendInputSchema = z
   .object({
     threadId: z.string().min(1),
@@ -268,10 +109,6 @@ export const agentSendInputSchema = z
     messageAttachments: z.array(agentMessageAttachmentInputSchema).optional(),
     commentAttachments: z
       .array(agentDiffCommentAttachmentSchema)
-      .max(100)
-      .optional(),
-    browserAttachments: z
-      .array(agentBrowserAttachmentSchema)
       .max(100)
       .optional(),
     messageMetadata: z.record(z.string(), z.unknown()).optional(),
@@ -305,26 +142,6 @@ export const agentSendInputSchema = z
       .optional(),
   })
   .superRefine((input, ctx) => {
-    input.browserAttachments?.forEach((attachment, index) => {
-      if (
-        (attachment.origin !== "browser-annotation" &&
-          attachment.origin !== "browser-design-change") ||
-        !attachment.screenshotRef
-      )
-        return;
-      const embeddedThread =
-        /^browser-review-screenshot:([^:]+):[a-f0-9-]{36}$/i.exec(
-          attachment.screenshotRef,
-        )?.[1];
-      if (embeddedThread !== input.threadId) {
-        ctx.addIssue({
-          code: "custom",
-          path: ["browserAttachments", index, "screenshotRef"],
-          message:
-            "browser annotation screenshotRef 必须是当前 threadId 的合法引用",
-        });
-      }
-    });
     if (!input.messageParts) return;
     const visibleMessage = input.messageParts
       .map((part) =>
@@ -1098,7 +915,6 @@ export const agentUpdateQueuedMessageInputSchema = z.object({
     .array(agentDiffCommentAttachmentSchema)
     .max(100)
     .optional(),
-  browserAttachments: z.array(agentBrowserAttachmentSchema).max(100).optional(),
 });
 
 export const agentRecentThreadMessagesInputSchema = z.object({

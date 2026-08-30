@@ -1,7 +1,6 @@
-import type { ThreadBrowserWorkspace } from '@/components/right-panel/right-panel-browser-state'
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import type { AgentBrowserAnchor, AgentBrowserAnnotationAttachment, AgentBrowserDesignChangeAttachment, CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
+import type { CodingGitAction, CodingReviewSummary, CodingTurnPhase, CodingVerificationRecord, FileRef, RuntimeCodingFileChange } from '@lume/shared'
 import type { ThreadFileLineSelection } from '@/components/agent/thread-file-links'
 import {
   closeFileTab,
@@ -81,65 +80,6 @@ export const rightPanelFileEditorStatesAtom = atomWithStorage<Record<string, Rig
 export const rightPanelFileTabsAtom = atomWithStorage<Record<string, RightPanelPersistedFileWorkspace>>(
   'right-panel-file-tabs',
   {},
-)
-
-export const rightPanelBrowserWorkspacesAtom = atomWithStorage<Record<string, ThreadBrowserWorkspace>>(
-  'right-panel-browser-workspaces',
-  {},
-  {
-    getItem(key, initialValue) {
-      if (typeof localStorage === 'undefined') return initialValue
-      try { return JSON.parse(localStorage.getItem(key) ?? '') as Record<string, ThreadBrowserWorkspace> } catch { return initialValue }
-    },
-    setItem(key, value) {
-      if (typeof localStorage === 'undefined') return
-      const layoutOnly = Object.fromEntries(Object.entries(value).map(([threadId, workspace]) => [threadId, {
-        tabs: workspace.tabs.map((tab) => ({ id: tab.id })),
-        ...(workspace.activeTabId ? { activeTabId: workspace.activeTabId } : {}),
-        recentlyClosed: workspace.recentlyClosed.map((tab) => ({ id: tab.id })),
-      }]))
-      localStorage.setItem(key, JSON.stringify(layoutOnly))
-    },
-    removeItem(key) { if (typeof localStorage !== 'undefined') localStorage.removeItem(key) },
-  },
-)
-
-export interface BrowserPageDraft {
-  purpose: 'annotation' | 'tweaks'
-  anchor: AgentBrowserAnchor
-  originalStyles: Record<string, string>
-  body?: string
-  proposedStyles?: Record<string, string>
-}
-
-export const browserPageDraftsAtom = atomWithStorage<Record<string, BrowserPageDraft>>(
-  'browser-page-drafts',
-  {},
-)
-
-export interface BrowserReviewSession {
-  ownerThreadId: string
-  tabId: string
-  url: string
-  generation: number
-  screenshotRef?: string
-  items: Array<{
-    id: string
-    status: 'valid' | 'stale'
-    attachment: AgentBrowserAnnotationAttachment | AgentBrowserDesignChangeAttachment
-    createdAt: string
-  }>
-  updatedAt: string
-}
-
-export const browserReviewSessionsAtom = atomWithStorage<Record<string, BrowserReviewSession>>(
-  'browser-review-sessions-v1',
-  {},
-)
-
-export const browserReviewCoachmarkSeenAtom = atomWithStorage<boolean>(
-  'browser-review-coachmark-seen-v1',
-  false,
 )
 
 export interface CodingReviewPreferences {
@@ -344,7 +284,7 @@ export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: Right
   }
 
   if (action.type === 'activate-side-chat') {
-    // side-chat 只切到 chat 视图（runtime activeItem），不进 persisted tabs，避免污染 browser/files tab 栏（见 #18）
+    // side-chat 只切到 chat 视图（runtime activeItem），不进 persisted tabs，避免污染 files tab 栏（见 #18）
     set(rightPanelFileWorkspacesAtom, {
       ...runtime,
       [action.threadId]: { ...runtimeWorkspace, activeItem: { kind: 'function', type: 'chat' } },

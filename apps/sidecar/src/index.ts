@@ -1,5 +1,5 @@
 import { argv } from "node:process";
-import { createHmac, randomUUID, timingSafeEqual } from "node:crypto";
+import { randomUUID } from "node:crypto";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
 import { initProxySettings, getActiveProxyConfig } from "./services/system/proxy-settings-manager";
@@ -12,7 +12,7 @@ import {
 import { getWorkspaceMcpManager } from "./services/mcp/workspace-mcp-manager";
 import { imRuntimeManager } from "./services/im/im-runtime-manager";
 import { abortActiveFeishuRunCards, recoverInterruptedFeishuRunCards } from "./services/im/feishu/feishu-card-stream";
-import { AGENT_IPC_CHANNELS, IM_IPC_CHANNELS, BROWSER_HANDLER_WAIT_CAP_MS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
+import { AGENT_IPC_CHANNELS, IM_IPC_CHANNELS, QUIET_RPC_METHODS, summarizeValue, extractCorrelationIds, toLumeRpcErrorShape, RPC_ERROR_CODES } from "@lume/shared";
 import { subscribeSubagentAnnounceEvent } from "./services/agent-runtime/subagents/subagent-announce-service";
 import { createRpcHandlers } from "./rpc/create-rpc-handlers";
 import { cleanupExpiredTrash, subscribeThreadListChanged, onAgentThreadTitleChanged } from "./services/agent/agent-thread-manager";
@@ -28,7 +28,6 @@ import {
   shouldEmitLog,} from "./services/infra/logger";
 import { assertSidecarNativeRuntime } from "./services/infra/native-runtime";
 import { createProcessRpcTransport, MAX_RPC_MESSAGE_UNITS } from "./rpc/process-transport";
-import { browserRpcErrorFromPayload, classifyBrowserRequestTimeout, classifyBrowserRpcResponse } from "./rpc/browser-rpc-sequence";
 import { createReverseRpcRenderClient } from "./services/agent-runtime/tools/web/reverse-rpc-render-client";
 import { setSidecarRenderClient } from "./services/agent-runtime/tools/web/render-client-holder";
 import { setPersistedSettingsMutationWriter } from "./services/system/settings-store";
@@ -38,16 +37,12 @@ import type { LumeLogDigestPolicy } from "@lume/shared";
 import { installPrivilegedCredential } from "./services/infra/privileged-auth";
 import { installSecretEncryptionKey } from "./services/infra/secret-crypto";
 import { installConnectionVaultKey } from "./services/channel/connection-credential-store";
-import { createBrowserBroker } from "./services/browser/browser-broker";
-import { setActiveBrowserBroker } from "./services/browser/browser-broker-holder";
-import { ExternalChromeTransport } from "./services/browser/external-chrome-transport";
 import { startBackgroundProcessRecovery } from "./services/agent/background-process-recovery";
 import { closePlanningTodoStore } from "./services/planning/planning-todo-store";
 import { reconcilePlanningStartOperations } from "./services/planning/planning-start-service";
 import { closePlanningCalendarStore } from "./services/planning/planning-calendar-store";
 import { startPlanningReminderScheduler, stopPlanningReminderScheduler } from "./services/planning/planning-reminder-scheduler";
 import { getNodeReplRuntimeRegistry } from "./services/agent-runtime/tools/node-repl/node-repl-runtime-registry";
-import { getBrowserToolSessionRegistry } from "./services/agent-runtime/tools/browser/browser-tool-session";
 import { installRuntimeHostPorts } from "./services/agent/agent-runtime-ports-binding";
 
 // 组合根最先注入 agent-runtime 的宿主端口(#289):任何 RPC/服务调用之前。
@@ -61,20 +56,11 @@ const rpcTransport = createProcessRpcTransport(
   process.env.LUME_SIDECAR_TRANSPORT === "stdio" ? { parentPort: null } : undefined,
 );
 const SETTINGS_ACK_TIMEOUT_MS = 10_000;
-// 容纳 desktop 最长常规请求:handler 上限 BROWSER_HANDLER_WAIT_CAP_MS(shared
-// 单源)+ 非 guest-optional 方法先吃的 waitForGuest ≤10s + RPC 余量。desktop 的
-// navigate/打字/批量串行已各自有界(#638),browserAuth 入确认级长等待档。
-const BROWSER_REQUEST_TIMEOUT_MS = BROWSER_HANDLER_WAIT_CAP_MS + 15_000;
-const BROWSER_CONFIRMATION_TIMEOUT_MS = 5 * 60_000;
 const pendingSettingsMutations = new Map<string, {
   resolve: () => void;
   reject: (error: Error) => void;
   timeout: ReturnType<typeof setTimeout>;
 }>();
-const pendingBrowserMainRequests = new Map<string, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeout: ReturnType<typeof setTimeout> }>();
-const browserRpcSecret = process.env.LUME_BROWSER_RPC_SECRET ? Buffer.from(process.env.LUME_BROWSER_RPC_SECRET, "base64url") : null;
-let browserRpcOutboundSequence = 0;
-let browserRpcInboundSequence = 0;
 
 function writeResponse(response: JsonRpcResponse): void {
   rpcTransport.send(JSON.stringify(response));
@@ -82,61 +68,6 @@ function writeResponse(response: JsonRpcResponse): void {
 
 function writeNotification(method: string, params: unknown): void {
   rpcTransport.send(JSON.stringify({ method, params }));
-}
-
-function requestBrowserMain(request: import("@lume/shared").BrowserActionRequest): Promise<unknown> {
-  if (!browserRpcSecret) return Promise.reject(new Error("browser transport unavailable"));
-  return new Promise((resolve, reject) => {
-    const sequence = ++browserRpcOutboundSequence;
-    // policy:confirm 等用户在弹窗操作;tab_browser_auth_request(browserAuth
-    // 凭据窗)同样等用户输入,desktop 侧 expiresAt 允许至 +5min。
-    // 超时错误码与等待时长同源于 classifyBrowserRequestTimeout：确认类报
-    // confirmation_timeout（动作必然未执行），其余报 executed_unknown（可能
-    // 已执行）——两类不能塌缩（#659/#606）。
-    const timeoutCode = classifyBrowserRequestTimeout(request.method);
-    const timeoutMs = timeoutCode === "confirmation_timeout"
-      ? BROWSER_CONFIRMATION_TIMEOUT_MS
-      : BROWSER_REQUEST_TIMEOUT_MS;
-    const timeout = setTimeout(() => {
-      pendingBrowserMainRequests.delete(request.requestId);
-      reject(Object.assign(
-        new Error(timeoutCode === "confirmation_timeout" ? "confirmation timed out" : "browser request timed out"),
-        { code: timeoutCode },
-      ));
-    }, timeoutMs);
-    pendingBrowserMainRequests.set(request.requestId, { resolve, reject, timeout });
-    rpcTransport.send(JSON.stringify({
-      id: request.requestId,
-      method: "browser:request",
-      params: request,
-      browserRpc: { sequence, mac: browserRpcMac("sidecar->main", sequence, request.requestId, request) }
-    }));
-  });
-}
-
-function browserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: number, id: string, body: unknown): string {
-  if (!browserRpcSecret) throw new Error("browser transport unavailable");
-  return createHmac("sha256", browserRpcSecret)
-    .update(`${direction}|${sequence}|${id}|${JSON.stringify(body)}`)
-    .digest("base64url");
-}
-
-// #611：desktop 死亡/通道断开时批量 reject in-flight 请求——否则全部干等到超时后
-// 误报 executed_unknown（「可能已执行」，而实际包根本没送达）。断连是明确的
-// browser_unavailable（可重试），与业务错误分离。
-rpcTransport.onClose(() => {
-  for (const [requestId, pending] of [...pendingBrowserMainRequests]) {
-    pendingBrowserMainRequests.delete(requestId);
-    clearTimeout(pending.timeout);
-    pending.reject(Object.assign(new Error("browser transport disconnected"), { code: RPC_ERROR_CODES.BROWSER_UNAVAILABLE }));
-  }
-});
-
-function verifyBrowserRpcMac(direction: "sidecar->main" | "main->sidecar", sequence: number, id: string, body: unknown, mac: unknown): boolean {
-  if (typeof mac !== "string" || !browserRpcSecret) return false;
-  const expected = Buffer.from(browserRpcMac(direction, sequence, id, body));
-  const actual = Buffer.from(mac);
-  return expected.length === actual.length && timingSafeEqual(expected, actual);
 }
 
 if ((process as typeof process & { parentPort?: unknown }).parentPort) {
@@ -166,29 +97,7 @@ const SLOW_RPC_MS = 2_000;
 // resolves pending renders) and the agent runtime (so WebFetch can invoke it).
 const renderClient = createReverseRpcRenderClient({ sendNotification: writeNotification });
 setSidecarRenderClient(renderClient);
-const externalChromeTransport = process.env.LUME_CHROME_BRIDGE_ENDPOINT && process.env.LUME_CHROME_BRIDGE_PAIRING_ID && process.env.LUME_CHROME_BRIDGE_GENERATION && process.env.LUME_CHROME_BRIDGE_HOST_PATH && process.env.LUME_CHROME_BRIDGE_HOST_SHA256
-  ? new ExternalChromeTransport({
-    // 与内置后端同治:不传会落回默认 10s,extension 后端的 30s 等待同样被先杀误报(#603)
-    requestTimeoutMs: BROWSER_REQUEST_TIMEOUT_MS,
-    endpoint: process.env.LUME_CHROME_BRIDGE_ENDPOINT,
-    pairingId: process.env.LUME_CHROME_BRIDGE_PAIRING_ID,
-    generation: Number(process.env.LUME_CHROME_BRIDGE_GENERATION),
-    hostPath: process.env.LUME_CHROME_BRIDGE_HOST_PATH,
-    hostSha256: process.env.LUME_CHROME_BRIDGE_HOST_SHA256,
-    onStateChange: (state) => {
-      browserBroker?.setExternalState({ hostConnected: state.connected });
-      writeNotification("browser:backend-state", state);
-    },
-  })
-  : undefined;
-const browserBroker = createBrowserBroker({ request: requestBrowserMain }, externalChromeTransport, (state) => {
-  writeNotification("browser:backend-state", state);
-});
-void externalChromeTransport?.start().catch((error) => {
-  writeNotification("browser:backend-state", { connected: false, error: error instanceof Error ? error.message : "bridge unavailable" });
-});
-setActiveBrowserBroker(browserBroker);
-const handlers = createRpcHandlers({ writeNotification, renderClient, browserBroker });
+const handlers = createRpcHandlers({ writeNotification, renderClient });
 
 function envAutostartEnabled(key: string, defaultEnabled: boolean): boolean {
   const value = process.env[key];
@@ -217,25 +126,8 @@ async function handleRpcLine(line: string): Promise<void> {
     return;
   }
 
+  // 无 method 的载荷是对请求的响应：本进程没有挂起的出站请求，静默丢弃。
   if (payload.id !== undefined && !payload.method) {
-    const responsePayload = payload as JsonRpcResponse & { browserRpc?: { sequence?: unknown; mac?: unknown } };
-    const sequence = responsePayload.browserRpc?.sequence;
-    const mac = responsePayload.browserRpc?.mac;
-    const body = responsePayload.error ? { ok: false, error: responsePayload.error.code } : { ok: true, result: responsePayload.result };
-    const macOk = typeof sequence === "number" && verifyBrowserRpcMac("main->sidecar", sequence, String(payload.id), body, mac);
-    const verdict = classifyBrowserRpcResponse(typeof sequence === "number" ? sequence : 0, macOk, browserRpcInboundSequence);
-    if (verdict === "advance") browserRpcInboundSequence = sequence as number;
-    const pending = pendingBrowserMainRequests.get(String(payload.id));
-    if (!pending) return; // 迟到响应（请求已超时删除）：advance 已治愈序列号，丢弃结果
-    clearTimeout(pending.timeout);
-    pendingBrowserMainRequests.delete(String(payload.id));
-    if (verdict === "reject-pending") {
-      pending.reject(new Error("browser transport authentication failed"));
-      return;
-    }
-    const response = responsePayload;
-    if (response.error) pending.reject(browserRpcErrorFromPayload(response.error));
-    else pending.resolve(response.result);
     return;
   }
 
@@ -254,13 +146,6 @@ async function handleRpcLine(line: string): Promise<void> {
   if (method === "system.log-ack") {
     const batchId = (payload.params as { batchId?: unknown } | null)?.batchId;
     if (typeof batchId === "string") acknowledgeLogBatch(batchId);
-    return;
-  }
-
-  // #838②:desktop 推送的 tab 生命周期事件(外部关 tab/导航换代),收到即清
-  // list_tabs 微缓存,失效窗口 0 延迟;fire-and-forget 无 ack,不涉 #829 运输语义
-  if (method === "browser:tab-closed" || method === "browser:tab-changed") {
-    getBrowserToolSessionRegistry().invalidateTabsCaches();
     return;
   }
 
@@ -349,11 +234,6 @@ async function handleRpcLine(line: string): Promise<void> {
     pendingSettingsMutations.delete(mutationId);
     if (params?.ok === true) pending.resolve();
     else pending.reject(new Error(typeof params?.error === "string" ? params.error : "desktop settings persistence failed"));
-    return;
-  }
-
-  if (method === "browser:settings" && payload.id === undefined) {
-    await handlers[method]?.(payload.params);
     return;
   }
 
@@ -635,7 +515,6 @@ async function boot(): Promise<void> {
     await Promise.allSettled([
       getWorkspaceMcpManager().disposeAll(),
       stopAutomationRunner(),
-      externalChromeTransport?.close() ?? Promise.resolve(),
     ]);
     const { memoryJobService } = await import("./services/memory-v2/job-service");
     await memoryJobService.waitForSettled(60_000);
@@ -648,9 +527,6 @@ async function boot(): Promise<void> {
       pending.reject(new Error("sidecar is stopping"));
     }
     pendingSettingsMutations.clear();
-    for (const pending of pendingBrowserMainRequests.values()) { clearTimeout(pending.timeout); pending.reject(new Error("sidecar is stopping")); }
-    pendingBrowserMainRequests.clear();
-    setActiveBrowserBroker(null);
     closePlanningCalendarStore();
     closePlanningTodoStore();
     flushLogTransport();

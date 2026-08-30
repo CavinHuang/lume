@@ -16,7 +16,6 @@ function baseEmitter(overrides: Partial<AgentRuntimeEmitter> = {}): AgentRuntime
     onComplete: () => {},
     onError: () => {},
     onAskUserQuestion: () => {},
-    onBrowserAuthRequest: () => {},
     onToolPermissionRequest: () => {},
     ...overrides
   };

@@ -52,8 +52,6 @@ import {
 } from "../../memory-v2/conversation-summary";
 import type { LumeRunState } from "../runtime-core/run-state";
 import { getEffectiveLumeConfig } from "../../system/lume-config-service";
-import { getActiveBrowserBroker } from "../../browser/browser-broker-holder";
-import { getBrowserToolSessionRegistry } from "../tools/browser/browser-tool-session";
 
 const log = createLogger("lume-runner");
 
@@ -406,22 +404,6 @@ export class LumeRunner {
       try {
         await session.dispose();
       } finally {
-        const browserSession = getBrowserToolSessionRegistry().take(runtime.sessionId);
-        if (browserSession) {
-          await getActiveBrowserBroker()?.dispatch({
-            method: "finalize_tabs",
-            // #613:回合结束不再静默清光 agent tab——active tab 兜底标 handoff
-            // 保活进 workspace store(下轮 context-assembler 重新注入上下文),
-            // 其余 tab 维持原清理语义。仅限 activeTabId,防 turnId 恒定导致
-            // 全线程 tab 无差别保活堆积。
-            params: browserSession.activeTabId
-              ? { keep: [{ tabId: browserSession.activeTabId, status: "handoff" as const }] }
-              : {},
-            threadId: runtime.sessionId,
-            browserSessionId: browserSession.browserSessionId,
-            browserTurnId: browserSession.browserTurnId,
-          }).catch(() => undefined);
-        }
         options.unregisterAbort(runtime.sessionId);
       }
     }
@@ -485,7 +467,6 @@ export class LumeRunner {
         permissionMode: input.permissionMode,
         messageAttachments: input.messageAttachments,
         commentAttachments: input.commentAttachments,
-        browserAttachments: input.browserAttachments,
         messageMetadata: input.messageMetadata,
         planningClientSubmissionId: input.trustedPlanningClientSubmissionId,
         emitSdkMessage: this.emit.onSdkMessage,
@@ -503,7 +484,6 @@ export class LumeRunner {
           });
         },
         emitAskUserQuestion: this.emit.onAskUserQuestion,
-        emitBrowserAuthRequest: this.emit.onBrowserAuthRequest,
         emitDesktopActionRequest: this.emit.onDesktopActionRequest,
         emitToolPermissionRequest: this.emit.onToolPermissionRequest,
         emitTodoUpdated: this.emit.onTodoUpdated,

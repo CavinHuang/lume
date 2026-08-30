@@ -11,11 +11,11 @@ describe("agentSendInputSchema messageParts", () => {
   test("accepts matching canonical capability refs", () => {
     const parsed = agentSendInputSchema.parse({
       threadId: "thread-1",
-      userMessage: "Use lume-plugin://browser",
+      userMessage: "Use lume-plugin://weather",
       clientSubmissionId: "8312d8d1-bc7b-4e93-a2ca-b6a4ca8ad503",
       messageParts: [
         { type: "text", text: "Use " },
-        { type: "capability_ref", occurrenceId: "plugin-1", uri: "lume-plugin://browser" }
+        { type: "capability_ref", occurrenceId: "plugin-1", uri: "lume-plugin://weather" }
       ]
     });
     expect(parsed.messageParts).toHaveLength(2);
@@ -27,12 +27,12 @@ describe("agentSendInputSchema messageParts", () => {
     const quotedBlock = '<quoted_context source="agent-history" label="Agent 历史" message_id="m1" role="assistant">\n引用内容\n</quoted_context>\n\n';
     const parsed = agentSendInputSchema.parse({
       threadId: "thread-1",
-      userMessage: quotedBlock + "Use lume-plugin://browser",
+      userMessage: quotedBlock + "Use lume-plugin://weather",
       clientSubmissionId: "8312d8d1-bc7b-4e93-a2ca-b6a4ca8ad503",
       messageParts: [
         { type: "text", text: quotedBlock },
         { type: "text", text: "Use " },
-        { type: "capability_ref", occurrenceId: "plugin-1", uri: "lume-plugin://browser" }
+        { type: "capability_ref", occurrenceId: "plugin-1", uri: "lume-plugin://weather" }
       ]
     });
     expect(parsed.messageParts).toHaveLength(3);

@@ -7,7 +7,6 @@ import { normalizeHostLevel, parseLumeLogLine, type LumeHostLogLine } from "@lum
 import { writeLogRecord } from "../../../infra/logger";
 import type {
   JsExecInput,
-  NodeReplBrowserAuthRequest,
   NodeReplComputerUseResult,
   NodeReplContentBlock,
   NodeReplExecutionResult,
@@ -339,38 +338,12 @@ export class JsonlNodeReplRuntimeClient implements NodeReplRuntimeClient {
       }
       return;
     }
-    if (message.method === "browser.request") {
-      if (!active?.options?.browserRequest) {
-        this.writeHostResult(message.id, false, undefined, "Browser Broker is unavailable");
-        return;
-      }
-      try {
-        const args = isRecord(message.args) ? message.args : {};
-        if (typeof args.method !== "string" || !isRecord(args.params)) throw new Error("invalid browser request");
-        const value = await active.options.browserRequest({ method: args.method, params: args.params as Record<string, unknown> }, active.abortController.signal);
-        this.writeHostResult(message.id, true, value);
-      } catch (error) {
-        this.writeHostResult(message.id, false, undefined, error instanceof Error ? error.message : "Browser Broker request failed");
-      }
-      return;
-    }
-    if (message.method !== "browserAuth.request" || !active?.options?.emitBrowserAuthRequest) {
-      this.writeHostResult(message.id, true, { status: "unavailable" });
-      return;
-    }
-
-    try {
-      const result = await active.options.emitBrowserAuthRequest(
-        isRecord(message.args) ? message.args as NodeReplBrowserAuthRequest : {},
-        active.abortController.signal
-      );
-      this.writeHostResult(message.id, true, result);
-    } catch {
-      this.writeHostResult(message.id, true, { status: "unavailable" });
-    }
+    // Unknown host call: acknowledge so the sandbox does not hang on a
+    // response that will never arrive.
+    this.writeHostResult(message.id, true, { status: "unavailable" });
   }
 
-  // A host call (tool approval, browser request, ...) can wait on the user far
+  // A host call (tool approval, ...) can wait on the user far
   // longer than the exec deadline; while it is in flight, re-arm the exec's
   // pending timeout to a one-shot lease so the sandbox thread is not torn down.
   private extendExecDeadline(active: ActiveExec): void {
@@ -427,7 +400,6 @@ export function buildNodeReplChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEn
   const bundledClients = bundledRoot
     ? [
       { permission: "computerUse", path: join(bundledRoot, "computer-use", "scripts", "computer-use-client.mjs") },
-      { permission: "browser", path: join(bundledRoot, "browser", "scripts", "browser-client.mjs") },
     ].filter((client) => existsSync(client.path))
     : [];
 
@@ -435,7 +407,7 @@ export function buildNodeReplChildEnv(base: NodeJS.ProcessEnv): NodeJS.ProcessEn
   const bundledPermissions = new Set(bundledClients.map((client) => client.permission));
   const permissions = uniqueStrings([
     ...readStringArray(manifest.permissions).filter((permission) =>
-      (permission !== "computerUse" && permission !== "browser") || bundledPermissions.has(permission)
+      permission !== "computerUse" || bundledPermissions.has(permission)
     ),
     ...bundledPermissions,
   ]);

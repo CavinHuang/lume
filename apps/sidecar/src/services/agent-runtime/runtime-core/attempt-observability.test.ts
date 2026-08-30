@@ -68,7 +68,6 @@ describe("runtime-core attempt observability", () => {
         onComplete: () => {},
         onError: () => {},
         onAskUserQuestion: () => {},
-        onBrowserAuthRequest: () => {},
         onToolPermissionRequest: () => {}
       },
       {
