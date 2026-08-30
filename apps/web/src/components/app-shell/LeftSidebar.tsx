@@ -261,6 +261,15 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
     }
   }
 
+  const openVault = () => {
+    const vaultId = '__vault__'
+    setActiveTabId(vaultId)
+
+    if (!tabs.find((tab) => tab.id === vaultId)) {
+      setTabs((previous) => [...previous, { id: vaultId, type: 'vault', title: 'Obsidian' }])
+    }
+  }
+
   const openLume = () => {
     const lumeId = '__lume__'
     setActiveTabId(lumeId)
@@ -474,6 +483,9 @@ export function LeftSidebar({ forceCollapsed = false }: { forceCollapsed?: boole
         return
       case 'skills':
         openSkills()
+        return
+      case 'vault':
+        openVault()
         return
       case 'automations':
         openAutomation()

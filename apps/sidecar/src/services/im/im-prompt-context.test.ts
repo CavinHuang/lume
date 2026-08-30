@@ -19,6 +19,14 @@ describe("buildImUserMessage", () => {
     expect(buildImUserMessage(msg({ peerKind: "group", senderId: "ou_a" }))).toBe("ou_a: 正文内容");
   });
 
+  test("群聊优先使用发送者显示名，避免把 open_id 暴露给模型", () => {
+    expect(buildImUserMessage(msg({
+      peerKind: "group",
+      senderId: "ou_a",
+      senderName: "张三"
+    }))).toBe("张三: 正文内容");
+  });
+
   test("有引用时以 XML 块注入（含不可信声明），正文包进 user_message", () => {
     const result = buildImUserMessage(msg(), { senderId: "ou_q", text: "被引用的消息" });
     expect(result).toBe(

@@ -85,7 +85,7 @@ import { announceSubagentCompletion } from "../subagents/subagent-announce-servi
 import { getRuntimeHostPorts } from "../host-ports";
 import { createLogger } from "../../infra/logger";
 import { getRuntimeCoreSessionDir } from "./session-store";
-import { createMainTaskTools } from "../task/task-tools";
+import { createMainTaskTools, type TaskCompletionSnapshot } from "../task/task-tools";
 import { ToolRuntime, type ToolRuntimeDiagnostic } from "../tools/tool-runtime";
 import {
   bindPlanningExecutionRun,
@@ -212,6 +212,8 @@ export function buildRuntimeCoreTools(input: {
   computerUseSurface?: ResolvedComputerUseSurface;
   chatType?: AgentSendInput["chatType"];
   threadType?: AgentSendInput["threadType"];
+  /** 主线程 Task 运行时创建后回调（完成门控/轮次提醒据此访问触碰任务快照） */
+  onMainTaskRuntime?: (runtime: { getTouchedTasks: () => TaskCompletionSnapshot[] }) => void;
   permissionMode?: AgentSendInput["permissionMode"];
   subagentDefinition?: AgentDefinition;
   messageMetadata?: Record<string, unknown>;
@@ -333,6 +335,7 @@ export function buildRuntimeCoreTools(input: {
         },
       })
     : undefined;
+  if (mainTaskRuntime) input.onMainTaskRuntime?.(mainTaskRuntime);
 
   const mainTaskTools = mainTaskRuntime?.tools ?? [];
 
@@ -340,7 +343,7 @@ export function buildRuntimeCoreTools(input: {
     ...AgentTool,
     name: "Delegate",
     description:
-      "Delegate a task to an INDEPENDENT, sidebar-visible child session. Use for long-running or important tasks that should be tracked as their own conversation. The child session appears under the parent in the sidebar. Returns the child's final result. Only one level of delegation is allowed. Set run_in_background=true to start the child asynchronously and return immediately with a delegationId; later collect results with WaitForDelegations.",
+      "Delegate a task to an INDEPENDENT, sidebar-visible child session. Use for long-running or important tasks that should be tracked as their own conversation. The child session appears under the parent in the sidebar. Returns the child's final result. Only one level of delegation is allowed. Set run_in_background=true to start the child asynchronously and return immediately with a delegationId; later collect results with WaitForDelegations. If you have claimed a main-agent Task (TaskUpdate in_progress) for this work, pass its task_ref to link the delegation to the Task.",
     inputSchema: {
       type: "object",
       properties: {

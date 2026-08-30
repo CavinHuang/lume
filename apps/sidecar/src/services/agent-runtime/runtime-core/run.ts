@@ -118,6 +118,7 @@ import {
   buildRuntimeCoreTools,
   isAutomationExecution,
 } from "./run-tools";
+import { getTaskCompletionBlocker } from "../task/task-tools";
 import {
   fingerprintToolSchema,
   estimateToolSchemaTokens,
@@ -861,6 +862,8 @@ async function createRuntimeCoreSessionImpl(
     toolInput: Parameters<typeof codingRunTracker.observe>[0],
   ): void => {
     codingRunTracker.observe(toolInput);
+    // 反作弊证据：清单簿记（Task 工具/TodoWrite）之外的实际工具活动
+    if (!LIST_TOOL_NAMES.has(toolInput.toolName)) sawNonTaskToolUse = true;
     const task = toolInput.result._meta?.task as
       { id?: string; status?: string } | undefined;
     if (task?.id && task.status === "running") {
@@ -1186,12 +1189,30 @@ async function createRuntimeCoreSessionImpl(
     }
   }
 
+  // 主线程 Task 运行时（完成门控/轮次提醒据此读取本 run 触碰过的任务快照）
+  const automationExecution = isAutomationExecution(input.messageMetadata);
+  let mainTaskRuntimeRef: { getTouchedTasks: () => { id: string; subject: string; status: "pending" | "in_progress" | "completed" }[] } | undefined
+  let turnsSinceTaskToolUse = 0
+  // 双清单系统共用提醒计数：任一清单工具被使用即视为已维护状态
+  // 只统计清单写操作（对齐 ZCode：仅 TodoWrite 写重置计数，纯读取不推迟提醒）
+  const LIST_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskStop", "TodoWrite"]);
+  const TASK_REMINDER_THRESHOLD = 6;
+  // 完成门控自动推进预算：防止模型反复敷衍导致门控与收尾无限拉锯（对齐 ZCode 验证器迭代预算）
+  const MAX_TASK_GATE_ROUNDS = 3;
+  let taskGateRoundsUsed = 0;
+  const MAX_TODO_GATE_ROUNDS = 3;
+  let todoGateRoundsUsed = 0;
+  // 反作弊：本 run 是否出现过清单簿记以外的工具活动（false + 全部标记完成 = 可疑空转收尾）
+  let sawNonTaskToolUse = false;
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     filesRoot: input.filesRoot,
     plansRoot: input.plansRoot,
     artifactsRoot: input.artifactsRoot,
     sessionId: input.lumeSessionId,
+    onMainTaskRuntime: (runtime) => {
+      mainTaskRuntimeRef = runtime;
+    },
     workspaceId: input.workspaceId,
     workspaceSlug: input.workspaceSlug,
     channelId: input.channelId,
@@ -1341,7 +1362,40 @@ async function createRuntimeCoreSessionImpl(
       }
     }
     const coding = await codingRunTracker.completionGuard();
-    return coding ?? getTodoCompletionBlocker(currentTodoState);
+    if (coding) return coding;
+    const todoBlocker = getTodoCompletionBlocker(currentTodoState);
+    if (todoBlocker) {
+      // automation run 不受 todo 门控劫持；预算耗尽只放行 todo 门本身，
+      // 后续门控（Task）仍需独立评估——两个预算互相独立，不互相饥饿
+      if (!automationExecution && todoGateRoundsUsed < MAX_TODO_GATE_ROUNDS) {
+        todoGateRoundsUsed += 1;
+        return todoBlocker;
+      }
+    }
+    // Task 持久任务门控：只看本 run 触碰过的任务，历史陈旧 pending 不劫持收尾；
+    // 计划任务不受门控（自动化收尾节奏由其自身编排决定）
+    if (automationExecution) return undefined;
+    const touchedAll = mainTaskRuntimeRef?.getTouchedTasks() ?? [];
+    const executingTasks = touchedAll.filter((task) => task.status === "in_progress");
+    if (executingTasks.length > 0) {
+      if (taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS) return undefined;
+      taskGateRoundsUsed += 1;
+      const lastRoundNote = taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS
+        ? "\n（这是最后一次自动推进，其后 run 将结束——请如实说明剩余任务的真实状态，不要虚假标记完成。）"
+        : "";
+      return getTaskCompletionBlocker(executingTasks) + lastRoundNote;
+    }
+    // 反作弊（对齐 ZCode 验证器"仅 represented by 清单更新 → fail"）：本 run
+    // 批量标记完成任务、却除清单簿记外无任何工具活动 → 插入一次证据确认
+    // （共享门控预算：最多质疑 3 轮，其后放行收尾）
+    if (!sawNonTaskToolUse && taskGateRoundsUsed < MAX_TASK_GATE_ROUNDS) {
+      const completedTasks = touchedAll.filter((task) => task.status === "completed");
+      if (completedTasks.length >= 2) {
+        taskGateRoundsUsed += 1;
+        return `[task incomplete] 本 run 将 ${completedTasks.length} 个任务标记为完成，但除任务清单更新外未观察到任何实际执行（工具调用）。若任务确实无需工具即已完成，请逐项重申各自的实际产出后再次收尾；若尚未真正执行，请现在执行。`;
+      }
+    }
+    return undefined;
   };
   const enableFileCheckpointing = input.permissionMode !== "plan";
   // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
@@ -1474,6 +1528,42 @@ async function createRuntimeCoreSessionImpl(
     // registerGeneratedRuntimeTools 不再需要：生成的 ToolSearch/ExecuteTool 定义自带
     // runtimeMetadata，canUseTool 直接从定义组装 descriptor（#541 双载体合一）
     ...(input.userMessage?.trim() ? { completionGuard } : {}),
+    turnRuntimeContext: async ({ toolsUsedLastTurn }) => {
+      // 计划任务不提醒：自动化 run 的收尾节奏由其自身编排决定
+      if (automationExecution) return undefined;
+      try {
+        const listToolUsed = toolsUsedLastTurn.some((name) => LIST_TOOL_NAMES.has(name));
+        if (listToolUsed) {
+          turnsSinceTaskToolUse = 0;
+          return undefined;
+        }
+        turnsSinceTaskToolUse += 1;
+        if (turnsSinceTaskToolUse < TASK_REMINDER_THRESHOLD) return undefined;
+        // 注入后重置计数，避免每轮重复打扰（下次再攒满阈值才提醒）
+        turnsSinceTaskToolUse = 0;
+        // 双清单覆盖：持久 Task 优先，其次会话内 TodoWrite 清单（对齐 ZCode 单清单提醒语义）
+        const unfinishedTasks = (mainTaskRuntimeRef?.getTouchedTasks() ?? []).filter((task) => task.status !== "completed");
+        if (unfinishedTasks.length > 0) {
+          const preview = unfinishedTasks
+            .slice(0, 5)
+            .map((task) => `${task.status === "in_progress" ? "[~]" : "[ ]"} ${task.subject}`)
+            .join("\n");
+          return `[task reminder] 本次执行创建或更新的任务仍有 ${unfinishedTasks.length} 项未完成，且已多轮未更新任务状态。如正在处理某项：先 TaskUpdate 将它置为唯一的 in_progress；完成一项立即标记 completed；全部完成后提交最终状态。\n${preview}`;
+        }
+        const unfinishedTodos = (currentTodoState?.todos ?? []).filter((todo) => todo.status !== "completed");
+        if (unfinishedTodos.length > 0) {
+          const preview = unfinishedTodos
+            .slice(0, 5)
+            .map((todo) => `${todo.status === "in_progress" ? "[~]" : "[ ]"} ${todo.content}`)
+            .join("\n");
+          return `[todo reminder] TodoWrite 已多轮未更新，当前清单仍有 ${unfinishedTodos.length} 项未完成。请继续按清单推进：开始一项时将它设为唯一的 in_progress，完成并验证后立即标记 completed；全部完成后提交全量完成状态。\n${preview}`;
+        }
+        return undefined;
+      } catch (error) {
+        log.warn("task reminder 注入失败", { error: error instanceof Error ? error.message : String(error) });
+        return undefined;
+      }
+    },
     additionalDirectories:
       additionalDirectories.length > 0 ? additionalDirectories : undefined,
     // 只放行写入的内部管理根（skills/plugins/.lume/plans/files），不进提示词
