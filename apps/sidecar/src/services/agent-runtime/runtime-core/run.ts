@@ -1189,7 +1189,7 @@ async function createRuntimeCoreSessionImpl(
 
   // 主线程 Task 运行时（完成门控/轮次提醒据此读取本 run 触碰过的任务快照）
   const automationExecution = isAutomationExecution(input.messageMetadata);
-  let mainTaskRuntimeRef: { getUnfinishedTouchedTasks: () => { id: string; subject: string; status: "pending" | "in_progress" | "completed" }[] } | undefined
+  let mainTaskRuntimeRef: { getTouchedTasks: () => { id: string; subject: string; status: "pending" | "in_progress" | "completed" }[] } | undefined
   let turnsSinceTaskToolUse = 0
   const TASK_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop"]);
   const TASK_REMINDER_THRESHOLD = 6;
@@ -1357,7 +1357,8 @@ async function createRuntimeCoreSessionImpl(
     // Task 持久任务门控：只看本 run 触碰过的任务，历史陈旧 pending 不劫持收尾；
     // 计划任务不受门控（自动化收尾节奏由其自身编排决定）
     if (automationExecution) return undefined;
-    return getTaskCompletionBlocker(mainTaskRuntimeRef?.getUnfinishedTouchedTasks() ?? []);
+    const touchedTasks = (mainTaskRuntimeRef?.getTouchedTasks() ?? []).filter((task) => task.status === "in_progress");
+    return getTaskCompletionBlocker(touchedTasks);
   };
   const enableFileCheckpointing = input.permissionMode !== "plan";
   // SDK 工具入口的 containment 根集（#546）必须与 guardrail 的
@@ -1501,7 +1502,7 @@ async function createRuntimeCoreSessionImpl(
         }
         turnsSinceTaskToolUse += 1;
         if (turnsSinceTaskToolUse < TASK_REMINDER_THRESHOLD) return undefined;
-        const unfinished = mainTaskRuntimeRef?.getUnfinishedTouchedTasks() ?? [];
+        const unfinished = (mainTaskRuntimeRef?.getTouchedTasks() ?? []).filter((task) => task.status !== "completed");
         if (unfinished.length === 0) return undefined;
         // 注入后重置计数，避免每轮重复打扰（下次再攒满阈值才提醒）
         turnsSinceTaskToolUse = 0;

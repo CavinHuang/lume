@@ -213,7 +213,7 @@ export function buildRuntimeCoreTools(input: {
   chatType?: AgentSendInput["chatType"];
   threadType?: AgentSendInput["threadType"];
   /** 主线程 Task 运行时创建后回调（完成门控/轮次提醒据此访问触碰任务快照） */
-  onMainTaskRuntime?: (runtime: { getUnfinishedTouchedTasks: () => TaskCompletionSnapshot[] }) => void;
+  onMainTaskRuntime?: (runtime: { getTouchedTasks: () => TaskCompletionSnapshot[] }) => void;
   permissionMode?: AgentSendInput["permissionMode"];
   subagentDefinition?: AgentDefinition;
   messageMetadata?: Record<string, unknown>;

@@ -9,21 +9,21 @@ export interface TaskCompletionSnapshot {
   status: "pending" | "in_progress" | "completed";
 }
 
-/* ZCode 式完成门控：run 收尾时若本 run 触碰过的任务仍有未完成项，
- * 返回继续推进的反馈文本（无未完成项时返回 undefined 放行收尾）。 */
+/* ZCode 式完成门控：run 收尾时若仍有执行中（in_progress）的本 run 任务，
+ * 返回继续推进的反馈文本。只拦执行中遗留——"创建未启动"的 pending 是合法
+ * 的跨回合持久化状态（Task 管跨回合），不得劫持收尾。 */
 export function getTaskCompletionBlocker(tasks: TaskCompletionSnapshot[]): string | undefined {
-  const remaining = tasks.filter((task) => task.status !== "completed");
-  if (remaining.length === 0) return undefined;
-  const active = remaining.find((task) => task.status === "in_progress");
-  const preview = remaining
+  const executing = tasks.filter((task) => task.status === "in_progress");
+  if (executing.length === 0) return undefined;
+  const preview = executing
     .slice(0, 5)
-    .map((task) => `${task.status === "in_progress" ? "[~]" : "[ ]"} ${task.subject}`)
+    .map((task) => `[~] ${task.subject}`)
     .join("\n");
-  const omitted = remaining.length > 5 ? `\n...以及另外 ${remaining.length - 5} 项` : "";
+  const omitted = executing.length > 5 ? `\n...以及另外 ${executing.length - 5} 项` : "";
   return [
-    `[task incomplete] 当前任务清单仍有 ${remaining.length} 项未完成${active ? `，正在进行：${active.subject}` : ""}。`,
+    `[task incomplete] 有 ${executing.length} 个任务仍处于执行中（in_progress），但 run 即将结束。`,
     preview + omitted,
-    "不要直接给出最终答复。请继续实际执行：开始一项前用 TaskUpdate 将它认领为唯一的 in_progress，完成并验证后立即标记 completed，再推进下一项；确实无法完成的用 TaskStop 释放回 pending 并说明原因。不要仅为了关闭清单而虚假标记完成。",
+    "请完成它们并标记 completed；确实无法完成的用 TaskStop 释放回 pending 并说明原因。不要仅为了结束 run 而虚假标记完成。",
   ].join("\n");
 }
 
@@ -36,7 +36,7 @@ export function createMainTaskTools(input: {
 }): {
   tools: ToolDefinition[];
   store: ReturnType<typeof createFileBackedTaskStore>;
-  getUnfinishedTouchedTasks: () => TaskCompletionSnapshot[];
+  getTouchedTasks: () => TaskCompletionSnapshot[];
 } {
   // 本 run 触碰过的任务快照（create/update 的主变更任务），供完成门控界定范围：
   // 只门控本 run 实际做过的工作，避免历史线程的陈旧 pending 劫持新 run 收尾。
@@ -61,10 +61,12 @@ export function createMainTaskTools(input: {
   return {
     tools,
     store,
-    getUnfinishedTouchedTasks: () =>
-      [...touchedTasks.values()]
-        .filter((task) => task.status !== "completed")
-        .map((task) => ({ id: task.id, subject: task.subject, status: task.status })),
+    getTouchedTasks: () =>
+      [...touchedTasks.values()].map((task) => ({
+        id: task.id,
+        subject: task.subject,
+        status: task.status,
+      })),
   };
 }
 
