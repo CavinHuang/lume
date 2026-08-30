@@ -1192,11 +1192,14 @@ async function createRuntimeCoreSessionImpl(
   let mainTaskRuntimeRef: { getTouchedTasks: () => { id: string; subject: string; status: "pending" | "in_progress" | "completed" }[] } | undefined
   let turnsSinceTaskToolUse = 0
   // 双清单系统共用提醒计数：任一清单工具被使用即视为已维护状态
-  const LIST_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "TaskStop", "TodoWrite"]);
+  // 只统计清单写操作（对齐 ZCode：仅 TodoWrite 写重置计数，纯读取不推迟提醒）
+  const LIST_TOOL_NAMES = new Set(["TaskCreate", "TaskUpdate", "TaskStop", "TodoWrite"]);
   const TASK_REMINDER_THRESHOLD = 6;
   // 完成门控自动推进预算：防止模型反复敷衍导致门控与收尾无限拉锯（对齐 ZCode 验证器迭代预算）
   const MAX_TASK_GATE_ROUNDS = 3;
   let taskGateRoundsUsed = 0;
+  const MAX_TODO_GATE_ROUNDS = 3;
+  let todoGateRoundsUsed = 0;
   const toolset = buildRuntimeCoreTools({
     cwd: input.cwd,
     filesRoot: input.filesRoot,
@@ -1357,7 +1360,13 @@ async function createRuntimeCoreSessionImpl(
     const coding = await codingRunTracker.completionGuard();
     if (coding) return coding;
     const todoBlocker = getTodoCompletionBlocker(currentTodoState);
-    if (todoBlocker) return todoBlocker;
+    if (todoBlocker) {
+      // automation run 同样不受 todo 门控劫持；轮次预算与 Task 门控一致
+      if (automationExecution) return undefined;
+      if (todoGateRoundsUsed >= MAX_TODO_GATE_ROUNDS) return undefined;
+      todoGateRoundsUsed += 1;
+      return todoBlocker;
+    }
     // Task 持久任务门控：只看本 run 触碰过的任务，历史陈旧 pending 不劫持收尾；
     // 计划任务不受门控（自动化收尾节奏由其自身编排决定）
     if (automationExecution) return undefined;

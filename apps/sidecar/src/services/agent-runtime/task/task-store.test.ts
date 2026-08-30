@@ -72,6 +72,39 @@ describe("FileBackedTaskStore", () => {
     });
   });
 
+  test("同任务僵尸：新 run 直接续做时自动释放旧认领", async () => {
+    await withStore(async (store) => {
+      const run1 = { ...context(), runId: "parent-run-1" };
+      const run2 = { ...context(), runId: "parent-run-2" };
+      const created = await store.create({ subject: "Resume" }, run1);
+      await store.update({ taskId: created.task.id, status: "in_progress", expectedRevision: created.revision }, run1);
+
+      // 新 run 不带 revision/claimToken 直接续做 → 旧认领自动释放并重新认领
+      const reclaimed = await store.update({ taskId: created.task.id, status: "in_progress" }, run2);
+      expect(reclaimed.claimToken).toBeString();
+    });
+  });
+
+  test("宽容 fence：缺省 revision/claimToken 走通认领-完成闭环", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Lenient" }, context());
+      const claimed = await store.update({ taskId: created.task.id, status: "in_progress" }, context());
+      expect(claimed.claimToken).toBeString();
+      const completed = await store.update({ taskId: created.task.id, status: "completed" }, context());
+      expect(completed.task.status).toBe("completed");
+    });
+  });
+
+  test("宽容 fence：跨 actor 缺省 claimToken 被拒，显式错 token 仍被拒", async () => {
+    await withStore(async (store) => {
+      const created = await store.create({ subject: "Cross" }, context());
+      await store.update({ taskId: created.task.id, status: "in_progress" }, context());
+      const otherActor = { ...context(), actorId: "main:other" };
+      await expect(store.update({ taskId: created.task.id, status: "completed" }, otherActor)).rejects.toThrow("claim token");
+      await expect(store.update({ taskId: created.task.id, status: "completed", claimToken: "bogus" }, context())).rejects.toThrow("claim token");
+    });
+  });
+
   test("同一父 Run 最多认领同一 Task 三次，新 Run 可重新尝试", async () => {
     await withStore(async (store) => {
       const runContext = { ...context(), runId: "parent-run-1" };

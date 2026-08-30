@@ -626,6 +626,14 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     changed: Map<string, StoredTask>,
     updateTask: (item: StoredTask) => void,
   ): void {
+    // 同任务僵尸自愈：上一 run 认领本任务后 run 终止，新 run 直接续做（最常见的
+    // 恢复路径）时先自动释放旧认领再认领；非僵尸（同 run / 栅栏在飞 / 无 parentRun）
+    // 给出 TaskStop 指引。
+    if (task.status === "in_progress") {
+      if (!this.tryReleaseZombieClaim(task, context)) {
+        throw new Error(`Task ${task.id} is already in_progress: run TaskStop on it first to release the previous claim, then claim again`);
+      }
+    }
     if (task.status !== "pending") throw new Error("Only pending Tasks can be claimed");
     if (task.blockedBy.some((id) => this.readTask(id)?.status !== "completed")) throw new Error("Task is blocked by unfinished dependencies");
     if (this.readTasks().some((item) => this.executorFence(item))) throw new Error("Task list is fenced until the previous executor terminates");

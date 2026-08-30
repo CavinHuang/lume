@@ -116,7 +116,7 @@ export function createTodoTool(opts: {
   return defineTool({
     name: 'TodoWrite',
     description:
-      'Update the complete session todo list. Keep exactly one task in_progress, mark each completed immediately after actual completion, and call TodoWrite again before the final answer so no task remains unfinished.',
+      'Update the complete session todo list. Send the full list each call; it replaces the previous one. Keep exactly one task in_progress, mark each completed immediately after actual completion, and call TodoWrite again before the final answer so no task remains unfinished.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,

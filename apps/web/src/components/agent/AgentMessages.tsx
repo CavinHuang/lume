@@ -74,6 +74,7 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
   const loadedThreadsRef = useRef<Set<string>>(new Set())
   const loadedRuntimeEventThreadsRef = useRef<Set<string>>(new Set())
   const [visibleThreadMessages, setVisibleThreadMessages] = useState<AgentMessage[]>([])
+  const [taskCapsuleVisible, setTaskCapsuleVisible] = useState(false)
   const [showScrollButton, setShowScrollButton] = useState(false)
   const [unreadCount, setUnreadCount] = useState(0)
   const projectionRef = useRef<ProjectionRef | null>(null)
@@ -400,6 +401,11 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     return null
   }, [runtimeEvents])
 
+  // 任务事件变化时重置胶囊可见性（新事件先隐藏，胶囊挂载后经回调回报实际可见性）
+  useEffect(() => {
+    setTaskCapsuleVisible(false)
+  }, [latestTaskProgress])
+
   const items: React.ReactNode[] = []
   let latestUserMessageIndex = -1
   for (let i = liveMessages.length - 1; i >= 0; i -= 1) {
@@ -464,9 +470,9 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
         </div>
       </div>
       <AgentHistorySelectionLayer threadId={threadId} rootRef={contentRef} />
-      {latestTaskProgress && <TaskProgressCapsule event={latestTaskProgress} />}
-      {/* 任务系统与 todo 面板同位悬浮，task.progress 存在时以任务胶囊为准 */}
-      <TodoPanel data={latestTaskProgress ? null : latestTodo} running={streaming} />
+      {/* 胶囊可见时 todo 面板让位；胶囊终态自动消失后 todo 面板恢复，不因事件存在而永久压制 */}
+      {latestTaskProgress && <TaskProgressCapsule event={latestTaskProgress} onVisibleChange={setTaskCapsuleVisible} />}
+      <TodoPanel data={taskCapsuleVisible ? null : latestTodo} running={streaming} />
       <ScrollMinimap
         items={minimapItems}
         scrollContainerRef={scrollContainerRef}

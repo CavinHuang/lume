@@ -6,7 +6,7 @@ import TaskRows, { type TaskDetail, type TaskRow as TaskRowModel } from './TaskR
 export function getTaskProgressStatusText(event: TaskProgressViewEvent): string {
   const current = event.currentTaskId
     ? event.tasks.find((task) => task.id === event.currentTaskId)
-    : event.tasks.find((task) => task.status === 'running')
+    : event.tasks.find((task) => task.status === 'running' || task.status === 'in_progress')
   // 进行中优先展示 activeForm（进行时文案），终态回落 subject/title
   const preferActiveForm = event.status !== 'completed' && event.status !== 'failed' && event.status !== 'cancelled'
   const title = (preferActiveForm && current?.activeForm) || current?.title || current?.description || current?.id
@@ -27,7 +27,7 @@ const AUTO_DISMISS_STATUSES = new Set(['completed', 'cancelled'])
  * 任务进度胶囊：悬浮在输入框上方，展示「任务进行中 n/m」；
  * hover 弹出任务面板（TaskRows 组件）。终态（完成/取消）短暂停留后自动消失，失败保留。
  */
-export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent }) {
+export function TaskProgressCapsule({ event, onVisibleChange }: { event: TaskProgressViewEvent, onVisibleChange?: (visible: boolean) => void }) {
   const [hovered, setHovered] = useState(false)
   const [dismissed, setDismissed] = useState(() => AUTO_DISMISS_STATUSES.has(event.status))
 
@@ -39,6 +39,12 @@ export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent })
     const timeoutId = window.setTimeout(() => setDismissed(true), 4000)
     return () => window.clearTimeout(timeoutId)
   }, [event])
+
+  // 向宿主回报实际可见性（终态自动消失/卸载即 false），供双清单让位判断
+  useEffect(() => {
+    onVisibleChange?.(!dismissed)
+    return () => onVisibleChange?.(false)
+  }, [dismissed])
 
   if (dismissed) return null
 
