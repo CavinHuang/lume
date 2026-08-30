@@ -14,12 +14,12 @@
 import { randomUUID } from "node:crypto";
 
 import {
-  BROWSER_API_SUPPORT_OVERRIDES_BY_BACKEND,
-  BROWSER_CAPABILITIES,
   browserCommandResultSchema,
   browserErrorPayload,
+  buildIabDescriptor,
   cancellationSideEffect,
   firstBrowserParseIssuePath,
+  type BrowserBackendDescriptor,
   type BrowserCommand,
   type BrowserCommandContext,
   type BrowserCommandResult,
@@ -32,14 +32,11 @@ import { getActiveBrowserMainBridge, type BrowserMainBridge } from "./bridge-tra
 
 /* ── 描述符 ────────────────────────────────────────────────────────── */
 
-/** ZCode 后端描述符(guide §14/§18.4;generation 刻意不对模型暴露)。 */
-export interface BrowserIabDescriptor {
-  id: string;
-  generation: number;
-  type: "iab";
-  name: string;
-  capabilities: { browser: typeof BROWSER_CAPABILITIES; tab: [] };
-  apiSupportOverrides: readonly string[];
+/**
+ * ZCode 后端描述符(guide §14/§18.4;generation 刻意不对模型暴露)。
+ * 共享形状单源自 shared/descriptor.ts;provider 元数据为本端附加字段。
+ */
+export interface BrowserIabDescriptor extends BrowserBackendDescriptor {
   metadata: { provider: string };
 }
 
@@ -105,12 +102,7 @@ export function createIabBrowserBackend(options: CreateIabBrowserBackendOptions 
   let protocolBlockedMessage: string | null = null;
 
   const descriptor: BrowserIabDescriptor = {
-    id: `iab:${uuid()}`,
-    generation: now(),
-    type: "iab",
-    name: "Lume In-app Browser",
-    capabilities: { browser: BROWSER_CAPABILITIES, tab: [] },
-    apiSupportOverrides: [...BROWSER_API_SUPPORT_OVERRIDES_BY_BACKEND.iab],
+    ...buildIabDescriptor({ id: `iab:${uuid()}`, generation: now(), name: "Lume In-app Browser" }),
     metadata: { provider: "lume-desktop-iab" },
   };
 

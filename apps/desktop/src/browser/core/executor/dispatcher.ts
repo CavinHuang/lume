@@ -61,6 +61,11 @@
  *     已随去重一并修正;text-input 的 dispatchTextInput(ZCode 名
  *     pasteTextIntoFocusedTarget/Ug)为规范实现,本文件保留同名选项适配层
  *     (includeRichText → richTextFallback)。
+ *   - fill 路由为 Lume 扩展:ZCode 执行器 jg 无 fill 分支(fill 仅存在于
+ *     locator 操作面,落默认分支 capability_unsupported);Lume 按协议 46 命令面
+ *     补齐 case "fill",复用 type 机制(可选 ref 点击聚焦 + Fj 粘贴管线),
+ *     replaceInputValue:true 承载替换语义(locator fill 的 replace !== false
+ *     分支保留在 locator-session.ts)。
  *
  * 注意:screenshot/snapshot/evaluate/element-info 各模块 import 本文件的
  * readState(函数声明,提升绑定),运行期互相调用,ESM 活绑定安全。
@@ -145,6 +150,7 @@ export interface ScreenshotCommandParams { clip?: { x: number; y: number; width:
 export interface SnapshotCommandParams { maxElements?: number; includeHidden?: boolean }
 export interface ClickCommandParams { ref?: string; x?: number; y?: number; button?: "left" | "right" | "middle"; doubleClick?: boolean; modifiers?: string[] }
 export interface TypeCommandParams { ref?: string; text: string }
+export interface FillCommandParams { ref?: string; text: string }
 export interface PressCommandParams { ref?: string; key: string; modifiers?: string[] }
 export interface CuaKeypressCommandParams { keys: string[] }
 export interface ScrollCommandParams { ref?: string; x?: number; y?: number }
@@ -499,6 +505,24 @@ export async function handleType(view: ControlledView, params: TypeCommandParams
     await dispatchClickAt(view, point, "left", false)
   }
   await pasteTextIntoFocusedTarget(view, params.text)
+  return done({ ok: true, state: readState(view.webContents) })
+}
+
+/**
+ * handleFill(ZCode 执行器 jg 无 fill 分支;Lume 补齐,语义取自 02 源码
+ * IabPlaywrightLocatorSession.perform 的 fill 操作:聚焦目标 → 经 Fj 粘贴管线
+ * 以 replaceInputValue 投递文本)。与 handleType 同构(可选 ref 点击聚焦),
+ * 差异仅在 replaceInputValue:true —— fill 的协议形状 {ref?, text} 无 replace
+ * 字段,恒为替换(replace !== false);追加语义由 type 承载,locator fill 的
+ * replace:false 分支保留在 locator-session.ts。
+ */
+export async function handleFill(view: ControlledView, params: FillCommandParams, done: CommandDone): Promise<BrowserCommandResult> {
+  if (params.ref) {
+    const point = await resolveRefCenter(view, params.ref)
+    if (!point) return done(refNotFound(params.ref))
+    await dispatchClickAt(view, point, "left", false)
+  }
+  await pasteTextIntoFocusedTarget(view, params.text, { replaceInputValue: true })
   return done({ ok: true, state: readState(view.webContents) })
 }
 
@@ -905,6 +929,8 @@ export async function executeBrowserCommandOnView(
         return await handleClick(view, commandParams<ClickCommandParams>(command), done)
       case "type":
         return await handleType(view, commandParams<TypeCommandParams>(command), done)
+      case "fill":
+        return await handleFill(view, commandParams<FillCommandParams>(command), done)
       case "press":
         return await handlePress(view, commandParams<PressCommandParams>(command), done)
       case "cuaKeypress":
@@ -936,7 +962,7 @@ export async function executeBrowserCommandOnView(
           ok: false,
           error: {
             code: "capability_unsupported",
-            message: `command ${command.method} is not supported by executor (available: navigate/getState/back/forward/reload/screenshot/snapshot/click/type/press/scroll/hover/select/check/drag/elementInfo/evaluate)`,
+            message: `command ${command.method} is not supported by executor (available: navigate/getState/back/forward/reload/screenshot/snapshot/click/type/fill/press/scroll/hover/select/check/drag/elementInfo/evaluate)`,
           },
         })
     }

@@ -6,8 +6,10 @@
  *   - errors.ts:稳定错误码 + sideEffect 语义
  *   - protocol.ts:46 命令 zod 单源(请求上下文/结果 meta/playwright/录制)
  *   - capabilities.ts:capability 描述符 + apiSupport 矩阵
+ *   - descriptor.ts:IAB 后端描述符 ZCode 形状单源工厂
  */
 export * from "./constants"
 export * from "./errors"
 export * from "./protocol"
 export * from "./capabilities"
+export * from "./descriptor"

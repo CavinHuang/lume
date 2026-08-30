@@ -18,7 +18,11 @@
  *  - ZCode 的 webview 直接渲染在 responsive 画布 DOM 内(transform 缩放就地生效);
  *    本池沿用 Lume 的宿主层浮置方案,画布只出目标矩形,surfaceScale 由面板经
  *    `setSurfaceScale` 写入 wrapper 的 `data-browser-surface-scale`,供截图校验循环读取。
+ *  - 桌面 zoom 补偿(ZCode XTt 的 VTt 分解)落在池内 webview 元素上:面板经
+ *    `setZoomCompensation` 写入,池把 webview 撑到 100%*layoutScale 再 scale(transformScale)
+ *    (origin 左上);截图定影期间清除补偿保持 1:1 采样,releaseStaging 时恢复。
  */
+import { IDENTITY_ZOOM_COMPENSATION, type BrowserZoomCompensation } from './browser-panel-logic'
 
 /** 旧池宿主层 id(pointer-events-none fixed inset-0,位于应用覆盖层之上)。 */
 const BROWSER_GUEST_HOST_ID = 'lume-browser-webview-pool'
@@ -55,6 +59,7 @@ interface GuestEntry {
   stopPositioning?: () => void
   target?: HTMLElement
   staged: boolean
+  zoomCompensation: BrowserZoomCompensation
 }
 
 /** 池宿主层(带 pending 挂载表,复用旧池"跨 React 挂载点共享"思路)。 */
@@ -90,6 +95,8 @@ export interface BrowserWebviewPool {
   releaseStaging(tabId: string): void
   /** 面板把当前 surfaceScale 写给校验循环(responsive zoom 补偿折算)。 */
   setSurfaceScale(tabId: string, scale: number): void
+  /** 写入桌面 zoom 补偿(VTt 分解;恒等时清除)。 */
+  setZoomCompensation(tabId: string, compensation: BrowserZoomCompensation): void
   /** 订阅 webview 生命周期事件;guest 销毁时自动解绑。 */
   onGuestEvent(tabId: string, type: string, listener: BrowserGuestEventListener): () => void
 }
@@ -126,6 +133,35 @@ export function createBrowserWebviewPool(partition = 'persist:lume-browser'): Br
   function setEntryHidden(entry: GuestEntry) {
     entry.wrapper.style.visibility = 'hidden'
     entry.wrapper.style.pointerEvents = 'none'
+  }
+
+  /**
+   * 桌面 zoom 补偿(ZCode XTt):transformScale !== 1 时 webview 以
+   * `100% * layoutScale` 布局 + scale(transformScale)(origin 左上)渲染,
+   * wrapper(overflow hidden,贴合画布矩形)负责裁剪;恒等时全部复位。
+   */
+  function applyZoomCompensation(entry: GuestEntry) {
+    const { layoutScale, transformScale } = entry.zoomCompensation
+    const webviewStyle = entry.webview.style
+    delete entry.wrapper.dataset.browserLayoutScale
+    delete entry.wrapper.dataset.browserTransformScale
+    webviewStyle.position = ''
+    webviewStyle.top = ''
+    webviewStyle.left = ''
+    webviewStyle.transform = ''
+    webviewStyle.transformOrigin = ''
+    webviewStyle.width = '100%'
+    webviewStyle.height = '100%'
+    if (transformScale === 1) return
+    webviewStyle.position = 'absolute'
+    webviewStyle.top = '0'
+    webviewStyle.left = '0'
+    webviewStyle.transform = `scale(${transformScale})`
+    webviewStyle.transformOrigin = 'top left'
+    webviewStyle.width = `${100 * layoutScale}%`
+    webviewStyle.height = `${100 * layoutScale}%`
+    entry.wrapper.dataset.browserLayoutScale = String(layoutScale)
+    entry.wrapper.dataset.browserTransformScale = String(transformScale)
   }
 
   function emitGuestEvent(entry: GuestEntry, event: Event) {
@@ -258,7 +294,7 @@ export function createBrowserWebviewPool(partition = 'persist:lume-browser'): Br
       // ZCode XTt:恢复期首 src = lume-browser-restore://pending,否则 about:blank;
       // 真实导航由面板在 dom-ready 后 loadURL 驱动。
       webview.setAttribute('src', options.restorePending ? 'lume-browser-restore://pending' : 'about:blank')
-      const entry: GuestEntry = { tabId, wrapper, webview, generation: 0, staged: false }
+      const entry: GuestEntry = { tabId, wrapper, webview, generation: 0, staged: false, zoomCompensation: IDENTITY_ZOOM_COMPENSATION }
       entries.set(tabId, entry)
       bindGuestEventRelay(entry)
       resolve(webview)
@@ -309,6 +345,8 @@ export function createBrowserWebviewPool(partition = 'persist:lume-browser'): Br
       entry.wrapper.style.clipPath = ''
       entry.wrapper.style.pointerEvents = 'none'
       entry.wrapper.style.opacity = '0.001'
+      // 定影期清除 zoom 补偿变换,保证 guest 表面 1:1 对齐请求视口。
+      entry.webview.style.transform = ''
       entry.webview.style.width = `${viewport.width}px`
       entry.webview.style.height = `${viewport.height}px`
     },
@@ -318,8 +356,7 @@ export function createBrowserWebviewPool(partition = 'persist:lume-browser'): Br
       entry.staged = false
       entry.wrapper.dataset.browserGuestStaged = 'false'
       entry.wrapper.style.opacity = ''
-      entry.webview.style.width = '100%'
-      entry.webview.style.height = '100%'
+      applyZoomCompensation(entry)
       if (entry.target && entry.target.isConnected) positionAt(entry, entry.target)
       else setEntryHidden(entry)
     },
@@ -327,6 +364,13 @@ export function createBrowserWebviewPool(partition = 'persist:lume-browser'): Br
       const entry = entries.get(tabId)
       if (!entry) return
       entry.wrapper.dataset.browserSurfaceScale = String(scale)
+    },
+    setZoomCompensation(tabId, compensation) {
+      const entry = entries.get(tabId)
+      if (!entry) return
+      entry.zoomCompensation = compensation
+      // 截图定影期间不套补偿(保持 1:1 采样),releaseStaging 时恢复。
+      if (!entry.staged) applyZoomCompensation(entry)
     },
     onGuestEvent(tabId, type, listener) {
       let byType = guestListeners.get(tabId)

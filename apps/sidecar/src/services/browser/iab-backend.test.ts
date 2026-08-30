@@ -74,10 +74,18 @@ describe("IAB 后端描述符", () => {
     expect(descriptor.generation).toBe(1234);
     expect(descriptor.type).toBe("iab");
     expect(descriptor.name).toBe("Lume In-app Browser");
-    expect(descriptor.capabilities.browser).toEqual(BROWSER_CAPABILITIES);
+    // plugin-facade 消费形状:capability 元素以 id 为主键(name → id 映射)。
+    expect(descriptor.capabilities.browser).toEqual(
+      BROWSER_CAPABILITIES.map((capability) => ({
+        id: capability.name,
+        title: capability.title,
+        description: capability.description,
+      })),
+    );
     expect(descriptor.capabilities.tab).toEqual([]);
+    // apiSupportOverrides[key] 短路查询形状:命中即 true。
     for (const override of BROWSER_API_SUPPORT_OVERRIDES_BY_BACKEND.iab) {
-      expect(descriptor.apiSupportOverrides).toContain(override);
+      expect(descriptor.apiSupportOverrides[override]).toBe(true);
     }
     expect(descriptor.metadata.provider).toBe("lume-desktop-iab");
   });

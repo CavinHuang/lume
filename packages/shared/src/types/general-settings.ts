@@ -43,6 +43,14 @@ export interface GeneralSettingsAgentIsland {
 }
 
 /**
+ * 浏览器 agent 工具注册门控(sidecar browser-availability 读取)。
+ * 字段缺失/undefined 视为启用,显式 false 关闭。
+ */
+export interface GeneralSettingsBrowser {
+  agentToolsEnabled?: boolean
+}
+
+/**
  * 灵动岛窗口在 Windows/Linux 桌面坐标系下的持久化位置。
  * - 缺省（undefined/null）：首次启动或 macOS 路径，由 window 模块走默认吸附逻辑。
  * - 由 main 在窗口 `move` 事件后防抖写入；createIslandWindow 读取并按
@@ -72,6 +80,12 @@ export interface GeneralSettings {
   chatFontScale: ChatFontScale
   agentIsland: GeneralSettingsAgentIsland
   /**
+   * 浏览器 agent 工具门控。缺省(字段缺失)视为启用;设置侧显式写入
+   * `agentToolsEnabled: false` 关闭。写入(sidecar 设置持久化)与读取
+   * (sidecar 浏览器门控)共用此类型。
+   */
+  browser?: GeneralSettingsBrowser
+  /**
    * Windows/Linux 灵动岛窗口位置持久化。macOS 贴刘海/原生面板，该字段无副作用。
    */
   islandWindowPosition?: IslandWindowPosition | null
@@ -89,6 +103,7 @@ export interface UpdateGeneralSettingsInput {
   agentMessageAvatarMode?: AgentMessageAvatarMode
   chatFontScale?: ChatFontScale
   agentIsland?: Partial<GeneralSettingsAgentIsland>
+  browser?: Partial<GeneralSettingsBrowser>
   islandWindowPosition?: IslandWindowPosition | null
   logging?: Partial<LumeLoggingSettings>
 }

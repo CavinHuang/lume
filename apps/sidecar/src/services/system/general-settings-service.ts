@@ -215,6 +215,10 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
       ? value.updateSettings
       : undefined;
   const customThemePalettes = sanitizeCustomThemePalettes(value.customThemePalettes);
+  const browser =
+    typeof value.browser === "object" && value.browser !== null
+      ? value.browser
+      : undefined;
 
   return {
     themeMode: isThemeMode(value.themeMode) ? value.themeMode : GENERAL_SETTINGS_DEFAULTS.themeMode,
@@ -272,7 +276,12 @@ function sanitizeGeneralSettings(input: unknown): GeneralSettings {
         typeof value.agentIsland?.enabled === "boolean"
           ? value.agentIsland.enabled
           : GENERAL_SETTINGS_DEFAULTS.agentIsland.enabled
-    }
+    },
+    // 浏览器门控按原样保留(仅接受布尔),缺省时不产出字段,
+    // 保持既有 persisted 形状与缺省即启用的语义。
+    ...(browser && typeof browser.agentToolsEnabled === "boolean"
+      ? { browser: { agentToolsEnabled: browser.agentToolsEnabled } }
+      : {})
   };
 }
 
@@ -416,6 +425,8 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
   // Task 6 fix round 2：bypass cache 读 disk 的 islandWindowPosition，避免 main 写
   // 后 sidecar cache stale 导致 wholesale replace 覆盖丢失。
   const diskIslandWindowPosition = readIslandWindowPositionFromDisk();
+  const browserAgentToolsEnabled =
+    input.browser?.agentToolsEnabled ?? current.browser?.agentToolsEnabled;
   const next: GeneralSettings = {
     themeMode: input.themeMode ?? current.themeMode,
     themePalette: isThemePalette(requestedThemePalette, customThemePalettes)
@@ -452,7 +463,11 @@ export async function updatePersistedGeneralSettings(input: UpdateGeneralSetting
     // 避免破坏现有 toEqual 契约）。
     ...(diskIslandWindowPosition
       ? { islandWindowPosition: diskIslandWindowPosition }
-      : {})
+      : {}),
+    // 浏览器门控:输入未提及且 current 缺省时不写入,与 sanitize 的缺省形状一致。
+    ...(browserAgentToolsEnabled === undefined
+      ? {}
+      : { browser: { agentToolsEnabled: browserAgentToolsEnabled } })
   };
   settings.generalSettings = next;
   await writePersistedSettings(settings);

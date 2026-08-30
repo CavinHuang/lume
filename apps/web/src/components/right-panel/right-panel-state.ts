@@ -1,8 +1,8 @@
 import type { LumeRuntimeEvent, RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 
-export type RightPanelFunction = 'files' | 'chat' | 'vault'
+export type RightPanelFunction = 'files' | 'chat' | 'vault' | 'browser'
 
-export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault']
+export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault', 'browser']
 
 export interface ThreadRightPanelWorkspace {
   tabs: Partial<Record<RightPanelFunction, RightPanelTabState>>
@@ -12,6 +12,7 @@ export type RightPanelTabState =
   | FilesTabState
   | ChatTabState
   | VaultTabState
+  | BrowserTabState
 
 export interface FilesTabState {
   type: 'files'
@@ -20,6 +21,11 @@ export interface FilesTabState {
 /** Obsidian Vault 面板：全局状态（vault/文件选择不在会话间区分），无持久化 tab 状态 */
 export interface VaultTabState {
   type: 'vault'
+}
+
+/** 内嵌浏览器面板（BrowserSidePane）：tab 模型由 browser-workspace-state 承载，这里只记 tab 开合 */
+export interface BrowserTabState {
+  type: 'browser'
 }
 
 /** 右侧面板 side-chat：为当前会话临时配一个问答副窗口（见 #18） */

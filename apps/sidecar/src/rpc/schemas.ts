@@ -1521,6 +1521,11 @@ export const updateGeneralSettingsInputSchema = z.object({
       enabled: z.boolean().optional(),
     })
     .optional(),
+  browser: z
+    .object({
+      agentToolsEnabled: z.boolean().optional(),
+    })
+    .optional(),
   updateSettings: z
     .object({
       autoCheckUpdates: z.boolean().optional(),

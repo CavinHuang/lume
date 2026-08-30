@@ -28,6 +28,14 @@ const sharpNative = resolve(
 );
 const nativeBinary = resolve(DESKTOP_DIR, "resources", "natives", currentNativeTargetId(), "lume-natives.node");
 const ripgrepBinary = resolve(DESKTOP_DIR, "resources", "ripgrep", currentNativeTargetId(), process.platform === "win32" ? "rg.exe" : "rg");
+const playwrightInjectedSource = resolve(
+  DESKTOP_DIR,
+  "node_modules",
+  "playwright-core",
+  "lib",
+  "generated",
+  "injectedScriptSource.js",
+);
 const desktopMain = resolve(DESKTOP_DIR, "dist", "main", "main.mjs");
 const desktopPreload = resolve(DESKTOP_DIR, "dist", "preload", "preload.cjs");
 const browserAuthPreload = resolve(DESKTOP_DIR, "dist", "preload", "browser-auth-preload.cjs");
@@ -49,6 +57,7 @@ const requiredFiles = [
   sharpNative,
   nativeBinary,
   ripgrepBinary,
+  playwrightInjectedSource,
   resolve(REPO_ROOT, "apps", "web", "dist", "index.html"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot-theme.js"),
   resolve(REPO_ROOT, "apps", "web", "dist", "boot.css"),

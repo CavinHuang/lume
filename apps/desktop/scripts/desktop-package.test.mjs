@@ -193,6 +193,29 @@ test('desktop package includes bundled capability plugins', () => {
   assert.match(main, /LUME_BUNDLED_PLUGINS_DIR/)
   assert.match(main, /process\.resourcesPath, 'bundled-plugins'/)
   assert.match(main, /'apps', 'sidecar', 'bundled-plugins'/)
+  // browser 插件随整个 bundled-plugins 目录经 extraResources 原样拷贝,
+  // 此处锁定插件本体(manifest + skill)确实存在于被拷贝的源目录。
+  for (const file of [
+    'apps/sidecar/bundled-plugins/browser/.lume-plugin/plugin.json',
+    'apps/sidecar/bundled-plugins/browser/skills/control-browser/SKILL.md',
+  ]) {
+    assert.equal(existsSync(resolve(REPO_ROOT, file)), true, `missing ${file}`)
+  }
+})
+
+test('injected-loader ships playwright-core as a pinned production dependency', () => {
+  // injected-loader 运行时经 createRequire 从打包后的 main.mjs 解析
+  // playwright-core/lib/generated/injectedScriptSource.js。electron-builder 只把
+  // production dependencies 收进 asar(files 数组不含 node_modules),且
+  // playwright-core >= 1.60 已移除该生成文件,版本必须精确锁定。
+  assert.equal(typeof pkg.dependencies?.['playwright-core'], 'string')
+  assert.doesNotMatch(pkg.dependencies['playwright-core'], /^[\^~]/)
+  assert.equal(
+    existsSync(
+      resolve(DESKTOP_ROOT, 'node_modules', 'playwright-core', 'lib', 'generated', 'injectedScriptSource.js'),
+    ),
+    true,
+  )
 })
 
 test('desktop package includes the Lume logo for the macOS tray', () => {

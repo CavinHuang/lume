@@ -260,11 +260,11 @@ function buildCommand(name: BrowserToolName, args: Record<string, unknown>): Bro
     case "screenshot":
       return { method: "screenshot", ...(tabId !== undefined ? { tabId } : {}), ...pick(args, ["fullPage", "clip"]) } as BrowserCommand;
     case "interact": {
-      // fill 与 type 同构 {ref?, text};desktop 执行器只路由 type(点击聚焦 +
-      // 合成粘贴替换),fill 无路由必返 capability_unsupported —— 工具层直接映射。
+      // fill 与 type 同构 {ref?, text};desktop 执行器已有 fill 路由(聚焦目标 +
+      // replaceInputValue 替换粘贴),fill 直传不再降级映射为 type。
       const action = String(args.action);
       return {
-        method: action === "fill" ? "type" : action,
+        method: action,
         ...(tabId !== undefined ? { tabId } : {}),
         ...interactParams(args),
       } as BrowserCommand;

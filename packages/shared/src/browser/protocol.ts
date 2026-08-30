@@ -402,10 +402,11 @@ const screenshotClip = z
 /**
  * 命令 schema 判别联合。
  *
- * 形状按还原源码逐条对照;仅两个例外(枚举内成员、执行器无路由):
- * - `fill`:与 `type` 同构 {ref?, text};ZCode 执行器 jg 无 fill 分支,到达执行器
- *   将返回 capability_unsupported(枚举收录以保持 46 命令面完整);
- * - `waitFor`:与 locator.waitFor 同构 {selector, state?, timeoutMs?};同样无执行器路由。
+ * 形状按还原源码逐条对照;仅一个例外(枚举内成员、执行器无路由):
+ * - `waitFor`:与 locator.waitFor 同构 {selector, state?, timeoutMs?};执行器无路由。
+ * `fill` 此前同为无路由例外,ZCode 执行器 jg 无该分支;Lume 执行器已按 locator
+ * fill 语义补齐 case(fill = 聚焦目标 + replaceInputValue 替换粘贴),与 type
+ * 同构 {ref?, text}。
  */
 export const browserCommandSchema = z.discriminatedUnion("method", [
   /* ── 导航 ── */

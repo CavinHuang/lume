@@ -1,4 +1,4 @@
-import { Braces, FileDiff, FolderOpen, List, MessageSquare, Package, Plus, X } from 'lucide-react'
+import { Braces, FileDiff, FolderOpen, Globe, List, MessageSquare, Package, Plus, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, type ComponentType } from 'react'
 import { Button } from '@/components/ui/button'
 import {
@@ -37,6 +37,7 @@ const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: PanelIcon
   // chat 仅作类型完备；side-chat 不在 tab 栏主动添加，由划线引用「打开右侧问答」触发（见 #18）
   chat: { label: '问答', Icon: MessageSquare },
   vault: { label: 'Obsidian', Icon: ObsidianIcon },
+  browser: { label: '浏览器', Icon: Globe },
 }
 
 export function buildRightPanelTabItems(

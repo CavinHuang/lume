@@ -377,3 +377,62 @@ describe('淘汰裁决', () => {
     expect(evictions).toBe(0) // disposed,requestEvaluation 直接返回
   })
 })
+
+describe('挂起发起跃迁(beginSuspend/commitSuspend/cancelSuspend)', () => {
+  test('live-background → suspend-pending,generation+1', () => {
+    const coordinator = makeCoordinator()
+    coordinator.upsert(makeRecord({ tabId: 't1', residency: 'live-background' }))
+    const pending = coordinator.beginSuspend('t1')
+    expect(pending?.residency).toBe('suspend-pending')
+    expect(pending?.generation).toBe(1)
+    expect(coordinator.get('t1')?.residency).toBe('suspend-pending')
+  })
+
+  test('live-visible/restoring/suspended/未知 tab → no-op 返回 null', () => {
+    const coordinator = makeCoordinator()
+    expect(coordinator.beginSuspend('missing')).toBeNull()
+    coordinator.upsert(makeRecord({ tabId: 't1', residency: 'live-visible' }))
+    expect(coordinator.beginSuspend('t1')).toBeNull()
+    coordinator.upsert(makeRecord({ tabId: 't2', residency: 'suspended' }))
+    expect(coordinator.beginSuspend('t2')).toBeNull()
+    coordinator.upsert(makeRecord({ tabId: 't3', residency: 'restoring' }))
+    expect(coordinator.beginSuspend('t3')).toBeNull()
+  })
+
+  test('commitSuspend:generation 匹配的 suspend-pending → suspended', () => {
+    const coordinator = makeCoordinator()
+    coordinator.upsert(makeRecord({ tabId: 't1' }))
+    const pending = coordinator.beginSuspend('t1')
+    expect(coordinator.commitSuspend('t1', pending!.generation)?.residency).toBe('suspended')
+  })
+
+  test('commitSuspend:generation 不匹配或状态已推进 → null', () => {
+    const coordinator = makeCoordinator()
+    coordinator.upsert(makeRecord({ tabId: 't1' }))
+    const pending = coordinator.beginSuspend('t1')
+    expect(coordinator.commitSuspend('t1', pending!.generation + 5)).toBeNull()
+    // report 救活后按旧 generation 提交 → null
+    coordinator.report('t1', { loading: true })
+    expect(coordinator.get('t1')?.residency).toBe('live-background')
+    expect(coordinator.commitSuspend('t1', pending!.generation)).toBeNull()
+  })
+
+  test('cancelSuspend:回滚到 visible 对应的 live-* 状态', () => {
+    const coordinator = makeCoordinator()
+    coordinator.upsert(makeRecord({ tabId: 'bg', residency: 'live-background' }))
+    const bg = coordinator.beginSuspend('bg')
+    expect(coordinator.cancelSuspend('bg', bg!.generation)?.residency).toBe('live-background')
+    // 直接 upsert 成 visible=true 的 suspend-pending(恢复存储重建形态)→ 回 live-visible
+    coordinator.upsert(makeRecord({ tabId: 'vis', residency: 'suspend-pending', visible: true }))
+    const vis = coordinator.get('vis')
+    expect(coordinator.cancelSuspend('vis', vis!.generation)?.residency).toBe('live-visible')
+  })
+
+  test('cancelSuspend:generation 不匹配/非 suspend-pending → null', () => {
+    const coordinator = makeCoordinator()
+    coordinator.upsert(makeRecord({ tabId: 't1' }))
+    expect(coordinator.cancelSuspend('t1', 9)).toBeNull()
+    const pending = coordinator.beginSuspend('t1')
+    expect(coordinator.cancelSuspend('t1', pending!.generation + 1)).toBeNull()
+  })
+})

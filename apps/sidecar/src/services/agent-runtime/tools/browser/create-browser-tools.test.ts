@@ -7,7 +7,7 @@
 import { describe, expect, test } from "bun:test";
 
 import {
-  BROWSER_CAPABILITIES,
+  buildIabDescriptor,
   type BrowserCommand,
   type BrowserCommandContext,
   type BrowserCommandResult,
@@ -27,12 +27,7 @@ function capturingBackend(execute: ExecuteFn) {
     commands,
     backend: {
       descriptor: {
-        id: "iab:test",
-        generation: 1,
-        type: "iab" as const,
-        name: "test",
-        capabilities: { browser: BROWSER_CAPABILITIES, tab: [] as [] },
-        apiSupportOverrides: [],
+        ...buildIabDescriptor({ id: "iab:test", generation: 1, name: "test" }),
         metadata: { provider: "test" },
       },
       async execute(input: { context: BrowserCommandContext; command: BrowserCommand }) {
@@ -134,9 +129,9 @@ describe("工具 → 命令映射", () => {
       doubleClick: true,
     });
     expect(await mapOne("interact", { action: "click", x: 10, y: 20 })).toEqual({ method: "click", x: 10, y: 20 });
-    // fill 无执行器路由(desktop 只路由 type),工具层映射为同构的 type 命令。
+    // fill 已有 desktop 执行器路由(聚焦 + 替换粘贴),直传不降级映射为 type。
     expect(await mapOne("interact", { action: "fill", ref: "e3", text: "hello" })).toEqual({
-      method: "type",
+      method: "fill",
       ref: "e3",
       text: "hello",
     });

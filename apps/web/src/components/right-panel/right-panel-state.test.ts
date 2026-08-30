@@ -21,7 +21,8 @@ describe('right-panel-state', () => {
 
     expect(Object.keys(workspace.tabs)).toEqual(['files', 'vault'])
     expect(RIGHT_PANEL_FUNCTION_ORDER.filter((type) => workspace.tabs[type])).toEqual(['files', 'vault'])
-    expect(getAvailableRightPanelFunctions(workspace)).toEqual([])
+    // browser 尚未打开,仍在可用清单里
+    expect(getAvailableRightPanelFunctions(workspace)).toEqual(['browser'])
   })
 
   test('closing a function only changes persisted function presence', () => {

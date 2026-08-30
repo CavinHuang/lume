@@ -14,13 +14,16 @@
  *
  * 语义偏差(ZCode 面板语义在 Lume 的落法,均为设计文档 §1 R4 允许的简化):
  *   1. webview 承载用 Lume 的浮置池(webview-pool.ts)而非文档内渲染;
- *      responsive 缩放折算出的 surfaceScale 经 pool.setSurfaceScale 供截图校验读取。
- *   2. desktopZoomFactor 取常量 1:Lume renderer 未暴露桌面 zoom 档位
- *      (ZCode SEt 经宿主 API 读取),layout/transform 分解(VTt)相应退化为恒等。
- *   3. agent 操作期间的非用户 resize 弱提示(aEt)与自由尺寸拖拽柄(GTt)不移植;
- *      保留 5s 操作横幅与 resetsResizeBaseline 基线计数。
+ *      responsive 缩放折算出的 surfaceScale 经 pool.setSurfaceScale 供截图校验读取;
+ *      桌面 zoom 补偿(VTt 分解)经 pool.setZoomCompensation 落在池内 webview 上。
+ *   2. desktopZoomFactor 经 options 注入(缺省 1):Lume renderer 未暴露桌面 zoom
+ *      档位(ZCode SEt 经宿主 API 读取),折算/分解公式在 browser-panel-logic.ts。
+ *   3. agent 操作期间的用户 resize 弱提示(aEt)由 SidePane 的 useBrowserResizeWarning
+ *      承载;此处保留 5s 操作横幅、per-tab operationUntil 与 resetsResizeBaseline 基线。
  *   4. currentTask 上报与 selected 同值(Lume 面板无 agent 任务关联)。
  *   5. main→renderer 事件经通用漏斗(listen),非裸 ipcRenderer(见 browser-view.ts 头部)。
+ *   6. 最近关闭环 renderer 内存 8 条(browser-panel-logic.ts;不排除来源),重开换新
+ *      tabId(ZCode §5);tab 重排为纯内存 Ade(不动 activeTabId)。
  */
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from 'react'
 import {
@@ -49,6 +52,21 @@ import {
   type BrowserWheelBoundaryPayload,
 } from '@/lib/desktop-api/browser-view'
 import { openExternal } from '@/lib/desktop-api'
+import {
+  decomposeDesktopZoom,
+  IDENTITY_ZOOM_COMPENSATION,
+  pushClosedTabRing,
+  reorderedByIds,
+  type ClosedTabEntry,
+} from './browser-panel-logic'
+import {
+  addStoredBrowserTab,
+  findStoredBrowserTab,
+  patchStoredBrowserTab,
+  readBrowserWorkspaceSnapshot,
+  removeStoredBrowserTab,
+  saveBrowserWorkspaceSnapshot,
+} from './browser-workspace-state'
 import { createBrowserWebviewPool, readGuestSurfaceSample, isViewportAligned, type BrowserWebviewElement, type BrowserWebviewPool } from './webview-pool'
 
 /** agent 操作态横幅时长(ZCode 5s 操作窗)。 */
@@ -101,6 +119,13 @@ export interface BrowserPanelTab {
   /** webview 重建代数(recoveryRequested/崩溃/显式导航重建 +1)。 */
   guestGeneration: number
   errorMessage: string | null
+  /** 主帧加载失败错误码(证书判定 isCertificateErrorCode 用;成功加载清零)。 */
+  loadErrorCode: number | null
+  /** 不可自愈崩溃详情(LTt guest 失败卡;重建成功后清零)。 */
+  guestFailure: { exitCode: number; reason: string } | null
+  /** 导航历史状态(did-navigate/-in-page 时随 webview.canGoBack/Forward 刷新)。 */
+  canGoBack?: boolean
+  canGoForward?: boolean
 }
 
 /** responsive 视口(ZCode CEt:viewport 非空即 responsive 开启)。 */
@@ -131,8 +156,10 @@ export interface UseBrowserPanelResult {
   tabs: BrowserPanelTab[]
   selectedTabId: string | null
   selectedTab: BrowserPanelTab | null
+  /** 最近关闭环(新→旧,最多 8 条;重开换新 id)。 */
+  closedTabs: ClosedTabEntry[]
   panelVisible: boolean
-  /** agent 操作横幅可见(5s 窗口)。 */
+  /** agent 操作横幅可见(面板级 5s 窗口,任一 tab 操作即亮)。 */
   operationActive: boolean
   /** agent 视口(responsive)状态;null 即非 responsive。 */
   responsiveViewport: BrowserResponsiveViewport | null
@@ -152,6 +179,12 @@ export interface UseBrowserPanelResult {
   selectTab: (tabId: string) => void
   openUrlTab: (url: string) => void
   closeTab: (tabId: string) => void
+  /** 按新顺序重排 tab(ZCode Ade:不改动选中)。 */
+  reorderTabs: (orderedIds: readonly string[]) => void
+  /** 重开最近关闭条目(换新 tabId;成功后移出环)。 */
+  reopenClosedTab: (entryId: string) => void
+  /** 重建 guest(不可自愈崩溃卡的恢复动作;guestGeneration+1)。 */
+  rebuildTab: (tabId: string) => void
   navigate: (tabId: string, url: string) => void
   goBack: (tabId: string) => void
   goForward: (tabId: string) => void
@@ -168,22 +201,40 @@ export interface UseBrowserPanelOptions {
   /** 用户 tab(open-browser-url/地址栏)缺省作用域;集成者传工作区身份。 */
   workspaceKey?: string
   sessionId?: string
+  /**
+   * 桌面 zoom 因子(ZCode SEt,1.1^clamp(level,-3,5) 折算后的值)。
+   * Lume renderer 未暴露宿主 zoom 档位,集成者可注入,缺省 1(恒等)。
+   */
+  desktopZoomFactor?: number
 }
 
 /**
  * 面板主 hook:创建 webview 池、订阅全部 `lume:browser-view-*` 事件、
  * 驱动 attach/驻留上报/截图摆位/滚轮续接/崩溃自愈。一个面板实例调用一次。
+ *
+ * 工作区维度:tabs 按传入 workspaceKey 分桶(ZCode Ed/Dd 语义,见
+ * browser-workspace-state.ts)——面板 React 态只装当前工作区的 tab,切换工作区时
+ * 旧 key 落库、新 key 恢复;后台工作区的 tab 由 main 事件按 tabId 路由进仓库。
  */
 export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowserPanelResult {
+  const workspaceKey = options.workspaceKey ?? 'default'
   const defaultScopeRef = useRef({
-    workspaceKey: options.workspaceKey ?? 'default',
     sessionId: options.sessionId ?? 'user',
   })
+  /** 桌面 zoom 因子(非法值归一为 1;原始值直接进 deps,保证档位变化即重算)。 */
+  const desktopZoomFactor = Number.isFinite(options.desktopZoomFactor) && (options.desktopZoomFactor ?? 1) > 0
+    ? options.desktopZoomFactor ?? 1
+    : 1
+  /** 当前装在面板 React 态里的工作区 key(save-on-switch 的落库键)。 */
+  const workspaceKeyRef = useRef(workspaceKey)
   const pool = useMemo<BrowserWebviewPool>(() => createBrowserWebviewPool(), [])
   const [tabs, setTabs] = useState<BrowserPanelTab[]>([])
   const [selectedTabId, setSelectedTabId] = useState<string | null>(null)
+  const [closedTabs, setClosedTabs] = useState<ClosedTabEntry[]>([])
   const [panelVisible, setPanelVisible] = useState(true)
   const [now, setNow] = useState(() => Date.now())
+  /** 面板级操作横幅截止(ZCode kde:操作事件即写 Date.now()+5s,与选中无关)。 */
+  const [lastOperationUntil, setLastOperationUntil] = useState(0)
   const [viewportByTab, setViewportByTab] = useState<Record<string, BrowserResponsiveViewport | undefined>>({})
   const [responsiveZoom, setResponsiveZoom] = useState<'fit' | number>('fit')
   const [resizeBaselineVersion, setResizeBaselineVersion] = useState(0)
@@ -196,6 +247,10 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
   tabsRef.current = tabs
   const selectedTabIdRef = useRef<string | null>(null)
   selectedTabIdRef.current = selectedTabId
+  const panelVisibleRef = useRef(panelVisible)
+  panelVisibleRef.current = panelVisible
+  const closedTabsRef = useRef<ClosedTabEntry[]>([])
+  closedTabsRef.current = closedTabs
 
   /** attach scope 指纹去重(ZCode Se:同指纹不重复提交)。 */
   const attachFingerprintRef = useRef(new Map<string, string>())
@@ -212,6 +267,8 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
 
   const patchTab = useCallback((tabId: string, patch: Partial<BrowserPanelTab>) => {
     setTabs((current) => current.map((tab) => (tab.tabId === tabId ? { ...tab, ...patch } : tab)))
+    // 后台工作区 bucket 路由:挂起/恢复/标题/favicons/url 等事件只带 tabId。
+    patchStoredBrowserTab(tabId, patch)
   }, [])
 
   /* ── attach(ZCode Se)+ detach(ZCode Ce)──────────────────────────── */
@@ -238,7 +295,7 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
 
   /** webview 重建(换代):detach 确认 → 池销毁 → 以新代数重挂 + 重绑事件。 */
   const remountTab = useCallback((tabId: string, options: { url?: string | null } = {}) => {
-    const tab = tabsRef.current.find((item) => item.tabId === tabId)
+    const tab = tabsRef.current.find((item) => item.tabId === tabId) ?? findStoredBrowserTab(tabId)
     if (!tab) return
     void (async () => {
       if (!(await detachGuest(tabId))) {
@@ -250,18 +307,17 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       pendingNavigationRef.current.delete(tabId)
       pool.discardGuest(tabId)
       const restoreUrl = options.url ?? tab.url
-      setTabs((current) => current.map((item) => (item.tabId === tabId
-        ? { ...item, guestState: 'mounting', guestGeneration: item.guestGeneration + 1, errorMessage: null, loading: Boolean(restoreUrl) }
-        : item)))
+      patchTab(tabId, { guestState: 'mounting', guestGeneration: tab.guestGeneration + 1, errorMessage: null, loadErrorCode: null, guestFailure: null, loading: Boolean(restoreUrl) })
       residencyGenerationRef.current.delete(tabId)
       const webview = await pool.ensureGuest(tabId, { restorePending: tab.residency === 'restoring' })
       bindTabEvents(tabId, webview)
       if (restoreUrl) pendingNavigationRef.current.set(tabId, restoreUrl)
     })()
-  }, [detachGuest, pool])
+  }, [detachGuest, patchTab, pool])
 
   const handleGuestReady = useCallback((tabId: string) => {
-    const tab = tabsRef.current.find((item) => item.tabId === tabId)
+    // 当前列表优先,后台工作区 bucket 兜底(后台挂载的 webview 也要提交 attach)。
+    const tab = tabsRef.current.find((item) => item.tabId === tabId) ?? findStoredBrowserTab(tabId)
     const webview = pool.getGuest(tabId)
     if (!tab || !webview) return
     let webContentsId = 0
@@ -324,13 +380,13 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       void webview.loadURL(pendingUrl).catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error)
         if (message.includes('ERR_ABORTED')) return
-        patchTab(tabId, { errorMessage: `页面加载失败:${message}`, loading: false })
+        patchTab(tabId, { errorMessage: message, loadErrorCode: null, loading: false })
       })
     })
-    pool.onGuestEvent(tabId, 'did-start-loading', () => patchTab(tabId, { loading: true, errorMessage: null }))
+    pool.onGuestEvent(tabId, 'did-start-loading', () => patchTab(tabId, { loading: true, errorMessage: null, loadErrorCode: null }))
     pool.onGuestEvent(tabId, 'did-stop-loading', () => patchTab(tabId, { loading: false }))
-    pool.onGuestEvent(tabId, 'did-navigate', () => patchTab(tabId, { url: safeUrl(webview) }))
-    pool.onGuestEvent(tabId, 'did-navigate-in-page', () => patchTab(tabId, { url: safeUrl(webview) }))
+    pool.onGuestEvent(tabId, 'did-navigate', () => patchTab(tabId, { url: safeUrl(webview), ...navigationState(webview) }))
+    pool.onGuestEvent(tabId, 'did-navigate-in-page', () => patchTab(tabId, { url: safeUrl(webview), ...navigationState(webview) }))
     pool.onGuestEvent(tabId, 'page-title-updated', (event) => {
       patchTab(tabId, { title: (event as Event & { title?: string }).title || null })
     })
@@ -343,7 +399,9 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       // 子 frame 失败与请求中断(-3)不展示(ZCode 同)。
       if (details.isMainFrame === false || details.errorCode === -3) return
       patchTab(tabId, {
-        errorMessage: `页面加载失败:${details.errorDescription || String(details.errorCode ?? '')}`,
+        // 卡片标题按 isCertificateErrorCode(loadErrorCode) 分型,errorMessage 只存详情。
+        errorMessage: details.errorDescription || String(details.errorCode ?? ''),
+        loadErrorCode: typeof details.errorCode === 'number' ? details.errorCode : null,
         url: details.validatedURL || safeUrl(webview),
       })
     })
@@ -351,7 +409,14 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       const details = (event as RenderProcessGoneEvent).details
       const reason = details?.reason ?? ''
       if (!RECOVERABLE_EXIT_REASONS.has(reason)) {
-        patchTab(tabId, { guestState: 'crashed', errorMessage: `渲染进程异常退出:${reason}`, loading: false })
+        // 不可自愈:guest 失败卡(LTt)承载,重试走 rebuildTab 换代重建。
+        patchTab(tabId, {
+          guestState: 'crashed',
+          errorMessage: null,
+          loadErrorCode: null,
+          guestFailure: { exitCode: details?.exitCode ?? 0, reason },
+          loading: false,
+        })
         return
       }
       if (crashRecoveringRef.current.has(tabId)) return
@@ -373,7 +438,7 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
   /* ── 挂载 / 关闭 / 恢复编排 ─────────────────────────────────────────── */
 
   const mountTab = useCallback((tabId: string, options: { pendingUrl?: string | null } = {}) => {
-    const tab = tabsRef.current.find((item) => item.tabId === tabId)
+    const tab = tabsRef.current.find((item) => item.tabId === tabId) ?? findStoredBrowserTab(tabId)
     if (!tab) return
     if (pool.hasGuest(tabId)) return
     void pool.ensureGuest(tabId, { restorePending: tab.residency === 'restoring' }).then((webview) => {
@@ -411,6 +476,15 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       operationUntil: 0,
       guestGeneration: 0,
       errorMessage: null,
+      loadErrorCode: null,
+      guestFailure: null,
+      canGoBack: false,
+      canGoForward: false,
+    }
+    if (input.workspaceKey !== workspaceKeyRef.current) {
+      // 非当前工作区:落后台 bucket(ZCode ready→后台挂载),不进面板列表、不抢选中。
+      addStoredBrowserTab(input.workspaceKey, tab)
+      return tabId
     }
     setTabs((current) => (current.some((item) => item.tabId === tabId) ? current : [...current, tab]))
     // 同步维护 ref:同 tick 的 mountTab/编排需要立即读到该 tab。
@@ -423,10 +497,27 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
   }, [])
 
   const removeTabLocally = useCallback((tabId: string) => {
+    const closedSource = tabsRef.current.find((item) => item.tabId === tabId) ?? findStoredBrowserTab(tabId)
+    if (closedSource) {
+      // 最近关闭环(ZCode Xde=8;不排除来源,重开换新 id)。
+      setClosedTabs((current) => pushClosedTabRing(current, {
+        id: makeTabId(),
+        title: closedSource.title,
+        url: closedSource.url,
+        faviconUrl: closedSource.faviconUrl,
+        closedAt: Date.now(),
+      }))
+    }
+    const inCurrentList = tabsRef.current.some((item) => item.tabId === tabId)
     attachFingerprintRef.current.delete(tabId)
     residencyGenerationRef.current.delete(tabId)
     pendingNavigationRef.current.delete(tabId)
     pool.discardGuest(tabId)
+    if (!inCurrentList) {
+      // 后台工作区 bucket 的 tab:从仓库移除(main 权威关闭的幂等回声)。
+      removeStoredBrowserTab(tabId)
+      return
+    }
     // 同步维护 ref,保证同 tick 内的后续编排读到最新表。
     tabsRef.current = tabsRef.current.filter((item) => item.tabId !== tabId)
     setTabs(tabsRef.current)
@@ -451,6 +542,41 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       .catch(() => undefined)
   }, [removeTabLocally])
 
+  /** 按新顺序重排 tab(ZCode Ade:非全量排列忽略;不改动 activeTabId)。 */
+  const reorderTabs = useCallback((orderedIds: readonly string[]) => {
+    setTabs((current) => {
+      const nextIds = reorderedByIds(current.map((tab) => tab.tabId), orderedIds)
+      if (!nextIds) return current
+      const byId = new Map(current.map((tab) => [tab.tabId, tab]))
+      const next = nextIds
+        .map((id) => byId.get(id))
+        .filter((tab): tab is BrowserPanelTab => Boolean(tab))
+      return next.length === current.length && next.every((tab, index) => tab === current[index]) ? current : next
+    })
+  }, [])
+
+  /** 重开最近关闭条目:换新 tabId 建用户 tab 并导航到原 URL(ZCode §5)。 */
+  const reopenClosedTab = useCallback((entryId: string) => {
+    const entry = closedTabsRef.current.find((item) => item.id === entryId)
+    if (!entry) return
+    setClosedTabs((current) => current.filter((item) => item.id !== entryId))
+    const normalized = entry.url ? normalizeBrowserUrl(entry.url) : ''
+    const tabId = createTab({
+      workspaceKey: workspaceKeyRef.current,
+      sessionId: defaultScopeRef.current.sessionId,
+      browserId: 'unclaimed-iab',
+      browserGeneration: 0,
+      origin: 'user',
+      url: normalized || null,
+    })
+    mountTab(tabId, normalized ? { pendingUrl: normalized } : {})
+  }, [createTab, mountTab])
+
+  /** 不可自愈崩溃卡的恢复:换代重建 guest(成功后 guestFailure 随 remount 清零)。 */
+  const rebuildTab = useCallback((tabId: string) => {
+    remountTab(tabId)
+  }, [remountTab])
+
   const wakeSuspendedTab = useCallback((tabId: string) => {
     const tab = tabsRef.current.find((item) => item.tabId === tabId)
     if (!tab) return
@@ -460,6 +586,64 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       sessionId: tab.sessionId,
       remoteSessionId: tab.remoteSessionId,
     }).catch(() => undefined)
+  }, [])
+
+  /* ── 工作区切换:旧 key 落库 + 新 key 恢复(ZCode save-on-switch/restore-on-switch)── */
+
+  /** 把某工作区的快照装进面板 React 态(首挂恢复与切换恢复共用)。 */
+  const applyWorkspaceSnapshot = useCallback((key: string) => {
+    const restored = readBrowserWorkspaceSnapshot(key)
+    // guest 活性对账:描述符称已挂载但池中无 guest(后台被摘/面板重挂)→ 回落 unmounted 壳;
+    // residency 以仓库为准(挂起的恢复为挂起壳,等用户唤醒走 ensureResident)。
+    const reconciled = restored.tabs.map((tab) => (
+      (tab.guestState === 'attached' || tab.guestState === 'mounting') && !pool.hasGuest(tab.tabId)
+        ? { ...tab, guestState: 'unmounted' as const, loading: false }
+        : tab
+    ))
+    // 离场 tab 不在新列表:显式隐藏 guest(否则浮置 webview 残留在宿主层)。
+    for (const tab of tabsRef.current) {
+      if (!reconciled.some((item) => item.tabId === tab.tabId)) pool.hide(tab.tabId)
+    }
+    tabsRef.current = reconciled
+    setTabs(reconciled)
+    const activeTabId = restored.activeTabId && reconciled.some((tab) => tab.tabId === restored.activeTabId)
+      ? restored.activeTabId
+      : reconciled.at(-1)?.tabId ?? null
+    selectedTabIdRef.current = activeTabId
+    setSelectedTabId(activeTabId)
+    setPanelVisible(!restored.collapsed)
+    // 选中的 resident tab 若池中无 guest(面板重挂场景)→ 以缓存 URL 重挂;挂起壳等唤醒。
+    const selected = reconciled.find((tab) => tab.tabId === activeTabId)
+    if (selected && selected.residency !== 'suspended' && !pool.hasGuest(selected.tabId)) {
+      mountTab(selected.tabId, { pendingUrl: selected.url && selected.url !== 'about:blank' ? selected.url : null })
+    }
+  }, [mountTab, pool])
+
+  /** 首挂恢复(面板重挂不丢当前工作区态;ZCode Ad(key) 初始化同语义)。 */
+  useEffect(() => {
+    applyWorkspaceSnapshot(workspaceKeyRef.current)
+  }, [applyWorkspaceSnapshot])
+
+  /** 切换工作区:旧 key 落库(save)→ 新 key 装载(restore);纯内存,reload 即失。 */
+  useEffect(() => {
+    const previousKey = workspaceKeyRef.current
+    if (previousKey === workspaceKey) return
+    workspaceKeyRef.current = workspaceKey
+    saveBrowserWorkspaceSnapshot(previousKey, {
+      tabs: tabsRef.current,
+      activeTabId: selectedTabIdRef.current,
+      collapsed: !panelVisibleRef.current,
+    })
+    applyWorkspaceSnapshot(workspaceKey)
+  }, [applyWorkspaceSnapshot, workspaceKey])
+
+  /** 面板卸载再落一次(ZCode:切换 cleanup 落盘 + 卸载再落)。 */
+  useEffect(() => () => {
+    saveBrowserWorkspaceSnapshot(workspaceKeyRef.current, {
+      tabs: tabsRef.current,
+      activeTabId: selectedTabIdRef.current,
+      collapsed: !panelVisibleRef.current,
+    })
   }, [])
 
   /* ── main→renderer 事件面(订阅一次,handler 全部经 ref/useState updater)── */
@@ -485,6 +669,8 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     }).then((unsub) => { if (disposed) unsub(); else unsubs.push(unsub) })
 
     void onBrowserViewOperation((payload) => {
+      // 面板级 5s 操作横幅(ZCode kde:操作事件即写,与选中 tab 无关)。
+      setLastOperationUntil(Date.now() + BROWSER_OPERATION_BANNER_MS)
       if (!payload.tabId) return
       setTabs((current) => current.map((tab) => (tab.tabId === payload.tabId
         ? { ...tab, operationUntil: Date.now() + BROWSER_OPERATION_BANNER_MS }
@@ -508,8 +694,9 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
 
     void onBrowserViewScreenshotSurfacePrepare((payload) => {
       if (disposed) return
-      // 身份匹配(ZCode OEt:workspaceKey+sessionId+browserId+browserGeneration+tabId)。
-      const tab = tabsRef.current.find((item) => item.tabId === payload.tabId)
+      // 身份匹配(ZCode OEt:workspaceKey+sessionId+browserId+browserGeneration+tabId);
+      // 后台工作区 bucket 的 tab 也要能屏外定影(截图不依赖面板可见)。
+      const tab = tabsRef.current.find((item) => item.tabId === payload.tabId) ?? findStoredBrowserTab(payload.tabId)
       if (!tab
         || tab.workspaceKey !== payload.workspaceKey
         || tab.sessionId !== payload.sessionId
@@ -560,14 +747,15 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     }).then((unsub) => { if (disposed) unsub(); else unsubs.push(unsub) })
 
     void onBrowserViewRestore((payload: BrowserViewRestorePayload) => {
-      const tab = tabsRef.current.find((item) => item.tabId === payload.tabId)
-      if (!tab) return
+      // 当前列表优先,后台工作区 bucket 兜底(未知 tab 丢弃,与旧 `if (!tab) return` 同)。
+      const known = tabsRef.current.find((item) => item.tabId === payload.tabId) ?? findStoredBrowserTab(payload.tabId)
+      if (!known) return
       residencyGenerationRef.current.set(payload.tabId, payload.generation)
       attachFingerprintRef.current.delete(payload.tabId)
       patchTab(payload.tabId, {
         residency: 'restoring',
         guestState: 'mounting',
-        url: payload.restoreUrl ?? tab.url,
+        url: payload.restoreUrl ?? known.url,
       })
       void pool.ensureGuest(payload.tabId, { restorePending: true }).then((webview) => {
         bindTabEvents(payload.tabId, webview)
@@ -577,9 +765,9 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
 
     void onBrowserViewOpenBrowserUrl((payload) => {
       if (!payload.url) return
-      // 弹窗转新面板 tab:本地创建用户 tab,真实导航在 dom-ready 后 loadURL。
+      // 弹窗转新面板 tab:本地创建用户 tab(作用域 = 当前工作区),真实导航在 dom-ready 后 loadURL。
       const tabId = createTab({
-        workspaceKey: defaultScopeRef.current.workspaceKey,
+        workspaceKey: workspaceKeyRef.current,
         sessionId: defaultScopeRef.current.sessionId,
         browserId: 'unclaimed-iab',
         browserGeneration: 0,
@@ -654,15 +842,15 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     [tabs, selectedTabId],
   )
   const responsiveViewport = selectedTabId ? viewportByTab[selectedTabId] ?? null : null
-  const operationActive = Boolean(selectedTab && selectedTab.operationUntil > now)
+  const operationActive = lastOperationUntil > now
   const surfaceStaging = surfaceRequest?.tabId === selectedTabId
 
   /** 操作横幅倒计时(1s 步进即可)。 */
   useEffect(() => {
-    if (!tabs.some((tab) => tab.operationUntil > Date.now())) return
+    if (lastOperationUntil <= Date.now() && !tabs.some((tab) => tab.operationUntil > Date.now())) return
     const timer = window.setInterval(() => setNow(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [tabs])
+  }, [lastOperationUntil, tabs])
 
   /** fit 缩放:画布尺寸观察(ZCode YTt 的 ResizeObserver;留 32px 边距)。 */
   useEffect(() => {
@@ -679,21 +867,29 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     return () => observer.disconnect()
   }, [])
 
-  /** responsive 视觉缩放(ZCode zTt fit 公式;desktopZoom 恒等)。 */
+  /** responsive 视觉缩放(ZCode zTt fit 公式:可用尺寸乘 desktopZoom)。 */
   const visualZoom = useMemo(() => {
     if (responsiveZoom !== 'fit') return responsiveZoom / 100
     if (!responsiveViewport || canvasSize.width <= 0 || canvasSize.height <= 0) return 1
-    const availableWidth = Math.max(0, canvasSize.width - 32)
-    const availableHeight = Math.max(0, canvasSize.height - 32)
+    const availableWidth = Math.max(0, canvasSize.width - 32) * desktopZoomFactor
+    const availableHeight = Math.max(0, canvasSize.height - 32) * desktopZoomFactor
     if (availableWidth === 0 || availableHeight === 0) return 1
     return Math.min(1, availableWidth / responsiveViewport.width, availableHeight / responsiveViewport.height)
-  }, [canvasSize, responsiveViewport, responsiveZoom])
+  }, [canvasSize, desktopZoomFactor, responsiveViewport, responsiveZoom])
 
-  /** surfaceScale 下发(池浮置方案的 ZCode [data-responsive-scale] 等价物)。 */
+  /** surfaceScale 下发(池浮置方案的 ZCode [data-responsive-scale] 等价物;ZCode BTt:visualZoom/desktopZoom)。 */
   useEffect(() => {
     if (!selectedTabId || !responsiveViewport) return
-    pool.setSurfaceScale(selectedTabId, visualZoom)
-  }, [pool, responsiveViewport, selectedTabId, visualZoom])
+    pool.setSurfaceScale(selectedTabId, visualZoom / desktopZoomFactor)
+  }, [desktopZoomFactor, pool, responsiveViewport, selectedTabId, visualZoom])
+
+  /** 桌面 zoom 补偿(ZCode XTt 的 VTt 分解;仅 responsive 画布需要,切选中/退出即复位)。 */
+  useEffect(() => {
+    if (!selectedTabId) return
+    pool.setZoomCompensation(selectedTabId, responsiveViewport
+      ? decomposeDesktopZoom(desktopZoomFactor)
+      : IDENTITY_ZOOM_COMPENSATION)
+  }, [desktopZoomFactor, pool, responsiveViewport, selectedTabId])
 
   /** present/hide 跟随选中与面板状态。 */
   useEffect(() => {
@@ -738,7 +934,7 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     const normalized = normalizeBrowserUrl(url)
     if (!normalized) return
     const tabId = createTab({
-      workspaceKey: defaultScopeRef.current.workspaceKey,
+      workspaceKey: workspaceKeyRef.current,
       sessionId: defaultScopeRef.current.sessionId,
       browserId: 'unclaimed-iab',
       browserGeneration: 0,
@@ -758,11 +954,11 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
       if (tab && tab.guestState !== 'mounting') remountTab(tabId, { url: normalized })
       return
     }
-    patchTab(tabId, { url: normalized, errorMessage: null })
+    patchTab(tabId, { url: normalized, errorMessage: null, loadErrorCode: null })
     void webview.loadURL(normalized).catch((error: unknown) => {
       const message = error instanceof Error ? error.message : String(error)
       if (message.includes('ERR_ABORTED')) return
-      patchTab(tabId, { errorMessage: `页面加载失败:${message}`, loading: false })
+      patchTab(tabId, { errorMessage: message, loadErrorCode: null, loading: false })
     })
   }, [patchTab, pool, remountTab])
 
@@ -817,6 +1013,7 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     tabs,
     selectedTabId,
     selectedTab,
+    closedTabs,
     panelVisible,
     operationActive,
     responsiveViewport,
@@ -830,6 +1027,9 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     selectTab,
     openUrlTab,
     closeTab,
+    reorderTabs,
+    reopenClosedTab,
+    rebuildTab,
     navigate,
     goBack,
     goForward,
@@ -849,5 +1049,14 @@ function safeUrl(webview: BrowserWebviewElement): string {
     return webview.getURL() || 'about:blank'
   } catch {
     return 'about:blank'
+  }
+}
+
+/** 读取 webview 导航历史状态(webview 未就绪回空 patch,按钮保持禁用)。 */
+function navigationState(webview: BrowserWebviewElement): Pick<BrowserPanelTab, 'canGoBack' | 'canGoForward'> {
+  try {
+    return { canGoBack: webview.canGoBack(), canGoForward: webview.canGoForward() }
+  } catch {
+    return {}
   }
 }

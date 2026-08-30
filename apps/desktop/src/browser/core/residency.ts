@@ -250,6 +250,38 @@ export class BrowserTabResidencyCoordinator {
     return { ...record }
   }
 
+  /** live-background → suspend-pending(挂起发起唯一入口;可见/其它状态受保护 no-op) */
+  beginSuspend(tabId: string): ResidencyRecord | null {
+    const record = this.records.get(tabId)
+    if (!record || record.residency !== "live-background") return null
+    record.generation += 1
+    record.residency = "suspend-pending"
+    this.requestEvaluation(record.windowId)
+    return { ...record }
+  }
+
+  /** suspend-pending → suspended(挂起完成;generation 匹配才有效) */
+  commitSuspend(tabId: string, generation: number): ResidencyRecord | null {
+    const record = this.records.get(tabId)
+    if (!record || record.generation !== generation || record.residency !== "suspend-pending") return null
+    record.guestAttached = false
+    record.loading = false
+    record.residency = "suspended"
+    record.lastActivityAt = this.now()
+    this.requestEvaluation(record.windowId)
+    return { ...record }
+  }
+
+  /** suspend-pending → live-*(发起方 ack 超时/失败回滚;generation 匹配才有效) */
+  cancelSuspend(tabId: string, generation: number): ResidencyRecord | null {
+    const record = this.records.get(tabId)
+    if (!record || record.generation !== generation || record.residency !== "suspend-pending") return null
+    record.loading = false
+    record.residency = record.visible ? "live-visible" : "live-background"
+    this.requestEvaluation(record.windowId)
+    return { ...record }
+  }
+
   /** suspend-pending 被取消后 renderer 未执行 → 直接落 suspended */
   commitCancelledSuspend(tabId: string, generation: number): ResidencyRecord | null {
     const record = this.records.get(tabId)

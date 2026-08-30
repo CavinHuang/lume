@@ -2,20 +2,23 @@
  * 浏览器侧面板(SidePane)—— ZCode 语义的 tab 模型面板在 Lume 的外壳。
  *
  * 组成:
- *  - tab 条(favicon/标题/驻留徽标/关闭),tab 模型来自 useBrowserPanel;
+ *  - tab 条(dnd-kit 拖拽重排/溢出估宽/渐隐 mask/总览弹层,见 BrowserTabStrip;
+ *    最近关闭重开入口在工具栏菜单);
+ *  - agent 操作横幅(面板级 5s,BrowserViewOperation 驱动);
  *  - 工具栏:后退/前进/刷新 + 地址栏 + 视口菜单(responsive/预设/缩放)+ devtools +
- *    系统浏览器打开;
- *  - agent 操作横幅(5s,BrowserViewOperation 驱动);
+ *    系统浏览器打开 + 最近关闭重开;
  *  - 画布:webview 池的 present 目标;responsive 模式下为可滚动画布
  *    (viewport × visualZoom 缩放补偿,wheel 边界续接挂在外层滚动容器);
- *  - 空态/挂起占位/错误卡(重试走 navigate 原位重建路径)。
+ *    agent 操作期间用户 resize 弱提示(aEt 移植,见 useBrowserResizeWarning);
+ *  - 空态/挂起占位/错误卡(证书错误/加载失败/guest 崩溃,LTt/ITt 分型)。
  *
  * UI 约定:一律使用 components/ui 的 shadcn 原子组件(AGENTS.md);文案为内联中文
  * (偏差:旧实现走 react-intl id,浏览器 i18n 键已随四端删除,后置补齐)。
- * ZCode 对应件:SidePane 布局 + NTt 工具栏 + XTt 画布 + LTt/ITt 错误卡(04 切片)。
+ * ZCode 对应件:SidePane 布局 + NTt 工具栏 + XTt 画布 + LTt/ITt 错误卡 + aEt 警告条。
  */
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import {
+  AlertTriangle,
   ArrowLeft,
   ArrowRight,
   ExternalLink,
@@ -24,19 +27,22 @@ import {
   MonitorSmartphone,
   MoreVertical,
   RotateCw,
+  ShieldAlert,
   Smartphone,
   Tablet,
-  X,
 } from 'lucide-react'
-import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { cn } from '@/lib/utils'
+import { BrowserTabStrip } from './BrowserTabStrip'
+import { formatRelativeTime, isCertificateErrorCode } from './browser-panel-logic'
+import { useBrowserResizeWarning, useOperationWindowActive } from './useBrowserResizeWarning'
 import {
   BROWSER_VIEWPORT_LIMITS,
   useBrowserPanel,
   type BrowserPanelTab,
+  type UseBrowserPanelResult,
 } from './useBrowserPanel'
 
 const ZOOM_OPTIONS: Array<'fit' | number> = ['fit', 50, 75, 100, 125, 150, 200]
@@ -47,10 +53,42 @@ const VIEWPORT_PRESETS: Array<{ label: string; icon: typeof Smartphone; viewport
   { label: `桌面 1280×720`, icon: MonitorSmartphone, viewport: { width: 1280, height: 720 } },
 ]
 
-export function BrowserSidePane({ className }: { className?: string }) {
-  const panel = useBrowserPanel()
+export function BrowserSidePane({ className, workspaceKey, desktopZoomFactor = 1, onPanelReady }: {
+  className?: string
+  /** 工作区身份:tabs/选中/收起态按 workspaceKey 分桶存取(见 browser-workspace-state.ts)。 */
+  workspaceKey?: string
+  /** 桌面 zoom 因子(ZCode SEt;Lume renderer 未暴露宿主档位,缺省 1 恒等)。 */
+  desktopZoomFactor?: number
+  /**
+   * 面板实例上报(右面板宿主认领 open-browser-url 欠账用)。面板对象每次渲染都是
+   * 新字面量,故仅在挂载时上报一次;动作回调均经 ref/稳定 setter 实现,句柄持续有效。
+   */
+  onPanelReady?: (panel: UseBrowserPanelResult | null) => void
+}) {
+  // 工作区身份:tabs/选中/收起态按 workspaceKey 分桶存取(见 browser-workspace-state.ts),
+  // 切换工作区(或任务)时旧工作区落库、新工作区恢复;缺省 'default' 单桶。
+  const panel = useBrowserPanel({ workspaceKey, desktopZoomFactor })
   const { selectedTab } = panel
   const [addressDraft, setAddressDraft] = useState('')
+  const canvasRegionRef = useRef<HTMLDivElement | null>(null)
+  const panelRef = useRef(panel)
+  panelRef.current = panel
+  const onPanelReadyRef = useRef(onPanelReady)
+  onPanelReadyRef.current = onPanelReady
+  // aEt:agent 操作窗 + 用户 resize 弱提示(agent 视口操作经 resizeBaselineVersion 抑制)。
+  const operationActive = useOperationWindowActive(selectedTab?.operationUntil ?? 0)
+  const { notifyBrowserViewportResize, showResizeWarning } = useBrowserResizeWarning({
+    containerRef: canvasRegionRef,
+    isVisible: panel.panelVisible,
+    operationActive,
+    resizeBaselineVersion: panel.resizeBaselineVersion,
+  })
+
+  // 挂载时上报面板句柄,卸载时注销(ZCode 面板挂载登记语义)。
+  useEffect(() => {
+    onPanelReadyRef.current?.(panelRef.current)
+    return () => onPanelReadyRef.current?.(null)
+  }, [])
 
   // 地址栏草稿跟随选中 tab 的真实 URL(ZCode T/addressValue 同步语义)。
   useEffect(() => {
@@ -71,10 +109,16 @@ export function BrowserSidePane({ className }: { className?: string }) {
       {panel.operationActive ? (
         <div role="status" aria-live="polite" className="flex items-center gap-2 border-b border-border bg-amber-500/10 px-3 py-1.5 text-xs font-medium text-foreground">
           <span className="size-1.5 animate-pulse rounded-full bg-amber-500" aria-hidden="true" />
-          agent 正在操作此页面,请勿调整窗口尺寸
+          agent 正在操作浏览器
         </div>
       ) : null}
-      <BrowserToolbar panel={panel} addressDraft={addressDraft} onAddressDraftChange={setAddressDraft} onSubmitAddress={submitAddress} />
+      <BrowserToolbar
+        panel={panel}
+        addressDraft={addressDraft}
+        onAddressDraftChange={setAddressDraft}
+        onSubmitAddress={submitAddress}
+        onLocalViewportAction={notifyBrowserViewportResize}
+      />
       {selectedTab && panel.responsiveViewport ? (
         <div className="flex items-center justify-center gap-2 border-b border-border px-3 py-1 text-xs text-muted-foreground">
           <span>视口 {panel.responsiveViewport.width}×{panel.responsiveViewport.height}</span>
@@ -84,81 +128,30 @@ export function BrowserSidePane({ className }: { className?: string }) {
           <span>范围 {BROWSER_VIEWPORT_LIMITS.minWidth}~{BROWSER_VIEWPORT_LIMITS.maxWidth} × {BROWSER_VIEWPORT_LIMITS.minHeight}~{BROWSER_VIEWPORT_LIMITS.maxHeight}</span>
         </div>
       ) : null}
-      <BrowserCanvas panel={panel} />
+      <BrowserCanvas panel={panel} regionRef={canvasRegionRef} showResizeWarning={showResizeWarning} />
     </div>
   )
 }
 
 type PanelApi = ReturnType<typeof useBrowserPanel>
 
-function BrowserTabStrip({ panel }: { panel: PanelApi }) {
-  return (
-    <div className="flex h-9 shrink-0 items-center gap-1 overflow-x-auto border-b border-border px-1.5">
-      {panel.tabs.map((tab) => (
-        <BrowserTabButton key={tab.tabId} tab={tab} selected={tab.tabId === panel.selectedTabId} panel={panel} />
-      ))}
-      <Button
-        type="button"
-        variant="ghost"
-        size="icon-xs"
-        className="ml-0.5 shrink-0"
-        aria-label="新建浏览器标签页"
-        onClick={() => panel.openUrlTab('about:blank')}
-      >
-        +
-      </Button>
-    </div>
-  )
-}
-
-function BrowserTabButton({ tab, selected, panel }: { tab: BrowserPanelTab; selected: boolean; panel: PanelApi }) {
-  const label = tab.title?.trim() || tab.url || '新标签页'
-  return (
-      <div
-        className={cn(
-          'group flex h-7 min-w-24 max-w-44 shrink-0 items-center gap-1.5 rounded-lg border px-1.5 text-xs font-medium',
-          selected ? 'border-border bg-accent text-accent-foreground shadow-sm' : 'border-transparent text-muted-foreground hover:bg-muted',
-        )}
-      >
-      <button type="button" className="flex min-w-0 flex-1 items-center gap-1.5" onClick={() => panel.selectTab(tab.tabId)} title={label}>
-        {tab.faviconUrl ? (
-          <img src={tab.faviconUrl} alt="" className="size-3.5 shrink-0 rounded-sm object-contain" draggable={false} referrerPolicy="no-referrer" />
-        ) : (
-          <Globe className="size-3.5 shrink-0" aria-hidden="true" />
-        )}
-        <span className="min-w-0 flex-1 truncate text-left">{label}</span>
-      </button>
-      {tab.residency === 'suspended' ? <Badge variant="outline" className="shrink-0 px-1 py-0 text-[10px] leading-3">挂起</Badge> : null}
-      {tab.residency === 'restoring' ? <Badge variant="outline" className="shrink-0 px-1 py-0 text-[10px] leading-3">恢复中</Badge> : null}
-      <button
-        type="button"
-        aria-label={`关闭 ${label}`}
-        className="shrink-0 rounded p-0.5 opacity-60 hover:opacity-100"
-        onClick={(event) => {
-          event.stopPropagation()
-          panel.closeTab(tab.tabId)
-        }}
-      >
-        <X className="size-3" aria-hidden="true" />
-      </button>
-    </div>
-  )
-}
-
-function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAddress }: {
+function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAddress, onLocalViewportAction }: {
   panel: PanelApi
   addressDraft: string
   onAddressDraftChange: (value: string) => void
   onSubmitAddress: () => void
+  /** 本地视口动作(responsive 开关)前调用:开 aEt 沉降窗(ZCode CEt onViewportResize)。 */
+  onLocalViewportAction: () => void
 }) {
   const tab = panel.selectedTab
   const disabled = !tab || tab.residency === 'suspended'
   return (
     <div className="flex h-10 shrink-0 items-center gap-1 border-b border-border px-1.5">
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="后退" disabled={disabled} onClick={() => tab && panel.goBack(tab.tabId)}>
+      {/* 后退/前进按导航历史禁用(canGoBack/canGoForward 随 did-navigate 刷新,见 useBrowserPanel)。 */}
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="后退" disabled={disabled || !tab.canGoBack} onClick={() => tab && panel.goBack(tab.tabId)}>
         <ArrowLeft className="size-4" aria-hidden="true" />
       </Button>
-      <Button type="button" variant="ghost" size="icon-sm" aria-label="前进" disabled={disabled} onClick={() => tab && panel.goForward(tab.tabId)}>
+      <Button type="button" variant="ghost" size="icon-sm" aria-label="前进" disabled={disabled || !tab.canGoForward} onClick={() => tab && panel.goForward(tab.tabId)}>
         <ArrowRight className="size-4" aria-hidden="true" />
       </Button>
       <Button type="button" variant="ghost" size="icon-sm" aria-label="刷新" disabled={disabled} onClick={() => tab && panel.reload(tab.tabId)}>
@@ -191,7 +184,14 @@ function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAdd
               {preset.label}
             </DropdownMenuItem>
           ))}
-          <DropdownMenuItem disabled={!tab || !panel.responsiveViewport} onClick={() => tab && panel.toggleResponsiveMode()}>
+          <DropdownMenuItem
+            disabled={!tab || !panel.responsiveViewport}
+            onClick={() => {
+              if (!tab) return
+              onLocalViewportAction()
+              panel.toggleResponsiveMode()
+            }}
+          >
             <MonitorSmartphone className="size-4" aria-hidden="true" />
             退出响应式(恢复自适应)
           </DropdownMenuItem>
@@ -212,6 +212,18 @@ function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAdd
             ))}
           </div>
           <DropdownMenuSeparator />
+          {/* 最近关闭重开(ZCode Xde 环;条目带相对时间,重开换新 tabId)。 */}
+          <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">最近关闭</div>
+          {panel.closedTabs.length === 0 ? (
+            <div className="px-2 py-1.5 text-xs text-muted-foreground/70">无最近关闭的标签页</div>
+          ) : panel.closedTabs.map((entry) => (
+            <DropdownMenuItem key={entry.id} onClick={() => panel.reopenClosedTab(entry.id)}>
+              <Globe className="size-4 shrink-0" aria-hidden="true" />
+              <span className="min-w-0 flex-1 truncate">{entry.title?.trim() || entry.url || '新标签页'}</span>
+              <span className="shrink-0 text-[10px] text-muted-foreground">{formatRelativeTime(entry.closedAt)}</span>
+            </DropdownMenuItem>
+          ))}
+          <DropdownMenuSeparator />
           <DropdownMenuItem disabled={!tab} onClick={() => tab && panel.openDevTools(tab.tabId)}>
             <Code2 className="size-4" aria-hidden="true" />
             打开开发者工具
@@ -229,7 +241,12 @@ function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAdd
   )
 }
 
-function BrowserCanvas({ panel }: { panel: PanelApi }) {
+function BrowserCanvas({ panel, regionRef, showResizeWarning }: {
+  panel: PanelApi
+  /** browser region 根容器(aEt ResizeObserver 观察目标)。 */
+  regionRef: RefObject<HTMLDivElement>
+  showResizeWarning: boolean
+}) {
   const tab = panel.selectedTab
 
   if (!tab) {
@@ -253,7 +270,19 @@ function BrowserCanvas({ panel }: { panel: PanelApi }) {
   }
 
   return (
-    <div className="relative flex min-h-0 min-w-0 flex-1">
+    <div ref={regionRef} className="relative flex min-h-0 min-w-0 flex-1">
+      {showResizeWarning ? (
+        <div
+          role="status"
+          aria-live="polite"
+          data-browser-resize-warning="visible"
+          className="pointer-events-none absolute top-2 right-2 left-2 z-20 mx-auto flex w-fit max-w-full items-center gap-2 rounded-xl border border-border bg-popover px-3 py-2 text-xs font-medium text-foreground shadow-md"
+        >
+          <span aria-hidden="true" className="h-4 w-0.5 shrink-0 rounded-full bg-amber-500" />
+          <AlertTriangle className="size-4 shrink-0 text-amber-500" aria-hidden="true" />
+          <span>agent 正在操作,调整尺寸可能干扰</span>
+        </div>
+      ) : null}
       <div
         ref={panel.scrollContainerRef}
         data-responsive-browser-mode={panel.responsiveViewport ? 'active' : 'inactive'}
@@ -285,14 +314,60 @@ function BrowserCanvas({ panel }: { panel: PanelApi }) {
           正在恢复页面…
         </div>
       ) : null}
-      {tab.errorMessage && !panel.surfaceStaging ? (
-        <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-3 bg-background p-6 text-center text-sm">
-          <p className="text-foreground">{tab.errorMessage}</p>
-          <Button type="button" variant="outline" size="sm" onClick={() => panel.navigate(tab.tabId, tab.url ?? 'about:blank')}>
-            重试
-          </Button>
-        </div>
+      {tab.guestFailure && !panel.surfaceStaging ? (
+        <GuestFailureCard failure={tab.guestFailure} onRebuild={() => panel.rebuildTab(tab.tabId)} />
+      ) : tab.errorMessage && !panel.surfaceStaging ? (
+        <LoadErrorCard tab={tab} onRetry={() => panel.navigate(tab.tabId, tab.url ?? 'about:blank')} />
       ) : null}
+    </div>
+  )
+}
+
+/** guest 崩溃卡(ZCode LTt:标题 + 描述 + exitCode/reason 明细 + 重建)。 */
+function GuestFailureCard({ failure, onRebuild }: {
+  failure: { exitCode: number; reason: string }
+  onRebuild: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background px-6">
+      <div className="flex max-w-sm flex-col items-center pb-10 text-center">
+        <AlertTriangle className="mb-6 size-16 text-amber-500 opacity-60" aria-hidden="true" />
+        <h3 className="text-sm font-medium text-foreground">渲染进程异常退出</h3>
+        <p className="mt-2 text-sm text-muted-foreground">页面进程已崩溃,可尝试重建页面。</p>
+        <p className="mt-2 font-mono text-xs break-all text-muted-foreground/70">
+          exit code {failure.exitCode} · {failure.reason}
+        </p>
+        <Button type="button" variant="outline" className="mt-6" onClick={onRebuild}>
+          <RotateCw className="size-4" aria-hidden="true" />
+          重建页面
+        </Button>
+      </div>
+    </div>
+  )
+}
+
+/**
+ * 加载失败卡(ZCode ITt 分型):证书错误(-217..-200)给"证书错误"标题与提示、
+ * 不提供绕过;其余给通用标题。两者都只有重试。
+ */
+function LoadErrorCard({ tab, onRetry }: { tab: BrowserPanelTab; onRetry: () => void }) {
+  const certificateError = isCertificateErrorCode(tab.loadErrorCode)
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-background px-6">
+      <div className="flex max-w-sm flex-col items-center pb-10 text-center">
+        {certificateError
+          ? <ShieldAlert className="mb-6 size-16 text-amber-500 opacity-60" aria-hidden="true" />
+          : <AlertTriangle className="mb-6 size-16 text-amber-500 opacity-60" aria-hidden="true" />}
+        <h3 className="text-sm font-medium text-foreground">{certificateError ? '证书错误' : '页面加载失败'}</h3>
+        <p className="mt-2 font-mono text-xs break-all text-muted-foreground/70">{tab.errorMessage}</p>
+        {certificateError ? (
+          <p className="mt-3 text-sm text-muted-foreground">该网站证书无效,已阻止访问。可重试加载,或改用系统浏览器打开。</p>
+        ) : null}
+        <Button type="button" variant="outline" className="mt-6" onClick={onRetry}>
+          <RotateCw className="size-4" aria-hidden="true" />
+          重试
+        </Button>
+      </div>
     </div>
   )
 }

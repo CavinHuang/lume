@@ -47,8 +47,9 @@
  *  4. 命令载荷按还原源码为平铺形状(BrowserGuestCommand);shared 协议 zod 集成时映射。
  *  5. setupDialogTracking 在维护 pendingDialogs 之外追加 onDialogOpening/onDialogClosed
  *     钩子(A6 EmbeddedBrowserJavaScriptDialogController 接线)。
- *  6. suspendFlights / suspendAckWaiters 的写入端位于原 bundle 的挂起发起路径
- *     (提取域外, 由 ipc/常驻装配层填充);本文件保留其读取/清理/等待语义。
+ *  6. suspendFlights / suspendAckWaiters 的写入端在原 bundle 位于提取域外的挂起发起
+ *     装配段;本文件以 suspendTabForIdle/runSuspendFlight 补齐(suspend-scheduler 驱动),
+ *     读取/清理/等待语义与还原源码一致。
  *  7. render-process-gone 回调读 details.reason(ZCode 原码 i[1]?.reason 与
  *     Electron 42 的 WebContents 签名 (event, details) 一致)。
  */
@@ -123,6 +124,10 @@ export interface BrowserTabResidencySnapshot {
   residency: BrowserResidency
   generation: number
   lastSelectedAt: number | null
+  /** renderer 可见(挂起裁决读侧) */
+  visible: boolean
+  /** 最近活动时间(挂起空闲判定读侧) */
+  lastActivityAt: number
 }
 
 /** PortingGap: 常驻协调器完整记录(Gg;generation 由协调器自持) */
@@ -166,6 +171,12 @@ export interface BrowserTabResidencyCoordinatorPort {
   upsert(record: BrowserTabResidencyUpsertInput): unknown
   get(tabId: string): BrowserTabResidencySnapshot | null
   report(tabId: string, patch: BrowserTabResidencyReportPatch): void
+  /** live-background → suspend-pending(挂起发起;core/residency.ts beginSuspend) */
+  beginSuspend(tabId: string): BrowserTabResidencySnapshot | null
+  /** suspend-pending → suspended(挂起完成;generation 匹配才有效) */
+  commitSuspend(tabId: string, generation: number): BrowserTabResidencySnapshot | null
+  /** suspend-pending → live-*(ack 超时/失败回滚;generation 匹配才有效) */
+  cancelSuspend(tabId: string, generation: number): BrowserTabResidencySnapshot | null
   markRestoring(tabId: string): BrowserTabResidencySnapshot | null
   completeRestore(tabId: string, generation: number): boolean
   failRestore(tabId: string, generation: number): BrowserTabResidencySnapshot | null
@@ -401,7 +412,8 @@ export interface RendererTabScope {
 /** 渲染器 report-residency 载荷 */
 export interface RendererResidencyReport extends RendererTabScope {
   restoreUrl?: string
-  title?: string
+  /** null = 页面标题已清空(cachedTitle 随之清空;缺省 = 无标题更新) */
+  title?: string | null
   faviconUrl?: string | null
   loading: boolean
   selected: boolean
@@ -414,6 +426,18 @@ export interface RendererSuspendAck {
   tabId: string
   windowId: number
   generation: number
+}
+
+/** PortingGap: tab 挂起裁决视图(suspend-scheduler 的输入;listSuspendViews 输出) */
+export interface TabSuspendView {
+  tabId: string
+  residency: BrowserResidency
+  /** renderer 展示中(可见即不可挂起) */
+  visible: boolean
+  /** 管理器运行态保护位(选中/加载/媒体/agent 命令/截图录像/下载) */
+  busy: boolean
+  /** 最近活动时间(空闲判定基准;residency 记录维护) */
+  lastActivityAt: number
 }
 
 /** restore-tabs 渲染器请求载荷 */
@@ -516,6 +540,9 @@ const DEFAULT_ATTACH_TIMEOUT_MS = 10000
 
 /** Cle —— guest teardown 前 CDP 在途命令排空超时 */
 const GUEST_CDP_IDLE_TIMEOUT_MS = 1000
+
+/** 挂起发起:等 renderer suspend-ready ack 的超时(超时回滚 live-background, 下轮重试) */
+const DEFAULT_SUSPEND_ACK_TIMEOUT_MS = 5000
 
 /** Ile —— 录制产物保留时长(之后删除条目与临时 WebM) */
 const RECORDING_ARTIFACT_CLEANUP_DELAY_MS = 3600 * 1000
@@ -1038,9 +1065,9 @@ export class BrowserGuestManager {
   readonly visibilityByScope = new Map<string, boolean>()
   /** windowId → 量得的自然视口 */
   readonly naturalViewportByWindow = new Map<number, BrowserViewportOverride>()
-  /** tabId → 挂起确认等待者(写入端在挂起发起路径, 见头注偏差 6) */
+  /** tabId → 挂起确认等待者(写入端 = runSuspendFlight, 见头注偏差 6) */
   readonly suspendAckWaiters = new Map<string, () => void>()
-  /** tabId → 挂起飞行(读取端 ensureGuest, 见头注偏差 6) */
+  /** tabId → 挂起飞行(写入端 = suspendTabForIdle;读取端 ensureGuest) */
   readonly suspendFlights = new Map<string, Promise<unknown>>()
   /** tabId → 恢复飞行(去重) */
   readonly restoreFlights = new Map<string, Promise<WebContents | null>>()
@@ -3392,6 +3419,117 @@ export class BrowserGuestManager {
       this.warn(`browser tab limit close failed tabId=${tab.tabId}`, error)
       return false
     }
+  }
+
+  /* ────────────────────────────────────────────────────────────────
+   * 挂起发起(ZCode 提取域外装配段的移植;suspend-scheduler / 装配层驱动)
+   * ──────────────────────────────────────────────────────────────── */
+
+  /**
+   * tab 挂起裁决视图(挂起调度器读侧):常驻状态/可见性/空闲时间来自 residency
+   * 记录,busy 为管理器运行态保护位。无常驻记录的 tab(理论上不存在 —— 登记
+   * attach/创建时必然 upsert)不返回。
+   */
+  listSuspendViews(): TabSuspendView[] {
+    const views: TabSuspendView[] = []
+    for (const tab of this.tabs.values()) {
+      if (tab.lifecycle === "closed") continue
+      const residency = this.residencyCoordinator.get(tab.tabId)
+      if (!residency) continue
+      views.push({
+        tabId: tab.tabId,
+        residency: residency.residency,
+        visible: residency.visible,
+        busy: this.isTabRuntimeBusy(tab),
+        lastActivityAt: residency.lastActivityAt,
+      })
+    }
+    return views
+  }
+
+  /**
+   * tab 是否可发起挂起(发起方预检):live-background 且无管理器运行态保护。
+   * 保护集与 refreshRuntimeProtection 同源(active/loading/media/operation/capture/
+   * download);residency 侧保护位(visible/selected/… )由 beginSuspend 兜底。
+   */
+  canSuspendTab(tabId: string): boolean {
+    const tab = this.tabs.get(tabId)
+    if (!tab || tab.lifecycle === "closed") return false
+    if (this.residencyCoordinator.get(tabId)?.residency !== "live-background") return false
+    return !this.isTabRuntimeBusy(tab)
+  }
+
+  /** 管理器运行态保护位(选中/加载/媒体/agent 命令在途/截图录像/下载) */
+  private isTabRuntimeBusy(tab: GuestTabRecord): boolean {
+    return (
+      tab.active ||
+      tab.loading ||
+      tab.mediaActive ||
+      this.hasRunningRequestForTab(tab.tabId) ||
+      this.isTabCaptureActive(tab) ||
+      this.hasPendingDownloadForTab(tab.tabId)
+    )
+  }
+
+  /**
+   * 挂起发起(挂起协议写入端, 头注偏差 6):beginSuspend(live-background →
+   * suspend-pending, generation+1)→ persistRecoverySnapshot(拆 webview 前抢壳与
+   * 导航历史)→ onSuspendTabRequested(lume:browser-view-suspend, renderer 卸载空壳)
+   * → 等 suspend-ready ack → 复核代数 → detach+close guest → commitSuspend 落
+   * suspended。已挂起/受保护/ack 超时(回滚 live-background)均返回 false。
+   */
+  async suspendTabForIdle(tabId: string): Promise<boolean> {
+    if (!this.canSuspendTab(tabId)) return false
+    const pending = this.residencyCoordinator.beginSuspend(tabId)
+    const tab = this.tabs.get(tabId)
+    if (!pending || !tab) return false
+    const generation = pending.generation
+    const flight = this.runSuspendFlight(tab, generation).finally(() => {
+      if (this.suspendFlights.get(tabId) === flight) this.suspendFlights.delete(tabId)
+    })
+    this.suspendFlights.set(tabId, flight)
+    return (await flight) === true
+  }
+
+  /**
+   * 挂起主飞行:快照 → suspend 通知 → ack 等待 → 代数复核 → 关 guest → 落 suspended。
+   * ack 前被救活(report 活动位/visible → generation+1 回 live-*)则提交必然失配,
+   * 不关 guest。
+   */
+  private async runSuspendFlight(tab: GuestTabRecord, generation: number): Promise<boolean> {
+    const guest = tab.guest
+    if (guest && !safeBool(() => guest.isDestroyed(), true)) {
+      await this.persistRecoverySnapshot(tab, guest)
+    }
+    this.onSuspendTabRequested(this.buildResidencyNotification(tab, generation, "suspend-pending"))
+    if (!(await this.waitForSuspendAck(tab.tabId, generation, DEFAULT_SUSPEND_ACK_TIMEOUT_MS))) {
+      this.residencyCoordinator.cancelSuspend(tab.tabId, generation)
+      return false
+    }
+    const current = this.tabs.get(tab.tabId)
+    if (!current || current !== tab || tab.lifecycle === "closed") return false
+    const residency = this.residencyCoordinator.get(tab.tabId)
+    if (!residency || residency.generation !== generation || residency.residency !== "suspend-pending") return false
+    this.detachAndCloseGuest(tab)
+    if (!this.residencyCoordinator.commitSuspend(tab.tabId, generation)) return false
+    this.deps.log(`[browser-use] suspended tabId=${tab.tabId} generation=${generation}`)
+    return true
+  }
+
+  /** 登记 suspend-ready 等待者并限时等待(acknowledgeSuspend 按 tabId+generation 唤醒) */
+  private waitForSuspendAck(tabId: string, generation: number, timeoutMs: number): Promise<boolean> {
+    return new Promise(resolve => {
+      const key = suspendAckKey(tabId, generation)
+      const timer = setTimeout(() => {
+        this.suspendAckWaiters.delete(key)
+        resolve(false)
+      }, timeoutMs)
+      this.suspendAckWaiters.set(key, () => {
+        clearTimeout(timer)
+        this.suspendAckWaiters.delete(key)
+        resolve(true)
+      })
+    })
   }
 
   /* ────────────────────────────────────────────────────────────────

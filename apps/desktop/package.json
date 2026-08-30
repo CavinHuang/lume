@@ -21,7 +21,8 @@
     "test:node-repl-worker": "node --experimental-vm-modules --test ./scripts/node-repl-worker.suite.mjs",
     "test:unit": "bun run test",
     "test:smoke": "bun test ./scripts/desktop-context-key.test.mjs ./scripts/desktop-package.test.mjs && node --experimental-vm-modules --test ./scripts/node-repl-worker.suite.mjs && bun test ./scripts/sidecar-process.test.mjs ./scripts/desktop-core.test.mjs ./src/desktop-host-supervisor.test.ts ./src/agent-island-service.test.ts ./src/voice-asr-service.test.ts ./src/voice-dictation-settings-service.test.ts ./src/desktop-core.voice-mic.test.ts",
-    "test:packaged-smoke": "node ./scripts/packaged-desktop-smoke.mjs"
+    "test:packaged-smoke": "node ./scripts/packaged-desktop-smoke.mjs",
+    "test:browser-rewrite-e2e": "node --check ./scripts/browser-rewrite.e2e.mjs && bun ./scripts/browser-rewrite.e2e.mjs"
   },
   "devDependencies": {
     "@types/react": "^18.3.12",
@@ -176,6 +177,7 @@
   "dependencies": {
     "@lume/shared": "workspace:*",
     "@types/ws": "^8.18.1",
+    "playwright-core": "1.59.1",
     "ws": "^8.21.3"
   }
 }

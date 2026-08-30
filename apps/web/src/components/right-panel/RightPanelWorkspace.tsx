@@ -46,11 +46,12 @@ import { AgentInput } from '../agent/AgentInput'
 import { ThreadFileEnvProvider } from '../agent/thread-file-env'
 import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { VaultRightPanelWorkspace } from './VaultRightPanelWorkspace'
+import { BrowserRightPanelWorkspace, useOpenBrowserUrlReveal } from './BrowserRightPanelWorkspace'
 import { CodingReviewPanel } from './CodingReviewPanel'
 import { type CodingReviewPanelState } from '@/atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
-  files: '文件', chat: '问答', vault: 'Obsidian Vault',
+  files: '文件', chat: '问答', vault: 'Obsidian Vault', browser: '浏览器',
 }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
@@ -80,6 +81,8 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const workspaceId = thread?.workspaceId ?? currentWorkspaceId ?? undefined
   const agentWorkspace = agentWorkspaces.find((item) => item.id === workspaceId)
   const workspaceSlug = agentWorkspace?.slug
+  // 浏览器面板工作区身份:与 sidecar 浏览器上下文同构(workspaceSlug ?? workspaceId ?? threadId)。
+  const browserWorkspaceKey = workspaceSlug ?? workspaceId ?? threadId
   const binding = useMemo(() => ({
     workspaceId,
     fileContextId: thread?.fileContextId ?? thread?.id,
@@ -158,6 +161,9 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
       return next === previous ? current : { ...current, [threadId]: next }
     })
   }, [binding, persistedFileTabs, setRuntime, threadId])
+
+  // open-browser-url reveal 桥(常驻订阅;须在下方早退 return 之前挂上)。
+  useOpenBrowserUrlReveal(threadId)
 
   if (!threadId || !layout.open) return null
 
@@ -261,6 +267,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                 openFunctions={openFunctions}
                 onRuntimeChange={updateRuntime}
                 threadId={threadId}
+                browserWorkspaceKey={browserWorkspaceKey}
                 codingReview={codingReview}
                 onOpenCodingFile={workspaceSlug ? (path) => {
                   closeCodingReview({ type: 'deactivate', threadId })
@@ -305,7 +312,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   )
 }
 
-function RightPanelActiveContent({ runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, codingReview, onOpenCodingFile }: {
+function RightPanelActiveContent({ runtime, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, browserWorkspaceKey, codingReview, onOpenCodingFile }: {
   runtime: ThreadFileWorkspace
   workspaceSlug?: string
   workspaceProjectPath?: string
@@ -313,6 +320,7 @@ function RightPanelActiveContent({ runtime, workspaceSlug, workspaceProjectPath,
   openFunctions: RightPanelFunction[]
   onRuntimeChange: (workspace: ThreadFileWorkspaceUpdate) => void
   threadId: string
+  browserWorkspaceKey?: string
   codingReview?: CodingReviewPanelState
   onOpenCodingFile?: (path: string) => void
 }) {
@@ -329,6 +337,9 @@ function RightPanelActiveContent({ runtime, workspaceSlug, workspaceProjectPath,
   }
   if (active.kind === 'function' && active.type === 'vault') {
     return <VaultRightPanelWorkspace threadId={threadId} />
+  }
+  if (active.kind === 'function' && active.type === 'browser') {
+    return <BrowserRightPanelWorkspace workspaceKey={browserWorkspaceKey} />
   }
   return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[active.type]} />
 }

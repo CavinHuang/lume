@@ -25,19 +25,22 @@
  *     (main 以 `lume:event:` 前缀发往 renderer,经 preload listen 白名单)。
  *   2. 截图 CSS 像素归一:与 ZCode 装配点一致用 nativeImage resize(quality:"best"),
  *     无 sharp 依赖。
- *   3. descriptor():ZCode 无同名装配函数;按 shared capabilities 的后端描述符形状
- *     (type/capabilities/apiSupportOverrides)暴露,供 sidecar 桥的能力协商消费。
+ *   3. descriptor():ZCode 无同名装配函数;经 shared/descriptor.ts 的
+ *     buildIabDescriptor(ZCode plugin-facade 形状)装配期生成,供 sidecar 桥的
+ *     能力协商消费(与 sidecar iab-backend 描述符同源单源)。
  *   4. 常驻挂起发起器(suspend-pending → renderer 卸载空壳 → ack → 关闭 guest)在
- *     ZCode 位于提取域外的装配段,Lume 暂未实现;超限当前直接走 closeTabForLimit
- *     淘汰,manager 的挂起读取端(suspendAckWaiters/suspendFlights)已就绪。
- *   5. recoveryStore(壳持久化)未注入:restoreTabs 恒返回 [](seam,见 PORTING 报告)。
+ *     ZCode 位于提取域外的装配段;Lume 以 manager.suspendTabForIdle(挂起协议写入端)
+ *     + core/suspend-scheduler.ts(空闲裁决轮询)补齐,此处 start/dispose 接线。
+ *   5. recoveryStore(壳持久化)以 core/recovery-store.ts 的 JSON 文件实现注入
+ *     (`<configDir>/browser-recovery/store.json`),restoreTabs 跨重启可用。
  */
 
 import { app, BrowserWindow, nativeImage, webContents } from "electron"
+import { randomUUID } from "crypto"
 import { join } from "path"
 import {
-  BROWSER_API_SUPPORT_OVERRIDES_BY_BACKEND,
-  BROWSER_CAPABILITIES,
+  buildIabDescriptor,
+  type BrowserBackendDescriptor,
 } from "@lume/shared"
 import { pasteTextIntoFocusedTarget, executeBrowserCommandOnView } from "./core/executor/dispatcher"
 import { executeIabPlaywrightLocator, type LocatorAction, type LocatorInputPorts } from "./core/executor/locator-session"
@@ -60,6 +63,8 @@ import {
 } from "./core/guest-manager"
 import { dispatchClickAt, dispatchKey } from "./core/input"
 import { assertFocusedInputTarget } from "./core/injected/text-input"
+import { createRecoveryStore } from "./core/recovery-store"
+import { createSuspendScheduler, type SuspendScheduler } from "./core/suspend-scheduler"
 import type {
   BrowserCommandResult,
   BrowserEventSink,
@@ -89,16 +94,8 @@ export interface LumeBrowserRuntimeDeps {
   configDir: string
   attachTimeoutMs?: number
   tabLimit?: number
-}
-
-/** ZCode plugin-facade 形状的后端描述符(descriptor() 返回值)。 */
-export interface LumeBrowserBackendDescriptor {
-  type: "iab"
-  capabilities: {
-    browser: Array<{ id: string; title: string; description: string }>
-    tab: string[]
-  }
-  apiSupportOverrides: Record<string, boolean>
+  /** 空闲挂起判定阈值(缺省 5 分钟;测试/E2E 可调短)。 */
+  suspendIdleDelayMs?: number
 }
 
 /** 渲染器 suspend-ready 载荷(ipc 层 suspendReady 通道的解析产物)。 */
@@ -116,10 +113,12 @@ export interface LumeBrowserRuntime {
   manager: BrowserGuestManager
   screenshotSurface: DesktopBrowserScreenshotSurfaceCoordinator
   dialogController: EmbeddedBrowserJavaScriptDialogController
+  /** 空闲挂起调度器(start 随装配生效;E2E/测试可手动 tick)。 */
+  suspendScheduler: SuspendScheduler
   /** webview will-attach 的分区强制钩子(传给 createBrowserIpc.mountAuthorizer)。 */
   mountAuthorizer: BrowserGuestMountAuthorizer
-  /** 后端能力描述符(sidecar 桥能力协商)。 */
-  descriptor(): LumeBrowserBackendDescriptor
+  /** 后端能力描述符(sidecar 桥能力协商;形状单源 shared/descriptor.ts)。 */
+  descriptor(): BrowserBackendDescriptor
   /** 命令执行(ZCode PCe:对话框自动化括弧 + 操作事件 + 管理器分发)。 */
   execute(context: BrowserOwnerContext, command: BrowserGuestCommand, signal?: AbortSignal): Promise<BrowserCommandResult>
   attachGuest(request: BrowserGuestAttachRequest): Promise<BrowserGuestAttachResult | undefined>
@@ -187,6 +186,8 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
       residency: record.residency,
       generation: record.generation,
       lastSelectedAt: record.lastSelectedAt ?? null,
+      visible: record.visible === true,
+      lastActivityAt: record.lastActivityAt,
     }
   }
   const residency: BrowserTabResidencyCoordinatorPort = {
@@ -199,6 +200,9 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
       }),
     get: (tabId) => toResidencySnapshot(residencyCoordinator.get(tabId)),
     report: (tabId, patch) => residencyCoordinator.report(tabId, patch),
+    beginSuspend: (tabId) => toResidencySnapshot(residencyCoordinator.beginSuspend(tabId)),
+    commitSuspend: (tabId, generation) => toResidencySnapshot(residencyCoordinator.commitSuspend(tabId, generation)),
+    cancelSuspend: (tabId, generation) => toResidencySnapshot(residencyCoordinator.cancelSuspend(tabId, generation)),
     markRestoring: (tabId) => toResidencySnapshot(residencyCoordinator.markRestoring(tabId)),
     completeRestore: (tabId, generation) => residencyCoordinator.completeRestore(tabId, generation),
     failRestore: (tabId, generation) => toResidencySnapshot(residencyCoordinator.failRestore(tabId, generation)),
@@ -280,6 +284,8 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
 
   const manager = new BrowserGuestManager(managerDeps, {
     residency: { coordinator: residency },
+    // 跨重启 tab 恢复:JSON 文件恢复存储(browser-recovery/store.json)。
+    recoveryStore: createRecoveryStore(deps.configDir, { warn: deps.warn }),
     executeCommand,
     executeLocator,
     // A6 接线:CDP 对话框开/关 → 控制器的防二次接管标记。
@@ -293,6 +299,15 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
     },
   })
   managerRef = manager
+
+  /* 空闲挂起调度器:后台 tab 空闲超阈值即发起挂起(E2E/测试可直接 tick 驱动)。 */
+  const suspendScheduler: SuspendScheduler = createSuspendScheduler({
+    manager,
+    getWindow: deps.getWindow,
+    warn: deps.warn,
+    ...(deps.suspendIdleDelayMs === undefined ? {} : { idleDelayMs: deps.suspendIdleDelayMs }),
+  })
+  suspendScheduler.start()
 
   /** ipc 层(createBrowserIpc deps.manager)消费的委托面。 */
   const view: BrowserViewManagerPort = {
@@ -315,7 +330,9 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
         sessionId: report.sessionId,
         ...(report.remoteSessionId === undefined ? {} : { remoteSessionId: report.remoteSessionId }),
         ...(report.restoreUrl === null ? {} : { restoreUrl: report.restoreUrl }),
-        ...(report.title === null ? {} : { title: report.title }),
+        // title=null 必须透传(renderer 侧标题清空):manager 以此清 cachedTitle,
+        // 否则 tab 条残留旧标题(ZCode o.reportBrowserTabResidency 同语义)。
+        title: report.title,
         ...(report.faviconUrl === undefined ? {} : { faviconUrl: report.faviconUrl }),
         loading: report.loading,
         selected: report.selected,
@@ -329,11 +346,18 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
       manager.updateViewportFromRenderer(tabId, viewport, windowId, zoomFactor),
   }
 
+  /* 后端描述符:装配期一次生成(id/generation 全进程稳定,ZCode plugin-facade 形状)。 */
+  const descriptor: BrowserBackendDescriptor = buildIabDescriptor({
+    id: `iab:${randomUUID()}`,
+    generation: Date.now(),
+  })
+
   return {
     view,
     manager,
     screenshotSurface,
     dialogController,
+    suspendScheduler,
     mountAuthorizer: {
       // 分区强制(ZCode 行为 + Lume 增强位):renderer 声明的分区必须为空或
       // 等于浏览器分区,一律改写为 BROWSER_GUEST_PARTITION;其余拒绝挂载。
@@ -343,20 +367,7 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
       },
     },
     descriptor() {
-      return {
-        type: "iab",
-        capabilities: {
-          browser: BROWSER_CAPABILITIES.map((capability) => ({
-            id: capability.name,
-            title: capability.title,
-            description: capability.description,
-          })),
-          tab: [],
-        },
-        apiSupportOverrides: Object.fromEntries(
-          BROWSER_API_SUPPORT_OVERRIDES_BY_BACKEND.iab.map((api) => [api, true]),
-        ),
-      }
+      return descriptor
     },
     async execute(context, command, signal) {
       // ZCode PCe:自动化直通括弧(eh.beginAutomation)+ 操作事件(zM/z1)。
@@ -391,7 +402,9 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
       screenshotSurface.handleWindowDestroyed(windowId)
     },
     dispose() {
+      suspendScheduler.stop()
       manager.disposeAll()
+      void manager.whenRecoveryIdle().catch(() => {})
       screenshotSurface.dispose()
       dialogController.dispose()
     },
