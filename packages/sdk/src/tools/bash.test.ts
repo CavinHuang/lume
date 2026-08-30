@@ -633,6 +633,34 @@ describe("BashTool #381 background timeout semantics", () => {
     expect(result.content).toContain("terminated (timeout");
   }, 30_000);
 
+  test("run abort does not kill an already-backgrounded command", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-abort-detach-"));
+    const command = /(?:^|[\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
+      ? "Start-Sleep -Seconds 30"
+      : "sleep 30";
+    const abortController = new AbortController();
+    const context = {
+      cwd: root,
+      sessionId: "abort-detach-test",
+      artifactsRoot: join(root, "artifacts"),
+      abortSignal: abortController.signal,
+      emitEvent: () => {},
+    };
+    const started = await BashTool.call({ command, run_in_background: true }, context);
+    const taskId = String(started.content).match(/task_\d+/)?.[0];
+    expect(taskId).toBeTruthy();
+
+    // 中止 Run:已转后台的任务不受影响("keeps running across turns"契约)
+    abortController.abort();
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+    const snapshot = await ProcessOutputTool.call({ task_id: taskId!, block: false }, context);
+    expect(snapshot.content).toContain("running");
+
+    // 清理
+    await ProcessStopTool.call({ task_id: taskId }, context);
+  }, 30_000);
+
   test("classifies deliberate wait commands for auto-background exclusion", () => {
     expect(isDeliberateWaitCommand("sleep 30")).toBeTrue();
     expect(isDeliberateWaitCommand("  sleep  30")).toBeTrue();
