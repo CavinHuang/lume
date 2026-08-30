@@ -103,7 +103,10 @@ test("renderer sidecar allowlist equals shared derived channels plus local incre
   // 与派生侧共用 shared 单源 NOTIFY_ONLY_CHANNEL_VALUES——本测试的独立性针对
   // PUBLIC_CHANNEL_SOURCES 漏配，不重复维护推送值枚举。）
   const sharedMethods = Object.entries(sharedIpc)
-    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && value && typeof value === "object")
+    // BROWSER_VIEW_IPC_CHANNELS(内嵌浏览器面板,lume:browser-view-*)是 main↔renderer
+    // IPC 通道表,经 dispatchCommand→BrowserIpc 漏斗路由,不是 renderer→sidecar 的
+    // RPC method——与 privileged/island 两表一样按名排除。
+    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && name !== "BROWSER_VIEW_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.entries(value))
     .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !NOTIFY_ONLY_CHANNEL_VALUES.has(value))
     .map(([, value]) => value);

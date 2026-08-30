@@ -2,6 +2,7 @@ import { argv } from "node:process";
 import { randomUUID } from "node:crypto";
 import { startWorkspaceWatcher, stopWorkspaceWatcher } from "./services/system/workspace-watcher";
 import { seedDefaultSkills } from "./services/skills/default-skills-seeder";
+import { createBrowserMainBridge, setActiveBrowserMainBridge } from "./services/browser/bridge-transport";
 import { initProxySettings, getActiveProxyConfig } from "./services/system/proxy-settings-manager";
 import { setProxyConfigProvider } from "./services/infra/proxy-config-holder";
 import { setOutboundNotificationWriter } from "./services/infra/outbound-notification";
@@ -92,6 +93,15 @@ if ((process as typeof process & { parentPort?: unknown }).parentPort) {
 }
 
 const SLOW_RPC_MS = 2_000;
+// 浏览器命令桥(sidecar→main 的 lume:browser-execute):MAC+sequence 传输,
+// 密钥由 desktop 注入(LUME_BROWSER_RPC_SECRET);未注入时桥不可用,
+// 浏览器工具 isEnabled 侧呈现为不可用,调用侧呈现为 backend_unavailable。
+const browserMainBridge = createBrowserMainBridge({
+  send: (line) => rpcTransport.send(line),
+  secret: process.env.LUME_BROWSER_RPC_SECRET ? Buffer.from(process.env.LUME_BROWSER_RPC_SECRET, "base64url") : null,
+});
+setActiveBrowserMainBridge(browserMainBridge);
+rpcTransport.onClose(() => browserMainBridge.failAllPending());
 // Process-wide reverse-RPC render client. Bridges WebFetch JS-render requests
 // to the desktop PageRenderer. Fed into BOTH the RPC handlers (so render:result
 // resolves pending renders) and the agent runtime (so WebFetch can invoke it).
@@ -126,8 +136,11 @@ async function handleRpcLine(line: string): Promise<void> {
     return;
   }
 
-  // 无 method 的载荷是对请求的响应：本进程没有挂起的出站请求，静默丢弃。
+  // 无 method 的载荷是对请求的响应:浏览器命令桥的响应(MAC+sequence)先行消费,
+  // 其余(本进程无挂起的出站请求)静默丢弃。
   if (payload.id !== undefined && !payload.method) {
+    const envelope = payload as JsonRpcRequest & { browserRpc?: unknown };
+    if (envelope.browserRpc !== undefined && browserMainBridge.handleResponse(envelope)) return;
     return;
   }
 

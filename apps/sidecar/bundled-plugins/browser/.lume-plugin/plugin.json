@@ -1,0 +1,16 @@
+{
+  "schema": "lume-plugin/v1",
+  "name": "browser",
+  "version": "1.0.0",
+  "description": "Drive Lume's in-app browser: navigate, inspect, interact, screenshot, and record web pages.",
+  "displayName": "Browser",
+  "category": "Productivity",
+  "skills": ["./skills"],
+  "permissions": {
+    "filesystem": { "read": ["./**"], "write": [] },
+    "network": { "outbound": [] },
+    "mcpServers": { "register": false },
+    "shell": { "allow": false },
+    "tools": { "allow": [], "deny": ["Bash"] }
+  }
+}

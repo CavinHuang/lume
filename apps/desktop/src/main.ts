@@ -32,7 +32,7 @@ import {
 import { once } from 'node:events'
 import { spawn } from 'node:child_process'
 import { homedir, release } from 'node:os'
-import { randomBytes, randomUUID } from 'node:crypto'
+import { createHmac, randomBytes, randomUUID, timingSafeEqual } from 'node:crypto'
 import { basename, dirname, join, resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 import {
@@ -92,7 +92,7 @@ import { createVoiceIndicatorManager, type VoiceIndicatorManager } from './voice
 import type { VoiceDictationSettings, VoiceDictationSettingsUpdate } from '@lume/shared'
 import type { VoiceMicPermissionState } from './desktop-core'
 import { VOICE_DICTATION_DEFAULT_SHORTCUT } from '@lume/shared'
-import { IM_IPC_CHANNELS, MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES, toLumeRpcErrorEnvelope } from '@lume/shared'
+import { IM_IPC_CHANNELS, MAX_RPC_MESSAGE_BYTES, RPC_ERROR_CODES, toLumeRpcErrorEnvelope, BROWSER_PROTOCOL_VERSION } from '@lume/shared'
 import {
   AttachmentStageRegistry,
   attachmentStageIdFromPreviewUrl,
@@ -170,6 +170,13 @@ import {
   validateTrayStatePayload,
   waitForWindowReady,
 } from './tray-window-runtime'
+import { ensureBrowserRestoreSchemePrivileged, installBrowserRestoreBootstrapProtocol } from './browser/restore-protocol'
+import { BROWSER_GUEST_PARTITION, createBrowserIpc, type BrowserIpc } from './browser/ipc'
+import { createLumeBrowserRuntime, type LumeBrowserRuntime } from './browser/assemble'
+
+// 浏览器恢复停靠 scheme 必须在 app ready 前注册 privileged(registerSchemesAsPrivileged
+// 全进程仅一次,restore-protocol 内部去重)。
+ensureBrowserRestoreSchemePrivileged()
 
 // 单实例锁(#290)：双开会产生两个 sidecar 并发写同一 ~/.lume 数据目录——
 // sessions/memory/audit 的 JSONL 与 sqlite 均无跨进程锁（仅 settings 有
@@ -268,6 +275,140 @@ let islandWindow: BrowserWindow | null = null
 // Agent 灵动岛 service（Task 6）：lazy 构造于 getAgentIslandService()；onNotification/start/quit 接线在 Task 7。
 let agentIslandService: AgentIslandService | null = null
 let actionHudWindow = null
+
+// 内嵌浏览器运行时（browser/assemble 装配）：ready 阶段构建一次，随主窗创建挂
+// webview 加固，will-quit 销毁。事件统一经 forwardBrowserEvent 加 `lume:event:`
+// 前缀送达 renderer（preload listen 白名单面）。
+let browserRuntime: LumeBrowserRuntime | null = null
+let browserIpc: BrowserIpc | null = null
+let detachBrowserGuestHardening: (() => void) | null = null
+let detachBrowserRestoreProtocol: (() => void) | null = null
+
+// sidecar↔main 浏览器命令桥(lume:browser-execute):进程级 256-bit 密钥经
+// spawn env 注入 sidecar(LUME_BROWSER_RPC_SECRET);序号在每次 fork 时归零
+// (sidecar 重启后出站序号同样从 1 重新计数)。
+const browserRpcSecret = randomBytes(32)
+let browserRpcInboundSequence = 0
+let browserRpcOutboundSequence = 0
+
+function forwardBrowserEvent(method: string, params: Record<string, unknown>): void {
+  const win = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+  if (!win) return
+  win.webContents.send(`lume:event:${method}`, params)
+}
+
+/* ── sidecar→main 浏览器命令桥(lume:browser-execute) ─────────────────
+ * MAC+sequence 传输:请求 body = params({context,command},ZCode 46 命令协议),
+ * 响应 body = {ok:true,result} | {ok:false,error:code};签名口径与 sidecar
+ * services/browser/bridge-transport.ts 逐字一致。载荷经 browserRuntime.execute
+ * (assemble 的 PCe 门面)落 BrowserGuestManager。 */
+
+function browserRpcMac(direction: 'sidecar->main' | 'main->sidecar', sequence: number, id: string, body: unknown): string {
+  return createHmac('sha256', browserRpcSecret)
+    .update(`${direction}|${sequence}|${id}|${JSON.stringify(body)}`)
+    .digest('base64url')
+}
+
+function verifyBrowserRpcMac(direction: 'sidecar->main' | 'main->sidecar', sequence: number, id: string, body: unknown, mac: unknown): boolean {
+  if (typeof mac !== 'string') return false
+  const expected = Buffer.from(browserRpcMac(direction, sequence, id, body))
+  const actual = Buffer.from(mac)
+  return expected.length === actual.length && timingSafeEqual(expected, actual)
+}
+
+function postBrowserRpcResponse(child, id: string, body: Record<string, unknown>, envelope: Record<string, unknown>): void {
+  const sequence = ++browserRpcOutboundSequence
+  child.postMessage(JSON.stringify({ id, ...envelope, browserRpc: { sequence, mac: browserRpcMac('main->sidecar', sequence, id, body) } }))
+}
+
+function handleSidecarBrowserExecute(child, payload): void {
+  const requestId = String(payload.id)
+  const requestSequence = payload.browserRpc?.sequence
+  if (typeof requestSequence !== 'number'
+    || requestSequence !== browserRpcInboundSequence + 1
+    || !verifyBrowserRpcMac('sidecar->main', requestSequence, requestId, payload.params ?? null, payload.browserRpc?.mac)) {
+    // 畸形/失序/坏 MAC 的请求也须回一条错误响应,否则 sidecar 干等超时后误报
+    // "可能已执行"(实际包根本没被接受,#611)。语义归 browser_unavailable
+    // (传输面故障、可重试),不含校验细节不构成 oracle;响应 MAC 正常签名。
+    postBrowserRpcResponse(child, requestId, { ok: false, error: 'browser_unavailable' }, { error: { code: 'browser_unavailable' } })
+    return
+  }
+  browserRpcInboundSequence = requestSequence
+  const params = payload.params ?? {}
+  // context.windowId 由桌面端补齐(shared 协议注:sidecar 侧可缺省),取主窗
+  // BrowserWindow.id,与 ipc.ts attach-guest 的 win.id 同一口径,保证 scope 一致。
+  const context = params.context && typeof params.context === 'object'
+    ? {
+      ...params.context,
+      ...(typeof params.context.windowId === 'number' || !mainWindow || mainWindow.isDestroyed()
+        ? {}
+        : { windowId: mainWindow.id }),
+    }
+    : null
+  const command = params.command
+  if (!browserRuntime || !context || !command || typeof command !== 'object') {
+    postBrowserRpcResponse(child, requestId, { ok: false, error: 'browser_unavailable' }, { error: { code: 'browser_unavailable' } })
+    return
+  }
+  browserRuntime.execute(context, command)
+    .then((result) => {
+      // protocolVersion 随首个结果声明支持范围,sidecar 协议闸(browser-gate)据此握手。
+      const body = { ...result, protocolVersion: BROWSER_PROTOCOL_VERSION }
+      postBrowserRpcResponse(child, requestId, { ok: true, result: body }, { result: body })
+    })
+    .catch((error) => {
+      const code = typeof error?.code === 'string' ? error.code : 'browser_internal_error'
+      postBrowserRpcResponse(child, requestId, { ok: false, error: code }, { error: { code } })
+    })
+}
+
+/** 装配内嵌浏览器运行时并注册 renderer↔main 通道 + 恢复停靠协议。 */
+function setupBrowserRuntime(configDir: string): void {
+  if (browserRuntime) return
+  browserRuntime = createLumeBrowserRuntime({
+    getWindow: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
+    emit: (event) => forwardBrowserEvent(event.method, event.params),
+    log: (message) => writeMainLog('debug', 'desktop.browser', 'browser.log', message),
+    warn: (message, error) => writeMainLog('warn', 'desktop.browser', 'browser.warn', message, {
+      data: { error: error instanceof Error ? error.message : error == null ? null : String(error) },
+    }),
+    configDir,
+  })
+  browserIpc = createBrowserIpc({
+    manager: browserRuntime.view,
+    screenshotSurface: browserRuntime.screenshotSurface,
+    dialog: browserRuntime.dialogController,
+    log: (message) => writeMainLog('debug', 'desktop.browser', 'browser.ipc', message),
+    warn: (message, error) => writeMainLog('warn', 'desktop.browser', 'browser.ipc_warn', message, {
+      data: { error: error instanceof Error ? error.message : error == null ? null : String(error) },
+    }),
+    guestPreloadPath: resolve(DESKTOP_ROOT, 'dist', 'preload', 'browser-guest-preload.cjs'),
+    resolveSenderWindow: (senderWebContentsId) => {
+      const sender = webContents.fromId(senderWebContentsId)
+      return sender ? BrowserWindow.fromWebContents(sender) : null
+    },
+    openExternal: (url) => shell.openExternal(url),
+    mountAuthorizer: browserRuntime.mountAuthorizer,
+    browserPartition: BROWSER_GUEST_PARTITION,
+    emit: (method, params) => forwardBrowserEvent(method, params),
+  })
+  detachBrowserRestoreProtocol = installBrowserRestoreBootstrapProtocol(session.fromPartition(BROWSER_GUEST_PARTITION))
+}
+
+/** 主窗创建时挂浏览器面板闸：webview guest 加固 + 对话框控制器登记。 */
+function attachBrowserPaneToWindow(win: BrowserWindow): (() => void) | null {
+  if (!browserRuntime || !browserIpc) return null
+  const detachHardening = browserIpc.hardenWindowForBrowserGuests(win)
+  // A7 对话框登记：webview 建立后按浏览器分区登记（分区已被 will-attach 强制）。
+  const onDidAttach = (_event: Electron.Event, guestContents: Electron.WebContents) => {
+    browserRuntime?.dialogController.bindGuest(BROWSER_GUEST_PARTITION, guestContents.id, win.id)
+  }
+  win.webContents.on('did-attach-webview', onDidAttach)
+  return () => {
+    detachHardening()
+    win.webContents.removeListener('did-attach-webview', onDidAttach)
+  }
+}
 let actionHudHideTimer: ReturnType<typeof setTimeout> | null = null
 let actionHudGeneration = 0
 let latestQuickInputContext: {
@@ -1338,6 +1479,9 @@ async function createMainWindowForGeneration(generation) {
   })
   win.setMenuBarVisibility(false)
 
+  // 浏览器面板闸：必须在 loadURL 前挂上（renderer 首个 webview 可能早于 ready 事件）。
+  detachBrowserGuestHardening = attachBrowserPaneToWindow(win)
+
   const windowUrl = app.isPackaged
     ? (() => {
         const webEntry = getWebEntryPath()
@@ -1782,6 +1926,12 @@ function getVoiceIndicatorManager(): VoiceIndicatorManager {
 }
 
 async function dispatchCommand(command, payload: Record<string, any> = {}, context: { ownerWebContentsId?: number } = {}) {
+  // 浏览器面板通道漏斗（ipc.ts 头部偏差 2）：sandbox renderer 经 lume:invoke 白名单
+  // 直发 `lume:browser-view-*` 命令名，由此转发到 BrowserIpc.handleRendererCommand
+  // （未知命令由其抛错）；与裸 ipcMain.handle 通道共用同一校验实现。
+  if (browserIpc && command.startsWith('lume:browser-view-')) {
+    return browserIpc.handleRendererCommand(command, payload, context.ownerWebContentsId ?? 0)
+  }
   switch (command) {
     case 'connection_vault_status': {
       requireMainWindowSender(context, 'connection_vault_status')
@@ -2673,6 +2823,9 @@ function createSidecarHost({ onNotification }) {
       env.LUME_TEMPLATES_DIR = templatesDir
     }
 
+    // 浏览器命令桥密钥:sidecar 未注入时桥不可用,浏览器工具整体禁用。
+    env.LUME_BROWSER_RPC_SECRET = browserRpcSecret.toString('base64url')
+
     const sidecarScriptPath = getSidecarScriptPath({
       appIsPackaged: app.isPackaged,
       resourcesPath: process.resourcesPath,
@@ -2726,6 +2879,8 @@ function createSidecarHost({ onNotification }) {
 
     started = new Promise<void>((resolveStarted, rejectStarted) => {
       stopRequested = false
+      browserRpcInboundSequence = 0
+      browserRpcOutboundSequence = 0
       const forkConfig = createSpawnConfig()
       const runningChild = utilityProcess.fork(
         forkConfig.modulePath,
@@ -2934,6 +3089,12 @@ function createSidecarHost({ onNotification }) {
           } catch {
             // Sidecar stderr remains the fallback for malformed or unwritable log events.
           }
+          return
+        }
+
+        // 浏览器命令桥请求(method+id,MAC+sequence 认证):先于通用 pending 分支。
+        if (payload && payload.method === 'lume:browser-execute' && payload.id !== undefined) {
+          handleSidecarBrowserExecute(runningChild, payload)
           return
         }
 
@@ -3350,6 +3511,7 @@ app.whenReady().then(async () => {
   const configDir = applyLauncherConfig()
   windowBehavior = readWindowBehaviorFromConfigDir(configDir)
   if (windowBehavior?.showTray !== false) ensureTray()
+  setupBrowserRuntime(configDir)
   logDesktopStartup('tray ready')
   // dev 模式 macOS Dock 默认显示 Electron 图标；显式设为 Lume（打包后由 bundle 内 icns 接管）
   if (process.platform === 'darwin' && app.dock) {
@@ -3425,6 +3587,16 @@ app.on('window-all-closed', () => {
 })
 
 app.on('will-quit', async () => {
+  // 浏览器运行时先于 sidecar 关停：中止在途请求/录制、关闭全部 tab、
+  // 反注册 ipc 通道与恢复停靠协议。
+  detachBrowserGuestHardening?.()
+  detachBrowserGuestHardening = null
+  browserIpc?.dispose()
+  browserIpc = null
+  browserRuntime?.dispose()
+  browserRuntime = null
+  detachBrowserRestoreProtocol?.()
+  detachBrowserRestoreProtocol = null
   desktopHostSupervisor?.stop()
   await sidecarHost.stop()
   writeMainLog('info', 'desktop.lifecycle', 'app.stopping', 'app stopping')

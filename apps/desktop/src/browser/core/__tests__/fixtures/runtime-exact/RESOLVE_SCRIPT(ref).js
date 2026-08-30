@@ -1,0 +1,1 @@
+(function(){var m=window.__zcodeRefs;var el=m&&m.get("e5");if(!el)return null;el.scrollIntoView({block:'center',inline:'center'});var b=el.getBoundingClientRect();return {cx:Math.round(b.left+b.width/2),cy:Math.round(b.top+b.height/2)};})()

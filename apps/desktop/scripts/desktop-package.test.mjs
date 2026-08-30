@@ -24,6 +24,8 @@ test('desktop package uses Vite-built TypeScript runtime files', () => {
   assert.deepEqual(pkg.build.files, [
     'dist/main/main.mjs',
     'dist/preload/preload.cjs',
+    'dist/preload/browser-guest-preload.cjs',
+    'dist/preload/browserVideoRecorder.cjs',
     'assets',
   ])
   assert.equal(pkg.dependencies?.['electron-updater'], undefined)

@@ -14,6 +14,7 @@ export * from "./coding-revert-summary";
 export * from "./stable-serialize";
 export * from "./runtime-error-copy";
 export * from "./logging";
+export * from "./browser";
 
 // Bootstrap-level compatibility types used by MIG-001 scaffold.
 export type AppMode = "chat" | "agent";
