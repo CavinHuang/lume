@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Check, ChevronDown, RotateCw, SkipForward, X } from 'lucide-react'
 import type { TaskProgressViewEvent } from './runtime-message-view'
 import { cn } from '@/lib/utils'
+import TaskRows, { type TaskDetail, type TaskRow as TaskRowModel } from './TaskRows'
 
 export function getTaskProgressStatusText(event: TaskProgressViewEvent): string {
   const current = event.currentTaskId
@@ -22,8 +22,7 @@ const AUTO_DISMISS_STATUSES = new Set(['completed', 'cancelled'])
 
 /**
  * 任务进度胶囊：悬浮在输入框上方，展示「任务进行中 n/m」；
- * hover 弹出任务面板（TaskRows 设计语言：序号进度环 / 实心状态徽章 /
- * 状态 pill / 可展开的 detail 行）。终态（完成/取消）短暂停留后自动消失，失败保留。
+ * hover 弹出任务面板（TaskRows 组件）。终态（完成/取消）短暂停留后自动消失，失败保留。
  */
 export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent }) {
   const [hovered, setHovered] = useState(false)
@@ -101,11 +100,11 @@ export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent })
             role="region"
             aria-label="任务列表"
             className={cn(
-              'absolute bottom-full left-1/2 mb-2 w-[340px] -translate-x-1/2 overflow-hidden rounded-2xl border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-elevated)] shadow-[0_24px_48px_-24px_hsl(var(--lume-shadow-panel)/0.5)] backdrop-blur transition-all duration-150',
+              'absolute bottom-full left-1/2 mb-2 w-[360px] -translate-x-1/2 p-1.5 overflow-hidden rounded-2xl border border-[var(--lume-border-subtle)] bg-[color:color-mix(in_oklab,var(--lume-bg-elevated)_97%,transparent)] shadow-[0_24px_48px_-24px_hsl(var(--lume-shadow-panel)/0.5)] backdrop-blur transition-all duration-150',
               hovered ? 'pointer-events-auto translate-y-0 opacity-100' : 'pointer-events-none translate-y-1 opacity-0',
             )}
           >
-            <div className="px-3 pb-2 pt-3">
+            <div className="px-2 pb-2 pt-1.5">
               <div className="flex items-baseline justify-between gap-2">
                 <span className={cn('min-w-0 truncate text-[12px] font-medium text-[var(--lume-text-secondary)]', isActive && 'lume-shimmer-text')}>
                   {getTaskProgressStatusText(event)}
@@ -124,10 +123,12 @@ export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent })
                 />
               </div>
             </div>
-            <div className="agent-message-scrollbar max-h-[300px] overflow-y-auto border-t border-[var(--lume-border-subtle)]">
-              {event.tasks.map((task, index) => (
-                <TaskRowItem key={task.id} task={task} index={index} />
-              ))}
+            <div className="agent-message-scrollbar max-h-[320px] overflow-y-auto">
+              <TaskRows
+                variant="List"
+                labels={{ completed: '已完成', failed: '失败' }}
+                rows={event.tasks.map((task, index) => toTaskRowModel(task, index))}
+              />
             </div>
           </div>
         )}
@@ -136,182 +137,36 @@ export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent })
   )
 }
 
-type TaskProgressTask = TaskProgressViewEvent['tasks'][number]
-type TaskRowDetail = { label: string, meta: string }
-
-function getTaskRowDetails(task: TaskProgressTask): TaskRowDetail[] {
-  const details: TaskRowDetail[] = []
+function getTaskRowDetails(task: TaskProgressViewEvent['tasks'][number], title: string): TaskDetail[] {
+  const details: TaskDetail[] = []
   const attemptMeta = task.attemptCount && task.attemptCount > 1 ? `第 ${task.attemptCount} 次` : ''
   if (task.status === 'failed' && task.error) details.push({ label: task.error, meta: attemptMeta })
   else if (task.blockedReason) details.push({ label: task.blockedReason, meta: attemptMeta })
-  if (task.description && task.description !== task.title && !details.some((d) => d.label === task.description)) {
+  if (task.description && task.description !== title && !details.some((d) => d.label === task.description)) {
     details.push({ label: task.description, meta: details.length === 0 ? attemptMeta : '' })
   }
-  if (task.status === 'completed' && task.result && task.result !== task.title) {
+  if (task.status === 'completed' && task.result && task.result !== title) {
     details.push({ label: task.result, meta: details.length === 0 ? attemptMeta : '' })
   }
   return details
 }
 
-function TaskRowItem({ task, index }: { task: TaskProgressTask, index: number }) {
-  // 手动展开/收起优先；未操作过时跟随运行态（运行中的任务自动展开）
-  const [manualOpen, setManualOpen] = useState<boolean | null>(null)
-  const running = task.status === 'running' || task.status === 'in_progress'
-  const open = manualOpen ?? running
+/* 真实任务状态 → TaskRows 行模型：
+ * completed/skipped → "done"；running/in_progress → "running"；
+ * pending/failed → "sequence" + phase（覆盖组件的演示时序，状态由事件驱动） */
+function toTaskRowModel(task: TaskProgressViewEvent['tasks'][number], index: number): TaskRowModel {
   const title = task.title || task.subject || task.description || task.id
-  const details = getTaskRowDetails(task)
-  const done = task.status === 'completed'
-  const failed = task.status === 'failed'
-  const skipped = task.status === 'skipped'
-
-  const badge = done ? (
-    <StatusBadge tone="green"><Check size={13} strokeWidth={3} /></StatusBadge>
-  ) : failed ? (
-    <StatusBadge tone="red"><X size={12} strokeWidth={3.5} /></StatusBadge>
-  ) : skipped ? (
-    <StatusBadge tone="muted"><SkipForward size={12} strokeWidth={2.6} /></StatusBadge>
-  ) : (
-    <SpinnerRing active={running} step={index + 1} />
-  )
-
-  const pill = done ? (
-    <StatusPill tone="green">已完成</StatusPill>
-  ) : failed ? (
-    <StatusPill tone="red">
-      失败
-      <RotateCw size={11} strokeWidth={3} className="animate-spin motion-reduce:animate-none" />
-    </StatusPill>
-  ) : skipped ? (
-    <StatusPill tone="muted">已跳过</StatusPill>
-  ) : null
-
-  return (
-    <div
-      className={cn(
-        'animate-in fade-in slide-in-from-bottom-1 fill-mode-both border-b border-[var(--lume-border-subtle)] duration-300 last:border-b-0 motion-reduce:animate-none',
-        'transition-colors hover:bg-[color:color-mix(in_oklab,var(--lume-text-secondary)_6%,transparent)]',
-      )}
-      style={{ animationDelay: `${Math.min(index, 8) * 80}ms` }}
-    >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setManualOpen(!open)}
-        className="flex h-11 w-full items-center gap-2.5 px-2.5 text-left"
-      >
-        <span className="flex size-6 shrink-0 items-center justify-center">{badge}</span>
-        <span
-          className={cn(
-            'min-w-0 flex-1 truncate text-[13px] font-medium',
-            running ? 'text-[var(--lume-text-primary)]' : 'text-[var(--lume-text-secondary)]',
-            (done || skipped) && 'text-[var(--lume-text-muted)]',
-            failed && 'text-destructive',
-          )}
-        >
-          {title}
-        </span>
-        {pill}
-        <span aria-hidden="true" className="-ml-2 flex size-7 shrink-0 items-center justify-center rounded-full text-[var(--lume-text-muted)]">
-          <ChevronDown
-            size={15}
-            strokeWidth={2.2}
-            className="transition-transform duration-300"
-            style={{ transform: open ? 'rotate(180deg)' : 'rotate(0deg)' }}
-          />
-        </span>
-      </button>
-
-      {/* dropdown detail — 与 Chain of Thought 相同的展开语法（grid-rows 0fr→1fr） */}
-      <div
-        className="grid transition-[grid-template-rows,opacity] duration-300"
-        style={{
-          gridTemplateRows: open ? '1fr' : '0fr',
-          opacity: open ? 1 : 0,
-          transitionTimingFunction: 'cubic-bezier(0.23, 1, 0.32, 1)',
-        }}
-      >
-        <div className="overflow-hidden">
-          {open && details.length > 0 && (
-            <div key={`details-${index}`} className="mb-2.5 grid grid-cols-[24px_1fr] gap-2.5 px-2.5">
-              <span aria-hidden="true" className="mx-auto h-full w-px bg-[var(--lume-border-subtle)]" />
-              <div className="flex flex-col gap-1.5">
-                {details.map((detail, detailIndex) => (
-                  <div
-                    key={`${detail.label}-${detailIndex}`}
-                    className="flex animate-in fade-in slide-in-from-bottom-1 items-center justify-between gap-2 fill-mode-both duration-300 motion-reduce:animate-none"
-                    style={{ animationDelay: `${120 + detailIndex * 100}ms` }}
-                  >
-                    <span className={cn('min-w-0 text-[12px] text-[var(--lume-text-secondary)]', failed && 'text-destructive/80')}>{detail.label}</span>
-                    {detail.meta && (
-                      <span className="shrink-0 font-mono text-[11.5px] tabular-nums text-[var(--lume-text-muted)]">{detail.meta}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  )
-}
-
-function SpinnerRing({ active, step }: { active?: boolean, step: number }) {
-  const size = 24
-  const stroke = 2
-  const r = (size - stroke) / 2
-  const c = 2 * Math.PI * r
-  return (
-    <span className="relative inline-flex shrink-0 items-center justify-center" style={{ width: size, height: size }}>
-      <svg width={size} height={size} className="absolute inset-0">
-        <circle cx={size / 2} cy={size / 2} r={r} fill="none" stroke="var(--lume-border-subtle)" strokeWidth={stroke} />
-        {active && (
-          <circle
-            cx={size / 2}
-            cy={size / 2}
-            r={r}
-            fill="none"
-            stroke="var(--lume-accent)"
-            strokeWidth={stroke}
-            strokeLinecap="round"
-            strokeDasharray={`${c * 0.28} ${c * 0.72}`}
-            className="animate-spin [transform-origin:center] motion-reduce:animate-none"
-          />
-        )}
-      </svg>
-      <span className="relative text-[10.5px] font-semibold tabular-nums text-[var(--lume-text-secondary)]">{step}</span>
-    </span>
-  )
-}
-
-function StatusBadge({ tone, children }: { tone: 'green' | 'red' | 'muted', children: React.ReactNode }) {
-  return (
-    <span
-      className={cn(
-        'flex size-5.5 shrink-0 items-center justify-center rounded-full text-white animate-in fade-in zoom-in-95 duration-200 motion-reduce:animate-none',
-        tone === 'green' && 'bg-[var(--lume-success)]',
-        tone === 'red' && 'bg-destructive',
-        tone === 'muted' && 'bg-[color:color-mix(in_oklab,var(--lume-text-muted)_50%,transparent)]',
-      )}
-    >
-      {children}
-    </span>
-  )
-}
-
-function StatusPill({ tone, children }: { tone: 'green' | 'red' | 'muted', children: React.ReactNode }) {
-  return (
-    <span
-      className={cn(
-        'inline-flex h-5.5 shrink-0 items-center gap-1.5 rounded-full px-2 text-[11.5px] font-medium animate-in fade-in duration-200 motion-reduce:animate-none',
-        tone === 'green' && 'bg-[color:color-mix(in_oklab,var(--lume-success)_14%,transparent)] text-[var(--lume-success)]',
-        tone === 'red' && 'bg-[color:color-mix(in_oklab,var(--destructive)_14%,transparent)] text-destructive',
-        tone === 'muted' && 'bg-[color:color-mix(in_oklab,var(--lume-text-muted)_12%,transparent)] text-[var(--lume-text-muted)]',
-      )}
-    >
-      {children}
-    </span>
-  )
+  const running = task.status === 'running' || task.status === 'in_progress'
+  const done = task.status === 'completed' || task.status === 'skipped'
+  return {
+    key: task.id,
+    label: title,
+    amount: task.attemptCount && task.attemptCount > 1 ? `第 ${task.attemptCount} 次` : '',
+    status: done ? 'done' : running ? 'running' : 'sequence',
+    phase: task.status === 'failed' ? 'failed' : task.status === 'pending' ? 'pending' : undefined,
+    step: index + 1,
+    details: getTaskRowDetails(task, title),
+  }
 }
 
 function ProgressRing({ ratio, stroke }: { ratio: number, stroke: string }) {
