@@ -1,7 +1,22 @@
 import { describe, expect, test } from "bun:test";
-import { sendImSegments } from "./outbound-segment";
+import { sendImSegments, splitImMessage } from "./outbound-segment";
 
 describe("sendImSegments（#598 分段失败归因与瞬时重发）", () => {
+  test("微信 3000 字符上限：超长文本按顺序拆分且不超限", () => {
+    const segments = splitImMessage("a".repeat(3001), { maxChars: 3000 });
+
+    expect(segments).toEqual(["a".repeat(3000), "a"]);
+    expect(segments.every((segment) => segment.length <= 3000)).toBe(true);
+  });
+
+  test("微信分段不因 emoji 的代理对而超过字符上限", () => {
+    const text = "😀".repeat(1499) + "a😀";
+    const segments = splitImMessage(text, { maxChars: 3000 });
+
+    expect(segments.join("")).toBe(text);
+    expect(segments.every((segment) => segment.length <= 3000)).toBe(true);
+  });
+
   test("全部成功直通", async () => {
     const sent: string[] = [];
     expect(await sendImSegments(["a", "b"], async (s) => {

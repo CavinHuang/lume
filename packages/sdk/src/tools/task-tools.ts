@@ -90,7 +90,7 @@ export function createTaskTools(input: {
 
   const taskCreate: ToolDefinition = {
     name: 'TaskCreate',
-    description: 'Create a persistent task item. Use TaskUpdate to add dependencies or claim it.',
+    description: 'Create a persistent task item that survives across turns. Use TaskUpdate to add dependencies or claim it; set activeForm to a present-progressive label shown to the user while the task executes.',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -98,13 +98,13 @@ export function createTaskTools(input: {
       properties: {
         subject: { type: 'string', minLength: 1 },
         description: { type: 'string' },
-        activeForm: { type: 'string' },
+        activeForm: { type: 'string', description: 'Present-progressive label shown to the user while this task is executing (e.g. "Verifying dependencies")' },
       },
     },
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
     isEnabled: () => true,
-    async prompt() { return 'Create a persistent task item.' },
+    async prompt() { return 'Create a persistent cross-turn task item.' },
     async call(raw): Promise<ToolResult> {
       try {
         const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}
@@ -156,7 +156,7 @@ export function createTaskTools(input: {
 
   const taskUpdate: ToolDefinition = {
     name: 'TaskUpdate',
-    description: 'Update a persistent task, claim it, complete it, reopen it to pending, or add/remove dependencies. Status changes are fenced: pass expectedRevision from your last read, plus claimToken while the task is in_progress. A blocked task cannot be claimed or completed until its blockers complete. A completed task can only transition back to pending (reopen).',
+    description: 'Update a persistent task, claim it, complete it, reopen it to pending, or add/remove dependencies. Workflow: claim a task with status "in_progress" immediately before you start working on it, mark it "completed" as soon as the work is done, and keep at most one task "in_progress" at a time. Status changes are fenced: pass expectedRevision from your last read (omitting it commits against the current revision), plus claimToken while the task is in_progress (omitting it reuses your own active claim). A blocked task cannot be claimed or completed until its blockers complete. A completed task can only transition back to pending (reopen).',
     inputSchema: {
       type: 'object',
       additionalProperties: false,
@@ -181,7 +181,7 @@ export function createTaskTools(input: {
     isReadOnly: () => false,
     isConcurrencySafe: () => false,
     isEnabled: () => true,
-    async prompt() { return 'Update or claim a persistent task.' },
+    async prompt() { return 'Claim, complete, or update a persistent task. Claim a task as in_progress right before working on it; mark completed immediately when done.' },
     async call(raw): Promise<ToolResult> {
       try {
         const value = raw && typeof raw === 'object' ? raw as Record<string, unknown> : {}

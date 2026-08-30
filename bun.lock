@@ -115,6 +115,7 @@
         "@tiptap/suggestion": "^3.22.3",
         "class-variance-authority": "^0.7.1",
         "clsx": "^2.1.1",
+        "dompurify": "^3.4.14",
         "framer-motion": "^12.43.0",
         "ink-mde": "0.33.0",
         "jotai": "^2.12.0",

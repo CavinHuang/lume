@@ -316,6 +316,41 @@ describe("im-runtime-manager", () => {
     expect(stopped).toBe(1);
     expect(manager.getRunningAccountIds()).toEqual([]);
   });
+
+  test("worker 拒绝启动时不覆盖其 auth_required 状态为 running", async () => {
+    const statuses: Array<ImAccountUpdateInput["status"]> = [];
+    const manager = createImRuntimeManager({
+      getRuntimeAccount: (id) => ({
+        id,
+        provider: "dingtalk",
+        label: id,
+        token: "secret",
+        accountKey: "",
+        baseUrl: "",
+        enabled: true,
+        status: "stopped",
+        hasToken: true,
+        createdAt: 1,
+        updatedAt: 1
+      }),
+      updateAccount: (_id, input) => {
+        if (input.status) statuses.push(input.status);
+      },
+      createWorker: () => ({
+        start() {
+          statuses.push("auth_required");
+        },
+        stop() {},
+        isRunning: () => false
+      })
+    });
+
+    await manager.startAccount("account-missing-key");
+
+    expect(manager.getRunningAccountIds()).toEqual([]);
+    expect(statuses).toEqual(["starting", "auth_required"]);
+    expect(statuses).not.toContain("running");
+  });
 });
 
 describe("#598 error 态账号定时自愈", () => {
@@ -388,6 +423,29 @@ describe("#598 error 态账号定时自愈", () => {
     expect(await manager.runRecoveryTick(Date.now())).toEqual([]);
   });
 
+  test("手动停止状态尚未异步落盘时，自愈也不会按旧 error 状态重新拉起", async () => {
+    const account = makeAccount("a-stop-race", "error");
+    let releaseStopped!: () => void;
+    const stoppedPersisted = new Promise<void>((resolve) => { releaseStopped = resolve; });
+    let starts = 0;
+    const manager = createImRuntimeManager({
+      listAccounts: () => [account],
+      getRuntimeAccount: () => ({ ...account, token: "t" } as never),
+      updateAccount: (_id, input) => input.status === "stopped" ? stoppedPersisted : undefined,
+      createWorker: () => {
+        starts += 1;
+        return { start() {}, stop() {}, isRunning: () => true };
+      }
+    });
+
+    manager.stopAccount(account.id);
+    expect(await manager.runRecoveryTick(Date.now())).toEqual([]);
+    expect(starts).toBe(0);
+
+    releaseStopped();
+    await Promise.resolve();
+  });
+
   test("startAutoRecovery 周期驱动 tick，stopAutoRecovery 停止", async () => {
     const manager = createImRuntimeManager({
       listAccounts: () => [],
@@ -400,5 +458,25 @@ describe("#598 error 态账号定时自愈", () => {
     manager.stopAutoRecovery();
     // 不抛错即通过（无 error 账号时 tick 为空转）
     expect(true).toBe(true);
+  });
+
+  test("stopAll 同时停止自愈定时器，不在关停阶段拉起 error 账号", async () => {
+    const account = makeAccount("a3", "error");
+    let starts = 0;
+    const manager = createImRuntimeManager({
+      listAccounts: () => [account],
+      getRuntimeAccount: () => ({ ...account, token: "t" } as never),
+      updateAccount: () => undefined,
+      createWorker: () => {
+        starts += 1;
+        return { start() {}, stop() {}, isRunning: () => true };
+      }
+    });
+
+    manager.startAutoRecovery({ intervalMs: 5 });
+    manager.stopAll();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+
+    expect(starts).toBe(0);
   });
 });
