@@ -174,6 +174,7 @@ import { ensureBrowserRestoreSchemePrivileged, installBrowserRestoreBootstrapPro
 import { BROWSER_GUEST_PARTITION, createBrowserIpc, type BrowserIpc } from './browser/ipc'
 import { createLumeBrowserRuntime, type LumeBrowserRuntime } from './browser/assemble'
 import { handleGitPanelCommand } from './browser/git-panel-service'
+import { createTerminalRelay, type TerminalRelay } from './browser/terminal-bridge'
 
 // 浏览器恢复停靠 scheme 必须在 app ready 前注册 privileged(registerSchemesAsPrivileged
 // 全进程仅一次,restore-protocol 内部去重)。
@@ -711,6 +712,11 @@ const sidecarHost = createSidecarHost({
       void handleRenderRequest(params)
       return
     }
+    // 终端输出（高频）：经专用 lume:terminal-data 事件直达 renderer，
+    // 不进通用 sidecar:event 总线（避免唤醒无关订阅者）。
+    if (getTerminalRelay().handleSidecarNotification(method, params)) {
+      return
+    }
     // #544 镜像保活通知仅主进程消费，不下发 renderer
     if (method === IM_IPC_CHANNELS.MIRROR_STREAM_ACTIVE) {
       const payload = params as { threadId?: unknown; active?: unknown } | null
@@ -745,12 +751,26 @@ const sidecarHost = createSidecarHost({
   },
 })
 
+// 右侧面板终端 tab 中继（desktop/browser/terminal-bridge.ts）：renderer invoke →
+// sidecar fork RPC；sidecar terminal:data 通知 → lume:terminal-data 事件。
+// lazy 构造：依赖 sidecarHost（上方 const）与 emitRendererEvent（函数声明提升）。
+let terminalRelay: TerminalRelay | null = null
+
+function getTerminalRelay(): TerminalRelay {
+  if (!terminalRelay) {
+    terminalRelay = createTerminalRelay({
+      callSidecar: <T,>(method: string, params?: unknown) => sidecarHost.call(method, params ?? null) as Promise<T>,
+      emitEvent: (channel, payload) => emitRendererEvent(channel, payload),
+    })
+  }
+  return terminalRelay
+}
+
 /**
  * 处理 sidecar 发来的 render:request：调用 PageRenderer 渲染 URL，成功/失败均经
  * render:result 回送 sidecar（成功带 html+finalUrl+status，失败带 error{code,message}）。
  * sidecarHost 为模块级 const，render 请求只在 sidecar 启动后才会到达，故闭包引用安全。
- */
-async function handleRenderRequest(params: {
+ */async function handleRenderRequest(params: {
   reqId: string
   url: string
   options?: { timeoutMs?: number; waitForSelector?: string }
@@ -1936,6 +1956,10 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
   // 右侧面板 Git 状态 tab（git-panel-service.ts handleGitPanelCommand；载荷形状在此校验）
   if (command.startsWith('lume:browser-git-')) {
     return handleGitPanelCommand(command, payload)
+  }
+  // 右侧面板终端 tab（terminal-bridge.ts 中继；载荷校验在 sidecar 桥）
+  if (command.startsWith('lume:terminal-')) {
+    return getTerminalRelay().handleRendererCommand(command, payload)
   }
   switch (command) {
     case 'connection_vault_status': {

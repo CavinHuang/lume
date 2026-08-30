@@ -107,7 +107,7 @@ test("renderer sidecar allowlist equals shared derived channels plus local incre
     // GIT_PANEL_IPC_CHANNELS(右侧面板 Git tab,lume:browser-git-*)是 main↔renderer
     // IPC 通道表,经 dispatchCommand 漏斗路由,不是 renderer→sidecar 的
     // RPC method——与 privileged/island 两表一样按名排除。
-    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && name !== "BROWSER_VIEW_IPC_CHANNELS" && name !== "GIT_PANEL_IPC_CHANNELS" && value && typeof value === "object")
+    .filter(([name, value]) => name.endsWith("IPC_CHANNELS") && name !== "PLUGIN_PACKAGE_PRIVILEGED_IPC_CHANNELS" && name !== "AGENT_ISLAND_IPC_CHANNELS" && name !== "BROWSER_VIEW_IPC_CHANNELS" && name !== "GIT_PANEL_IPC_CHANNELS" && name !== "TERMINAL_IPC_CHANNELS" && value && typeof value === "object")
     .flatMap(([, value]) => Object.entries(value))
     .filter(([key, value]) => key !== "CHANGED" && key !== "REMINDER_DUE" && key !== "EVENTS" && typeof value === "string" && !value.includes(":privileged-") && !NOTIFY_ONLY_CHANNEL_VALUES.has(value))
     .map(([, value]) => value);

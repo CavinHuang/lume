@@ -18,6 +18,7 @@ import { desktopContextRpcService } from "../services/desktop-context/desktop-co
 import type { NotificationWriter, RpcHandler } from "./types";
 import { createPersonaHandlers } from "./persona-handlers";
 import { createPlanningTodoHandlers } from "./planning-todo-handlers";
+import { getTerminalBridgeHandlers } from "../services/terminal/terminal-bridge";
 
 export interface CreateRpcHandlersContext {
   writeNotification: NotificationWriter;
@@ -72,7 +73,9 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
     }),
     createPlanningTodoHandlers({ writeNotification: context.writeNotification }),
     createPersonaHandlers(),
-    createObsidianVaultHandlers()
+    createObsidianVaultHandlers(),
+    // 右侧面板终端 tab（sidecar 侧 PTY 执行体 + terminal:data 输出通知）
+    getTerminalBridgeHandlers({ writeNotification: context.writeNotification })
   );
   if (context.renderClient) {
     handlers["render:result"] = async (params: unknown) => {

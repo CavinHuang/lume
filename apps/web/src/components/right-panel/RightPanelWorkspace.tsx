@@ -54,11 +54,12 @@ import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { VaultRightPanelWorkspace } from './VaultRightPanelWorkspace'
 import { BrowserRightPanelWorkspace, useOpenBrowserUrlReveal } from './BrowserRightPanelWorkspace'
 import { GitPanel } from './GitPanel'
+import { TerminalPanel } from '../terminal/TerminalPanel'
 import { CodingReviewPanel } from './CodingReviewPanel'
 import { type CodingReviewPanelState } from '@/atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
-  files: '文件', chat: '问答', vault: 'Obsidian Vault', browser: '浏览器', git: 'Git',
+  files: '文件', chat: '问答', vault: 'Obsidian Vault', terminal: '终端', browser: '浏览器', git: 'Git',
 }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
@@ -385,6 +386,9 @@ function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceP
   }
   if (type === 'git') {
     return <GitPanel workspacePath={workspaceProjectPath} />
+  }
+  if (type === 'terminal') {
+    return <TerminalPanel workspacePath={workspaceProjectPath} />
   }
   return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[type]} />
 }

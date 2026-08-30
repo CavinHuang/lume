@@ -96,6 +96,12 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   // GIT_PANEL_IPC_CHANNELS 单源；main dispatchCommand 前缀转发）。
   'lume:browser-git-status',
   'lume:browser-git-diff',
+  // 右侧面板终端 tab（apps/desktop/src/browser/terminal-bridge.ts 中继 →
+  // sidecar terminal:* fork RPC；main dispatchCommand 前缀转发）。
+  'lume:terminal-create',
+  'lume:terminal-write',
+  'lume:terminal-resize',
+  'lume:terminal-dispose',
 ])
 
 export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
@@ -123,6 +129,9 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'lume:browser-view-suspend',
   'lume:browser-view-restore',
   'lume:open-browser-url',
+  // 右侧面板终端 tab：sidecar terminal:data 通知经 terminal-bridge.ts 中继为
+  // 专用事件（高频输出不进 sidecar:event 通用总线）。
+  'lume:terminal-data',
 ])
 
 export function validateRendererInvokeCommand(command) {

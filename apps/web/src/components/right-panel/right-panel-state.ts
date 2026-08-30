@@ -11,14 +11,15 @@
  * 与浏览器面板的关系:统一 tab 数组里的 `browser` 是承载 BrowserSidePane 的宿主
  * tab;浏览器内部的多 tab(url/residency/generation)仍由 useBrowserPanel +
  * browser-workspace-state 承载,挂载/重挂时按 workspaceKey 自恢复。git 为单例
- * (GitPanel 只读);files/vault/chat 沿用原语义(chat 仅由划线引用触发,见 #18)。
+ * (GitPanel 只读);terminal 为单例(会话保活由 TerminalPanel 模块仓承担);
+ * files/vault/chat 沿用原语义(chat 仅由划线引用触发,见 #18)。
  */
 import type { LumeRuntimeEvent, RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 
-export type RightPanelFunction = 'files' | 'chat' | 'vault' | 'browser' | 'git'
+export type RightPanelFunction = 'files' | 'chat' | 'vault' | 'terminal' | 'browser' | 'git'
 
 /** 可主动打开/参与回退优先级的功能集合(chat 不在菜单提供,由划线引用触发,见 #18)。 */
-export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault', 'browser', 'git']
+export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault', 'terminal', 'browser', 'git']
 
 /** ZCode SidePaneTab 对齐:tab 全面板唯一 id;单例类型 id === type。 */
 export interface RightPanelTab {
@@ -231,7 +232,7 @@ export function resolveRightPanelWorkspaceKey(input: {
 }
 
 function isRightPanelFunction(value: unknown): value is RightPanelFunction {
-  return value === 'files' || value === 'chat' || value === 'vault' || value === 'browser' || value === 'git'
+  return value === 'files' || value === 'chat' || value === 'vault' || value === 'terminal' || value === 'browser' || value === 'git'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

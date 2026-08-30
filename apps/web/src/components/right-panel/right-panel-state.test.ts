@@ -31,8 +31,8 @@ describe('right-panel-state tab model', () => {
     expect(workspace.tabs).toEqual([tab('files'), tab('vault')])
     expect(workspace.activeTabId).toBe('vault')
     expect(workspace.collapsed).toBe(false)
-    // browser 尚未打开,仍在可用清单里
-    expect(getAvailableRightPanelFunctions(workspace.tabs)).toEqual(['browser', 'git'])
+    // browser/terminal 尚未打开,仍在可用清单里(菜单序,ZCode terminal 恒有且先于 browser)
+    expect(getAvailableRightPanelFunctions(workspace.tabs)).toEqual(['terminal', 'browser', 'git'])
     expect(getOpenRightPanelFunctions(workspace.tabs)).toEqual(['files', 'vault'])
   })
 

@@ -11,7 +11,7 @@
  *
  * UI 约定:一律使用 components/ui 的 shadcn 原子组件(AGENTS.md);文案为内联中文。
  */
-import { Braces, FileDiff, FolderOpen, GitBranch, Globe, List, MessageSquare, Package, Plus, X } from 'lucide-react'
+import { Braces, FileDiff, FolderOpen, GitBranch, Globe, List, MessageSquare, Package, Plus, SquareTerminal, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, type ComponentType, type CSSProperties, type RefCallback } from 'react'
 import {
   DndContext,
@@ -75,6 +75,7 @@ const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: PanelIcon
   // chat 仅作类型完备；side-chat 由划线引用「打开右侧问答」触发（见 #18）
   chat: { label: '问答', Icon: MessageSquare },
   vault: { label: 'Obsidian', Icon: ObsidianIcon },
+  terminal: { label: '终端', Icon: SquareTerminal },
   browser: { label: '浏览器', Icon: Globe },
   git: { label: 'Git', Icon: GitBranch },
 }

@@ -45,6 +45,7 @@ import { closePlanningCalendarStore } from "./services/planning/planning-calenda
 import { startPlanningReminderScheduler, stopPlanningReminderScheduler } from "./services/planning/planning-reminder-scheduler";
 import { getNodeReplRuntimeRegistry } from "./services/agent-runtime/tools/node-repl/node-repl-runtime-registry";
 import { installRuntimeHostPorts } from "./services/agent/agent-runtime-ports-binding";
+import { disposeTerminalBridge } from "./services/terminal/terminal-bridge";
 
 // 组合根最先注入 agent-runtime 的宿主端口(#289):任何 RPC/服务调用之前。
 installRuntimeHostPorts();
@@ -557,6 +558,7 @@ async function boot(): Promise<void> {
         new Promise((resolve) => setTimeout(resolve, 5_000))
       ]);
       void getNodeReplRuntimeRegistry().shutdownAll?.();
+      disposeTerminalBridge();
       await Promise.race([
         stopWatcher(),
         new Promise((resolve) => setTimeout(resolve, 60_000))
