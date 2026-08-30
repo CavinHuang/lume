@@ -75,6 +75,15 @@ describe("mergeImMessageBatch", () => {
     expect(merged.text).toBe("张三: 帮我看看\n\nuser-b: 收到");
   });
 
+  test("群聊仅有显示名时仍按不同发送者分别归因", () => {
+    const merged = mergeImMessageBatch([
+      msg({ peerKind: "group", text: "第一条", senderName: "张三" }),
+      msg({ peerKind: "group", text: "第二条", senderName: "李四" })
+    ]);
+    expect(merged.text).toBe("张三: 第一条\n\n李四: 第二条");
+    expect(merged.senderId).toBeUndefined();
+  });
+
   test("群聊单发送者保持原语义（senderId 保留）", () => {
     const merged = mergeImMessageBatch([
       msg({ peerKind: "group", text: "第一条", senderId: "user-a", senderName: "张三" }),

@@ -117,10 +117,10 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
     }
     return undefined;
   };
-  const senderIds = new Set(
-    batch.map((m) => m.senderId?.trim() ?? "").filter(Boolean)
+  const senderKeys = new Set(
+    batch.map((m) => m.senderId?.trim() || m.senderName?.trim() || "").filter(Boolean)
   );
-  const multiSender = head.peerKind === "group" && senderIds.size > 1;
+  const multiSender = head.peerKind === "group" && senderKeys.size > 1;
   const text = batch
     .map((m) => {
       const trimmed = m.text.trim();
