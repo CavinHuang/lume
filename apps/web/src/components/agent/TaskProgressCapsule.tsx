@@ -8,14 +8,15 @@ export function getTaskProgressStatusText(event: TaskProgressViewEvent): string 
     ? event.tasks.find((task) => task.id === event.currentTaskId)
     : event.tasks.find((task) => task.status === 'running')
   const title = current?.title || current?.description || current?.id
+  // 注意：event.message 是 sidecar 的机器文案（如 "Task updated: 7"），不透出给用户
   if (event.status === 'completed') return '任务已完成'
   if (event.status === 'failed') return title ? `执行失败：${title}` : '任务执行失败'
   if (event.status === 'cancelled') return '任务已取消'
-  if (event.status === 'waiting_for_user') return title ? `等待你的确认：${title}` : event.message?.trim() || '等待你的确认'
-  if (event.status === 'waiting_for_permission') return title ? `等待授权：${title}` : event.message?.trim() || '等待授权'
-  if (event.status === 'pending') return title ? `准备执行：${title}` : event.message?.trim() || '准备执行任务'
+  if (event.status === 'waiting_for_user') return title ? `等待你的确认：${title}` : '等待你的确认'
+  if (event.status === 'waiting_for_permission') return title ? `等待授权：${title}` : '等待授权'
+  if (event.status === 'pending') return title ? `准备执行：${title}` : '准备执行任务'
   if (title) return `正在执行：${title}`
-  return event.message?.trim() || '正在执行任务'
+  return '正在执行任务'
 }
 
 const AUTO_DISMISS_STATUSES = new Set(['completed', 'cancelled'])
@@ -124,8 +125,11 @@ export function TaskProgressCapsule({ event }: { event: TaskProgressViewEvent })
               </div>
             </div>
             <div className="agent-message-scrollbar max-h-[320px] overflow-y-auto">
+              {/* key 随悬浮态变化：每次打开面板重播行的交错入场动画 */}
               <TaskRows
-                variant="List"
+                key={hovered ? 'open' : 'closed'}
+                variant="Capsules"
+                autoOpenKey={event.currentTaskId ?? event.tasks.find((task) => task.status === 'running' || task.status === 'in_progress')?.id}
                 labels={{ completed: '已完成', failed: '失败' }}
                 rows={event.tasks.map((task, index) => toTaskRowModel(task, index))}
               />
