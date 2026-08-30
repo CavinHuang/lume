@@ -106,3 +106,20 @@ SidePane 是 ZCode 右侧的多 tab 面板,**15 种 tab 类型**:
 ## 逆向覆盖度宣告
 
 壳层三层 + 15 种 tab + 交互面 + 数据源闭环 + 专用 chunk 已全覆盖;唯一未展开的深潜点是 V4 store 内部帧→快照归约与 gitService 服务端之外的 fileWatcherService 实现(均为通用基础设施,非面板特有)。
+
+---
+
+# 第三轮基础设施深潜(6 报告,详见同名 Q*.md 文件)
+
+| 报告 | 覆盖 | 核心结论 |
+|---|---|---|
+| Q7-v4-session-datalayer | V4 会话数据层(一切会话面板的地基) | 分片协议 wireVersion 3(crc32/1MB帧/16MB组装/1024片/30s超时);delta op 5种(row.appended/upserted/removed/delta/state.updated)+纯 reducer;rows.window 尾窗60行+loadOlder三重防护(纪元/窗头游标/前缀过滤)+loadAllOlder 回合导航水合(≥2 realUser 护栏);CAS 命令强制 baseRevision/baseLogEpoch;control 服务端权威相位机+canStop+queue(guide不进可见队列)+pendingInteractions 三类(乐观账本+移动端Plan ACK 500ms看门狗→权威恢复);subagents×backgroundWorks 按 childSessionId join;双层30s keep-warm;恢复状态机(recovery中采纳online快照/断档→resync/超时升级forceSnapshot/fail-closed);服务端配额表(事件留存2000/尾窗60/range200/慢消费者500ops·1MB/输出头尾32KB) |
+| Q8-transport-filewatcher | MessagePort 协议栈 + fileWatcherService | renderer↔host 每条 postMessage=一条完整RPC帧(无13B传输头,那是Socket路径);RPC帧=[type,id,channelName,name]+参数,VQL变长整数+标签字节序列化;server构造即发200 Initialize;未注册通道缓冲1s后call回202;无自动重连(port close级联dispose);fileWatcher=纯fs.watch+recursive透传+150ms防抖+单路径附带changedPath+error自清理;ScopedServicePort 每 attachment 独立端口,远程会话 18 个工作区服务整体替换 |
+| Q9-trajectory-source-snapshot-cache | 轨迹数据源 + 任务快照缓存 | getModelTrajectory 在 host 进程,数据来自 ~/.zcode/cli/{debug,rollout}/model-io-<taskId>.jsonl(每任务一文件,无rotation,尾读32MB+最新200条,无脱敏),sourceFiles=JSONL绝对路径;快照缓存三层(在途Promise/内存ETag/localStorage≤20条·2MB·单条256KB),ETag=host算的快照sha256;byteBudget/toolLimit 仅是缓存key维度 |
+| Q10-remote-semantics | 远程工作区 SidePane 语义 | 三态连接门(local/remote-ready/remote-waiting,rpcReady=渲染闸);断连占位Proxy绝不误落本地;终端/Git/watch 走远程服务(PTY在远程);web远控无浏览器面板(桌面+SSH/WSL保留);compactForRemoteControl 触屏适配;simplifyForNarrowRemote 隐藏帮助+终端开关保留侧面板;浏览器tab打remoteSessionId戳不串会话 |
+| Q11-app-shell-state-machine | App壳状态机盲区补漏(H区33KB) | 修正:wjt=窗口chrome/更新hook非状态机;draftFocusVersion 唯一写点=startDraft(+1/新建任务),自动收起三重防误触;跨任务browser恢复URL+gitSource按任务键迁移(Ujt);任务导航历史带回溯弹出;全部shell开关经wn可见性守卫;模型切换 restartingRuntime 阻塞任务导航 |
+| Q12-composer-event-pipeline | 面板→聊天写入侧 | 10种window CustomEvent全枚举,消费契约三档严格度;三条插入路径(File附件/文本插入/上下文chip发送时序列化);@-mention Lexical三触发符五数据源,白板项特殊分支直转PNG附件;browserNavigationRequest 纯props通道不经composer |
+
+## 逆向覆盖度终版宣告
+
+三轮 16 份报告(4+6+6)覆盖:壳层三层架构、15 种 tab 类型全部逐一深潜、46/49 命令执行引擎、playwright-over-CDP 定位与快照、驻留状态机、截图表面协议、录像管线、传输协议栈(VSBuffer/ChannelServer/ScopedServicePort)、fileWatcher、V4 会话数据层(帧归约/CAS/恢复状态机/配额表)、git 执行层闭环、RepoWiki 生成管线、轨迹数据源、快照缓存、composer 事件管道、远程语义、App 壳状态机。ZCode 右侧面板的实现逆向已无已知盲区。
