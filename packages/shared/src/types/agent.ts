@@ -1750,6 +1750,8 @@ export const AGENT_IPC_CHANNELS = {
   // 线程管理
   /** 获取线程列表 */
   LIST_THREADS: 'agent:list-threads',
+  /** 把正在前台等待的 Bash 命令立即转入后台（手动转后台，按 toolUseId 定位） */
+  PROMOTE_SHELL_BACKGROUND: 'agent:promote-shell-background',
   /** 创建线程 */
   CREATE_THREAD: 'agent:create-thread',
   /** 线程列表变更通知（push：thread-manager 在线程创建后广播，前端据此刷新列表）*/

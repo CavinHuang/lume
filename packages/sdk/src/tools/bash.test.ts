@@ -3,7 +3,7 @@ import { readFileSync } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, isDeliberateWaitCommand, looksLikeInteractivePrompt, redactSensitiveText, tailTruncate } from "./bash";
+import { BashTool, createPreviewAccumulator, extractFailureDigest, interpretShellExit, isDeliberateWaitCommand, looksLikeInteractivePrompt, promoteForegroundShellTask, redactSensitiveText, tailTruncate } from "./bash";
 import { analyzeBashCommand } from "../utils/bash-command-analysis";
 import { clearProcessJobs, ProcessOutputTool } from "./process-job-registry";
 import {
@@ -549,6 +549,48 @@ describe("BashTool #381 background timeout semantics", () => {
     expect(isDeliberateWaitCommand("Start-Sleep -Seconds 5")).toBeFalse();
     expect(isDeliberateWaitCommand("echo sleep")).toBeFalse();
   });
+
+  test("promotes a running foreground command to background on demand (manual promote)", async () => {
+    clearProcessJobs();
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-manual-promote-"));
+    const command = /(?:^|[\/])(?:pwsh|powershell)(?:\.exe)?$/i.test(resolveShellInvocation("").command)
+      ? "Start-Sleep -Seconds 3; Write-Output done"
+      : "sleep 3; printf done";
+    const events: SDKMessage[] = [];
+    const context = {
+      cwd: root,
+      sessionId: "manual-promote-test",
+      artifactsRoot: join(root, "artifacts"),
+      toolUseId: "tu_manual_promote",
+      emitEvent: (event: SDKMessage) => events.push(event),
+    };
+    // 不 await:前台命令在 15s 自动转后台前由手动 promote 接管
+    const pending = BashTool.call({ command }, context);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+
+    // 未知 toolUseId 拒绝
+    expect(promoteForegroundShellTask({ toolUseId: "tu_unknown" }).ok).toBeFalse();
+    // 跨会话拒绝
+    expect(
+      promoteForegroundShellTask({ toolUseId: "tu_manual_promote", sessionId: "session-b" }).ok,
+    ).toBeFalse();
+    // 本会话 promote 成功,原调用立即以后台回执返回
+    expect(
+      promoteForegroundShellTask({ toolUseId: "tu_manual_promote", sessionId: "manual-promote-test" }).ok,
+    ).toBeTrue();
+
+    const result = await pending;
+    expect(String(result.content)).toContain("moved to the background by user");
+    const taskId = String(result.content).match(/task_\d+/)?.[0];
+    expect(taskId).toBeTruthy();
+    expect(result._meta?.task).toMatchObject({ id: taskId, status: "running", backgroundedByUser: true });
+
+    const completed = await ProcessOutputTool.call({ task_id: taskId!, block: true, timeout: 30_000 }, context);
+    expect(completed.content).toContain("done");
+    expect(events.filter((event) =>
+      event.type === "system" && event.subtype === "task_started" && event.task_id === taskId
+    )).toHaveLength(1);
+  }, 60_000);
 });
 
 /**

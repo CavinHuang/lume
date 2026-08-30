@@ -149,6 +149,18 @@ export const acknowledgeRendererDelivery = (event: AgentMessageAppendedEvent) =>
 export const listThreads = () =>
   invoke('sidecar_call', { method: AGENT_IPC_CHANNELS.LIST_THREADS, params: null })
 
+export interface PromoteShellBackgroundResult {
+  ok: boolean
+  error?: string
+}
+
+/** 手动转后台：把正在前台等待的 Bash 命令立即转入后台（按 toolUseId 定位） */
+export const promoteShellBackground = (input: { toolUseId: string; sessionId?: string }) =>
+  invoke<PromoteShellBackgroundResult>('sidecar_call', {
+    method: AGENT_IPC_CHANNELS.PROMOTE_SHELL_BACKGROUND,
+    params: input,
+  })
+
 export const createThread = (workspaceId?: string) =>
   invoke('sidecar_call', { method: AGENT_IPC_CHANNELS.CREATE_THREAD, params: { workspaceId } })
 

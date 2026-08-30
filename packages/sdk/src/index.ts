@@ -131,6 +131,7 @@ export {
   waitForProcessJobTerminal,
   type ProcessJob,
 } from './tools/process-job-registry.js'
+export { promoteForegroundShellTask } from './tools/bash.js'
 
 // --------------------------------------------------------------------------
 // MCP Client

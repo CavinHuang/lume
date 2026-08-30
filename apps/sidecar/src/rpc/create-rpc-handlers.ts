@@ -3,6 +3,7 @@ import { getAgentRuntimeStatusManager } from "../services/agent/agent-runtime-st
 import { PlanModePhaseTracker } from "../services/agent/plan-mode-phase-tracker";
 import { createAgentHandlers } from "./agent-handlers";
 import { createAutomationHandlers } from "./automation-handlers";
+import { createBashHandlers } from "./bash-handlers";
 import { createChannelHandlers } from "./channel-handlers";
 import { createConnectorHandlers } from "./connector-handlers";
 import { createImHandlers } from "./im-handlers";
@@ -126,6 +127,7 @@ export function createRpcHandlers(context: CreateRpcHandlersContext): Record<str
       writeNotification: context.writeNotification
     }),
     createAutomationHandlers(),
+    createBashHandlers(),
     createRoutineHandlers(),
     createSuggestionHandlers({ writeNotification: context.writeNotification }),
     createDesktopContextHandlers(desktopContextRpcService),

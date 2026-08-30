@@ -71,6 +71,39 @@ function resolveOutputLimitBytes(input: { run_in_background?: boolean }): number
   return input.run_in_background === true ? BACKGROUND_MAX_OUTPUT_BYTES : MAX_OUTPUT_BYTES
 }
 
+interface ForegroundShellTaskHandle {
+  sessionId?: string
+  trigger: () => Promise<void>
+}
+
+// 前台等待期内的 durable 任务,按 toolUseId 索引;仅本进程内有效(sidecar 与
+// 工具执行同进程,RPC 直达)。
+const activeForegroundShellTasks = new Map<string, ForegroundShellTaskHandle>()
+
+function isManualPromotionResult(value: unknown): value is ToolResult {
+  return Boolean(value) && typeof value === 'object' && (value as { type?: unknown }).type === 'tool_result'
+}
+
+/**
+ * 手动转后台入口(供宿主 RPC 调用):把正在前台等待的 shell 命令立即转入后台。
+ * 返回后命令继续运行、完成通知照常发出;原工具调用会立即收到后台回执。
+ * direct 路径(独立 SDK 调用方,无 job 记录)不支持。
+ */
+export function promoteForegroundShellTask(input: {
+  toolUseId: string
+  sessionId?: string
+}): { ok: true } | { ok: false; error: string } {
+  const handle = activeForegroundShellTasks.get(input.toolUseId)
+  if (!handle) {
+    return { ok: false, error: `没有正在前台运行的 shell 命令: ${input.toolUseId}` }
+  }
+  if (input.sessionId && handle.sessionId && handle.sessionId !== input.sessionId) {
+    return { ok: false, error: '该命令属于其他会话' }
+  }
+  void handle.trigger()
+  return { ok: true }
+}
+
 type ShellTask = Awaited<ReturnType<typeof startShellTask>>
 
 export const BashTool = defineTool({
@@ -155,32 +188,67 @@ export const BashTool = defineTool({
     const task = await startShellTask({ command, timeoutMs: commandTimeoutMs, purpose, context, outputLimitBytes: resolveOutputLimitBytes(input) })
     if (input.run_in_background) return promoteToBackground(task, input.description, context)
 
-    const initial = await Promise.race([
-      task.done,
-      delay(PROGRESS_THRESHOLD_MS).then(() => null),
-    ])
-    if (initial) return finishForegroundTask(task, initial)
-
-    // sleep 是刻意的等待:带显式 timeout 时前台等到结束或被击杀即可,自动转
-    // 后台只会多出一条通知再唤醒一轮;无 timeout 时仍照常转后台,防止回合被
-    // 无 deadline 的 sleep 无限阻塞。
-    if (timeoutMs !== undefined && isDeliberateWaitCommand(command)) {
-      return finishForegroundTask(task, await task.done)
+    // 手动转后台:前台等待期内的 durable 任务按 toolUseId 注册,宿主可经
+    // RPC(agent:promote-shell-background)触发 promote;触发后 call() 立即
+    // 以后台回执返回,命令与完成通知链路照常由 promoteToBackground 接管。
+    const foregroundToolUseId = task.job ? context.toolUseId : undefined
+    let resolveManualPromotion: ((result: ToolResult) => void) | undefined
+    const manualPromotion: Promise<ToolResult> | undefined = foregroundToolUseId
+      ? new Promise<ToolResult>((resolve) => { resolveManualPromotion = resolve })
+      : undefined
+    if (foregroundToolUseId && resolveManualPromotion) {
+      activeForegroundShellTasks.set(foregroundToolUseId, {
+        sessionId: context.sessionId,
+        trigger: () => {
+          activeForegroundShellTasks.delete(foregroundToolUseId)
+          return Promise.resolve(promoteToBackground(task, input.description, context, false, true))
+            .then((result) => { resolveManualPromotion!(result) })
+        },
+      })
     }
+    try {
+      // Promise.race 会把 undefined 经 Promise.resolve 立即兑现——manualPromotion
+      // 缺省时绝不能混入 race,否则前台等待被 0ms 击穿直接落入自动转后台。
+      const raceForeground = <T>(promises: Promise<T>[]): Promise<T | ToolResult> =>
+        manualPromotion
+          ? Promise.race([...promises, manualPromotion] as Promise<T | ToolResult>[])
+          : Promise.race(promises)
 
-    context.emitEvent?.({
-      type: 'system',
-      subtype: 'local_command_output',
-      content: 'Command is still running.',
-      session_id: context.sessionId || '',
-    })
+      const initial = await raceForeground<ShellTaskResult | null>([
+        task.done,
+        delay(PROGRESS_THRESHOLD_MS).then(() => null),
+      ])
+      if (isManualPromotionResult(initial)) return initial
+      if (initial) return finishForegroundTask(task, initial)
 
-    const completion = await Promise.race([
-      task.done,
-      delay(Math.max(0, AUTO_BACKGROUND_MS - PROGRESS_THRESHOLD_MS)).then(() => null),
-    ])
-    if (completion) return finishForegroundTask(task, completion)
-    return promoteToBackground(task, input.description, context, true)
+      // sleep 是刻意的等待:带显式 timeout 时前台等到结束或被击杀即可,自动转
+      // 后台只会多出一条通知再唤醒一轮;无 timeout 时仍照常转后台,防止回合被
+      // 无 deadline 的 sleep 无限阻塞。手动转后台仍可打断等待(race 已挂上)。
+      if (timeoutMs !== undefined && isDeliberateWaitCommand(command)) {
+        const waited = await raceForeground<ShellTaskResult>([task.done])
+        if (isManualPromotionResult(waited)) return waited
+        return finishForegroundTask(task, waited)
+      }
+
+      context.emitEvent?.({
+        type: 'system',
+        subtype: 'local_command_output',
+        content: 'Command is still running.',
+        session_id: context.sessionId || '',
+      })
+
+      const completion = await raceForeground([
+        task.done,
+        delay(Math.max(0, AUTO_BACKGROUND_MS - PROGRESS_THRESHOLD_MS)).then(() => null),
+      ])
+      if (isManualPromotionResult(completion)) return completion
+      if (completion) return finishForegroundTask(task, completion)
+      return await (manualPromotion
+        ? Promise.race([promoteToBackground(task, input.description, context, true), manualPromotion])
+        : promoteToBackground(task, input.description, context, true))
+    } finally {
+      if (foregroundToolUseId) activeForegroundShellTasks.delete(foregroundToolUseId)
+    }
   },
 })
 
@@ -738,7 +806,7 @@ async function startDurableShellTask({
   }
 }
 
-async function promoteToBackground(task: ShellTask, description: unknown, context: ToolContext, automatic = false): Promise<ToolResult> {
+async function promoteToBackground(task: ShellTask, description: unknown, context: ToolContext, automatic = false, manual = false): Promise<ToolResult> {
   const subject = typeof description === 'string' && description.trim() ? description.trim() : 'Background shell command'
   const job = task.job ?? createProcessJobRecord({
       subject,
@@ -769,13 +837,13 @@ async function promoteToBackground(task: ShellTask, description: unknown, contex
     type: 'tool_result',
     tool_use_id: '',
     content: [
-      `${automatic ? 'Command exceeded the foreground budget and is continuing in the background' : 'Background process started'}: ${job.id}`,
+      `${manual ? 'Command was moved to the background by user' : automatic ? 'Command exceeded the foreground budget and is continuing in the background' : 'Background process started'}: ${job.id}`,
       `Output is being written to: ${task.outputFile}`,
       'You will be notified when it completes. Do not poll ProcessOutput.',
       // 自动转后台意味着模型没预期到命令长跑:就地教它下次怎么表达,避免反复超预算
       ...(automatic ? ['For long-running servers or watchers, pass run_in_background up front.'] : []),
     ].join('\n'),
-    _meta: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)), task: { id: job.id, status: 'running', kind: 'shell', autoBackgrounded: automatic } },
+    _meta: { execution: runningExecution(task.command, task.outputFile, shellKind(resolveShellInvocation(task.command).command)), task: { id: job.id, status: 'running', kind: 'shell', autoBackgrounded: automatic, backgroundedByUser: manual } },
   }
 }
 

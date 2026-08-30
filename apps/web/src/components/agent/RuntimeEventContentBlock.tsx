@@ -13,7 +13,7 @@ import type { RuntimeAssistantBlock, RuntimeMessageView, RuntimeToolCallView, Ta
 import { groupAssistantBlocksForMinimal, groupAssistantBlocksForStandard } from './minimal-assistant-grouping'
 import { SubagentInlinePanel } from './SubagentInlinePanel'
 import { AskUserQuestionBlock } from './AskUserQuestionBlock'
-import { agentSend, getThreadMessageVersions, revokeFilePreviewScope } from '@/lib/desktop-api'
+import { agentSend, getThreadMessageVersions, promoteShellBackground, revokeFilePreviewScope } from '@/lib/desktop-api'
 import { MessageFileReferenceBindingProvider } from './thread-file-env'
 import { getAgentRole, validatePlanningTodoRefPart, type AgentCapabilityReferenceView, type AgentMessage, type AgentMessageAttachmentInput, type AgentRoleDefinition, type AgentUserMessagePart, type FileRef } from '@lume/shared'
 import { AnimatedCollapsiblePanel, useDeferredUnmount } from './AnimatedCollapsiblePanel'
@@ -1322,6 +1322,27 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
   const [collapsed, setCollapsed] = useState(true)
   const isRunning = toolCall.status === 'running'
   const input = asRecord(toolCall.input)
+  // 手动转后台:仅对前台等待中的 Bash 命令开放(显式 run_in_background 的已经是后台任务)
+  const canPromoteToBackground = isRunning
+    && toolCall.toolName === 'Bash'
+    && input.run_in_background !== true
+  const [promotePending, setPromotePending] = useState(false)
+  const handlePromoteToBackground = () => {
+    if (promotePending) return
+    setPromotePending(true)
+    void promoteShellBackground({ toolUseId: toolCall.id, sessionId: threadId })
+      .then((result) => {
+        if (!result?.ok) {
+          toast.error(result?.error ?? '转入后台失败')
+          setPromotePending(false)
+        }
+        // 成功后原工具调用会立即以后台回执收尾,卡片随 status 更新,无需本地清理
+      })
+      .catch(() => {
+        toast.error('转入后台失败')
+        setPromotePending(false)
+      })
+  }
 
   if (isDelegationToolName(toolCall.toolName)) {
     return (
@@ -1415,6 +1436,17 @@ const RuntimeEventToolCallBlock = memo(function RuntimeEventToolCallBlock({
         // 完成后才切换为真正的 disclosure button。
         <div className="flex h-11 w-full items-center gap-3 px-4 text-left text-[13px] text-[var(--lume-text-secondary)]">
           {headerContent}
+          {canPromoteToBackground && (
+            <Button
+              variant="ghost"
+              type="button"
+              disabled={promotePending}
+              onClick={handlePromoteToBackground}
+              className="h-7 shrink-0 rounded-full px-2.5 text-[12px] font-medium text-[var(--lume-text-muted)] hover:bg-[var(--lume-accent-soft)] hover:text-[var(--lume-text-primary)]"
+            >
+              {promotePending ? '转入中…' : '转入后台'}
+            </Button>
+          )}
         </div>
       ) : (
         <Button
