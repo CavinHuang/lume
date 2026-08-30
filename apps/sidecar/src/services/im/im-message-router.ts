@@ -875,6 +875,8 @@ function listPeerHistoryThreads(
       && (thread.source.accountId ?? "") === message.accountId
       && thread.source.peerKind === message.peerKind
       && (thread.source.peerId ?? "") === message.peerId
+      && thread.status !== "archived"
+      && thread.status !== "trashed"
       && thread.id !== currentThreadId)
     .sort((a, b) => b.updatedAt - a.updatedAt)
     .slice(0, 10);
@@ -1051,6 +1053,24 @@ export async function routeInboundImMessage(
     }
   }
   const approvalCommand = parseImApprovalCommand(message.text);
+  const chatCommand = parseImCommand(message.text);
+  // 钉钉 sessionWebhook 随每条入站消息刷新。命令路径不会经过下方普通消息的
+  // upsert，必须先更新绑定，否则回复可能继续使用已经过期的 webhook。
+  if (
+    existing
+    && (approvalCommand.type !== "none" || chatCommand.type !== "none")
+    && (message.contextToken !== undefined || message.peerName !== undefined)
+  ) {
+    existing = upsertImThreadBinding({
+      provider: message.provider,
+      accountId: message.accountId,
+      peerKind: message.peerKind,
+      peerId: message.peerId,
+      peerName: message.peerName,
+      threadId: existing.threadId,
+      contextToken: message.contextToken
+    });
+  }
   if (approvalCommand.type !== "none") {
     log.info("处理审批命令", { peerId: message.peerId, requestId: approvalCommand.type === "command" ? approvalCommand.requestId : undefined });
     let result: { threadId: string };
@@ -1071,7 +1091,6 @@ export async function routeInboundImMessage(
     return result;
   }
   // 会话内斜杠命令（/help /new /stop /now /model）
-  const chatCommand = parseImCommand(message.text);
   if (chatCommand.type !== "none") {
     log.info("处理会话命令", { provider: message.provider, peerId: message.peerId, type: chatCommand.type });
     return routeImChatCommand(message, chatCommand, existing, deps);

@@ -76,6 +76,9 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
 
   // #598：error 态账号指数退避状态（attempts 从 1 起计；nextAt 为最早可重试时刻）
   const recoveryBackoff = new Map<string, { attempts: number; nextAt: number }>();
+  // stopAccount 的状态回写可能异步落盘；在此期间显式抑制自愈，避免扫描到旧的
+  // error 状态后把用户刚停止的账号重新拉起。显式 startAccount 会解除抑制。
+  const recoverySuppressedAccounts = new Set<string>();
   let recoveryOptions = { intervalMs: 30_000, baseDelayMs: 30_000, maxDelayMs: 30 * 60_000 };
   let recoveryTimer: ReturnType<typeof setInterval> | undefined;
 
@@ -93,6 +96,7 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     async startAccount(accountId: string) {
+      recoverySuppressedAccounts.delete(accountId);
       const lifecycleVersion = lifecycleVersions.get(accountId) ?? 0;
       const pendingStop = pendingStops.get(accountId);
       if (pendingStop) {
@@ -164,6 +168,7 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
     },
 
     stopAccount(accountId: string) {
+      recoverySuppressedAccounts.add(accountId);
       recoveryBackoff.delete(accountId);
       lifecycleVersions.set(accountId, (lifecycleVersions.get(accountId) ?? 0) + 1);
       const worker = workers.get(accountId);
@@ -188,7 +193,10 @@ export function createImRuntimeManager(input: CreateImRuntimeManagerInput = {}):
 
     async runRecoveryTick(now = Date.now()) {
       const { baseDelayMs, maxDelayMs } = recoveryOptions;
-      const candidates = listAccountsFn().filter((account) => account.enabled && account.status === "error");
+      const candidates = listAccountsFn().filter((account) =>
+        account.enabled
+        && account.status === "error"
+        && !recoverySuppressedAccounts.has(account.id));
       const attempted: string[] = [];
       const restarts: Array<Promise<void>> = [];
       for (const account of candidates) {

@@ -77,11 +77,12 @@ describe("mergeImMessageBatch", () => {
 
   test("群聊单发送者保持原语义（senderId 保留）", () => {
     const merged = mergeImMessageBatch([
-      msg({ peerKind: "group", text: "第一条", senderId: "user-a" }),
-      msg({ peerKind: "group", text: "第二条", senderId: "user-a" })
+      msg({ peerKind: "group", text: "第一条", senderId: "user-a", senderName: "张三" }),
+      msg({ peerKind: "group", text: "第二条", senderId: "user-a", senderName: "张三" })
     ]);
     expect(merged.text).toBe("第一条\n\n第二条");
     expect(merged.senderId).toBe("user-a");
+    expect(merged.senderName).toBe("张三");
   });
 
   test("单条也剥 messageId（已见标记归管线管）", () => {

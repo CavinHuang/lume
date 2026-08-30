@@ -35,6 +35,8 @@ describe("openclaw-weixin-worker", () => {
             peerId: "user-1",
             peerKind: "dm",
             peerName: "Alice",
+            senderId: "wxid_alice",
+            senderName: "张三",
             text: "hello",
             contents: [],
             contextToken: "ctx-1"
@@ -60,6 +62,8 @@ describe("openclaw-weixin-worker", () => {
       accountLabel: "工作微信",
       workspaceId: "workspace-1",
       peerId: "user-1",
+      senderId: "wxid_alice",
+      senderName: "张三",
       text: "hello",
       contextToken: "ctx-1"
     })]);

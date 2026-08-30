@@ -102,6 +102,7 @@ export function createOpenClawWeixinWorker(input: CreateOpenClawWeixinWorkerInpu
         peerId: update.peerId,
         peerName: update.peerName,
         senderId: update.senderId,
+        senderName: update.senderName,
         text: update.text,
         contents: update.contents,
         contextToken: update.contextToken,

@@ -295,6 +295,20 @@ describe("createFeishuCardStream", () => {
     });
     expect(await stream.open()).toBe(false);
   });
+
+  test("卡片实体创建成功但消息发送业务码非 0 时仍回退文本", async () => {
+    const calls: FakeApiCalls = { cardCreates: [], messageCreates: [], updates: [] };
+    const client = fakeClient(calls);
+    client.im.v1.message.create = async () => ({ code: 230002 }) as never;
+    const stream = createFeishuCardStream({
+      appId: "cli_x",
+      appSecret: "sec",
+      chatId: "oc_chat",
+      client
+    });
+
+    expect(await stream.open()).toBe(false);
+  });
 });
 
 describe("abortActiveFeishuRunCards（#598 优雅关停卡片收尾）", () => {

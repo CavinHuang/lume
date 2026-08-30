@@ -140,6 +140,7 @@ export function mergeImMessageBatch(batch: InboundImRouteMessage[]): InboundImRo
     peerId: head.peerId,
     peerName: lastOf((m) => m.peerName),
     senderId: multiSender ? undefined : lastOf((m) => m.senderId),
+    senderName: multiSender ? undefined : lastOf((m) => m.senderName),
     text,
     contents: batch.some((m) => m.contents?.length)
       ? batch.flatMap((m) => m.contents ?? [])

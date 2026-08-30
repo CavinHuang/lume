@@ -388,6 +388,29 @@ describe("#598 error 态账号定时自愈", () => {
     expect(await manager.runRecoveryTick(Date.now())).toEqual([]);
   });
 
+  test("手动停止状态尚未异步落盘时，自愈也不会按旧 error 状态重新拉起", async () => {
+    const account = makeAccount("a-stop-race", "error");
+    let releaseStopped!: () => void;
+    const stoppedPersisted = new Promise<void>((resolve) => { releaseStopped = resolve; });
+    let starts = 0;
+    const manager = createImRuntimeManager({
+      listAccounts: () => [account],
+      getRuntimeAccount: () => ({ ...account, token: "t" } as never),
+      updateAccount: (_id, input) => input.status === "stopped" ? stoppedPersisted : undefined,
+      createWorker: () => {
+        starts += 1;
+        return { start() {}, stop() {}, isRunning: () => true };
+      }
+    });
+
+    manager.stopAccount(account.id);
+    expect(await manager.runRecoveryTick(Date.now())).toEqual([]);
+    expect(starts).toBe(0);
+
+    releaseStopped();
+    await Promise.resolve();
+  });
+
   test("startAutoRecovery 周期驱动 tick，stopAutoRecovery 停止", async () => {
     const manager = createImRuntimeManager({
       listAccounts: () => [],
