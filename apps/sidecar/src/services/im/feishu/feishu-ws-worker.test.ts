@@ -221,6 +221,29 @@ describe("createFeishuWsWorker", () => {
     expect(updated).toHaveLength(1);
     expect(updated[0]?.status).toBe("auth_required");
   });
+
+  it("停止后忽略旧连接的异步失败，不覆盖 stopped 状态", async () => {
+    let rejectStart!: (error: Error) => void;
+    const statuses: string[] = [];
+    const pending = new Promise<void>((_, reject) => { rejectStart = reject; });
+    const { client } = makeFakeClient();
+    client.start = () => pending;
+    const worker = createFeishuWsWorker({
+      account: makeAccount(),
+      updateAccount: async (_id, input) => {
+        if (input.status) statuses.push(input.status);
+      },
+      createClient: () => client as never,
+    });
+
+    worker.start();
+    worker.stop();
+    rejectStart(new Error("late start failure"));
+    await Promise.resolve();
+
+    expect(statuses).toEqual([]);
+    expect(worker.isRunning()).toBe(false);
+  });
 });
 
 describe("parseFeishuEvent", () => {

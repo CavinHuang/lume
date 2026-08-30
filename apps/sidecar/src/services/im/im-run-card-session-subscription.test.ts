@@ -20,6 +20,7 @@ describe("im-run-card-session 压缩中间态订阅链路（#725 review S1/S3）
   let tempConfigDir = "";
   let appliedEvents: LumeRuntimeEvent[] = [];
   let openOk = true;
+  let closedStreams = 0;
 
   beforeEach(() => {
     prevConfigDir = process.env.LUME_CONFIG_DIR;
@@ -27,6 +28,7 @@ describe("im-run-card-session 压缩中间态订阅链路（#725 review S1/S3）
     process.env.LUME_CONFIG_DIR = tempConfigDir;
     appliedEvents = [];
     openOk = true;
+    closedStreams = 0;
     resetAgentRuntimeStatusManagerForTest();
   });
 
@@ -74,7 +76,7 @@ describe("im-run-card-session 压缩中间态订阅链路（#725 review S1/S3）
       get degraded() {
         return false;
       },
-      close: () => {},
+      close: () => { closedStreams += 1; },
       abortInterrupted: async () => undefined
     }));
   }
@@ -172,5 +174,15 @@ describe("im-run-card-session 压缩中间态订阅链路（#725 review S1/S3）
 
     statuses.markCompacting("thread-sub-5");
     expect(appliedEvents.filter((event) => event.type.startsWith("context.compaction"))).toHaveLength(0);
+  });
+
+  test("没有内容事件便结束的运行会关闭未开卡的流", async () => {
+    await bindFeishuThread("thread-sub-empty");
+    installFakeStream();
+    const session = createImRunCardSession("thread-sub-empty")!;
+
+    session.finish({ kind: "completed" });
+
+    expect(closedStreams).toBe(1);
   });
 });
