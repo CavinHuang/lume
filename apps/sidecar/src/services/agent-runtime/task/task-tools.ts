@@ -70,7 +70,7 @@ export function createMainTaskTools(input: {
   };
 }
 
-function emitTaskProgress(input: {
+export function emitTaskProgress(input: {
   threadId: string;
   runId?: string;
   emitRuntimeEvent?: (event: LumeRuntimeEvent) => void;
