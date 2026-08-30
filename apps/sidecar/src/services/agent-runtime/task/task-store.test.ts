@@ -44,6 +44,34 @@ describe("FileBackedTaskStore", () => {
     });
   });
 
+  test("上一 run 遗留的僵尸 in_progress 在新 run 认领时自动释放", async () => {
+    await withStore(async (store) => {
+      const run1 = { ...context(), runId: "parent-run-1" };
+      const run2 = { ...context(), runId: "parent-run-2" };
+      const interrupted = await store.create({ subject: "Interrupted" }, run1);
+      await store.update({ taskId: interrupted.task.id, status: "in_progress", expectedRevision: interrupted.revision }, run1);
+
+      const next = await store.create({ subject: "Next" }, run2);
+      const claimed = await store.update({ taskId: next.task.id, status: "in_progress", expectedRevision: next.revision }, run2);
+      expect(claimed.claimToken).toBeString();
+
+      const healed = await store.get(interrupted.task.id, run2);
+      expect(healed?.task.status).toBe("pending");
+      // create(1) → claim(2) → 僵尸释放(3)
+      expect(healed?.revision).toBe(3);
+    });
+  });
+
+  test("同一 run 的活跃认领不被自愈逻辑误释放", async () => {
+    await withStore(async (store) => {
+      const run1 = { ...context(), runId: "parent-run-1" };
+      const first = await store.create({ subject: "First" }, run1);
+      const second = await store.create({ subject: "Second" }, run1);
+      await store.update({ taskId: first.task.id, status: "in_progress", expectedRevision: first.revision }, run1);
+      await expect(store.update({ taskId: second.task.id, status: "in_progress", expectedRevision: second.revision }, run1)).rejects.toThrow("already has active Task");
+    });
+  });
+
   test("同一父 Run 最多认领同一 Task 三次，新 Run 可重新尝试", async () => {
     await withStore(async (store) => {
       const runContext = { ...context(), runId: "parent-run-1" };

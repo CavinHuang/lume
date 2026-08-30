@@ -365,7 +365,7 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       if (typeof mutationInput.subject === "string") task.subject = requireText(mutationInput.subject, "subject");
       if (typeof mutationInput.description === "string") task.description = mutationInput.description;
       if (typeof mutationInput.activeForm === "string") task.activeForm = mutationInput.activeForm;
-      if (requestedStatus === "in_progress") this.claim(task, context, mutationInput);
+      if (requestedStatus === "in_progress") this.claim(task, context, mutationInput, tasks, changed, updateTask);
       if (requestedStatus === "completed") {
         if (this.executorBinding(task)) throw new Error("Task cannot be completed while its executor is active");
         // 与 claim 同门控：被未完成依赖阻塞的 Task 不得直通 completed（#647 P2-1）
@@ -618,12 +618,28 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
     if (this.hasCycle(tasks)) throw new Error("Task dependency change would create a cycle");
   }
 
-  private claim(task: StoredTask, context: TaskStoreContext, input: Record<string, unknown>): void {
+  private claim(
+    task: StoredTask,
+    context: TaskStoreContext,
+    input: Record<string, unknown>,
+    tasks: Map<string, StoredTask>,
+    changed: Map<string, StoredTask>,
+    updateTask: (item: StoredTask) => void,
+  ): void {
     if (task.status !== "pending") throw new Error("Only pending Tasks can be claimed");
     if (task.blockedBy.some((id) => this.readTask(id)?.status !== "completed")) throw new Error("Task is blocked by unfinished dependencies");
-    const active = this.readTasks().find((item) => item.status === "in_progress");
-    if (active && active.id !== task.id) throw new Error(`Task list already has active Task ${active.id}`);
     if (this.readTasks().some((item) => this.executorFence(item))) throw new Error("Task list is fenced until the previous executor terminates");
+    const active = [...tasks.values()].find((item) => item.status === "in_progress");
+    if (active && active.id !== task.id) {
+      // 串行线程自愈（对齐 ZCode 的无僵尸清单）：run 串行推进，活跃认领的
+      // parentRun ≠ 当前 run 即为上一 run 终止时遗留的僵尸认领，自动释放后
+      // 放行本次认领；有执行器栅栏（子代理在飞）已在上方拦截。
+      if (!this.tryReleaseZombieClaim(active, context)) {
+        throw new Error(`Task list already has active Task ${active.id}`);
+      }
+      updateTask(active);
+      changed.set(active.id, active);
+    }
     const lume = serviceMetadata(task);
     const parentRunId = context.runId?.trim();
     const attemptsInRun = parentRunId
@@ -646,6 +662,18 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
       },
     };
     void input;
+  }
+
+  /* 上一 run 终止时遗留的 in_progress 认领即僵尸：run 串行推进意味着其所属
+   * run 必已结束。无 parentRun 记录的旧数据保守不自动处理；有执行器栅栏的
+   * 由调用方的 fence 检查先行拦截。 */
+  private tryReleaseZombieClaim(active: StoredTask, context: TaskStoreContext): boolean {
+    if (this.executorFence(active)) return false;
+    const claim = serviceMetadata(active).claim as Record<string, unknown> | undefined;
+    const parentRun = claim && typeof claim.parentRun === "string" ? claim.parentRun : undefined;
+    if (!parentRun || !context.runId?.trim() || parentRun === context.runId.trim()) return false;
+    this.releaseClaim(active, {}, "run ended");
+    return true;
   }
 
   private releaseClaim(task: StoredTask, input: Record<string, unknown>, reason: string): void {
