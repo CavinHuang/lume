@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createVaultFileSystem } from "./vault-facade";
@@ -10,6 +10,8 @@ function formatLocalDate(date: Date): string {
   const day = String(date.getDate()).padStart(2, "0");
   return `${year}-${month}-${day}`;
 }
+
+const PNG_MAGIC_BASE64 = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]).toString("base64");
 
 describe("vault-facade", () => {
   function makeVault(): string {
@@ -153,7 +155,8 @@ describe("vault-facade", () => {
       const fs = createVaultFileSystem(root);
       const result = await fs.createUntitledNote("Lume Inbox");
       expect(result.ok).toBe(true);
-      expect(readFileSync(join(root, "Lume Inbox", result.relativePath.split("/").pop()!), "utf-8")).toBe("");
+      const filename = result.ok ? result.relativePath.split("/").pop()! : "";
+      expect(readFileSync(join(root, "Lume Inbox", filename), "utf-8")).toBe("");
     } finally {
       rmSync(root, { recursive: true, force: true });
     }
@@ -200,6 +203,41 @@ describe("vault-facade", () => {
       const fs = createVaultFileSystem(root);
       const huge = "x".repeat(2 * 1024 * 1024 + 1);
       await expect(fs.writeFile({ relativePath: "huge.md", content: huge })).rejects.toThrow("2 MB");
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("resolveMedia 解析根内图片路径并拒绝越界", () => {
+    const root = makeVault();
+    try {
+      writeFileSync(join(root, "notes", "pic.png"), "png-bytes", "utf-8");
+      const fs = createVaultFileSystem(root);
+      expect(fs.resolveMedia("notes/a.md", "pic.png")).toBe(realpathSync(join(root, "notes", "pic.png")));
+      expect(fs.resolveMedia("notes/a.md", "./pic.png?v=1#frag")).toBe(realpathSync(join(root, "notes", "pic.png")));
+      expect(fs.resolveMedia("notes/a.md", "../root-note.md")).toBe(realpathSync(join(root, "root-note.md")));
+      expect(fs.resolveMedia("notes/a.md", "missing.png")).toBeNull();
+      expect(fs.resolveMedia("notes/a.md", "../../outside.png")).toBeNull();
+      expect(fs.resolveMedia("notes/a.md", "")).toBeNull();
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
+  });
+
+  test("savePastedImage 落盘笔记同目录 assets 并校验魔数", () => {
+    const root = makeVault();
+    try {
+      const fs = createVaultFileSystem(root);
+      const saved = fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: PNG_MAGIC_BASE64 });
+      expect(saved.src?.startsWith("assets/pasted-image-") && saved.src.endsWith(".png")).toBe(true);
+      expect(statSync(join(root, "notes", saved.src!)).size).toBe(8);
+
+      // 声明 MIME 与魔数不一致时拒绝。
+      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/gif", base64: PNG_MAGIC_BASE64 })).toEqual({ src: null });
+      expect(fs.savePastedImage({ noteRelativePath: "notes/a.md", mimeType: "image/png", base64: Buffer.from("not-an-image").toString("base64") })).toEqual({ src: null });
+
+      const rootSaved = fs.savePastedImage({ noteRelativePath: "root-note.md", mimeType: "image/png", base64: PNG_MAGIC_BASE64 });
+      expect(rootSaved.src?.startsWith("assets/")).toBe(true);
     } finally {
       rmSync(root, { recursive: true, force: true });
     }

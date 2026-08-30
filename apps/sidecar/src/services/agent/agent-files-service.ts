@@ -2089,7 +2089,7 @@ function decodeAttachmentBase64(
   return bytes;
 }
 
-function detectImageMediaType(bytes: Buffer): string | undefined {
+export function detectImageMediaType(bytes: Buffer): string | undefined {
   if (
     bytes.length >= 8 &&
     bytes

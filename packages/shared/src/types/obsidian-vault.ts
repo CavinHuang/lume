@@ -73,6 +73,18 @@ export interface ObsidianVaultFocusAttribution {
   focus: ObsidianVaultFocus
 }
 
+export interface ObsidianVaultSavePastedImageInput {
+  vaultPath: string
+  /** 目标笔记的相对路径；图片落在其同目录 assets/ 下。 */
+  noteRelativePath: string
+  mimeType: string
+  base64: string
+}
+
+export type ObsidianVaultSavePastedImageResult =
+  | { src: string }
+  | { src: null }
+
 export const OBSIDIAN_VAULT_IPC_CHANNELS = {
   GET_CONFIG: "obsidian:get-config",
   SET_ENABLED: "obsidian:set-enabled",
@@ -87,4 +99,6 @@ export const OBSIDIAN_VAULT_IPC_CHANNELS = {
   RENAME_FILE: "obsidian:rename-file",
   DELETE_FILE: "obsidian:delete-file",
   SET_FOCUS: "obsidian:set-focus",
+  RESOLVE_MEDIA: "obsidian:resolve-media",
+  SAVE_PASTED_IMAGE: "obsidian:save-pasted-image",
 } as const

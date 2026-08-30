@@ -4,7 +4,7 @@
  * `..`/空段/隐藏目录/软链接、根内越界检查、mkdir 后复验（TOCTOU）、
  * 2MB/5000 文件/深度 16 限额、sha256 乐观锁、独占创建、原子写。
  */
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, lstatSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
@@ -12,16 +12,28 @@ import type {
   ObsidianVaultFileEntry,
   ObsidianVaultReadResult,
   ObsidianVaultRenameInput,
+  ObsidianVaultSavePastedImageInput,
+  ObsidianVaultSavePastedImageResult,
   ObsidianVaultWriteInput,
   ObsidianVaultWriteResult,
 } from "@lume/shared";
 import { writeFileAtomic } from "@lume/agent-sdk";
+import { detectImageMediaType } from "../agent/agent-files-service";
 import { assertVaultRoot } from "./vault-registry";
 
 const MAX_VAULT_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_VAULT_FILES = 5_000;
 const MAX_VAULT_DEPTH = 16;
 const HIDDEN_DIRECTORY_PREFIX = ".";
+const MAX_VAULT_PASTED_IMAGE_BYTES = 10 * 1024 * 1024;
+// 解码前先拒超限 base64，避免多复制一份 Node Buffer。
+const MAX_VAULT_PASTED_IMAGE_BASE64_CHARS = Math.ceil(MAX_VAULT_PASTED_IMAGE_BYTES / 3) * 4;
+const PASTED_IMAGE_EXTENSIONS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/gif": "gif",
+  "image/webp": "webp",
+};
 
 function sha256(content: string): string {
   return createHash("sha256").update(content, "utf-8").digest("hex");
@@ -133,6 +145,8 @@ function assertContentSize(content: string): void {
 export interface ObsidianVaultFileSystem {
   listFiles(): ObsidianVaultFileEntry[];
   readFile(relativePath: string): ObsidianVaultReadResult;
+  resolveMedia(noteRelativePath: string, src: string): string | null;
+  savePastedImage(input: Omit<ObsidianVaultSavePastedImageInput, "vaultPath">): ObsidianVaultSavePastedImageResult;
   writeFile(input: Omit<ObsidianVaultWriteInput, "vaultPath">): Promise<ObsidianVaultWriteResult>;
   createUntitledNote(folderPath?: string, content?: string, now?: Date): Promise<ObsidianVaultWriteResult>;
   createFolder(relativePath: string): void;
@@ -206,6 +220,55 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
       sha256: sha256(content),
       modifiedAt: stats.mtimeMs,
     };
+  };
+
+  // 媒体解析面向 .obsidian 之外的所有根内文件，不走仅 .md 的 getSafeVaultTarget。
+  const resolveMedia = (noteRelativePath: string, src: string): string | null => {
+    if (typeof src !== "string" || !src.trim() || src.includes("\0")) return null;
+    const note = getSafeVaultTarget(root, noteRelativePath);
+    const source = src.trim().replace(/[?#].*$/, "");
+    if (!source) return null;
+
+    let candidate: string;
+    try {
+      candidate = source.toLowerCase().startsWith("file:")
+        ? decodeURIComponent(new URL(source).pathname)
+        : resolve(dirname(note.absolutePath), decodeURIComponent(source));
+    } catch {
+      return null;
+    }
+    if (!isWithinRoot(root, candidate)) return null;
+
+    const relativeCandidate = toRelativePath(root, candidate);
+    try {
+      const target = getSafeVaultPath(root, relativeCandidate);
+      return existsSync(target.absolutePath) && lstatSync(target.absolutePath).isFile() ? target.absolutePath : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const savePastedImage = (input: Omit<ObsidianVaultSavePastedImageInput, "vaultPath">): ObsidianVaultSavePastedImageResult => {
+    const extension = PASTED_IMAGE_EXTENSIONS[input.mimeType];
+    if (!extension || typeof input.base64 !== "string" || input.base64.length === 0 || input.base64.length > MAX_VAULT_PASTED_IMAGE_BASE64_CHARS) return { src: null };
+    const normalizedBase64 = input.base64.replace(/\s/g, "");
+    if (!normalizedBase64 || normalizedBase64.length > MAX_VAULT_PASTED_IMAGE_BASE64_CHARS || normalizedBase64.length % 4 !== 0 || !/^[A-Za-z0-9+/]*={0,2}$/.test(normalizedBase64)) return { src: null };
+
+    const data = Buffer.from(normalizedBase64, "base64");
+    // 声明 MIME 必须与魔数识别一致，拒绝改后缀的任意字节。
+    if (data.length === 0 || data.length > MAX_VAULT_PASTED_IMAGE_BYTES || detectImageMediaType(data) !== input.mimeType) return { src: null };
+
+    const note = getSafeVaultTarget(root, input.noteRelativePath);
+    const directory = dirname(note.relativePath);
+    const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const filename = `pasted-image-${timestamp}-${randomUUID()}.${extension}`;
+    const mediaRelativePath = directory === "." ? `assets/${filename}` : `${directory}/assets/${filename}`;
+    const target = getSafeVaultPath(root, mediaRelativePath);
+    mkdirSync(dirname(target.absolutePath), { recursive: true });
+    // mkdir 引入新祖先，写前按当前目录树复验一次。
+    const revalidated = getSafeVaultPath(root, mediaRelativePath);
+    writeFileSync(revalidated.absolutePath, data, { flag: "wx" });
+    return { src: toRelativePath(dirname(note.absolutePath), revalidated.absolutePath) };
   };
 
   const writeFile = async (input: Omit<ObsidianVaultWriteInput, "vaultPath">): Promise<ObsidianVaultWriteResult> => {
@@ -304,5 +367,5 @@ export function createVaultFileSystem(rootPath: string): ObsidianVaultFileSystem
     unlinkSync(revalidated.absolutePath);
   };
 
-  return { listFiles, readFile, writeFile, createUntitledNote, createFolder, renameFile, deleteFile };
+  return { listFiles, readFile, resolveMedia, savePastedImage, writeFile, createUntitledNote, createFolder, renameFile, deleteFile };
 }
