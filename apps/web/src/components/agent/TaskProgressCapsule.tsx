@@ -42,9 +42,9 @@ export function TaskProgressCapsule({ event, onVisibleChange }: { event: TaskPro
 
   // 向宿主回报实际可见性（终态自动消失/卸载即 false），供双清单让位判断
   useEffect(() => {
-    onVisibleChange?.(!dismissed)
+    onVisibleChange?.(!dismissed && event.tasks.length > 0)
     return () => onVisibleChange?.(false)
-  }, [dismissed])
+  }, [dismissed, event.tasks.length])
 
   // 任务全部被删除后事件仍残留（空列表），直接隐藏胶囊
   if (dismissed || event.tasks.length === 0) return null

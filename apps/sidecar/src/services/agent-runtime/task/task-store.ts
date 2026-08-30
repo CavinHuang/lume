@@ -709,8 +709,9 @@ export class FileBackedTaskStore implements TaskStoreAdapter {
 
   private assertFence(task: StoredTask, input: Record<string, unknown>, sensitive: boolean, context: TaskStoreContext): void {
     if (!sensitive) return;
-    // 同 actor 串行路径宽容（LLM 不必先读 revision 再写）：缺省 expectedRevision
-    // 视为按当前 revision 提交；显式传入但不匹配仍报错，跨代理并发 fencing 语义不变。
+    // 宽容写路径（LLM 不必先读 revision 再写）：缺省 expectedRevision 视为按
+    // 当前 revision 提交（前提：kernel 线程互斥下单写者串行）；显式传入但不匹配
+    // 仍报错，保留显式 fencing 供多代理并发场景使用。
     if (typeof input.expectedRevision !== "number") input.expectedRevision = task.revision;
     if (input.expectedRevision !== task.revision) throw new Error(`Task revision conflict: expected ${String(input.expectedRevision)}, current ${task.revision}`);
     const token = this.claimToken(task);

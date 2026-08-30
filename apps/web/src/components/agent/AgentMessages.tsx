@@ -401,11 +401,6 @@ export function AgentMessages({ threadId, streaming, onOpenThreadFile, onOpenThr
     return null
   }, [runtimeEvents])
 
-  // 任务事件变化时重置胶囊可见性（新事件先隐藏，胶囊挂载后经回调回报实际可见性）
-  useEffect(() => {
-    setTaskCapsuleVisible(false)
-  }, [latestTaskProgress])
-
   const items: React.ReactNode[] = []
   let latestUserMessageIndex = -1
   for (let i = liveMessages.length - 1; i >= 0; i -= 1) {

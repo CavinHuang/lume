@@ -1361,11 +1361,12 @@ async function createRuntimeCoreSessionImpl(
     if (coding) return coding;
     const todoBlocker = getTodoCompletionBlocker(currentTodoState);
     if (todoBlocker) {
-      // automation run 同样不受 todo 门控劫持；轮次预算与 Task 门控一致
-      if (automationExecution) return undefined;
-      if (todoGateRoundsUsed >= MAX_TODO_GATE_ROUNDS) return undefined;
-      todoGateRoundsUsed += 1;
-      return todoBlocker;
+      // automation run 不受 todo 门控劫持；预算耗尽只放行 todo 门本身，
+      // 后续门控（Task）仍需独立评估——两个预算互相独立，不互相饥饿
+      if (!automationExecution && todoGateRoundsUsed < MAX_TODO_GATE_ROUNDS) {
+        todoGateRoundsUsed += 1;
+        return todoBlocker;
+      }
     }
     // Task 持久任务门控：只看本 run 触碰过的任务，历史陈旧 pending 不劫持收尾；
     // 计划任务不受门控（自动化收尾节奏由其自身编排决定）
