@@ -1365,8 +1365,7 @@ async function createRuntimeCoreSessionImpl(
     if (taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS) return undefined;
     taskGateRoundsUsed += 1;
     const lastRoundNote = taskGateRoundsUsed >= MAX_TASK_GATE_ROUNDS
-      ? "
-（这是最后一次自动推进，其后 run 将结束——请如实说明剩余任务的真实状态，不要虚假标记完成。）"
+      ? "\n（这是最后一次自动推进，其后 run 将结束——请如实说明剩余任务的真实状态，不要虚假标记完成。）"
       : "";
     return getTaskCompletionBlocker(touchedTasks) + lastRoundNote;
   };
