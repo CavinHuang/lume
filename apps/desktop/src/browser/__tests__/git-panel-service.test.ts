@@ -242,6 +242,8 @@ describe('getGitPanelStatus（真实 git，无 git 环境跳过）', () => {
   const git = (args: string[], cwd: string) => {
     spawnSync('git', args, { cwd, stdio: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
   }
+  // Windows 下 bun spawnSync 冷启动/AV 扫描可使 git 调用前后停顿 ~4s，放宽 bun 默认 5s 用例超时。
+  const E2E_TIMEOUT_MS = 30_000
 
   test('临时仓库端到端：分支头 + 三类变更 + 行数', async () => {
     if (!hasGit) return
@@ -285,7 +287,7 @@ describe('getGitPanelStatus（真实 git，无 git 环境跳过）', () => {
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
-  })
+  }, E2E_TIMEOUT_MS)
 
   test('非 git 目录返回 isRepository=false', async () => {
     if (!hasGit) return
@@ -298,7 +300,7 @@ describe('getGitPanelStatus（真实 git，无 git 环境跳过）', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true })
     }
-  })
+  }, E2E_TIMEOUT_MS)
 })
 
 describe('getGitPanelBranchComparison（真实 git，无 git 环境跳过）', () => {
@@ -306,6 +308,8 @@ describe('getGitPanelBranchComparison（真实 git，无 git 环境跳过）', (
   const git = (args: string[], cwd: string) => {
     spawnSync('git', args, { cwd, stdio: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
   }
+  // 同上：Windows git spawn 停顿放宽用例超时（13 次设置步骤 + 服务侧多次 spawn）。
+  const E2E_TIMEOUT_MS = 30_000
 
   test('临时仓库端到端：与 upstream 比较未推送提交 + branch 单文件 diff', async () => {
     if (!hasGit) return
@@ -349,7 +353,7 @@ describe('getGitPanelBranchComparison（真实 git，无 git 环境跳过）', (
       rmSync(repo, { recursive: true, force: true })
       rmSync(origin, { recursive: true, force: true })
     }
-  })
+  }, E2E_TIMEOUT_MS)
 
   test('无 upstream 返回 available=false；非 git 目录同样降级', async () => {
     if (!hasGit) return
@@ -374,5 +378,5 @@ describe('getGitPanelBranchComparison（真实 git，无 git 环境跳过）', (
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
-  })
+  }, E2E_TIMEOUT_MS)
 })

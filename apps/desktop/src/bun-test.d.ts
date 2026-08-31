@@ -1,6 +1,6 @@
 declare module 'bun:test' {
   export const describe: (name: string, callback: () => void) => void
-  export const test: (name: string, callback: () => void | Promise<void>) => void
+  export const test: (name: string, callback: () => void | Promise<void>, timeout?: number) => void
   export const expect: (value: unknown) => any
   export const beforeEach: (callback: () => void | Promise<void>) => void
   export const afterEach: (callback: () => void | Promise<void>) => void
