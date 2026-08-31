@@ -498,8 +498,9 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
 
   const removeTabLocally = useCallback((tabId: string) => {
     const closedSource = tabsRef.current.find((item) => item.tabId === tabId) ?? findStoredBrowserTab(tabId)
-    if (closedSource) {
-      // 最近关闭环(ZCode Xde=8;不排除来源,重开换新 id)。
+    if (closedSource && closedSource.origin !== 'agent') {
+      // 最近关闭环(ZCode Xde=8):agent 持有的 browser-use tab 由主进程权威持有,
+      // 不入用户重开环(ZCode:"browser-use 不入环")。
       setClosedTabs((current) => pushClosedTabRing(current, {
         id: makeTabId(),
         title: closedSource.title,
@@ -577,16 +578,22 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     remountTab(tabId)
   }, [remountTab])
 
-  const wakeSuspendedTab = useCallback((tabId: string) => {
-    const tab = tabsRef.current.find((item) => item.tabId === tabId)
-    if (!tab) return
+  /** 挂起 tab 复活请求:main 权威翻转 residency 后走 restore 重建(失败仅 warn,ZCode 同款)。 */
+  const ensureResidentFor = useCallback((tab: BrowserPanelTab) => {
     void browserViewEnsureResident({
-      tabId,
+      tabId: tab.tabId,
       workspaceKey: tab.workspaceKey,
       sessionId: tab.sessionId,
       remoteSessionId: tab.remoteSessionId,
-    }).catch(() => undefined)
+    }).catch((error: unknown) => {
+      console.warn('[browser] ensureResident failed for tab', tab.tabId, error)
+    })
   }, [])
+
+  const wakeSuspendedTab = useCallback((tabId: string) => {
+    const tab = tabsRef.current.find((item) => item.tabId === tabId)
+    if (tab) ensureResidentFor(tab)
+  }, [ensureResidentFor])
 
   /* ── 工作区切换:旧 key 落库 + 新 key 恢复(ZCode save-on-switch/restore-on-switch)── */
 
@@ -928,7 +935,11 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
 
   const selectTab = useCallback((tabId: string) => {
     setSelectedTabId(tabId)
-  }, [])
+    // 激活挂起 tab 先请求复活(ZCode handleActivateSidePaneTab:ensureResident 失败仅
+    // warn 仍激活;成功后 main restore 通道翻转 residency,占位卡随 residency 消失)。
+    const tab = tabsRef.current.find((item) => item.tabId === tabId)
+    if (tab && tab.residency === 'suspended') ensureResidentFor(tab)
+  }, [ensureResidentFor])
 
   const openUrlTab = useCallback((url: string) => {
     const normalized = normalizeBrowserUrl(url)
