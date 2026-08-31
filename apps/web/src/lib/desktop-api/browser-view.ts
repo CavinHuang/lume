@@ -21,6 +21,7 @@ export const BrowserViewInvokeChannel = {
   attachGuest: 'lume:browser-view-attach-guest',
   detachGuest: 'lume:browser-view-detach-guest',
   updateViewport: 'lume:browser-view-update-viewport',
+  clearData: 'lume:browser-view-clear-data',
   screenshotSurfaceReady: 'lume:browser-view-screenshot-surface-ready',
   closeTabFromRenderer: 'lume:browser-view-close-tab-from-renderer',
   reportResidency: 'lume:browser-view-report-residency',
@@ -260,6 +261,11 @@ export function browserViewSuspendReady(input: BrowserViewSuspendReadyInput): Pr
 /** 用户请求复活挂起 tab。 */
 export function browserViewEnsureResident(scope: BrowserViewTabScopeInput): Promise<void> {
   return browserViewInvoke<void>(BrowserViewInvokeChannel.ensureResident, scope)
+}
+
+/** 清除内嵌浏览器数据(mode 'cache' 仅缓存面;'all' 含 cookies/localStorage 登录态)。 */
+export function browserViewClearEmbeddedBrowserData(mode: 'cache' | 'all'): Promise<{ success: boolean; error?: string }> {
+  return browserViewInvoke<{ success: boolean; error?: string }>(BrowserViewInvokeChannel.clearData, mode)
 }
 
 /** 窗口重建时拉 shell 列表。 */

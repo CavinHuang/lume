@@ -214,5 +214,6 @@ fork RPC（terminal:create/write/resize/dispose/data/exit；browser-execute MAC+
 | create 不返回字体/主题字段 | renderer 非 xterm 设置面，留 xterm 升级路径 |
 | git 面板无 last-turn 来源 | ZCode 该构建中恒为空占位 |
 | 白板「加入聊天」→ PNG 下载 | Lume composer 无附件暂存通道 |
+| Chrome 数据导入（importChromeBrowserData）不移植 | Cookie 解密依赖提权 helper/Windows App-Bound key reader/macOS 钥匙串基础设施；清除数据（W1，cache/all 两模式）已实现 |
 | 右面板状态不落盘（内存 + LRU 50） | ZCode 同语义 |
 | 浏览器 devtools/下载 UI/权限 UI | 双方均无（ZCode developer-tools 是 token 调试面板，非浏览器 devtools） |

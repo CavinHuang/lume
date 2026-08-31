@@ -172,6 +172,7 @@ import {
 } from './tray-window-runtime'
 import { ensureBrowserRestoreSchemePrivileged, installBrowserRestoreBootstrapProtocol } from './browser/restore-protocol'
 import { BROWSER_GUEST_PARTITION, createBrowserIpc, type BrowserIpc } from './browser/ipc'
+import { clearEmbeddedBrowserData } from './browser/data-management'
 import { applyDesktopChromiumNetworkPolicies, readDesktopNetworkConfigFromEnv } from './browser/network-policy'
 import { createLumeBrowserRuntime, type LumeBrowserRuntime } from './browser/assemble'
 import { handleGitPanelCommand } from './browser/git-panel-service'
@@ -395,6 +396,11 @@ function setupBrowserRuntime(configDir: string): void {
     configDir,
   })
   browserIpc = createBrowserIpc({
+    clearEmbeddedBrowserData: (mode) =>
+      clearEmbeddedBrowserData(session.fromPartition(BROWSER_GUEST_PARTITION), mode, {
+        info: (message, meta) => writeMainLog('info', 'desktop.browser', 'browser.log', message, meta == null ? undefined : { data: meta as Record<string, unknown> }),
+        warn: (message, meta) => writeMainLog('warn', 'desktop.browser', 'browser.warn', message, meta == null ? undefined : { data: meta as Record<string, unknown> }),
+      }),
     manager: browserRuntime.view,
     screenshotSurface: browserRuntime.screenshotSurface,
     dialog: browserRuntime.dialogController,

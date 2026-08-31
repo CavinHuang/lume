@@ -19,8 +19,7 @@
  * ZCode 对应件:SidePane 布局 + NTt 工具栏 + XTt 画布 + $Tt 视口输入条 + LTt/ITt 错误卡 + aEt 警告条。
  */
 import { useEffect, useRef, useState, type RefObject } from 'react'
-import {
-  AlertTriangle,
+import {AlertTriangle,
   ArrowLeft,
   ArrowRight,
   ExternalLink,
@@ -32,6 +31,7 @@ import {
   ShieldAlert,
   Smartphone,
   Tablet,
+  Trash2,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -40,6 +40,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip
 import { cn } from '@/lib/utils'
 import { BrowserTabStrip } from './BrowserTabStrip'
 import { formatRelativeTime, isCertificateErrorCode } from './browser-panel-logic'
+import { browserViewClearEmbeddedBrowserData } from '@/lib/desktop-api/browser-view'
 import { useBrowserResizeWarning, useOperationWindowActive } from './useBrowserResizeWarning'
 import {
   BROWSER_VIEWPORT_LIMITS,
@@ -238,6 +239,25 @@ function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAdd
           >
             <ExternalLink className="size-4" aria-hidden="true" />
             在系统浏览器打开
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onClick={async () => {
+              if (!window.confirm('清除内嵌浏览器的缓存数据？（不影响登录态与网站数据）')) return
+              await browserViewClearEmbeddedBrowserData('cache').catch(() => undefined)
+            }}
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+            清除浏览器缓存
+          </DropdownMenuItem>
+          <DropdownMenuItem
+            onClick={async () => {
+              if (!window.confirm('清除内嵌浏览器的全部数据？将退出所有已登录网站。')) return
+              await browserViewClearEmbeddedBrowserData('all').catch(() => undefined)
+            }}
+          >
+            <Trash2 className="size-4" aria-hidden="true" />
+            清除全部浏览器数据
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>

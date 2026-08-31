@@ -92,6 +92,7 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'lume:browser-view-suspend-ready',
   'lume:browser-view-ensure-resident',
   'lume:browser-view-restore-tabs',
+  'lume:browser-view-clear-data',
   // 右侧面板 Git 状态 tab（apps/desktop/src/browser/git-panel-service.ts
   // GIT_PANEL_IPC_CHANNELS 单源；main dispatchCommand 前缀转发；
   // watch = renderer 告知工作区路径启动 fs.watch，dirty 事件在下方事件白名单）。

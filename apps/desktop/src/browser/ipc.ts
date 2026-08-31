@@ -41,6 +41,7 @@
  */
 
 import { BrowserWindow, ipcMain } from "electron"
+import { isEmbeddedBrowserClearMode } from "./data-management"
 import type { IpcMainEvent, IpcMainInvokeEvent } from "electron"
 
 /* ── 通道名表(types.ts 事件面 §2.2 的 renderer→main 半边 + 对话框) ───── */
@@ -56,6 +57,7 @@ export const BROWSER_VIEW_IPC_CHANNELS = {
   suspendReady: "lume:browser-view-suspend-ready",
   ensureResident: "lume:browser-view-ensure-resident",
   restoreTabs: "lume:browser-view-restore-tabs",
+  clearData: "lume:browser-view-clear-data",
 } as const
 
 /** guest preload → main 的 sendSync JS 对话框通道(ZCode I.EmbeddedBrowserJavaScriptDialog)。 */
@@ -150,6 +152,8 @@ export interface BrowserGuestMountAuthorizer {
 /** createBrowserIpc 依赖注入。 */
 export interface BrowserIpcDeps {
   manager: BrowserViewManagerPort
+  /** 内嵌浏览器数据清除(ZCode W1;persist 分区 session 由装配层绑定)。 */
+  clearEmbeddedBrowserData?: (mode: "cache" | "all") => Promise<{ success: boolean; error?: string }>
   screenshotSurface: BrowserScreenshotSurfaceReadyPort
   dialog: BrowserDialogControllerPort
   log: (message: string) => void
@@ -407,6 +411,12 @@ export function createBrowserIpc(deps: BrowserIpcDeps): BrowserIpc {
     )
   }
 
+  async function handleClearData(payload: unknown): Promise<{ success: boolean; error?: string }> {
+    if (!deps.clearEmbeddedBrowserData) return { success: false, error: "capability_unsupported" }
+    if (!isEmbeddedBrowserClearMode(payload)) return { success: false, error: "invalid_clear_mode" }
+    return await deps.clearEmbeddedBrowserData(payload)
+  }
+
   /** 裸通道注册(逐字对齐 ZCode E_e;dispose 时逐一移除)。 */
   const invokeHandlers: Record<string, (payload: unknown, senderWebContentsId: number) => Promise<unknown>> = {
     [BROWSER_VIEW_IPC_CHANNELS.attachGuest]: handleAttachGuest,
@@ -417,6 +427,7 @@ export function createBrowserIpc(deps: BrowserIpcDeps): BrowserIpc {
     [BROWSER_VIEW_IPC_CHANNELS.suspendReady]: handleSuspendReady,
     [BROWSER_VIEW_IPC_CHANNELS.ensureResident]: handleEnsureResident,
     [BROWSER_VIEW_IPC_CHANNELS.restoreTabs]: handleRestoreTabs,
+    [BROWSER_VIEW_IPC_CHANNELS.clearData]: handleClearData,
   }
   for (const [channel, handler] of Object.entries(invokeHandlers)) {
     ipcMain.handle(channel, (event: IpcMainInvokeEvent, payload: unknown) => handler(payload, event.sender.id))
