@@ -114,6 +114,7 @@ export function WhiteboardCanvas({ board, tool, color, width, onCommitStroke }: 
         onPointerMove={handlePointerMove}
         onPointerUp={handlePointerUp}
         onPointerCancel={handlePointerUp}
+        aria-label="白板画布"
       />
     </div>
   )

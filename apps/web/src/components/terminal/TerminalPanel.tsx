@@ -21,7 +21,8 @@ import '@xterm/xterm/css/xterm.css'
 import { FitAddon } from '@xterm/addon-fit'
 import { Terminal } from '@xterm/xterm'
 import { SquareTerminal } from 'lucide-react'
-import { useEffect, useReducer, useRef } from 'react'
+import { useEffect, useReducer, useRef, useState } from 'react'
+import { writeClipboardText, readClipboardText } from '@/lib/desktop-api/native'
 import { Button } from '@/components/ui/button'
 import { Spinner } from '@/components/ui/spinner'
 import {
@@ -177,6 +178,8 @@ export function TerminalPanel({ workspacePath, sessionKey: sessionKeyProp }: Ter
   const sessionKey = sessionKeyProp ?? workspacePath ?? ''
   const [, forceRender] = useReducer((count: number) => count + 1, 0)
   const termRef = useRef<HTMLDivElement | null>(null)
+  // 右键菜单(ZCode terminal.contextMenu.copy/paste):定位 + 当前会话是否选中文本。
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number; hasSelection: boolean } | null>(null)
 
   // 挂载即确保会话 + 订阅数据泵 + 建 xterm 实例（注册与缓冲回放同任务同步完成）。
   useEffect(() => {
@@ -264,9 +267,59 @@ export function TerminalPanel({ workspacePath, sessionKey: sessionKeyProp }: Ter
     )
   }
 
+  const copySelection = () => {
+    const terminal = activeTerminals.get(sessionKey)
+    const selection = terminal?.getSelection()
+    if (!selection) return
+    void writeClipboardText(selection).catch(() => undefined)
+  }
+  const pasteClipboard = () => {
+    const session = sessions.get(sessionKey)
+    if (!session?.id || session.status !== 'ready') return
+    void readClipboardText()
+      .then((text) => writeTerminal({ id: session.id, data: text }))
+      .catch(() => undefined)
+  }
+
   return (
-    <div className="flex min-h-0 flex-1 flex-col">
-      <div ref={termRef} className="min-h-0 flex-1 bg-[var(--lume-bg-panel)] px-2 py-1" />
+    <div className="relative flex min-h-0 flex-1 flex-col">
+      <div
+        ref={termRef}
+        className="min-h-0 flex-1 bg-[var(--lume-bg-panel)] px-2 py-1"
+        onContextMenu={(event) => {
+          event.preventDefault()
+          const rect = event.currentTarget.getBoundingClientRect()
+          const terminal = activeTerminals.get(sessionKey)
+          setContextMenu({
+            x: event.clientX - rect.left,
+            y: event.clientY - rect.top,
+            hasSelection: Boolean(terminal?.hasSelection()),
+          })
+        }}
+      />
+      {contextMenu && (
+        <div
+          className="absolute z-10 min-w-28 rounded-md border border-[var(--lume-border-subtle)] bg-[var(--lume-bg-panel)] py-1 shadow-md"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          <button
+            type="button"
+            disabled={!contextMenu.hasSelection}
+            className="flex w-full items-center px-3 py-1.5 text-left text-xs hover:bg-[color-mix(in_srgb,var(--lume-text-primary)_5%,transparent)] disabled:opacity-40"
+            onClick={() => { copySelection(); setContextMenu(null) }}
+          >
+            复制
+          </button>
+          <button
+            type="button"
+            className="flex w-full items-center px-3 py-1.5 text-left text-xs hover:bg-[color-mix(in_srgb,var(--lume-text-primary)_5%,transparent)]"
+            onClick={() => { pasteClipboard(); setContextMenu(null) }}
+          >
+            粘贴
+          </button>
+        </div>
+      )}
     </div>
   )
 }
