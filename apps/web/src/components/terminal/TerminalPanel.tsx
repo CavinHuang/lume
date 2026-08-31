@@ -1,22 +1,28 @@
 /**
- * 右侧面板「终端」tab —— 简易终端（非 xterm：输出 <pre> + 单行输入）。
+ * 右侧面板「终端」tab —— xterm.js 真实终端（对齐 ZCode CTt 组件形状）。
  *
  * 对齐 ZCode SidePane terminal tab 的核心语义（docs/analysis/P3-wiki-terminal.md §2）：
  *  - 真实 shell 会话（sidecar node-pty terminal-service），数据流 terminal:data →
- *    追加缓冲；退出流 terminal:exit → 会话标记 exited（ZCode per-id onDynamicExit）；
- *  - 会话与 tab 生命周期解耦：切换 tab 不杀 PTY（ZCode stash 注册表的 Lume 落法 =
- *    模块级会话仓，缓冲在 renderer 侧持续累积，重挂载即恢复画面）；
+ *    xterm.write；退出流 terminal:exit → 终端内暗色提示 + 会话标记 exited
+ *    （ZCode per-id onDynamicExit）；
+ *  - 键级输入（terminal.onData → terminal:write，含控制字符，交互式程序可用）；
+ *  - FitAddon 尺寸协商：ResizeObserver → fit() → onResize → pty.resize
+ *    （ZCode FitAddon 去抖思路）；
+ *  - 会话与 tab 生命周期解耦：切换 tab 不杀 PTY；模块级会话仓持续累积缓冲，
+ *    重挂载时回放（ZCode stash 注册表的 Lume 落法 = xterm 实例随挂载建毁，
+ *    持久面是缓冲而非实例）；
  *  - 关闭语义差异：tab 关闭/应用内不回收 PTY，仅 LRU（MAX_SESSIONS）淘汰与
- *    renderer 卸载（pagehide）时全量 dispose —— 显式按 tab 回收待 reducer 支持
- *    tab 关闭回调后跟进。
+ *    renderer 卸载（pagehide）时全量 dispose。
  *
- * 渲染限制（xterm 升级路径）：无逐字符网格/光标/滚动区，TUI 全屏程序（vim/htop）
- * 不可用；单行输入模式（Enter 提交）。颜色为固定调色板近似。
+ * 与 ZCode 的偏差：不接 settingService 终端字体/主题 profile（Lume 尚无该设置面），
+ * 以面板 CSS 变量取底色/前景色适配应用主题。
  */
-import { SquareTerminal, X } from 'lucide-react'
-import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent, type RefObject } from 'react'
+import '@xterm/xterm/css/xterm.css'
+import { FitAddon } from '@xterm/addon-fit'
+import { Terminal } from '@xterm/xterm'
+import { SquareTerminal } from 'lucide-react'
+import { useEffect, useReducer, useRef } from 'react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
 import {
   createTerminalSession,
@@ -26,13 +32,13 @@ import {
   resizeTerminal,
   writeTerminal,
 } from '@/lib/desktop-api/terminal'
-import { parseAnsiSegments, splitAnsiLines, type AnsiSegment, type AnsiStyle } from './terminal-ansi'
 
 /* ── 模块级会话仓（跨 tab 切换保活；ZCode stash 的简化落法） ─────────────── */
 
 interface TerminalSessionState {
   id: string
   shell: string | null
+  /** 跨挂载持久面：xterm 实例随挂载建毁，重挂载时回放。 */
   buffer: string
   status: 'ready' | 'error' | 'exited'
   error?: string
@@ -41,17 +47,19 @@ interface TerminalSessionState {
 
 /** 会话上限（LRU）：防止长期使用期间 shell 无界累积。 */
 const MAX_SESSIONS = 4
-/** 输出缓冲上限（字符）：超限掐头（对齐行边界），控制重解析/DOM 规模。 */
+/** 回放缓冲上限（字符）：超限掐头（对齐行边界），控制重放规模。 */
 const TERMINAL_BUFFER_LIMIT = 200_000
-/** resize 上报防抖（ms），对齐 ZCode FitAddon 去抖思路。 */
-const RESIZE_DEBOUNCE_MS = 200
 
 const sessions = new Map<string, TerminalSessionState>()
 const pendingCreates = new Map<string, Promise<void>>()
 const storeListeners = new Set<() => void>()
+/** 当前挂载中的 xterm 实例（pump 直写通道；同一会话至多一个挂载面板）。 */
+const activeTerminals = new Map<string, Terminal>()
 let unsubscribePump: (() => void) | null = null
 let unsubscribeExitPump: (() => void) | null = null
 let pagehideBound = false
+
+const MONOSPACE_FAMILY = 'ui-monospace, SFMono-Regular, Menlo, Consolas, "Liberation Mono", monospace'
 
 function notifyStoreListeners(): void {
   for (const listener of [...storeListeners]) listener()
@@ -74,22 +82,32 @@ function evictOldestSession(): void {
   if (oldest?.id) void disposeTerminal({ id: oldest.id }).catch(() => undefined)
 }
 
-/** 数据泵：全局单订阅（data/exit 各一），按会话 id 分发（tab 未挂载期间照常累积）。 */
+function formatExitNotice(exitCode: number | null): string {
+  return `\r\n\x1b[2m[进程已退出 code=${exitCode ?? 'unknown'}]\x1b[0m\r\n`
+}
+
+/**
+ * 数据泵：全局单订阅（data/exit 各一），按会话 id 分发。tab 未挂载期间输出照常
+ * 累积进缓冲；已挂载的 xterm 实例同步直写。注册/回放在挂载 effect 内同步完成，
+ * 事件（IPC 宏任务）不会插入其间，无重复/乱序窗口。
+ */
 function ensureDataPump(): void {
   if (unsubscribePump && unsubscribeExitPump) return
   unsubscribePump ??= onTerminalData((event) => {
-    for (const session of sessions.values()) {
+    for (const [key, session] of sessions) {
       if (session.id !== event.id) continue
       session.buffer = appendCapped(session.buffer, event.data)
+      activeTerminals.get(key)?.write(event.data)
       notifyStoreListeners()
       return
     }
   })
   unsubscribeExitPump ??= onTerminalExit((event) => {
-    for (const session of sessions.values()) {
+    for (const [key, session] of sessions) {
       if (session.id !== event.id) continue
       session.status = 'exited'
       session.exitCode = event.exitCode
+      activeTerminals.get(key)?.write(formatExitNotice(event.exitCode))
       notifyStoreListeners()
       return
     }
@@ -153,111 +171,75 @@ interface TerminalPanelProps {
   workspacePath?: string
 }
 
-
-/** AnsiStyle → React 内联样式（支持 256 色/真彩 CSS 值 + 文字属性 + 反色）。 */
-const ANSI_PALETTE: Record<string, string> = {
-  black: '#3f3f46', red: '#ef4444', green: '#22c55e', yellow: '#eab308',
-  blue: '#3b82f6', magenta: '#d946ef', cyan: '#06b6d4', white: '#e4e4e7',
-  'bright-black': '#71717a', 'bright-red': '#f87171', 'bright-green': '#4ade80',
-  'bright-yellow': '#facc15', 'bright-blue': '#60a5fa', 'bright-magenta': '#e879f9',
-  'bright-cyan': '#22d3ee', 'bright-white': '#fafafa',
-  'bg-black': '#18181b', 'bg-red': '#450a0a', 'bg-green': '#052e16',
-  'bg-yellow': '#422006', 'bg-blue': '#172554', 'bg-magenta': '#4a044e',
-  'bg-cyan': '#083344', 'bg-white': '#e4e4e7',
-  'bg-bright-black': '#27272a', 'bg-bright-red': '#7f1d1d', 'bg-bright-green': '#14532d',
-  'bg-bright-yellow': '#713f12', 'bg-bright-blue': '#1e3a8a', 'bg-bright-magenta': '#701a75',
-  'bg-bright-cyan': '#164e63', 'bg-bright-white': '#f4f4f5',
-}
-function resolveAnsiColor(name: NonNullable<AnsiStyle['fg']>): string {
-  if (name.startsWith('rgb') || name.startsWith('#')) return name
-  return ANSI_PALETTE[name] ?? name
-}
-function ansiStyleToCss(style: AnsiStyle): React.CSSProperties {
-  const css: React.CSSProperties = {}
-  const fgColor = style.fg ? resolveAnsiColor(style.fg) : undefined
-  const bgColor = style.bg ? resolveAnsiColor(style.bg) : undefined
-  if (style.inverse) { css.color = bgColor ?? 'var(--lume-text-primary)'; css.backgroundColor = fgColor ?? 'var(--lume-text-secondary)' }
-  else {
-    if (fgColor) css.color = fgColor
-    else css.color = 'var(--lume-text-secondary)'
-    if (bgColor) css.backgroundColor = bgColor
-  }
-  if (style.bold) css.fontWeight = '600'
-  if (style.dim) css.opacity = '0.6'
-  if (style.italic) css.fontStyle = 'italic'
-  const deco = [style.underline ? 'underline' : '', style.strikethrough ? 'line-through' : ''].filter(Boolean).join(' ')
-  if (deco) css.textDecoration = deco
-  return css
-}
-
-
 export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
   const sessionKey = workspacePath ?? ''
   const [, forceRender] = useReducer((count: number) => count + 1, 0)
-  const [inputValue, setInputValue] = useState('')
-  const scrollRef = useRef<HTMLDivElement | null>(null)
-  const measureRef = useRef<HTMLSpanElement | null>(null)
-  const inputRef = useRef<HTMLInputElement | null>(null)
-  const stickToBottomRef = useRef(true)
-  const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const termRef = useRef<HTMLDivElement | null>(null)
 
-  // 挂载即确保会话 + 订阅数据泵（会话不随 tab 切换销毁；仅重渲染订阅随挂载增减）。
+  // 挂载即确保会话 + 订阅数据泵 + 建 xterm 实例（注册与缓冲回放同任务同步完成）。
   useEffect(() => {
     ensureDataPump()
     touchSession(sessionKey)
     ensureSession(sessionKey, workspacePath)
     storeListeners.add(forceRender)
-    return () => { storeListeners.delete(forceRender) }
+    const container = termRef.current
+    if (!container) return
+
+    const style = window.getComputedStyle(container)
+    const terminal = new Terminal({
+      fontSize: 12,
+      fontFamily: MONOSPACE_FAMILY,
+      cursorBlink: true,
+      scrollback: 5000,
+      theme: {
+        background: style.backgroundColor,
+        foreground: style.color,
+        cursor: style.color,
+        selectionBackground: '#64748b66',
+      },
+    })
+    const fit = new FitAddon()
+    terminal.loadAddon(fit)
+    terminal.open(container)
+    activeTerminals.set(sessionKey, terminal)
+    const session = sessions.get(sessionKey)
+    if (session?.buffer) terminal.write(session.buffer)
+    if (session?.status === 'exited') terminal.write(formatExitNotice(session.exitCode ?? null))
+
+    const dataSubscription = terminal.onData((data) => {
+      const current = sessions.get(sessionKey)
+      if (!current?.id || current.status !== 'ready') return
+      void writeTerminal({ id: current.id, data }).catch(() => undefined)
+    })
+    const resizeSubscription = terminal.onResize(({ cols, rows }) => {
+      const current = sessions.get(sessionKey)
+      if (!current?.id || current.status !== 'ready') return
+      void resizeTerminal({ id: current.id, cols, rows }).catch(() => undefined)
+    })
+    const observer = new ResizeObserver(() => {
+      try {
+        fit.fit()
+      } catch {
+        // 容器尺寸瞬时不可测（display:none 等）时跳过本轮
+      }
+    })
+    observer.observe(container)
+    try {
+      fit.fit()
+    } catch {
+      // 同上
+    }
+
+    return () => {
+      observer.disconnect()
+      dataSubscription.dispose()
+      resizeSubscription.dispose()
+      activeTerminals.delete(sessionKey)
+      terminal.dispose()
+    }
   }, [sessionKey, workspacePath])
 
   const session = sessions.get(sessionKey)
-
-  const lines = useMemo<Array<AnsiSegment[]>>(
-    () => (session ? splitAnsiLines(parseAnsiSegments(session.buffer)) : []),
-    [session?.buffer],
-  )
-
-  // 输出追加后贴底滚动（用户上翻时让位）。
-  useLayoutEffect(() => {
-    const scroller = scrollRef.current
-    if (!scroller || !stickToBottomRef.current) return
-    scroller.scrollTop = scroller.scrollHeight
-  }, [lines])
-
-  // 尺寸上报：ResizeObserver → 估算 cols/rows → 防抖上报（sidecar 直传 pty.resize）。
-  useEffect(() => {
-    const container = scrollRef.current
-    if (!container) return
-    const report = () => {
-      const current = sessions.get(sessionKey)
-      if (!current?.id) return
-      const measure = measureRef.current
-      if (!measure) return
-      const charWidth = measure.getBoundingClientRect().width / 10
-      if (!Number.isFinite(charWidth) || charWidth <= 0) return
-      const cols = Math.max(20, Math.floor(container.clientWidth / charWidth) - 1)
-      const rows = Math.max(6, Math.floor(container.clientHeight / 16))
-      void resizeTerminal({ id: current.id, cols, rows }).catch(() => undefined)
-    }
-    const debounced = () => {
-      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
-      resizeTimerRef.current = setTimeout(report, RESIZE_DEBOUNCE_MS)
-    }
-    const observer = new ResizeObserver(debounced)
-    observer.observe(container)
-    return () => {
-      observer.disconnect()
-      if (resizeTimerRef.current) clearTimeout(resizeTimerRef.current)
-      resizeTimerRef.current = null
-    }
-  }, [sessionKey])
-
-  const handleSubmit = (event: FormEvent) => {
-    event.preventDefault()
-    if (!session?.id || session.status !== 'ready' || !inputValue) return
-    setInputValue('')
-    void writeTerminal({ id: session.id, data: `${inputValue}\n` }).catch(() => undefined)
-  }
 
   if (!session) {
     return (
@@ -281,73 +263,8 @@ export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
   }
 
   return (
-    <div className="flex min-h-0 flex-1 flex-col bg-[var(--lume-bg-panel)]">
-      <div
-        ref={scrollRef}
-        className="min-h-0 flex-1 overflow-y-auto px-2 py-1"
-        onScroll={(event) => {
-          const el = event.currentTarget
-          stickToBottomRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 24
-        }}
-        onMouseUp={() => {
-          // 点击输出区回到输入行（有选区时让位复制）。
-          if (!window.getSelection()?.toString()) inputRef.current?.focus()
-        }}
-      >
-        <pre className="w-full font-mono text-[11px] leading-4 break-words whitespace-pre-wrap">
-          {lines.map((segments, lineIndex) => (
-            <div key={lineIndex}>{segments.length === 0 ? ' ' : segments.map((segment, segmentIndex) => (
-              <span key={segmentIndex} style={ansiStyleToCss(segment.style)}>
-                {segment.text}
-              </span>
-            ))}</div>
-          ))}
-        </pre>
-      </div>
-      <form onSubmit={handleSubmit} className="flex h-9 shrink-0 items-center gap-1.5 border-t border-[var(--lume-border-subtle)] px-2">
-        <SquareTerminal size={13} className="shrink-0 text-[var(--lume-text-muted)]" />
-        <Input
-          ref={inputRef as RefObject<HTMLInputElement>}
-          value={inputValue}
-          onChange={(event) => setInputValue(event.target.value)}
-          disabled={session.status === 'exited'}
-          className="h-7 rounded-md border-none bg-transparent px-1 font-mono text-xs"
-          placeholder={
-            session.status === 'exited'
-              ? '进程已退出'
-              : session.shell
-                ? `${shellLabel(session.shell)} — 输入命令后回车`
-                : '输入命令后回车'
-          }
-          autoComplete="off"
-          autoCorrect="off"
-          autoCapitalize="off"
-          spellCheck={false}
-        />
-        {session.status === 'exited' ? (
-          <Button variant="outline" size="sm" type="button" onClick={() => retrySession(sessionKey, workspacePath)}>
-            重新打开
-          </Button>
-        ) : (
-          inputValue && (
-            <Button variant="ghost" size="icon-xs" type="button" title="清空输入" onClick={() => setInputValue('')}>
-              <X size={12} />
-            </Button>
-          )
-        )}
-      </form>
-      <span
-        ref={measureRef}
-        aria-hidden
-        className="pointer-events-none absolute -top-40 font-mono text-[11px] opacity-0"
-      >
-        0000000000
-      </span>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div ref={termRef} className="min-h-0 flex-1 bg-[var(--lume-bg-panel)] px-2 py-1" />
     </div>
   )
-}
-
-function shellLabel(shell: string): string {
-  const name = shell.split(/[\\/]/).at(-1) ?? shell
-  return name.replace(/\.exe$/i, '')
 }
