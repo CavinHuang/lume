@@ -25,7 +25,8 @@ import {
   handleCloseOtherTabs,
   handleCloseTab,
   handleOpenTab,
-  handleOpenTerminalInstance,
+  handleOpenInstanceTab,
+  handleSetTabTitle,
   handleReopenClosedTab,
   handleReorderTabs,
   handleToggleCollapse,
@@ -270,7 +271,8 @@ type RightPanelWorkspaceAction =
   | { type: 'activate-side-chat'; threadId: string }
   | { type: 'open-file'; threadId: string; ref: FileRef; binding?: ThreadFileWorkspace['binding']; lineSelection?: ThreadFileLineSelection; navigationRevision?: number }
   | { type: 'reveal-directory'; threadId: string; request: NonNullable<ThreadFileWorkspace['revealRequest']>; binding?: ThreadFileWorkspace['binding'] }
-  | { type: 'open-terminal-instance'; threadId: string; tabId: string; title: string }
+  | { type: 'open-instance-tab'; threadId: string; tabId: string; instanceType: 'terminal' | 'whiteboard'; title: string }
+  | { type: 'set-tab-title'; threadId: string; tabId: string; title: string }
   | { type: 'close-function'; threadId: string; function: RightPanelFunction }
   | { type: 'close-tab'; threadId: string; tabId: string }
   | { type: 'close-other-tabs'; threadId: string; tabId: string }
@@ -333,8 +335,14 @@ export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: Right
     return
   }
 
-  if (action.type === 'open-terminal-instance') {
-    handleOpenTerminalInstance(workspaceKey(), action.tabId, action.title)
+  if (action.type === 'open-instance-tab') {
+    handleOpenInstanceTab(workspaceKey(), action.tabId, action.instanceType, action.title)
+    syncRuntimeWithUnifiedTabs()
+    return
+  }
+
+  if (action.type === 'set-tab-title') {
+    handleSetTabTitle(workspaceKey(), action.tabId, action.title)
     syncRuntimeWithUnifiedTabs()
     return
   }

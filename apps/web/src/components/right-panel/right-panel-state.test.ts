@@ -17,7 +17,7 @@ import {
   reorderRightPanelTabs,
   resolveRightPanelWorkspaceKey,
   nextTerminalInstanceTitle,
-  openRightPanelTerminalInstance,
+  openRightPanelInstanceTab,
   sanitizeRightPanelWorkspaceState,
 } from './right-panel-state'
 
@@ -149,8 +149,8 @@ describe('right-panel-state tab model', () => {
   test('terminal instances are non-singleton with deduped Zde titles', () => {
     let state = createEmptyRightPanelWorkspace()
     state = openRightPanelTab(state, 'terminal')
-    state = openRightPanelTerminalInstance(state, 'terminal-a', 'repo')
-    state = openRightPanelTerminalInstance(state, 'terminal-b', 'repo 2')
+    state = openRightPanelInstanceTab(state, 'terminal-a', 'terminal', 'repo')
+    state = openRightPanelInstanceTab(state, 'terminal-b', 'terminal', 'repo 2')
     expect(state.tabs.map((tab) => ({ id: tab.id, title: tab.title }))).toEqual([
       { id: 'terminal', title: undefined },
       { id: 'terminal-a', title: 'repo' },
@@ -159,7 +159,7 @@ describe('right-panel-state tab model', () => {
     expect(state.activeTabId).toBe('terminal-b')
 
     // 同 id 幂等激活(重放竞态);Zde 查重跳过既有标题
-    state = openRightPanelTerminalInstance(state, 'terminal-a', 'repo')
+    state = openRightPanelInstanceTab(state, 'terminal-b', 'terminal', 'repo 2')
     expect(state.activeTabId).toBe('terminal-a')
     expect(nextTerminalInstanceTitle(state, 'repo')).toBe('repo 3')
     expect(nextTerminalInstanceTitle(state, 'fresh')).toBe('fresh')

@@ -56,13 +56,16 @@ import { FilesRightPanelWorkspace } from './FilesRightPanelWorkspace'
 import { VaultRightPanelWorkspace } from './VaultRightPanelWorkspace'
 import { BrowserRightPanelWorkspace, useOpenBrowserUrlReveal } from './BrowserRightPanelWorkspace'
 import { GitPanel } from './GitPanel'
+import { WhiteboardPanel } from '../whiteboard/WhiteboardPanel'
+import { createWhiteboardBoard } from '../whiteboard/whiteboard-store'
 import { TerminalPanel } from '../terminal/TerminalPanel'
 import { CodingReviewPanel } from './CodingReviewPanel'
 import { type CodingReviewPanelState } from '@/atoms'
 
 const PLACEHOLDER_LABELS: Record<RightPanelFunction, string> = {
   files: '文件', chat: '问答', vault: 'Obsidian Vault', terminal: '终端', browser: '浏览器', git: 'Git',
-}
+  whiteboard: '白板',
+  }
 
 type ThreadFileWorkspaceUpdate = ThreadFileWorkspace | ((current: ThreadFileWorkspace) => ThreadFileWorkspace)
 
@@ -221,8 +224,18 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
     const suffix = cryptoRef && typeof cryptoRef.randomUUID === 'function'
       ? cryptoRef.randomUUID()
       : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`
-    dispatch({ type: 'open-terminal-instance', threadId, tabId: `terminal-${suffix}`, title })
+    dispatch({ type: 'open-instance-tab', threadId, tabId: `terminal-${suffix}`, instanceType: 'terminal', title })
   }, [dispatch, threadId, unified, workspaceProjectPath])
+  // 白板(ZCode $ue/Qde:建 board → 开 whiteboard tab;boardId 即 tabId,ZCode 同形)。
+  const createWhiteboard = useCallback(() => {
+    if (!threadId || !workspaceKey) return
+    const board = createWhiteboardBoard(workspaceKey)
+    dispatch({ type: 'open-instance-tab', threadId, tabId: board.id, instanceType: 'whiteboard', title: board.name })
+  }, [dispatch, threadId, workspaceKey])
+  const renameWhiteboardTab = useCallback((boardId: string, name: string) => {
+    if (!threadId) return
+    dispatch({ type: 'set-tab-title', threadId, tabId: boardId, title: name })
+  }, [dispatch, threadId])
   const openFunctions = getOpenRightPanelFunctions(unified.tabs)
   const activeUnifiedTab: RightPanelTab | null = unified.tabs.find((tab) => tab.id === unified.activeTabId) ?? null
   const storedRuntimeWorkspace = runtime[threadId]
@@ -316,6 +329,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
               onCloseOtherTabs={(tabId) => action({ type: 'close-other-tabs', threadId, tabId })}
               onCloseAllTabs={() => action({ type: 'close-all-tabs', threadId })}
               onOpenTerminalInstance={workspaceProjectPath ? openTerminalInstance : undefined}
+              onNewWhiteboard={threadId ? createWhiteboard : undefined}
               onReorderTabs={(orderedIds) => action({ type: 'reorder-tabs', threadId, orderedIds })}
               onReopenClosedTab={(entryId) => action({ type: 'reopen-closed-tab', threadId, entryId })}
               onCloseFile={(tabId: string) => action({ type: 'close-file', threadId, tabId })}
@@ -337,6 +351,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                 workspaceKey={workspaceKey}
                 codingReview={codingReview}
                 onRevealFileInTree={revealFileInTree}
+                onWhiteboardRename={renameWhiteboardTab}
                 onOpenCodingFile={workspaceSlug ? (path) => {
                   closeCodingReview({ type: 'deactivate', threadId })
                   action({
@@ -384,7 +399,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
  * 活动内容分发:审阅(运行时临时面)> 文件 tab(runtime activeItem 明确指向具体
  * 文件)> 统一层活动 tab 按类型分发(browser/git/files/vault/chat)。
  */
-function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, workspaceKey, codingReview, onOpenCodingFile, onRevealFileInTree }: {
+function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, workspaceKey, codingReview, onOpenCodingFile, onRevealFileInTree, onWhiteboardRename }: {
   runtime: ThreadFileWorkspace
   activeTab: RightPanelTab | null
   workspaceSlug?: string
@@ -397,6 +412,7 @@ function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceP
   codingReview?: CodingReviewPanelState
   onOpenCodingFile?: (path: string) => void
   onRevealFileInTree?: (repoRelativePath: string) => boolean
+  onWhiteboardRename?: (boardId: string, name: string) => void
 }) {
   if (codingReview?.active) {
     return <CodingReviewPanel threadId={threadId} state={codingReview} onOpenFile={onOpenCodingFile} />
@@ -425,6 +441,9 @@ function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceP
     // 实例 tab(terminal:<uuid>)按 id 隔离会话;固定功能 tab 沿用 workspacePath 单例键。
     const sessionKey = activeTab && activeTab.id !== 'terminal' ? activeTab.id : undefined
     return <TerminalPanel workspacePath={workspaceProjectPath} sessionKey={sessionKey} />
+  }
+  if (type === 'whiteboard' && activeTab) {
+    return <WhiteboardPanel workspaceKey={workspaceKey ?? ''} boardId={activeTab.id} onRename={(name: string) => onWhiteboardRename?.(activeTab.id, name)} />
   }
   return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[type]} />
 }

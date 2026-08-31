@@ -11,7 +11,7 @@
  *
  * UI 约定:一律使用 components/ui 的 shadcn 原子组件(AGENTS.md);文案为内联中文。
  */
-import { Braces, FileDiff, FolderOpen, GitBranch, Globe, List, MessageSquare, Package, Plus, SquareTerminal, X } from 'lucide-react'
+import { Braces, FileDiff, FolderOpen, GitBranch, Globe, List, MessageSquare, Package, PenTool, Plus, SquareTerminal, X } from 'lucide-react'
 import { useEffect, useMemo, useRef, type ComponentType, type CSSProperties, type RefCallback } from 'react'
 import {
   DndContext,
@@ -76,6 +76,7 @@ const FUNCTION_META: Record<RightPanelFunction, { label: string; Icon: PanelIcon
   chat: { label: '问答', Icon: MessageSquare },
   vault: { label: 'Obsidian', Icon: ObsidianIcon },
   terminal: { label: '终端', Icon: SquareTerminal },
+  whiteboard: { label: '白板', Icon: PenTool },
   browser: { label: '浏览器', Icon: Globe },
   git: { label: 'Git', Icon: GitBranch },
 }
@@ -118,6 +119,7 @@ interface RightPanelTabBarProps {
   onCloseOtherTabs: (tabId: string) => void
   onCloseAllTabs: () => void
   onOpenTerminalInstance?: () => void
+  onNewWhiteboard?: () => void
   onReorderTabs: (orderedIds: string[]) => void
   onReopenClosedTab: (entryId: string) => void
   onOpenFunction: (type: RightPanelFunction) => void
@@ -264,6 +266,12 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
             <DropdownMenuItem onSelect={() => props.onOpenTerminalInstance!()}>
               <SquareTerminal size={14} />
               <span className="flex-1">新终端</span>
+            </DropdownMenuItem>
+          )}
+          {props.onNewWhiteboard && (
+            <DropdownMenuItem onSelect={() => props.onNewWhiteboard!()}>
+              <PenTool size={14} />
+              <span className="flex-1">白板</span>
             </DropdownMenuItem>
           )}
         </DropdownMenuContent>

@@ -16,7 +16,7 @@
  */
 import type { LumeRuntimeEvent, RuntimeCodingFileChange, RuntimeCodingReport } from '@lume/shared'
 
-export type RightPanelFunction = 'files' | 'chat' | 'vault' | 'terminal' | 'browser' | 'git'
+export type RightPanelFunction = 'files' | 'chat' | 'vault' | 'terminal' | 'browser' | 'git' | 'whiteboard'
 
 /** 可主动打开/参与回退优先级的功能集合(chat 不在菜单提供,由划线引用触发,见 #18)。 */
 export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault', 'terminal', 'browser', 'git']
@@ -144,17 +144,25 @@ export function openRightPanelTab(state: RightPanelWorkspaceState, type: RightPa
  * 终端实例(ZCode handleOpenTerminalTab):终端是唯一可多开的类型——每次开启
  * 追加新 tab(id 唯一,title = cwd.basename 查重序号)并激活;同 id 幂等激活。
  */
-export function openRightPanelTerminalInstance(
+export function openRightPanelInstanceTab(
   state: RightPanelWorkspaceState,
   tabId: string,
+  type: 'terminal' | 'whiteboard',
   title: string,
 ): RightPanelWorkspaceState {
   const existing = state.tabs.find((tab) => tab.id === tabId)
   if (existing) return activateRightPanelTab(state, existing.id)
-  return activateRightPanelTab(
-    { ...state, tabs: [...state.tabs, { id: tabId, type: 'terminal', title }] },
-    tabId,
-  )
+  return activateRightPanelTab({ ...state, tabs: [...state.tabs, { id: tabId, type, title }] }, tabId)
+}
+
+/** 实例改名(白板改名同步 tab 标题;固定功能 tab 不可改名)。 */
+export function renameRightPanelTab(state: RightPanelWorkspaceState, tabId: string, title: string): RightPanelWorkspaceState {
+  const trimmed = title.trim()
+  if (!trimmed) return state
+  return {
+    ...state,
+    tabs: state.tabs.map((tab) => (tab.id === tabId ? { ...tab, title: trimmed.slice(0, 40) } : tab)),
+  }
 }
 
 /** ZCode Zde 查重标题:basename 撞名时追加序号(「repo」「repo 2」「repo 3」…)。 */
@@ -263,7 +271,8 @@ export function resolveRightPanelWorkspaceKey(input: {
 }
 
 function isRightPanelFunction(value: unknown): value is RightPanelFunction {
-  return value === 'files' || value === 'chat' || value === 'vault' || value === 'terminal' || value === 'browser' || value === 'git'
+  return value === 'files' || value === 'chat' || value === 'vault' || value === 'terminal'
+    || value === 'browser' || value === 'git' || value === 'whiteboard'
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
