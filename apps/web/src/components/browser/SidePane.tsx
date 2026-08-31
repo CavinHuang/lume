@@ -32,6 +32,7 @@ import {AlertTriangle,
   Smartphone,
   Tablet,
   Trash2,
+  MousePointerClick,
 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
@@ -239,6 +240,17 @@ function BrowserToolbar({ panel, addressDraft, onAddressDraftChange, onSubmitAdd
           >
             <ExternalLink className="size-4" aria-hidden="true" />
             在系统浏览器打开
+          </DropdownMenuItem>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            disabled={!tab}
+            onClick={async () => {
+              if (!tab) return
+              try { await panel.toggleElementPicker(tab.tabId) } catch { /* 忽略 */ }
+            }}
+          >
+            <MousePointerClick className="size-4" aria-hidden="true" />
+            {panel.elementPickerActive ? '取消元素选取' : '选取页面元素'}
           </DropdownMenuItem>
           <DropdownMenuSeparator />
           <DropdownMenuItem

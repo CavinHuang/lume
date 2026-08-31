@@ -51,7 +51,8 @@ import {
   type BrowserViewScreenshotSurfacePreparePayload,
   type BrowserWheelBoundaryPayload,
 } from '@/lib/desktop-api/browser-view'
-import { openExternal } from '@/lib/desktop-api'
+import { openExternal, writeClipboardText } from '@/lib/desktop-api/native'
+import { buildElementPickerCancelScript, buildElementPickerStartScript, isElementPickerResult } from './element-picker'
 import {
   decomposeDesktopZoom,
   IDENTITY_ZOOM_COMPENSATION,
@@ -195,6 +196,9 @@ export interface UseBrowserPanelResult {
   setResponsiveZoom: (zoom: 'fit' | number) => void
   applyResponsiveViewportSize: (viewport: BrowserResponsiveViewport) => void
   wakeSuspendedTab: (tabId: string) => void
+  /** 元素选取器(ZCode elementPicker.start/cancel):选取结果写剪贴板。 */
+  elementPickerActive: boolean
+  toggleElementPicker: (tabId: string) => Promise<void>
 }
 
 export interface UseBrowserPanelOptions {
@@ -594,6 +598,40 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     const tab = tabsRef.current.find((item) => item.tabId === tabId)
     if (tab) ensureResidentFor(tab)
   }, [ensureResidentFor])
+
+  // 元素选取器(ZCode MTt 控制器:代数守卫 + start/cancel 脚本;结果写剪贴板)。
+  const [elementPickerActive, setElementPickerActive] = useState(false)
+  const elementPickerGenerationRef = useRef(0)
+  const toggleElementPicker = useCallback(async (tabId: string) => {
+    const webview = pool.getGuest(tabId)
+    if (!webview) return
+    const generation = ++elementPickerGenerationRef.current
+    if (elementPickerActive) {
+      setElementPickerActive(false)
+      try { await webview.executeJavaScript(buildElementPickerCancelScript(), true) } catch { /* webview 已销毁 */ }
+      return
+    }
+    setElementPickerActive(true)
+    try {
+      const result = await webview.executeJavaScript(buildElementPickerStartScript(), true)
+      if (elementPickerGenerationRef.current !== generation) return
+      setElementPickerActive(false)
+      if (!isElementPickerResult(result) || result.status !== 'selected' || !result.element) return
+      const element = result.element
+      const block = [
+        `选择器: \`${element.selector}\``,
+        element.text ? `文本: ${element.text}` : '',
+        `位置: ${Math.round(element.rect.x)},${Math.round(element.rect.y)} ${Math.round(element.rect.width)}×${Math.round(element.rect.height)}`,
+        '',
+        '```html',
+        element.outerHTML,
+        '```',
+      ].filter(Boolean).join('\n')
+      await writeClipboardText(block).catch(() => undefined)
+    } catch {
+      if (elementPickerGenerationRef.current === generation) setElementPickerActive(false)
+    }
+  }, [elementPickerActive, pool])
 
   /* ── 工作区切换:旧 key 落库 + 新 key 恢复(ZCode save-on-switch/restore-on-switch)── */
 
@@ -1051,6 +1089,8 @@ export function useBrowserPanel(options: UseBrowserPanelOptions = {}): UseBrowse
     setResponsiveZoom,
     applyResponsiveViewportSize,
     wakeSuspendedTab,
+    elementPickerActive,
+    toggleElementPicker,
   }
 }
 
