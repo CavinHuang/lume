@@ -492,3 +492,121 @@ function parseDiffSection(value: unknown): GitPanelSection {
   }
   return value as GitPanelSection
 }
+
+/* ── 写路径(ZCode gitService 写方法面,提取报告 Q5 §2;UI 面后续接线) ──── */
+
+const PUSH_TIMEOUT_MS = 10 * 60_000
+const PUSH_MAX_OUTPUT_BYTES = 8 * 1024 * 1024
+
+/** 写操作失败:抛出带 stderr 摘要的错误(调用方归一化展示)。 */
+function assertGitOk(result: GitRunResult, context: string): void {
+  if (result.failure) {
+    throw new Error(`git ${context} failed: ${result.failure}`)
+  }
+  if (result.code !== 0) {
+    throw new Error(`git ${context} failed: ${result.stderr.trim().split("\n")[0] ?? "unknown"}`)
+  }
+}
+
+function assertPathsInput(paths: readonly string[]): string[] {
+  const cleaned = paths.map((path) => path.trim()).filter((path) => path.length > 0)
+  if (cleaned.length === 0) throw new Error("git write op requires at least one path")
+  return cleaned
+}
+
+/** ZCode stagePaths:`git add -- <paths>`。 */
+export async function stageGitPanelPaths(workspacePath: string, paths: readonly string[]): Promise<{ staged: number }> {
+  const cleaned = assertPathsInput(paths)
+  const repoRoot = await runGit(['rev-parse', '--show-toplevel'], workspacePath, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(repoRoot, 'rev-parse')
+  const result = await runGit(['add', '--', ...cleaned], repoRoot.stdout.trim(), { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(result, 'add')
+  return { staged: cleaned.length }
+}
+
+/** ZCode unstagePaths:`git restore --staged -- <paths>`。 */
+export async function unstageGitPanelPaths(workspacePath: string, paths: readonly string[]): Promise<{ unstaged: number }> {
+  const cleaned = assertPathsInput(paths)
+  const repoRoot = await runGit(['rev-parse', '--show-toplevel'], workspacePath, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(repoRoot, 'rev-parse')
+  const result = await runGit(['restore', '--staged', '--', ...cleaned], repoRoot.stdout.trim(), { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(result, 'restore --staged')
+  return { unstaged: cleaned.length }
+}
+
+/** ZCode discardPaths:`git restore --worktree -- <paths>`(仅已跟踪路径)。 */
+export async function discardGitPanelPaths(workspacePath: string, paths: readonly string[]): Promise<{ discarded: number }> {
+  const cleaned = assertPathsInput(paths)
+  const repoRoot = await runGit(['rev-parse', '--show-toplevel'], workspacePath, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(repoRoot, 'rev-parse')
+  const result = await runGit(['restore', '--worktree', '--', ...cleaned], repoRoot.stdout.trim(), { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(result, 'restore --worktree')
+  return { discarded: cleaned.length }
+}
+
+/** ZCode commit:`git commit -m <msg> [-- <paths>]` + `rev-parse HEAD` → 提交哈希。 */
+export async function commitGitPanelChanges(workspacePath: string, message: string, paths?: readonly string[]): Promise<{ commitHash: string }> {
+  const trimmed = message.trim()
+  if (!trimmed) throw new Error('git commit requires a non-empty message')
+  const repoRoot = await runGit(['rev-parse', '--show-toplevel'], workspacePath, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(repoRoot, 'rev-parse')
+  const root = repoRoot.stdout.trim()
+  const pathArgs = paths && paths.length > 0 ? ['--', ...assertPathsInput(paths)] : []
+  const commit = await runGit(['commit', '-m', trimmed, ...pathArgs], root, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(commit, 'commit')
+  const head = await runGit(['rev-parse', 'HEAD'], root, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(head, 'rev-parse HEAD')
+  return { commitHash: head.stdout.trim() }
+}
+
+/** ZCode push:setUpstream 时解析 remote(config branch.<b>.remote 兜底 origin)+ 当前分支 → `push --set-upstream`;10 分钟 / 8MB 上限。 */
+export async function pushGitPanelBranch(
+  workspacePath: string,
+  options: { setUpstream?: boolean } = {},
+): Promise<{ pushed: boolean; setUpstream: boolean }> {
+  const repoRoot = await runGit(['rev-parse', '--show-toplevel'], workspacePath, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(repoRoot, 'rev-parse')
+  const root = repoRoot.stdout.trim()
+  if (options.setUpstream !== true) {
+    const pushed = await runGit(['push'], root, { timeoutMs: PUSH_TIMEOUT_MS, maxOutputBytes: PUSH_MAX_OUTPUT_BYTES })
+    assertGitOk(pushed, 'push')
+    return { pushed: true, setUpstream: false }
+  }
+  const branch = await runGit(['rev-parse', '--abbrev-ref', 'HEAD'], root, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(branch, 'rev-parse HEAD')
+  const branchName = branch.stdout.trim()
+  const remote = await runGit(['config', '--get', `branch.${branchName}.remote`], root, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  const remoteName = remote.code === 0 && remote.stdout.trim() ? remote.stdout.trim() : 'origin'
+  const pushed = await runGit(['push', '--set-upstream', remoteName, branchName], root, {
+    timeoutMs: PUSH_TIMEOUT_MS,
+    maxOutputBytes: PUSH_MAX_OUTPUT_BYTES,
+  })
+  assertGitOk(pushed, 'push --set-upstream')
+  return { pushed: true, setUpstream: true }
+}
+
+export interface GitPanelLocalBranch {
+  name: string
+  upstreamName: string | null
+  commitHash: string
+  committedAtMs: number | null
+}
+
+/** ZCode getLocalBranches:`for-each-ref refs/heads`(当前分支置顶,按提交时间降序)。 */
+export async function getGitPanelLocalBranches(workspacePath: string): Promise<GitPanelLocalBranch[]> {
+  const repoRoot = await runGit(['rev-parse', '--show-toplevel'], workspacePath, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  assertGitOk(repoRoot, 'rev-parse')
+  const result = await runGit(
+    ['for-each-ref', 'refs/heads', '--format=%(refname:short)%00%(upstream:short)%00%(objectname)%00%(committerdate:unix)'],
+    repoRoot.stdout.trim(),
+    { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES },
+  )
+  assertGitOk(result, 'for-each-ref')
+  const branches = result.stdout.split('\n').filter((line) => line.trim().length > 0).flatMap((line) => {
+    const [name, upstreamName, commitHash, committedAtUnix] = line.split('\0')
+    if (!name || !commitHash) return []
+    const committedAtMs = committedAtUnix && Number.isFinite(Number(committedAtUnix)) ? Number(committedAtUnix) * 1000 : null
+    return [{ name, upstreamName: upstreamName || null, commitHash, committedAtMs }]
+  })
+  return branches.sort((a, b) => (b.committedAtMs ?? 0) - (a.committedAtMs ?? 0))
+}

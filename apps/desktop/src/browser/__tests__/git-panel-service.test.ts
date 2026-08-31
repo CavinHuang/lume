@@ -1,9 +1,17 @@
 // git-panel-service 解析测试:porcelain v2(-z 分支头/1/2/u/? 记录)、numstat -z
 // (普通/二进制/重命名记录)、状态字母归一、staged/unstaged 装配、环境加固。
 // 真实 git 的端到端用例在无 git 环境自动跳过。
+import {
+  stageGitPanelPaths,
+  unstageGitPanelPaths,
+  discardGitPanelPaths,
+  commitGitPanelChanges,
+  pushGitPanelBranch,
+  getGitPanelLocalBranches,
+} from '../git-panel-service'
 import { describe, expect, test } from 'bun:test'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
@@ -375,6 +383,80 @@ describe('getGitPanelBranchComparison（真实 git，无 git 环境跳过）', (
       } finally {
         rmSync(outside, { recursive: true, force: true })
       }
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+    }
+  }, E2E_TIMEOUT_MS)
+})
+
+describe('git 写路径(stage/unstage/discard/commit/push/branches;真实 git)', () => {
+  const hasGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0
+  const git = (args, cwd) => {
+    spawnSync('git', args, { cwd, stdio: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+  }
+  const E2E_TIMEOUT_MS = 30_000
+
+  test('stage → commit → branches → push 到 bare origin(--set-upstream)', async () => {
+    if (!hasGit) return
+    const origin = mkdtempSync(path.join(tmpdir(), 'git-write-origin-'))
+    const repo = mkdtempSync(path.join(tmpdir(), 'git-write-repo-'))
+    try {
+      git(['init', '--bare', origin], origin)
+      git(['init'], repo)
+      git(['config', 'core.autocrlf', 'false'], repo)
+      git(['config', 'user.email', 'test@lume.dev'], repo)
+      git(['config', 'user.name', 'lume-test'], repo)
+      writeFileSync(path.join(repo, 'a.txt'), 'one\n')
+
+      await stageGitPanelPaths(repo, ['a.txt'])
+      const statusAfterStage = await getGitPanelStatus(repo)
+      expect(statusAfterStage.changes.some((change) => change.section === 'staged' && change.repoRelativePath === 'a.txt')).toBe(true)
+
+      // 首个提交建立 HEAD(unstage 的 restore --staged 在空仓库无法解析,ZCode 同)
+      await commitGitPanelChanges(repo, 'base: a.txt')
+      writeFileSync(path.join(repo, 'a.txt'), 'two\n')
+      await stageGitPanelPaths(repo, ['a.txt'])
+      await unstageGitPanelPaths(repo, ['a.txt'])
+      const statusAfterUnstage = await getGitPanelStatus(repo)
+      expect(statusAfterUnstage.changes.some((change) => change.section === 'staged')).toBe(false)
+
+      await stageGitPanelPaths(repo, ['a.txt'])
+      const committed = await commitGitPanelChanges(repo, 'test: write path')
+      expect(committed.commitHash).toMatch(/^[0-9a-f]{40}$/)
+
+      const branches = await getGitPanelLocalBranches(repo)
+      expect(branches).toHaveLength(1)
+      expect(branches[0].name).toBe(
+        spawnSync('git', ['rev-parse', '--abbrev-ref', 'HEAD'], { cwd: repo, encoding: 'utf8' }).stdout.trim(),
+      )
+
+      git(['remote', 'add', 'origin', origin], repo)
+      const pushed = await pushGitPanelBranch(repo, { setUpstream: true })
+      expect(pushed).toEqual({ pushed: true, setUpstream: true })
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(origin, { recursive: true, force: true })
+    }
+  }, E2E_TIMEOUT_MS)
+
+  test('discard 还原已跟踪文件的未暂存改动;commit 空信息拒绝', async () => {
+    if (!hasGit) return
+    const repo = mkdtempSync(path.join(tmpdir(), 'git-discard-'))
+    try {
+      git(['init'], repo)
+      git(['config', 'core.autocrlf', 'false'], repo)
+      git(['config', 'user.email', 'test@lume.dev'], repo)
+      git(['config', 'user.name', 'lume-test'], repo)
+      writeFileSync(path.join(repo, 'b.txt'), 'base\n')
+      git(['add', '--', 'b.txt'], repo)
+      git(['commit', '-m', 'base'], repo)
+      writeFileSync(path.join(repo, 'b.txt'), 'changed\n')
+
+      await discardGitPanelPaths(repo, ['b.txt'])
+      expect(readFileSync(path.join(repo, 'b.txt'), 'utf-8')).toBe('base\n')
+
+      await expect(commitGitPanelChanges(repo, '   ')).rejects.toThrow(/non-empty message/)
+      await expect(stageGitPanelPaths(repo, [])).rejects.toThrow(/at least one path/)
     } finally {
       rmSync(repo, { recursive: true, force: true })
     }
