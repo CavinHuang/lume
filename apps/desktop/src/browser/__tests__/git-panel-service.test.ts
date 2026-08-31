@@ -7,9 +7,13 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import {
+  assembleBranchChanges,
   assembleChanges,
+  getGitPanelBranchComparison,
+  getGitPanelDiff,
   getGitPanelStatus,
   hardenedGitEnv,
+  numstatToKind,
   parseGitStatus,
   parseNumstat,
   statusLetterToKind,
@@ -23,20 +27,20 @@ function porcelain(lines: string[]): string {
 }
 
 describe('parseGitStatus 分支头', () => {
-  test('解析 branch.head 与 branch.ab', () => {
+  test('解析 branch.head/upstream 与 branch.ab', () => {
     const parsed = parseGitStatus(porcelain([
       '# branch.oid abc123',
       '# branch.head main',
       '# branch.upstream origin/main',
       '# branch.ab +2 -3',
     ]))
-    expect(parsed.branch).toEqual({ branchName: 'main', ahead: 2, behind: 3 })
+    expect(parsed.branch).toEqual({ branchName: 'main', trackingBranchName: 'origin/main', ahead: 2, behind: 3 })
     expect(parsed.entries).toEqual([])
   })
 
-  test('detached HEAD 分支名为 null；无 upstream 时 ahead/behind 为 0', () => {
+  test('detached HEAD 分支名为 null；无 upstream 时 trackingBranchName 为 null、ahead/behind 为 0', () => {
     const parsed = parseGitStatus(porcelain(['# branch.oid abc123', '# branch.head (detached)']))
-    expect(parsed.branch).toEqual({ branchName: null, ahead: 0, behind: 0 })
+    expect(parsed.branch).toEqual({ branchName: null, trackingBranchName: null, ahead: 0, behind: 0 })
   })
 
   test('忽略其它 # 头与空输出', () => {
@@ -187,6 +191,32 @@ describe('assembleChanges', () => {
   })
 })
 
+describe('numstatToKind', () => {
+  test('行数推断（ZCode numstat 场景规则）', () => {
+    expect(numstatToKind(1, 0)).toBe('added')
+    expect(numstatToKind(0, 3)).toBe('deleted')
+    expect(numstatToKind(2, 5)).toBe('modified')
+    expect(numstatToKind(0, 0)).toBe('modified') // 100% 相似度重命名
+    expect(numstatToKind(null, null)).toBe('modified') // 二进制
+  })
+})
+
+describe('assembleBranchChanges', () => {
+  test('section=branch；kind 从行数推断，重命名行数归属新路径', () => {
+    const numstat = parseNumstat(`1\t0\tadded.txt${NUL}2\t3\tmod.txt${NUL}3\t3\t${NUL}old.txt${NUL}renamed.txt${NUL}`)
+    const changes = assembleBranchChanges(numstat, '/repo', '/repo')
+    expect(changes).toEqual([
+      { path: 'added.txt', repoRelativePath: 'added.txt', kind: 'added', section: 'branch', added: 1, removed: 0 },
+      { path: 'mod.txt', repoRelativePath: 'mod.txt', kind: 'modified', section: 'branch', added: 2, removed: 3 },
+      { path: 'renamed.txt', repoRelativePath: 'renamed.txt', kind: 'modified', section: 'branch', added: 3, removed: 3 },
+    ])
+  })
+
+  test('空 numstat 产出空列表', () => {
+    expect(assembleBranchChanges(parseNumstat(''), '/repo', '/repo')).toEqual([])
+  })
+})
+
 describe('hardenedGitEnv', () => {
   test('剥离仓库定位变量并固定输出环境', () => {
     const env = hardenedGitEnv({
@@ -267,6 +297,82 @@ describe('getGitPanelStatus（真实 git，无 git 环境跳过）', () => {
       expect(status.changes).toEqual([])
     } finally {
       rmSync(dir, { recursive: true, force: true })
+    }
+  })
+})
+
+describe('getGitPanelBranchComparison（真实 git，无 git 环境跳过）', () => {
+  const hasGit = spawnSync('git', ['--version'], { stdio: 'ignore' }).status === 0
+  const git = (args: string[], cwd: string) => {
+    spawnSync('git', args, { cwd, stdio: 'ignore', env: { ...process.env, GIT_TERMINAL_PROMPT: '0' } })
+  }
+
+  test('临时仓库端到端：与 upstream 比较未推送提交 + branch 单文件 diff', async () => {
+    if (!hasGit) return
+    const repo = mkdtempSync(path.join(tmpdir(), 'lume-git-branch-'))
+    const origin = mkdtempSync(path.join(tmpdir(), 'lume-git-origin-'))
+    try {
+      git(['init', '-q', '-b', 'main', '.'], repo)
+      git(['init', '-q', '--bare', '.'], origin)
+      git(['config', 'user.email', 't@t'], repo)
+      git(['config', 'user.name', 't'], repo)
+      git(['config', 'core.autocrlf', 'false'], repo)
+      writeFileSync(path.join(repo, 'base.txt'), 'a\n')
+      writeFileSync(path.join(repo, 'modified.txt'), 'x\n')
+      writeFileSync(path.join(repo, 'gone.txt'), 'g\n')
+      git(['add', '.'], repo)
+      git(['commit', '-qm', 'base'], repo)
+      git(['remote', 'add', 'origin', origin], repo)
+      git(['push', '-q', '-u', 'origin', 'main'], repo)
+
+      // 第二个提交：修改 + 新增 + 删除各一
+      writeFileSync(path.join(repo, 'modified.txt'), 'x2\n')
+      writeFileSync(path.join(repo, 'new.txt'), 'n\n')
+      rmSync(path.join(repo, 'gone.txt'))
+      git(['add', '-A'], repo)
+      git(['commit', '-qm', 'second'], repo)
+
+      const comparison = await getGitPanelBranchComparison(repo)
+      expect(comparison.available).toBe(true)
+      expect(comparison.comparisonLabel).toBe('origin/main')
+      const byPath = new Map(comparison.changes.map((change) => [change.path, change]))
+      expect(byPath.get('modified.txt')).toMatchObject({ kind: 'modified', section: 'branch', added: 1, removed: 1, repoRelativePath: 'modified.txt' })
+      expect(byPath.get('new.txt')).toMatchObject({ kind: 'added', section: 'branch', added: 1, removed: 0 })
+      expect(byPath.get('gone.txt')).toMatchObject({ kind: 'deleted', section: 'branch', added: 0, removed: 1 })
+      expect(comparison.changes).toHaveLength(3)
+
+      const diff = await getGitPanelDiff(repo, 'modified.txt', 'branch')
+      expect(diff.availability).toBe('patch')
+      expect(diff.patch).toContain('+x2')
+      expect(diff.patch).toContain('-x\n')
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
+      rmSync(origin, { recursive: true, force: true })
+    }
+  })
+
+  test('无 upstream 返回 available=false；非 git 目录同样降级', async () => {
+    if (!hasGit) return
+    const repo = mkdtempSync(path.join(tmpdir(), 'lume-git-noupstream-'))
+    try {
+      git(['init', '-q', '-b', 'main', '.'], repo)
+      git(['config', 'user.email', 't@t'], repo)
+      git(['config', 'user.name', 't'], repo)
+      writeFileSync(path.join(repo, 'a.txt'), 'a\n')
+      git(['add', '.'], repo)
+      git(['commit', '-qm', 'init'], repo)
+
+      const comparison = await getGitPanelBranchComparison(repo)
+      expect(comparison).toEqual({ available: false, comparisonLabel: '', changes: [] })
+
+      const outside = mkdtempSync(path.join(tmpdir(), 'lume-git-norepo2-'))
+      try {
+        expect(await getGitPanelBranchComparison(outside)).toEqual({ available: false, comparisonLabel: '', changes: [] })
+      } finally {
+        rmSync(outside, { recursive: true, force: true })
+      }
+    } finally {
+      rmSync(repo, { recursive: true, force: true })
     }
   })
 })

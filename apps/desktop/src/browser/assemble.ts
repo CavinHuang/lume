@@ -65,6 +65,7 @@ import { dispatchClickAt, dispatchKey } from "./core/input"
 import { assertFocusedInputTarget } from "./core/injected/text-input"
 import { createRecoveryStore } from "./core/recovery-store"
 import { createSuspendScheduler, type SuspendScheduler } from "./core/suspend-scheduler"
+import { createGitWorkspaceWatcher } from "./git-watcher"
 import type {
   BrowserCommandResult,
   BrowserEventSink,
@@ -129,6 +130,8 @@ export interface LumeBrowserRuntime {
   ensureResident(scope: BrowserTabScope & { windowId: number }): Promise<void>
   restoreTabs(query: BrowserRestoreTabsQuery): Promise<readonly unknown[]>
   updateViewport(tabId: string, viewport: { width: number; height: number } | null, windowId: number, zoomFactor: number): Promise<void>
+  /** Git 面板文件 watch：renderer 告知工作区路径（lume:browser-git-watch），变更 60s 防抖后回发 lume:browser-git-dirty。 */
+  watchWorkspace(workspacePath: string): void
   /** renderer 截图表面就绪回报(ipc 层 `lume:browser-view-screenshot-surface-ready`)。 */
   handleScreenshotSurfaceReady(payload: unknown, senderWebContentsId: number): void
   /** 窗口销毁:失败该窗口在途的截图表面请求。 */
@@ -309,6 +312,15 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
   })
   suspendScheduler.start()
 
+  /* Git 面板文件 watch（实时刷新源）：fs.watch 工作区 + .git，60s 防抖后经 deps.emit
+   * 回发 lume:browser-git-dirty；工作区路径由 renderer 经 lume:browser-git-watch 告知
+   * （main 不感知 projectPath），unwatchAll 随 runtime dispose 生效。 */
+  const gitWatcher = createGitWorkspaceWatcher({
+    emit: deps.emit,
+    getWindow: deps.getWindow,
+    warn: deps.warn,
+  })
+
   /** ipc 层(createBrowserIpc deps.manager)消费的委托面。 */
   const view: BrowserViewManagerPort = {
     attachGuest: async (request) =>
@@ -394,6 +406,7 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
     ensureResident: (scope) => view.ensureResident(scope),
     restoreTabs: (query) => view.restoreTabs(query),
     updateViewport: (tabId, viewport, windowId, zoomFactor) => view.updateViewport(tabId, viewport, windowId, zoomFactor),
+    watchWorkspace: (workspacePath) => gitWatcher.watchWorkspace(workspacePath),
     handleScreenshotSurfaceReady(payload, senderWebContentsId) {
       // 载荷形状由协调器 handleReady 的身份/视口/scale 校验把关。
       screenshotSurface.handleReady(payload as BrowserScreenshotSurfaceReadyPayload, senderWebContentsId)
@@ -403,6 +416,7 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
     },
     dispose() {
       suspendScheduler.stop()
+      gitWatcher.unwatchAll()
       manager.disposeAll()
       void manager.whenRecoveryIdle().catch(() => {})
       screenshotSurface.dispose()

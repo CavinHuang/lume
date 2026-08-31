@@ -7,11 +7,27 @@
  * apps/desktop/src/browser/git-panel-service.ts。
  */
 import { invoke } from '@/lib/desktop-runtime/core'
-import { GIT_PANEL_IPC_CHANNELS, type GitPanelDiff, type GitPanelSection, type GitPanelStatus } from '@lume/shared'
+import { listen } from '@/lib/desktop-runtime/event'
+import { GIT_PANEL_IPC_CHANNELS, type GitPanelBranchComparison, type GitPanelDiff, type GitPanelSection, type GitPanelStatus } from '@lume/shared'
 
 /** 工作区 Git 状态概要(含三类变更列表)。git 不可用/非仓库时返回降级标志,不抛错。 */
 export async function fetchGitPanelStatus(workspacePath: string): Promise<GitPanelStatus> {
   return invoke<GitPanelStatus>(GIT_PANEL_IPC_CHANNELS.status, { workspacePath })
+}
+
+/** 注册工作区文件 watch(main 侧 fs.watch,变更 60s 防抖后回发 dirty 事件)。 */
+export async function watchGitPanelWorkspace(workspacePath: string): Promise<void> {
+  await invoke(GIT_PANEL_IPC_CHANNELS.watch, { workspacePath })
+}
+
+/** 订阅 git-dirty 事件(文件变更防抖通知;返回取消订阅函数)。 */
+export function onGitPanelDirty(listener: () => void): Promise<() => void> {
+  return listen(GIT_PANEL_IPC_CHANNELS.dirty, () => listener())
+}
+
+/** 分支比较(<upstream>...HEAD;available=false 表示无上游分支)。 */
+export async function fetchGitPanelBranchComparison(workspacePath: string): Promise<GitPanelBranchComparison> {
+  return invoke<GitPanelBranchComparison>(GIT_PANEL_IPC_CHANNELS.branchComparison, { workspacePath })
 }
 
 /** 单文件 diff(unified patch;懒加载,renderer 自行按 revision 缓存失效)。 */

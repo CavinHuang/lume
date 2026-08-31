@@ -5,27 +5,28 @@
  *  - 结构 = 来源下拉 + 刷新按钮 + 虚拟化变更列表（estimateSize 32 / overscan 14，
  *    measureElement 适配展开后的可变高度）+ 展开式懒加载 diff；
  *  - unstaged 来源合并 unstaged + untracked + conflicted（ZCode gitSourceId 分组）；
+ *  - branch 来源与上游分支比较未推送提交（branchComparison，选项仅在有 tracking
+ *    分支时出现，数据按需加载）；
  *  - diff 缓存以 revision 失效：刷新后已展开项自动重新拉取；
  *  - 完全只读，无 stage/unstage/commit。
  *
- * v1 偏差（后续跟进）：branch / last-turn 来源、查找（scrollToIndex）、文件 watch
- * 自动刷新未实现，仅手动刷新；diff 以纯文本 +/- 着色渲染（Shiki 可后续接入）。
+ * v1 偏差（后续跟进）：last-turn 来源、查找（scrollToIndex）未实现；自动刷新 =
+ * main 侧 fs.watch 实时通道（lume:browser-git-dirty 事件）+ 60s 轮询兜底；diff 以
+ * 纯文本 +/- 着色渲染（Shiki 可后续接入）。
  */
 import { useVirtualizer } from '@tanstack/react-virtual'
 import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import type { GitPanelChange, GitPanelDiff, GitPanelStatus } from '@lume/shared'
+import type { GitPanelBranchComparison, GitPanelChange, GitPanelDiff, GitPanelSource, GitPanelStatus } from '@lume/shared'
 import { Button } from '@/components/ui/button'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
 import { cn } from '@/lib/utils'
-import { fetchGitPanelDiff, fetchGitPanelStatus } from '@/lib/desktop-api/git-panel'
+import { fetchGitPanelBranchComparison, fetchGitPanelDiff, fetchGitPanelStatus, onGitPanelDirty, watchGitPanelWorkspace } from '@/lib/desktop-api/git-panel'
 
-/** v1 仅本地两作用域；branch/last-turn 依赖后端比较数据，暂缓（见文件头偏差）。 */
-type GitPanelSource = 'unstaged' | 'staged'
-
-const SOURCE_OPTIONS: Array<{ value: GitPanelSource; label: string }> = [
+/** 本地两作用域固定展示；branch 选项依赖 status.trackingBranchName 动态追加。 */
+const BASE_SOURCE_OPTIONS: Array<{ value: GitPanelSource; label: string }> = [
   { value: 'unstaged', label: '未暂存更改' },
   { value: 'staged', label: '已暂存更改' },
 ]
@@ -52,6 +53,7 @@ interface GitPanelProps {
 
 export function GitPanel({ workspacePath }: GitPanelProps) {
   const [status, setStatus] = useState<GitPanelStatus | null>(null)
+  const [branchComparison, setBranchComparison] = useState<GitPanelBranchComparison | null>(null)
   const [loading, setLoading] = useState(false)
   const [source, setSource] = useState<GitPanelSource>('unstaged')
   const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(new Set())
@@ -59,8 +61,28 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   // ZCode refreshToken 等价：递增触发 status 重载 + diff 缓存失效。
   const [revision, setRevision] = useState(0)
 
-  // 文件 watch 自动刷新：ZCode 通过 host 进程 fileWatcherService 监听工作区目录，
-  // Lume MVP 用定时轮询等效实现（60s 与 ZCode 防抖值一致）。
+  // 有 tracking 分支才出现 branch 选项，标签带上游名（ZCode sourceOptions 动态生成等效）。
+  const sourceOptions = useMemo(() => {
+    if (!status?.trackingBranchName) return BASE_SOURCE_OPTIONS
+    return [...BASE_SOURCE_OPTIONS, { value: 'branch' as const, label: `分支差异（${status.trackingBranchName}）` }]
+  }, [status?.trackingBranchName])
+
+  // 自动刷新双通道：主 = main 侧 fs.watch（lume:browser-git-watch 注册工作区，
+  // 变更 60s 防抖回发 lume:browser-git-dirty），到此递增 revision 即重载 status
+  // 并失效 diff 缓存（ZCode GitAutoRefresh → onRefreshGit 等效）。
+  useEffect(() => {
+    const unlisten = onGitPanelDirty(() => setRevision((current) => current + 1))
+    return () => { void unlisten.then((dispose) => dispose()) }
+  }, [])
+
+  // 告知 main 当前工作区路径以启动 watch（main 不感知 projectPath，与
+  // terminal-create 的 cwd 同一道传递面；同时只 watch 一个工作区，新路径替换旧监听）。
+  useEffect(() => {
+    if (!workspacePath) return
+    void watchGitPanelWorkspace(workspacePath).catch(() => undefined)
+  }, [workspacePath])
+
+  // 兜底：60s 轮询（与 ZCode 防抖值一致；watch 通道失效时仍能收敛）。
   useEffect(() => {
     if (!workspacePath) return
     const timer = setInterval(() => setRevision(r => r + 1), 60_000)
@@ -71,6 +93,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
     // 切换工作区时清空展开与缓存，避免串仓库。
     setExpandedPaths(new Set())
     setDiffs(new Map())
+    setBranchComparison(null)
   }, [workspacePath])
 
   useEffect(() => {
@@ -84,12 +107,30 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
     return () => { cancelled = true }
   }, [workspacePath, revision])
 
+  // 分支比较按需加载：仅 branch 来源时请求（ZCode includeBranchComparison 仅 git tab 打开时请求的懒加载等效）。
+  useEffect(() => {
+    if (!workspacePath || source !== 'branch') return
+    let cancelled = false
+    setLoading(true)
+    fetchGitPanelBranchComparison(workspacePath)
+      .then((result) => { if (!cancelled) setBranchComparison(result) })
+      .catch(() => { if (!cancelled) setBranchComparison(null) })
+      .finally(() => { if (!cancelled) setLoading(false) })
+    return () => { cancelled = true }
+  }, [workspacePath, source, revision])
+
+  // 上游分支消失（切分支/删除 upstream）时回落 unstaged（ZCode activeGitSourceId 校验等效）。
+  useEffect(() => {
+    if (source === 'branch' && status !== null && !status.trackingBranchName) setSource('unstaged')
+  }, [source, status])
+
   const changes = useMemo(() => {
+    if (source === 'branch') return branchComparison?.changes ?? []
     if (!status) return []
     return status.changes.filter((change) => source === 'staged'
       ? change.section === 'staged'
       : change.section !== 'staged')
-  }, [status, source])
+  }, [status, branchComparison, source])
 
   const diffKey = useCallback((change: GitPanelChange) => `${change.section}:${change.repoRelativePath}`, [])
 
@@ -140,15 +181,21 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
     measureElement: (element) => element.getBoundingClientRect().height,
   })
 
+  // branch 数据未就绪时占位，避免切换来源瞬间闪空态文案。
+  const branchNotLoaded = source === 'branch' && loading && !branchComparison
+  const branchUnavailable = source === 'branch' && branchComparison !== null && !branchComparison.available
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[var(--lume-border-subtle)] px-2">
-        <Select value={source} onValueChange={(value) => setSource(value === 'staged' ? 'staged' : 'unstaged')}>
+        <Select value={source} onValueChange={(value) => {
+          if (value === 'unstaged' || value === 'staged' || value === 'branch') setSource(value)
+        }}>
           <SelectTrigger size="sm" className="min-w-0 flex-1">
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            {SOURCE_OPTIONS.map((option) => (
+            {sourceOptions.map((option) => (
               <SelectItem key={option.value} value={option.value}>{option.label}</SelectItem>
             ))}
           </SelectContent>
@@ -175,7 +222,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
 
       {!workspacePath ? (
         <GitPanelEmpty title="未绑定项目目录" hint="当前会话没有可读取 Git 状态的项目路径" />
-      ) : loading && !status ? (
+      ) : (loading && !status) || branchNotLoaded ? (
         <div className="flex flex-1 items-center justify-center text-[var(--lume-text-muted)]"><Spinner /></div>
       ) : !status ? (
         <GitPanelEmpty title="无法读取 Git 状态" hint="读取状态时出错，请点击刷新重试" />
@@ -185,8 +232,12 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
         <GitPanelEmpty title="不是 Git 仓库" hint="当前项目目录未初始化 Git" />
       ) : changes.length === 0 ? (
         <GitPanelEmpty
-          title={source === 'staged' ? '没有已暂存的更改' : '没有未提交的更改'}
-          hint={source === 'staged' ? '使用 git add 暂存文件后会出现在这里' : '工作区与暂存区当前是干净的'}
+          title={branchUnavailable
+            ? '当前分支没有上游分支'
+            : source === 'staged' ? '没有已暂存的更改' : source === 'branch' ? '没有领先上游分支的提交' : '没有未提交的更改'}
+          hint={branchUnavailable
+            ? 'git push -u 设置 upstream 后可在此比较未推送的提交'
+            : source === 'staged' ? '使用 git add 暂存文件后会出现在这里' : source === 'branch' ? '当前分支与上游分支内容一致' : '工作区与暂存区当前是干净的'}
         />
       ) : (
         <div ref={scrollRef} className="min-h-0 flex-1 overflow-y-auto">

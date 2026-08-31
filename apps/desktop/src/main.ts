@@ -174,6 +174,7 @@ import { ensureBrowserRestoreSchemePrivileged, installBrowserRestoreBootstrapPro
 import { BROWSER_GUEST_PARTITION, createBrowserIpc, type BrowserIpc } from './browser/ipc'
 import { createLumeBrowserRuntime, type LumeBrowserRuntime } from './browser/assemble'
 import { handleGitPanelCommand } from './browser/git-panel-service'
+import { GIT_PANEL_IPC_CHANNELS } from '@lume/shared'
 import { createTerminalRelay, type TerminalRelay } from './browser/terminal-bridge'
 
 // 浏览器恢复停靠 scheme 必须在 app ready 前注册 privileged(registerSchemesAsPrivileged
@@ -1952,6 +1953,16 @@ async function dispatchCommand(command, payload: Record<string, any> = {}, conte
   // （未知命令由其抛错）；与裸 ipcMain.handle 通道共用同一校验实现。
   if (browserIpc && command.startsWith('lume:browser-view-')) {
     return browserIpc.handleRendererCommand(command, payload, context.ownerWebContentsId ?? 0)
+  }
+  // Git 面板文件 watch：renderer 告知当前工作区路径（main 不感知 agent workspaces
+  // 的 projectPath，与 terminal-create 的 cwd 同一道传递面）；main fs.watch 后 60s
+  // 防抖经 forwardBrowserEvent 回发 lume:browser-git-dirty 驱动 GitPanel 刷新。
+  if (command === GIT_PANEL_IPC_CHANNELS.watch) {
+    const workspacePath = payload?.workspacePath
+    if (typeof workspacePath === 'string' && workspacePath.length > 0) {
+      browserRuntime?.watchWorkspace(workspacePath)
+    }
+    return null
   }
   // 右侧面板 Git 状态 tab（git-panel-service.ts handleGitPanelCommand；载荷形状在此校验）
   if (command.startsWith('lume:browser-git-')) {

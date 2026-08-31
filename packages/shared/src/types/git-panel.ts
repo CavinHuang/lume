@@ -14,10 +14,18 @@
 export const GIT_PANEL_IPC_CHANNELS = {
   status: 'lume:browser-git-status',
   diff: 'lume:browser-git-diff',
+  branchComparison: 'lume:browser-git-branch-comparison',
+  /** renderer→main invoke：告知当前工作区路径，main fs.watch 之（实时刷新源）。 */
+  watch: 'lume:browser-git-watch',
+  /** main→renderer 事件（文件变更 60s 防抖后通知 Git 面板刷新，main 加 `lume:event:` 前缀）。 */
+  dirty: 'lume:browser-git-dirty',
 } as const
 
-/** 单文件变更所属区：worktree 改动 / 暂存区改动 / 未跟踪文件。 */
-export type GitPanelSection = 'unstaged' | 'staged' | 'untracked'
+/** 面板 diff 作用域（下拉来源）：worktree / 暂存区 / 上游分支比较。 */
+export type GitPanelSource = 'unstaged' | 'staged' | 'branch'
+
+/** 单文件变更所属区：worktree 改动 / 暂存区改动 / 未跟踪文件 / 分支比较（<upstream>...HEAD）。 */
+export type GitPanelSection = 'unstaged' | 'staged' | 'untracked' | 'branch'
 
 /** 变更类型（git 状态字母归一：M/T→modified，R/C→renamed，U→conflicted）。 */
 export type GitPanelChangeKind = 'added' | 'deleted' | 'modified' | 'renamed' | 'conflicted'
@@ -32,14 +40,22 @@ export interface GitPanelChange {
   removed: number | null
 }
 
-/** 工作区 Git 状态概要（getStatus 返回）。 */
+/** 工作区 Git 状态概要（getStatus 返回；trackingBranchName 为 null 表示无上游分支）。 */
 export interface GitPanelStatus {
   isGitAvailable: boolean
   isRepository: boolean
   branchName: string | null
+  trackingBranchName: string | null
   ahead: number
   behind: number
   isDirty: boolean
+  changes: GitPanelChange[]
+}
+
+/** 分支比较（<upstream>...HEAD；available=false 表示非仓库或无上游分支）。 */
+export interface GitPanelBranchComparison {
+  available: boolean
+  comparisonLabel: string
   changes: GitPanelChange[]
 }
 

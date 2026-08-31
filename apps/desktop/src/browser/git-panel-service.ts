@@ -5,8 +5,10 @@
  * Q5 git 执行层闭环）：
  *  - status：`status --porcelain=v2 --branch --untracked-files=all -z` 解析分支头
  *    （ahead/behind）与三类变更（unstaged/staged/untracked），行数来自 `diff --numstat -z`；
- *  - diff：单文件 unified patch（staged 加 --cached，untracked 用 --no-index /dev/null），
- *    懒加载由 renderer 控制，本层不做缓存；
+ *  - branchComparison：`rev-parse @{u}` 取上游分支，`diff --numstat -z --find-renames
+ *    <upstream>...HEAD --` 比较未推送提交；单文件 diff 同区间（ZCode Q5 §2/§3）；
+ *  - diff：单文件 unified patch（staged 加 --cached，untracked 用 --no-index /dev/null，
+ *    branch 用 <upstream>...HEAD），懒加载由 renderer 控制，本层不做缓存；
  *  - 只读：不提供 stage/unstage/commit 任何写操作（面板语义）。
  *
  * 执行加固（Q5）：
@@ -19,13 +21,16 @@
  *  1. diff 通道名沿用 `lume:browser-git-*` 前缀（挂在浏览器面板通道族下，同侧栏面板家族）；
  *  2. untracked 文件的 added/removed 不单独跑 --no-index numstat（N 个文件 N 次进程），
  *     置 null，renderer 不显示行数；
- *  3. --no-index 退出码 1 = 有差异（git 约定），按成功处理。
+ *  3. --no-index 退出码 1 = 有差异（git 约定），按成功处理；
+ *  4. branch 来源的 kind 从 numstat 行数推断（added/deleted/modified，ZCode numstat 场景同
+ *     规则），重命名不单独标 R——parseNumstat 已把行数归属新路径。
  */
 
 import { spawn } from 'node:child_process'
 import path from 'node:path'
 import {
   GIT_PANEL_IPC_CHANNELS,
+  type GitPanelBranchComparison,
   type GitPanelChange,
   type GitPanelChangeKind,
   type GitPanelDiff,
@@ -49,6 +54,9 @@ export async function handleGitPanelCommand(command: string, payload: Record<str
       parseDiffSection(payload.section),
     )
   }
+  if (command === GIT_PANEL_IPC_CHANNELS.branchComparison) {
+    return getGitPanelBranchComparison(parseNonEmptyString(payload.workspacePath, 'workspacePath'))
+  }
   throw new Error(`unsupported git-panel command: ${command}`)
 }
 
@@ -59,6 +67,7 @@ export async function getGitPanelStatus(workspacePath: string): Promise<GitPanel
     isGitAvailable: false,
     isRepository: false,
     branchName: null,
+    trackingBranchName: null,
     ahead: 0,
     behind: 0,
     isDirty: false,
@@ -89,6 +98,7 @@ export async function getGitPanelStatus(workspacePath: string): Promise<GitPanel
     isGitAvailable: true,
     isRepository: true,
     branchName: parsed.branch.branchName,
+    trackingBranchName: parsed.branch.trackingBranchName,
     ahead: parsed.branch.ahead,
     behind: parsed.branch.behind,
     isDirty: changes.length > 0,
@@ -103,6 +113,15 @@ export async function getGitPanelDiff(workspacePath: string, file: string, secti
   if (topLevel.failure || topLevel.code !== 0) throw new Error('not a git repository')
   const repoRoot = path.resolve(topLevel.stdout.trim())
 
+  if (section === 'branch') {
+    const upstream = await resolveTrackingBranch(repoRoot)
+    if (!upstream) throw new Error('branch has no upstream')
+    const args = ['diff', '--no-ext-diff', '--no-color', '--find-renames', `${upstream}...HEAD`, '--', file]
+    const result = await runGit(args, repoRoot, { maxOutputBytes: DIFF_MAX_OUTPUT_BYTES })
+    if (result.failure || result.code !== 0) throw new Error(`git diff failed (exit ${result.code})`)
+    return toDiffPayload(result)
+  }
+
   const args = section === 'staged'
     ? ['diff', '--cached', '--no-ext-diff', '--no-color', '--', file]
     : section === 'untracked'
@@ -112,10 +131,53 @@ export async function getGitPanelDiff(workspacePath: string, file: string, secti
   // --no-index 约定：0 = 无差异，1 = 有差异，>1 = 真错误。
   const ok = section === 'untracked' ? result.code >= 0 && result.code <= 1 : result.code === 0
   if (result.failure || !ok) throw new Error(`git diff failed (exit ${result.code})`)
+  return toDiffPayload(result)
+}
 
+/** 截断/二进制判定（branch 与本地 diff 共用）。 */
+function toDiffPayload(result: GitRunResult): GitPanelDiff {
   if (result.truncated) return { availability: 'truncated', patch: result.stdout }
   if (/^Binary files .* differ$/m.test(result.stdout)) return { availability: 'binary', patch: '' }
   return { availability: 'patch', patch: result.stdout }
+}
+
+/* ── 分支比较（<upstream>...HEAD，ZCode Q5 §3） ────────────────────────── */
+
+/** 解析上游分支（tracking）；非仓库/无上游/分离 HEAD 返回 null。 */
+export async function resolveTrackingBranch(repoRoot: string): Promise<string | null> {
+  const upstream = await runGit(['rev-parse', '--abbrev-ref', '--symbolic-full-name', '@{u}'], repoRoot, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  if (upstream.failure || upstream.code !== 0) return null
+  const name = upstream.stdout.trim()
+  // 分离 HEAD 或未设置 upstream 时 @{u} 解析失败或输出空/尖括号占位。
+  return name.length > 0 && !name.startsWith('@{') ? name : null
+}
+
+/**
+ * 分支比较：与上游分支比较未推送提交。
+ * available=false = 非仓库或无上游；numstat 失败/截断降级为空 changes（同 status 降级风格）。
+ */
+export async function getGitPanelBranchComparison(workspacePath: string): Promise<GitPanelBranchComparison> {
+  const unavailable: GitPanelBranchComparison = { available: false, comparisonLabel: '', changes: [] }
+  const topLevel = await runGit(['rev-parse', '--show-toplevel'], workspacePath, { maxOutputBytes: STATUS_MAX_OUTPUT_BYTES })
+  if (topLevel.failure || topLevel.code !== 0) return unavailable
+  const repoRoot = path.resolve(topLevel.stdout.trim())
+
+  const upstream = await resolveTrackingBranch(repoRoot)
+  if (!upstream) return unavailable
+
+  const numstat = await runGit(
+    ['diff', '--numstat', '-z', '--find-renames', `${upstream}...HEAD`, '--'],
+    repoRoot,
+    { maxOutputBytes: DIFF_MAX_OUTPUT_BYTES },
+  )
+  if (numstat.failure || numstat.code !== 0 || numstat.truncated) {
+    return { available: true, comparisonLabel: upstream, changes: [] }
+  }
+  return {
+    available: true,
+    comparisonLabel: upstream,
+    changes: assembleBranchChanges(parseNumstat(numstat.stdout), repoRoot, workspacePath),
+  }
 }
 
 /* ── git 进程执行 ─────────────────────────────────────────────────────── */
@@ -213,7 +275,7 @@ export function hardenedGitEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.Pr
 
 /** `#` 分支头 + 变更条目（-z 下记录间 NUL 分隔；`2` 重命名记录额外跟一个 origPath token）。 */
 export interface ParsedGitStatus {
-  branch: { branchName: string | null; ahead: number; behind: number }
+  branch: { branchName: string | null; trackingBranchName: string | null; ahead: number; behind: number }
   entries: ParsedStatusEntry[]
 }
 
@@ -231,7 +293,7 @@ export interface ParsedStatusEntry {
 /** 解析 `status --porcelain=v2 --branch -z` 输出。 */
 export function parseGitStatus(output: string): ParsedGitStatus {
   const tokens = splitNulRecords(output)
-  const branch = { branchName: null as string | null, ahead: 0, behind: 0 }
+  const branch = { branchName: null as string | null, trackingBranchName: null as string | null, ahead: 0, behind: 0 }
   const entries: ParsedStatusEntry[] = []
 
   for (let i = 0; i < tokens.length; i += 1) {
@@ -239,6 +301,10 @@ export function parseGitStatus(output: string): ParsedGitStatus {
     if (token.startsWith('# branch.head ')) {
       const name = token.slice('# branch.head '.length)
       branch.branchName = name === '(detached)' ? null : name
+      continue
+    }
+    if (token.startsWith('# branch.upstream ')) {
+      branch.trackingBranchName = token.slice('# branch.upstream '.length)
       continue
     }
     if (token.startsWith('# branch.ab ')) {
@@ -374,6 +440,33 @@ export function assembleChanges(
   return changes
 }
 
+/** numstat 行数 → 变更类型（ZCode numstat 场景推断规则：纯增=added，纯删=deleted，其余=modified）。 */
+export function numstatToKind(added: number | null, removed: number | null): GitPanelChangeKind {
+  if (added !== null && added > 0 && removed === 0) return 'added'
+  if (removed !== null && removed > 0 && added === 0) return 'deleted'
+  return 'modified'
+}
+
+/** 分支比较 numstat → 面板变更列表（kind 从行数推断，重命名行数已归属新路径）。 */
+export function assembleBranchChanges(
+  numstat: Map<string, { added: number | null; removed: number | null }>,
+  repoRoot: string,
+  workspacePath: string,
+): GitPanelChange[] {
+  const changes: GitPanelChange[] = []
+  for (const [repoRelativePath, counts] of numstat) {
+    changes.push({
+      path: toWorkspaceRelativePath(repoRoot, workspacePath, repoRelativePath),
+      repoRelativePath,
+      kind: numstatToKind(counts.added, counts.removed),
+      section: 'branch',
+      added: counts.added,
+      removed: counts.removed,
+    })
+  }
+  return changes
+}
+
 /** 展示路径：工作区是仓库根的子目录时去掉前缀，否则原样返回仓库根相对路径。 */
 export function toWorkspaceRelativePath(repoRoot: string, workspacePath: string, repoRelativePath: string): string {
   const rel = path.relative(repoRoot, workspacePath)
@@ -391,11 +484,11 @@ function parseNonEmptyString(value: unknown, field: string): string {
   return value
 }
 
-const DIFF_SECTIONS: ReadonlySet<string> = new Set(['unstaged', 'staged', 'untracked'])
+const DIFF_SECTIONS: ReadonlySet<string> = new Set(['unstaged', 'staged', 'untracked', 'branch'])
 
 function parseDiffSection(value: unknown): GitPanelSection {
   if (typeof value !== 'string' || !DIFF_SECTIONS.has(value)) {
-    throw new TypeError('section must be one of unstaged/staged/untracked')
+    throw new TypeError('section must be one of unstaged/staged/untracked/branch')
   }
   return value as GitPanelSection
 }

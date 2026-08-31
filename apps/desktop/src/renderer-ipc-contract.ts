@@ -93,9 +93,12 @@ export const ALLOWED_RENDERER_INVOKE_COMMANDS = new Set([
   'lume:browser-view-ensure-resident',
   'lume:browser-view-restore-tabs',
   // 右侧面板 Git 状态 tab（apps/desktop/src/browser/git-panel-service.ts
-  // GIT_PANEL_IPC_CHANNELS 单源；main dispatchCommand 前缀转发）。
+  // GIT_PANEL_IPC_CHANNELS 单源；main dispatchCommand 前缀转发；
+  // watch = renderer 告知工作区路径启动 fs.watch，dirty 事件在下方事件白名单）。
   'lume:browser-git-status',
   'lume:browser-git-diff',
+  'lume:browser-git-branch-comparison',
+  'lume:browser-git-watch',
   // 右侧面板终端 tab（apps/desktop/src/browser/terminal-bridge.ts 中继 →
   // sidecar terminal:* fork RPC；main dispatchCommand 前缀转发）。
   'lume:terminal-create',
@@ -132,6 +135,9 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   // 右侧面板终端 tab：sidecar terminal:data 通知经 terminal-bridge.ts 中继为
   // 专用事件（高频输出不进 sidecar:event 通用总线）。
   'lume:terminal-data',
+  // 右侧面板 Git 状态 tab：git-watcher.ts fs.watch 工作区变更 60s 防抖后通知
+  // GitPanel 递增 revision 刷新（60s 轮询保留兜底）。
+  'lume:browser-git-dirty',
 ])
 
 export function validateRendererInvokeCommand(command) {
