@@ -17,7 +17,6 @@ import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Spinner } from '@/components/ui/spinner'
-import { cn } from '@/lib/utils'
 import {
   createTerminalSession,
   disposeTerminal,
@@ -25,8 +24,7 @@ import {
   resizeTerminal,
   writeTerminal,
 } from '@/lib/desktop-api/terminal'
-import { ANSI_COLOR_CLASSES } from './terminal-ansi-types'
-import { parseAnsiSegments, splitAnsiLines, type AnsiSegment } from './terminal-ansi'
+import { parseAnsiSegments, splitAnsiLines, type AnsiSegment, type AnsiStyle } from './terminal-ansi'
 
 /* ── 模块级会话仓（跨 tab 切换保活；ZCode stash 的简化落法） ─────────────── */
 
@@ -142,6 +140,44 @@ interface TerminalPanelProps {
   workspacePath?: string
 }
 
+
+/** AnsiStyle → React 内联样式（支持 256 色/真彩 CSS 值 + 文字属性 + 反色）。 */
+const ANSI_PALETTE: Record<string, string> = {
+  black: '#3f3f46', red: '#ef4444', green: '#22c55e', yellow: '#eab308',
+  blue: '#3b82f6', magenta: '#d946ef', cyan: '#06b6d4', white: '#e4e4e7',
+  'bright-black': '#71717a', 'bright-red': '#f87171', 'bright-green': '#4ade80',
+  'bright-yellow': '#facc15', 'bright-blue': '#60a5fa', 'bright-magenta': '#e879f9',
+  'bright-cyan': '#22d3ee', 'bright-white': '#fafafa',
+  'bg-black': '#18181b', 'bg-red': '#450a0a', 'bg-green': '#052e16',
+  'bg-yellow': '#422006', 'bg-blue': '#172554', 'bg-magenta': '#4a044e',
+  'bg-cyan': '#083344', 'bg-white': '#e4e4e7',
+  'bg-bright-black': '#27272a', 'bg-bright-red': '#7f1d1d', 'bg-bright-green': '#14532d',
+  'bg-bright-yellow': '#713f12', 'bg-bright-blue': '#1e3a8a', 'bg-bright-magenta': '#701a75',
+  'bg-bright-cyan': '#164e63', 'bg-bright-white': '#f4f4f5',
+}
+function resolveAnsiColor(name: NonNullable<AnsiStyle['fg']>): string {
+  if (name.startsWith('rgb') || name.startsWith('#')) return name
+  return ANSI_PALETTE[name] ?? name
+}
+function ansiStyleToCss(style: AnsiStyle): React.CSSProperties {
+  const css: React.CSSProperties = {}
+  const fgColor = style.fg ? resolveAnsiColor(style.fg) : undefined
+  const bgColor = style.bg ? resolveAnsiColor(style.bg) : undefined
+  if (style.inverse) { css.color = bgColor ?? 'var(--lume-text-primary)'; css.backgroundColor = fgColor ?? 'var(--lume-text-secondary)' }
+  else {
+    if (fgColor) css.color = fgColor
+    else css.color = 'var(--lume-text-secondary)'
+    if (bgColor) css.backgroundColor = bgColor
+  }
+  if (style.bold) css.fontWeight = '600'
+  if (style.dim) css.opacity = '0.6'
+  if (style.italic) css.fontStyle = 'italic'
+  const deco = [style.underline ? 'underline' : '', style.strikethrough ? 'line-through' : ''].filter(Boolean).join(' ')
+  if (deco) css.textDecoration = deco
+  return css
+}
+
+
 export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
   const sessionKey = workspacePath ?? ''
   const [, forceRender] = useReducer((count: number) => count + 1, 0)
@@ -248,13 +284,7 @@ export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
         <pre className="w-full font-mono text-[11px] leading-4 break-words whitespace-pre-wrap">
           {lines.map((segments, lineIndex) => (
             <div key={lineIndex}>{segments.length === 0 ? ' ' : segments.map((segment, segmentIndex) => (
-              <span
-                key={segmentIndex}
-                className={cn(
-                  segment.color ? ANSI_COLOR_CLASSES[segment.color] : 'text-[var(--lume-text-secondary)]',
-                  segment.bold && 'font-semibold',
-                )}
-              >
+              <span key={segmentIndex} style={ansiStyleToCss(segment.style)}>
                 {segment.text}
               </span>
             ))}</div>
