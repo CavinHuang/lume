@@ -59,6 +59,14 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   // ZCode refreshToken 等价：递增触发 status 重载 + diff 缓存失效。
   const [revision, setRevision] = useState(0)
 
+  // 文件 watch 自动刷新：ZCode 通过 host 进程 fileWatcherService 监听工作区目录，
+  // Lume MVP 用定时轮询等效实现（60s 与 ZCode 防抖值一致）。
+  useEffect(() => {
+    if (!workspacePath) return
+    const timer = setInterval(() => setRevision(r => r + 1), 60_000)
+    return () => clearInterval(timer)
+  }, [workspacePath])
+
   useEffect(() => {
     // 切换工作区时清空展开与缓存，避免串仓库。
     setExpandedPaths(new Set())
