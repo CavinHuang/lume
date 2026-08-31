@@ -33,6 +33,7 @@ import {
   firstOpenRightPanelTab,
   getOpenRightPanelFunctions,
   getRightPanelReviewLaunchTarget,
+  nextTerminalInstanceTitle,
   resolveRightPanelWorkspaceKey,
   type RightPanelFunction,
   type RightPanelTab,
@@ -210,6 +211,18 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
   const panelVisible = !unified.collapsed || Boolean(codingReview)
   if (!panelVisible) return null
 
+  // 终端实例(ZCode handleOpenTerminalTab + Zde 查重标题):cwd.basename 撞名加序号。
+  const workspaceProjectPath = agentWorkspace?.projectPath
+  const openTerminalInstance = useCallback(() => {
+    if (!threadId || !workspaceProjectPath) return
+    const base = workspaceProjectPath.split(/[\/]/).filter(Boolean).at(-1) ?? '终端'
+    const title = nextTerminalInstanceTitle(unified, base)
+    const cryptoRef = globalThis.crypto
+    const suffix = cryptoRef && typeof cryptoRef.randomUUID === 'function'
+      ? cryptoRef.randomUUID()
+      : `${Date.now()}-${Math.floor(Math.random() * 1e9)}`
+    dispatch({ type: 'open-terminal-instance', threadId, tabId: `terminal-${suffix}`, title })
+  }, [dispatch, threadId, unified, workspaceProjectPath])
   const openFunctions = getOpenRightPanelFunctions(unified.tabs)
   const activeUnifiedTab: RightPanelTab | null = unified.tabs.find((tab) => tab.id === unified.activeTabId) ?? null
   const storedRuntimeWorkspace = runtime[threadId]
@@ -302,6 +315,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
               onCloseTab={(tabId) => action({ type: 'close-tab', threadId, tabId })}
               onCloseOtherTabs={(tabId) => action({ type: 'close-other-tabs', threadId, tabId })}
               onCloseAllTabs={() => action({ type: 'close-all-tabs', threadId })}
+              onOpenTerminalInstance={workspaceProjectPath ? openTerminalInstance : undefined}
               onReorderTabs={(orderedIds) => action({ type: 'reorder-tabs', threadId, orderedIds })}
               onReopenClosedTab={(entryId) => action({ type: 'reopen-closed-tab', threadId, entryId })}
               onCloseFile={(tabId: string) => action({ type: 'close-file', threadId, tabId })}
@@ -408,7 +422,9 @@ function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceP
     return <GitPanel workspacePath={workspaceProjectPath} onRevealInTree={onRevealFileInTree} />
   }
   if (type === 'terminal') {
-    return <TerminalPanel workspacePath={workspaceProjectPath} />
+    // 实例 tab(terminal:<uuid>)按 id 隔离会话;固定功能 tab 沿用 workspacePath 单例键。
+    const sessionKey = activeTab && activeTab.id !== 'terminal' ? activeTab.id : undefined
+    return <TerminalPanel workspacePath={workspaceProjectPath} sessionKey={sessionKey} />
   }
   return <PlaceholderRightPanelTab label={PLACEHOLDER_LABELS[type]} />
 }

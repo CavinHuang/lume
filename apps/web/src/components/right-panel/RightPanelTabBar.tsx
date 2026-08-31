@@ -92,7 +92,7 @@ export function buildRightPanelTabItems(
   if (reviewOpen) result.push({ kind: 'review', id: 'review', label: '审阅' })
   let filesEmitted = false
   for (const tab of tabs) {
-    result.push({ kind: 'function', id: tab.id, type: tab.type, label: FUNCTION_META[tab.type].label })
+    result.push({ kind: 'function', id: tab.id, type: tab.type, label: tab.title ?? FUNCTION_META[tab.type].label })
     if (tab.type === 'files') {
       result.push(...fileItems)
       filesEmitted = true
@@ -117,6 +117,7 @@ interface RightPanelTabBarProps {
   onCloseFile: (tabId: string) => void
   onCloseOtherTabs: (tabId: string) => void
   onCloseAllTabs: () => void
+  onOpenTerminalInstance?: () => void
   onReorderTabs: (orderedIds: string[]) => void
   onReopenClosedTab: (entryId: string) => void
   onOpenFunction: (type: RightPanelFunction) => void
@@ -259,6 +260,12 @@ export function RightPanelTabBar(props: RightPanelTabBarProps) {
             )
           })}
           {availableFunctions.length === 0 && <DropdownMenuItem disabled>全部功能已打开</DropdownMenuItem>}
+          {props.onOpenTerminalInstance && (
+            <DropdownMenuItem onSelect={() => props.onOpenTerminalInstance!()}>
+              <SquareTerminal size={14} />
+              <span className="flex-1">新终端</span>
+            </DropdownMenuItem>
+          )}
         </DropdownMenuContent>
       </DropdownMenu>
 

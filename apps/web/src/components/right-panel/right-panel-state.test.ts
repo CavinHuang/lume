@@ -16,6 +16,8 @@ import {
   recomputeRightPanelCollapse,
   reorderRightPanelTabs,
   resolveRightPanelWorkspaceKey,
+  nextTerminalInstanceTitle,
+  openRightPanelTerminalInstance,
   sanitizeRightPanelWorkspaceState,
 } from './right-panel-state'
 
@@ -142,6 +144,47 @@ describe('right-panel-state tab model', () => {
 
     expect(sanitizeRightPanelWorkspaceState(null)).toEqual({ tabs: [], activeTabId: null, collapsed: false })
     expect(sanitizeRightPanelWorkspaceState({ tabs: [], collapsed: true })).toEqual({ tabs: [], activeTabId: null, collapsed: true })
+  })
+
+  test('terminal instances are non-singleton with deduped Zde titles', () => {
+    let state = createEmptyRightPanelWorkspace()
+    state = openRightPanelTab(state, 'terminal')
+    state = openRightPanelTerminalInstance(state, 'terminal-a', 'repo')
+    state = openRightPanelTerminalInstance(state, 'terminal-b', 'repo 2')
+    expect(state.tabs.map((tab) => ({ id: tab.id, title: tab.title }))).toEqual([
+      { id: 'terminal', title: undefined },
+      { id: 'terminal-a', title: 'repo' },
+      { id: 'terminal-b', title: 'repo 2' },
+    ])
+    expect(state.activeTabId).toBe('terminal-b')
+
+    // 同 id 幂等激活(重放竞态);Zde 查重跳过既有标题
+    state = openRightPanelTerminalInstance(state, 'terminal-a', 'repo')
+    expect(state.activeTabId).toBe('terminal-a')
+    expect(nextTerminalInstanceTitle(state, 'repo')).toBe('repo 3')
+    expect(nextTerminalInstanceTitle(state, 'fresh')).toBe('fresh')
+
+    // 实例参与关闭语义(closeRightPanelTab 原样复用)
+    const closed = closeRightPanelTab(state, 'terminal-a')
+    expect(closed.tabs.map((tab) => tab.id)).toEqual(['terminal', 'terminal-b'])
+    expect(closed.activeTabId).toBe('terminal-b')
+  })
+
+  test('sanitize preserves terminal instance titles and drops malformed ones', () => {
+    const sanitized = sanitizeRightPanelWorkspaceState({
+      tabs: [
+        { id: 'terminal', type: 'terminal' },
+        { id: 'terminal-a', type: 'terminal', title: '  repo  ' },
+        { id: 'terminal-b', type: 'terminal', title: 42 },
+      ],
+      activeTabId: 'terminal-a',
+      collapsed: false,
+    })
+    expect(sanitized.tabs).toEqual([
+      { id: 'terminal', type: 'terminal' },
+      { id: 'terminal-a', type: 'terminal', title: 'repo' },
+      { id: 'terminal-b', type: 'terminal' },
+    ])
   })
 
   test('workspace key resolution matches the browser panel bucket identity', () => {

@@ -25,6 +25,7 @@ import {
   handleCloseOtherTabs,
   handleCloseTab,
   handleOpenTab,
+  handleOpenTerminalInstance,
   handleReopenClosedTab,
   handleReorderTabs,
   handleToggleCollapse,
@@ -269,6 +270,7 @@ type RightPanelWorkspaceAction =
   | { type: 'activate-side-chat'; threadId: string }
   | { type: 'open-file'; threadId: string; ref: FileRef; binding?: ThreadFileWorkspace['binding']; lineSelection?: ThreadFileLineSelection; navigationRevision?: number }
   | { type: 'reveal-directory'; threadId: string; request: NonNullable<ThreadFileWorkspace['revealRequest']>; binding?: ThreadFileWorkspace['binding'] }
+  | { type: 'open-terminal-instance'; threadId: string; tabId: string; title: string }
   | { type: 'close-function'; threadId: string; function: RightPanelFunction }
   | { type: 'close-tab'; threadId: string; tabId: string }
   | { type: 'close-other-tabs'; threadId: string; tabId: string }
@@ -327,6 +329,12 @@ export const rightPanelWorkspaceActionAtom = atom(null, (get, set, action: Right
         : findRightPanelTab(readRightPanelWorkspaceState(workspaceKey()), action.tabId)?.type
     // 未知 tabId(如重开竞态)只激活既有 tab,不落新类型
     if (type) handleOpenTab(workspaceKey(), type)
+    syncRuntimeWithUnifiedTabs()
+    return
+  }
+
+  if (action.type === 'open-terminal-instance') {
+    handleOpenTerminalInstance(workspaceKey(), action.tabId, action.title)
     syncRuntimeWithUnifiedTabs()
     return
   }

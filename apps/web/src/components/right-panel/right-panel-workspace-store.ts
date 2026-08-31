@@ -23,6 +23,7 @@ import {
   closeRightPanelTab,
   createEmptyRightPanelWorkspace,
   openRightPanelTab,
+  openRightPanelTerminalInstance,
   pushRightPanelClosedRing,
   recomputeRightPanelCollapse,
   reorderRightPanelTabs,
@@ -122,6 +123,11 @@ export function handleOpenTab(workspaceKey: string, type: RightPanelFunction): v
 }
 
 /** 激活(ZCode handleActivateSidePaneTab:只切 activeTabId 并展开)。 */
+/** 终端实例(ZCode handleOpenTerminalTab):非单例,追加唯一 id tab 并激活。 */
+export function handleOpenTerminalInstance(workspaceKey: string, tabId: string, title: string): void {
+  writeState(workspaceKey, openRightPanelTerminalInstance(readRightPanelWorkspaceState(workspaceKey), tabId, title))
+}
+
 export function handleActivateTab(workspaceKey: string, tabId: string): void {
   writeState(workspaceKey, activateRightPanelTab(readRightPanelWorkspaceState(workspaceKey), tabId))
 }

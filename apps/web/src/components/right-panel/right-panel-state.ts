@@ -25,6 +25,8 @@ export const RIGHT_PANEL_FUNCTION_ORDER: RightPanelFunction[] = ['files', 'vault
 export interface RightPanelTab {
   id: string
   type: RightPanelFunction
+  /** 实例型 tab 显示名(终端实例:cwd.basename + 序号,ZCode Zde);固定功能 tab 无。 */
+  title?: string
 }
 
 /** ZCode sidePaneState + isSidePaneCollapsed:按 workspaceKey 分桶持久(见 right-panel-workspace-store.ts)。 */
@@ -110,7 +112,10 @@ export function sanitizeRightPanelWorkspaceState(value: unknown): RightPanelWork
     const id = typeof item.id === 'string' && item.id ? item.id : item.type
     if (seen.has(id)) return []
     seen.add(id)
-    return [{ id, type: item.type }]
+    const title = typeof item.title === 'string' && item.title.trim()
+      ? item.title.trim().slice(0, 40)
+      : undefined
+    return [{ id, type: item.type, ...(title ? { title } : {}) }]
   })
   const activeTabId = typeof value.activeTabId === 'string' && seen.has(value.activeTabId)
     ? value.activeTabId
@@ -133,6 +138,32 @@ export function openRightPanelTab(state: RightPanelWorkspaceState, type: RightPa
   if (existing) return activateRightPanelTab(state, existing.id)
   const tab = createRightPanelTab(type)
   return activateRightPanelTab({ ...state, tabs: [...state.tabs, tab] }, tab.id)
+}
+
+/**
+ * 终端实例(ZCode handleOpenTerminalTab):终端是唯一可多开的类型——每次开启
+ * 追加新 tab(id 唯一,title = cwd.basename 查重序号)并激活;同 id 幂等激活。
+ */
+export function openRightPanelTerminalInstance(
+  state: RightPanelWorkspaceState,
+  tabId: string,
+  title: string,
+): RightPanelWorkspaceState {
+  const existing = state.tabs.find((tab) => tab.id === tabId)
+  if (existing) return activateRightPanelTab(state, existing.id)
+  return activateRightPanelTab(
+    { ...state, tabs: [...state.tabs, { id: tabId, type: 'terminal', title }] },
+    tabId,
+  )
+}
+
+/** ZCode Zde 查重标题:basename 撞名时追加序号(「repo」「repo 2」「repo 3」…)。 */
+export function nextTerminalInstanceTitle(state: RightPanelWorkspaceState, base: string): string {
+  const taken = new Set(state.tabs.filter((tab) => tab.type === 'terminal').map((tab) => tab.title))
+  if (!taken.has(base)) return base
+  let ordinal = 2
+  while (taken.has(`${base} ${ordinal}`)) ordinal += 1
+  return `${base} ${ordinal}`
 }
 
 /** 关闭(ZCode wd):删空 → 收起;删的是活动 tab → 激活原索引处邻居。 */

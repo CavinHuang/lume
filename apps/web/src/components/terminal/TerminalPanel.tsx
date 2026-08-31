@@ -169,10 +169,12 @@ function touchSession(sessionKey: string): void {
 interface TerminalPanelProps {
   /** 当前会话绑定的项目目录；缺失时 sidecar 回落用户主目录。 */
   workspacePath?: string
+  /** 多实例隔离键（终端实例 tab 传唯一 id；缺省按 workspacePath 单例）。 */
+  sessionKey?: string
 }
 
-export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
-  const sessionKey = workspacePath ?? ''
+export function TerminalPanel({ workspacePath, sessionKey: sessionKeyProp }: TerminalPanelProps) {
+  const sessionKey = sessionKeyProp ?? workspacePath ?? ''
   const [, forceRender] = useReducer((count: number) => count + 1, 0)
   const termRef = useRef<HTMLDivElement | null>(null)
 
