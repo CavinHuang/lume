@@ -1,5 +1,5 @@
 import { useAtom, useAtomValue, useSetAtom } from 'jotai'
-import { useCallback, useEffect, useMemo, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
 import {
   activeTabIdAtom,
   agentRuntimeEventsFamily,
@@ -22,6 +22,7 @@ import { onSidecarEvent } from '@/lib/desktop-api'
 import { AGENT_IPC_CHANNELS, MEMORY_IPC_CHANNELS, type FileSource } from '@lume/shared'
 import { cn } from '@/lib/utils'
 import {
+  createFileTreeRevealRequest,
   createThreadFileWorkspace,
   getEffectiveThreadFileBindings,
   normalizePersistedRightPanelFileTabs,
@@ -100,6 +101,23 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
     fileContextId: thread?.fileContextId ?? thread?.id,
     projectBindingKey: agentWorkspace?.realpathKey ?? agentWorkspace?.projectPath,
   }), [agentWorkspace?.projectPath, agentWorkspace?.realpathKey, workspaceId, thread?.fileContextId, thread?.id])
+
+  // 「在文件树中显示」移交(ZCode GitPanel onRevealFileInTree):把仓库相对路径
+  // 交给文件树——展开祖先目录、选中并滚动到该文件。无 slug 时无法构造 project
+  // FileRef,回退不可用(GitPanel 据此隐藏菜单项)。
+  const navigationRevisionRef = useRef(0)
+  const revealFileInTree = useCallback((repoRelativePath: string): boolean => {
+    const activeThreadId = threadId
+    if (!activeThreadId || !workspaceSlug) return false
+    const navigationRevision = ++navigationRevisionRef.current
+    const { request } = createFileTreeRevealRequest(
+      { source: 'project', scopeId: workspaceSlug, relativePath: repoRelativePath },
+      navigationRevision,
+    )
+    dispatch({ type: 'reveal-directory', threadId: activeThreadId, request, binding })
+    return true
+  }, [binding, dispatch, threadId, workspaceSlug])
+
 
   useEffect(() => {
     const result = reconcileThreadFileWorkspaces(runtime, getEffectiveThreadFileBindings(threads, currentWorkspaceId).map((item) => ({
@@ -304,6 +322,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
                 threadId={threadId}
                 workspaceKey={workspaceKey}
                 codingReview={codingReview}
+                onRevealFileInTree={revealFileInTree}
                 onOpenCodingFile={workspaceSlug ? (path) => {
                   closeCodingReview({ type: 'deactivate', threadId })
                   action({
@@ -351,7 +370,7 @@ export function RightPanelWorkspace({ maxWidth }: { maxWidth: number }) {
  * 活动内容分发:审阅(运行时临时面)> 文件 tab(runtime activeItem 明确指向具体
  * 文件)> 统一层活动 tab 按类型分发(browser/git/files/vault/chat)。
  */
-function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, workspaceKey, codingReview, onOpenCodingFile }: {
+function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceProjectPath, fileContextId, openFunctions, onRuntimeChange, threadId, workspaceKey, codingReview, onOpenCodingFile, onRevealFileInTree }: {
   runtime: ThreadFileWorkspace
   activeTab: RightPanelTab | null
   workspaceSlug?: string
@@ -363,6 +382,7 @@ function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceP
   workspaceKey?: string
   codingReview?: CodingReviewPanelState
   onOpenCodingFile?: (path: string) => void
+  onRevealFileInTree?: (repoRelativePath: string) => boolean
 }) {
   if (codingReview?.active) {
     return <CodingReviewPanel threadId={threadId} state={codingReview} onOpenFile={onOpenCodingFile} />
@@ -385,7 +405,7 @@ function RightPanelActiveContent({ runtime, activeTab, workspaceSlug, workspaceP
     return <BrowserRightPanelWorkspace workspaceKey={workspaceKey} />
   }
   if (type === 'git') {
-    return <GitPanel workspacePath={workspaceProjectPath} />
+    return <GitPanel workspacePath={workspaceProjectPath} onRevealInTree={onRevealFileInTree} />
   }
   if (type === 'terminal') {
     return <TerminalPanel workspacePath={workspaceProjectPath} />

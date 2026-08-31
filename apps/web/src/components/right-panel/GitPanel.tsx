@@ -11,12 +11,12 @@
  *  - 查找（ZCode KEt）：大小写/空白归一化子串匹配已加载 diff 文本；有查询时自动
  *    批量预加载全部 diff，Enter/prev/next 在命中文件间循环（展开 + scrollToIndex
  *    center）；计数为命中文件粒度（虚拟列表滚动以文件行为单位）；
- *  - 行级菜单（ZCode §1.3）：在文件管理器中显示（桌面）/复制绝对路径/复制相对路径；
+ *  - 行级菜单（ZCode §1.3）：在文件管理器中显示（桌面）/复制绝对/相对路径/
+ *    在文件树中显示（经宿主 reveal-directory 移交，展开祖先并选中滚动）；
  *  - 来源选择跨挂载记忆（ZCode Ujt activeGitSourceId 按 workspace 键控迁移）；
  *  - 完全只读，无 stage/unstage/commit。
  *
- * v1 偏差（后续跟进）：last-turn 来源（ZCode 该构建中恒为空占位，无需移植）、
- * 「在文件树中显示」移交（Lume 文件树 reveal 总线按 thread 绑定，需桥接）；
+ * v1 偏差（后续跟进）：last-turn 来源（ZCode 该构建中恒为空占位，无需移植）；
  * 自动刷新 = main 侧 fs.watch 实时通道（lume:browser-git-dirty 事件）+ 60s 轮询
  * 兜底；diff 以纯文本 +/- 着色渲染（Shiki 可后续接入）。
  */
@@ -79,6 +79,11 @@ function countPatchMatches(patch: string, query: string): number {
 interface GitPanelProps {
   /** 当前会话绑定的项目目录；缺失时显示无项目空态。 */
   workspacePath?: string
+  /**
+   * 「在文件树中显示」移交（ZCode onRevealFileInTree）：交由宿主把文件树切到
+   * 该文件（展开祖先 + 选中滚动）。缺省/宿主无法构造 FileRef 时隐藏菜单项。
+   */
+  onRevealInTree?: (repoRelativePath: string) => boolean
 }
 
 /**
@@ -87,7 +92,7 @@ interface GitPanelProps {
  */
 const sourceByWorkspace = new Map<string, GitPanelSource>()
 
-export function GitPanel({ workspacePath }: GitPanelProps) {
+export function GitPanel({ workspacePath, onRevealInTree }: GitPanelProps) {
   const [status, setStatus] = useState<GitPanelStatus | null>(null)
   const [branchComparison, setBranchComparison] = useState<GitPanelBranchComparison | null>(null)
   const [loading, setLoading] = useState(false)
@@ -408,6 +413,7 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
                     expanded={expanded}
                     diff={diffs.get(diffKey(change))}
                     onToggle={() => toggleExpanded(change.repoRelativePath)}
+                    onRevealInTree={onRevealInTree}
                   />
                 </div>
               )
@@ -419,11 +425,12 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   )
 }
 
-function GitChangeRow({ change, expanded, diff, onToggle }: {
+function GitChangeRow({ change, expanded, diff, onToggle, onRevealInTree }: {
   change: GitPanelChange
   expanded: boolean
   diff: LoadedDiff | undefined
   onToggle: () => void
+  onRevealInTree?: (repoRelativePath: string) => boolean
 }) {
   const desktop = isDesktopRuntime()
   const copyPath = (text: string) => { void writeClipboardText(text).catch(() => undefined) }
@@ -473,8 +480,11 @@ function GitChangeRow({ change, expanded, diff, onToggle }: {
                 在文件管理器中显示
               </DropdownMenuItem>
             )}
-            <DropdownMenuItem onSelect={() => copyPath(change.path)}>复制绝对路径</DropdownMenuItem>
-            <DropdownMenuItem onSelect={() => copyPath(change.repoRelativePath)}>复制相对路径</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => copyPath(change.path)}>复制绝对路径</DropdownMenuItem>
+          <DropdownMenuItem onSelect={() => copyPath(change.repoRelativePath)}>复制相对路径</DropdownMenuItem>
+          {onRevealInTree && (
+            <DropdownMenuItem onSelect={() => onRevealInTree(change.repoRelativePath)}>在文件树中显示</DropdownMenuItem>
+          )}
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
