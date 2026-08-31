@@ -17,8 +17,9 @@ import {
   deliverOpenBrowserUrl,
   setBrowserPanelMounted,
 } from '@/components/browser/open-browser-url-bridge'
+import { addStoredBrowserTab, hasStoredBrowserTab } from '@/components/browser/browser-workspace-state'
 import { openExternal } from '@/lib/desktop-api'
-import { onBrowserViewOpenBrowserUrl } from '@/lib/desktop-api/browser-view'
+import { onBrowserViewOpenBrowserUrl, onBrowserViewReady } from '@/lib/desktop-api/browser-view'
 import { rightPanelLayoutAtom, rightPanelWorkspaceActionAtom } from '@/atoms'
 
 export function BrowserRightPanelWorkspace({ workspaceKey }: { workspaceKey?: string }) {
@@ -40,10 +41,17 @@ export function BrowserRightPanelWorkspace({ workspaceKey }: { workspaceKey?: st
 }
 
 /**
- * open-browser-url reveal 桥(常驻订阅,挂于 RightPanelWorkspace;须在早退 return
- * 之前调用):面板未挂载时暂存 URL 并点亮右面板「浏览器」tab;无会话上下文
- * (threadId 缺省,如设置页)时退化为系统浏览器外开 —— ZCode「无 shell →
- * window.open」回退的 Lume 等价。
+ * open-browser-url + browser-view-ready reveal 桥(常驻订阅,挂于 RightPanelWorkspace;
+ * 须在早退 return 之前调用),对齐 ZCode Qde 常驻控制器 + lde「挂载/揭示」模型:
+ *
+ *  - open-browser-url:面板未挂载时暂存 URL 并点亮右面板「浏览器」tab;无会话上下文
+ *    (threadId 缺省,如设置页)时退化为系统浏览器外开 —— ZCode「无 shell →
+ *    window.open」回退的 Lume 等价。
+ *  - browser-view-ready:agent 建 tab 的 ready 事件原由面板内部订阅接住;面板未挂载
+ *    时无人接、tab 永不可见。此处兜底:先把 tab 壳记入模块级工作区仓(ZCode lde
+ *    后台挂载分支,面板挂载时 applyWorkspaceSnapshot 对账装表);若属于当前会话
+ *    (workspaceKey === threadId,RightPanelWorkspace 的推导同式)则进一步揭示
+ *    浏览器 tab(ZCode shouldReveal「展开并激活」分支)。
  */
 export function useOpenBrowserUrlReveal(threadId: string | undefined): void {
   const dispatch = useSetAtom(rightPanelWorkspaceActionAtom)
@@ -66,6 +74,41 @@ export function useOpenBrowserUrlReveal(threadId: string | undefined): void {
       setLayout((current) => ({ ...current, open: true, mode: current.mode === 'compact' ? 'normal' : current.mode }))
       dispatch({ type: 'activate-function', threadId: activeThreadId, function: 'browser' })
     }).then((unsub) => { if (disposed) unsub(); else unsubs.push(unsub) })
+
+    void onBrowserViewReady((payload) => {
+      if (disposed) return
+      // 已被面板接住(挂载中/仓里已有)则跳过;此处只补「面板未挂载」的丢失窗口。
+      if (hasStoredBrowserTab(payload.tabId)) return
+      addStoredBrowserTab(payload.workspaceKey, {
+        tabId: payload.tabId,
+        workspaceKey: payload.workspaceKey,
+        sessionId: payload.sessionId,
+        remoteSessionId: payload.remoteSessionId,
+        browserId: payload.browserId,
+        browserGeneration: payload.browserGeneration,
+        origin: 'agent',
+        residency: 'resident',
+        guestState: 'unmounted',
+        title: null,
+        url: null,
+        faviconUrl: null,
+        loading: false,
+        operationUntil: 0,
+        guestGeneration: 0,
+        errorMessage: null,
+        loadErrorCode: null,
+        guestFailure: null,
+        canGoBack: false,
+        canGoForward: false,
+      })
+      if (payload.workspaceKey && payload.workspaceKey === threadIdRef.current) {
+        const activeThreadId = threadIdRef.current
+        if (!activeThreadId) return
+        setLayout((current) => ({ ...current, open: true, mode: current.mode === 'compact' ? 'normal' : current.mode }))
+        dispatch({ type: 'activate-function', threadId: activeThreadId, function: 'browser' })
+      }
+    }).then((unsub) => { if (disposed) unsub(); else unsubs.push(unsub) })
+
     return () => {
       disposed = true
       for (const unsub of unsubs) unsub()
