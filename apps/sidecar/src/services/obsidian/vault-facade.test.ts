@@ -153,6 +153,7 @@ describe("vault-facade", () => {
       const fs = createVaultFileSystem(root);
       const result = await fs.createUntitledNote("Lume Inbox");
       expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("createUntitledNote should succeed");
       expect(readFileSync(join(root, "Lume Inbox", result.relativePath.split("/").pop()!), "utf-8")).toBe("");
     } finally {
       rmSync(root, { recursive: true, force: true });
