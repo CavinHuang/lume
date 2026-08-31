@@ -159,7 +159,7 @@ describe('right-panel-state tab model', () => {
     expect(state.activeTabId).toBe('terminal-b')
 
     // 同 id 幂等激活(重放竞态);Zde 查重跳过既有标题
-    state = openRightPanelInstanceTab(state, 'terminal-b', 'terminal', 'repo 2')
+    state = openRightPanelInstanceTab(state, 'terminal-a', 'terminal', 'repo')
     expect(state.activeTabId).toBe('terminal-a')
     expect(nextTerminalInstanceTitle(state, 'repo')).toBe('repo 3')
     expect(nextTerminalInstanceTitle(state, 'fresh')).toBe('fresh')
