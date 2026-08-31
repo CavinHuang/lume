@@ -8,20 +8,28 @@
  *  - branch 来源与上游分支比较未推送提交（branchComparison，选项仅在有 tracking
  *    分支时出现，数据按需加载）；
  *  - diff 缓存以 revision 失效：刷新后已展开项自动重新拉取；
+ *  - 查找（ZCode KEt）：大小写/空白归一化子串匹配已加载 diff 文本；有查询时自动
+ *    批量预加载全部 diff，Enter/prev/next 在命中文件间循环（展开 + scrollToIndex
+ *    center）；计数为命中文件粒度（虚拟列表滚动以文件行为单位）；
+ *  - 行级菜单（ZCode §1.3）：在文件管理器中显示（桌面）/复制绝对路径/复制相对路径；
  *  - 完全只读，无 stage/unstage/commit。
  *
- * v1 偏差（后续跟进）：last-turn 来源、查找（scrollToIndex）未实现；自动刷新 =
- * main 侧 fs.watch 实时通道（lume:browser-git-dirty 事件）+ 60s 轮询兜底；diff 以
- * 纯文本 +/- 着色渲染（Shiki 可后续接入）。
+ * v1 偏差（后续跟进）：last-turn 来源（ZCode 该构建中恒为空占位，无需移植）、
+ * 「在文件树中显示」移交（Lume 文件树 reveal 总线按 thread 绑定，需桥接）；
+ * 自动刷新 = main 侧 fs.watch 实时通道（lume:browser-git-dirty 事件）+ 60s 轮询
+ * 兜底；diff 以纯文本 +/- 着色渲染（Shiki 可后续接入）。
  */
 import { useVirtualizer } from '@tanstack/react-virtual'
-import { ChevronDown, ChevronRight, GitBranch, RefreshCw } from 'lucide-react'
+import { ChevronDown, ChevronRight, ChevronUp, GitBranch, MoreVertical, RefreshCw, Search, X } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { GitPanelBranchComparison, GitPanelChange, GitPanelDiff, GitPanelSource, GitPanelStatus } from '@lume/shared'
 import { Button } from '@/components/ui/button'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { Input } from '@/components/ui/input'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Spinner } from '@/components/ui/spinner'
 import { FileTypeIcon } from '@/components/file-browser/FileTypeIcon'
+import { isDesktopRuntime, revealPathInSystem, writeClipboardText } from '@/lib/desktop-api/native'
 import { cn } from '@/lib/utils'
 import { fetchGitPanelBranchComparison, fetchGitPanelDiff, fetchGitPanelStatus, onGitPanelDirty, watchGitPanelWorkspace } from '@/lib/desktop-api/git-panel'
 
@@ -46,6 +54,27 @@ const KIND_LETTER_CLASSES: Record<GitPanelChange['kind'], string> = {
 /** 展开 diff 的缓存态：loading 占位 / 加载失败 / 正常结果。 */
 type LoadedDiff = { state: 'loading' } | { state: 'failed' } | { state: 'done'; diff: GitPanelDiff }
 
+/** 大小写/空白归一化（ZCode KEt 同款：子串匹配前双方归一）。 */
+function normalizeForSearch(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ')
+}
+
+/** 统计 needle 在 patch 中的非重叠出现次数（0 次或空查询返回 0）。 */
+function countPatchMatches(patch: string, query: string): number {
+  const haystack = normalizeForSearch(patch)
+  const needle = normalizeForSearch(query)
+  if (!needle) return 0
+  let count = 0
+  let index = 0
+  for (;;) {
+    const found = haystack.indexOf(needle, index)
+    if (found < 0) break
+    count += 1
+    index = found + needle.length
+  }
+  return count
+}
+
 interface GitPanelProps {
   /** 当前会话绑定的项目目录；缺失时显示无项目空态。 */
   workspacePath?: string
@@ -60,6 +89,10 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   const [diffs, setDiffs] = useState<ReadonlyMap<string, LoadedDiff>>(new Map())
   // ZCode refreshToken 等价：递增触发 status 重载 + diff 缓存失效。
   const [revision, setRevision] = useState(0)
+  // 查找态（ZCode KEt）：开启查找条 + 查询词 + 当前命中文件游标。
+  const [searchOpen, setSearchOpen] = useState(false)
+  const [searchQuery, setSearchQuery] = useState('')
+  const [matchCursor, setMatchCursor] = useState(0)
 
   // 有 tracking 分支才出现 branch 选项，标签带上游名（ZCode sourceOptions 动态生成等效）。
   const sourceOptions = useMemo(() => {
@@ -185,6 +218,64 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   const branchNotLoaded = source === 'branch' && loading && !branchComparison
   const branchUnavailable = source === 'branch' && branchComparison !== null && !branchComparison.available
 
+  // 查找激活（有非空查询词）时批量预加载全部 diff（ZCode KEt：有查询自动批量预加载）。
+  const searchActive = searchOpen && searchQuery.trim().length > 0
+  useEffect(() => {
+    if (!searchActive || !workspacePath) return
+    const pending = changes.filter((change) => !diffs.has(diffKey(change)))
+    if (pending.length === 0) return
+    let cancelled = false
+    setDiffs((current) => {
+      const next = new Map(current)
+      for (const change of pending) next.set(diffKey(change), { state: 'loading' })
+      return next
+    })
+    for (const change of pending) {
+      void fetchGitPanelDiff(workspacePath, change.repoRelativePath, change.section)
+        .then((diff) => {
+          if (!cancelled) setDiffs((current) => new Map(current).set(diffKey(change), { state: 'done', diff }))
+        })
+        .catch(() => {
+          if (!cancelled) setDiffs((current) => new Map(current).set(diffKey(change), { state: 'failed' }))
+        })
+    }
+    return () => { cancelled = true }
+  }, [searchActive, changes, diffKey, diffs, workspacePath])
+
+  // 命中表：按列表顺序保留含命中的文件（计数来自已加载完成的 diff 文本）。
+  const matchedEntries = useMemo(() => {
+    if (!searchActive) return [] as Array<{ index: number; count: number }>
+    return changes
+      .map((change, index) => {
+        const loaded = diffs.get(diffKey(change))
+        const count = loaded?.state === 'done' && loaded.diff.patch
+          ? countPatchMatches(loaded.diff.patch, searchQuery)
+          : 0
+        return { index, count }
+      })
+      .filter((entry) => entry.count > 0)
+  }, [changes, diffKey, diffs, searchActive, searchQuery])
+
+  // 查询/命中表变化时游标归位。
+  useEffect(() => { setMatchCursor(0) }, [searchQuery, matchedEntries.length])
+
+  const goToMatch = useCallback((cursor: number) => {
+    if (matchedEntries.length === 0) return
+    const wrapped = ((cursor % matchedEntries.length) + matchedEntries.length) % matchedEntries.length
+    setMatchCursor(wrapped)
+    const entry = matchedEntries[wrapped]
+    const change = changes[entry.index]
+    if (!change) return
+    setExpandedPaths((current) => new Set(current).add(change.repoRelativePath))
+    virtualizer.scrollToIndex(entry.index, { align: 'center' })
+  }, [changes, matchedEntries, virtualizer])
+
+  const closeSearch = useCallback(() => {
+    setSearchOpen(false)
+    setSearchQuery('')
+    setMatchCursor(0)
+  }, [])
+
   return (
     <div className="flex min-h-0 flex-1 flex-col">
       <div className="flex h-10 shrink-0 items-center gap-1.5 border-b border-[var(--lume-border-subtle)] px-2">
@@ -218,7 +309,50 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
         >
           <RefreshCw size={13} className={cn(loading && 'animate-spin')} />
         </Button>
+        <Button
+          variant="ghost"
+          size="icon-xs"
+          type="button"
+          onClick={() => (searchOpen ? closeSearch() : setSearchOpen(true))}
+          disabled={!status?.isRepository || changes.length === 0}
+          title={searchOpen ? '关闭查找' : '在差异中查找'}
+        >
+          <Search size={13} className={cn(searchOpen && 'text-[var(--lume-text-primary)]')} />
+        </Button>
       </div>
+
+      {searchOpen && (
+        <div className="flex h-9 shrink-0 items-center gap-1 border-b border-[var(--lume-border-subtle)] px-2">
+          <Input
+            value={searchQuery}
+            onChange={(event) => setSearchQuery(event.target.value)}
+            placeholder="在差异中查找（大小写/空白不敏感）"
+            className="h-7 min-w-0 flex-1 font-mono text-xs"
+            autoFocus
+            onKeyDown={(event) => {
+              if (event.key === 'Enter') {
+                event.preventDefault()
+                goToMatch(matchCursor + (event.shiftKey ? -1 : 1))
+              }
+              if (event.key === 'Escape') closeSearch()
+            }}
+          />
+          {searchActive && (
+            <span className="shrink-0 font-mono text-[11px] tabular-nums text-[var(--lume-text-muted)]" title="命中文件 / 命中文件总数">
+              {matchedEntries.length ? `${matchCursor + 1}/${matchedEntries.length}` : '无命中'}
+            </span>
+          )}
+          <Button variant="ghost" size="icon-xs" type="button" onClick={() => goToMatch(matchCursor - 1)} disabled={matchedEntries.length === 0} title="上一个命中（Shift+Enter）">
+            <ChevronUp size={13} />
+          </Button>
+          <Button variant="ghost" size="icon-xs" type="button" onClick={() => goToMatch(matchCursor + 1)} disabled={matchedEntries.length === 0} title="下一个命中（Enter）">
+            <ChevronDown size={13} />
+          </Button>
+          <Button variant="ghost" size="icon-xs" type="button" onClick={closeSearch} title="关闭查找">
+            <X size={13} />
+          </Button>
+        </div>
+      )}
 
       {!workspacePath ? (
         <GitPanelEmpty title="未绑定项目目录" hint="当前会话没有可读取 Git 状态的项目路径" />
@@ -276,30 +410,59 @@ function GitChangeRow({ change, expanded, diff, onToggle }: {
   diff: LoadedDiff | undefined
   onToggle: () => void
 }) {
+  const desktop = isDesktopRuntime()
+  const copyPath = (text: string) => { void writeClipboardText(text).catch(() => undefined) }
   return (
     <div className="border-b border-[var(--lume-border-subtle)]/60">
-      <button
-        type="button"
-        onClick={onToggle}
-        aria-expanded={expanded}
-        className="flex h-8 w-full items-center gap-1.5 px-2 text-left text-[13px] transition-colors hover:bg-[color-mix(in_srgb,var(--lume-text-primary)_5%,transparent)]"
-        title={change.repoRelativePath}
-      >
-        {expanded
-          ? <ChevronDown size={13} className="shrink-0 text-[var(--lume-text-muted)]" />
-          : <ChevronRight size={13} className="shrink-0 text-[var(--lume-text-muted)]" />}
-        <FileTypeIcon filename={fileNameOf(change.path)} size={14} />
-        <span className="min-w-0 flex-1 truncate">{change.path}</span>
-        <span className={cn('shrink-0 font-mono text-[11px]', KIND_LETTER_CLASSES[change.kind])} title={change.kind}>
-          {KIND_LETTERS[change.kind]}
-        </span>
-        {change.added !== null && change.added > 0 && (
-          <span className="shrink-0 font-mono text-[11px] text-[color:var(--lume-diff-added-fg)]">+{change.added}</span>
-        )}
-        {change.removed !== null && change.removed > 0 && (
-          <span className="shrink-0 font-mono text-[11px] text-[color:var(--lume-diff-deleted-fg)]">−{change.removed}</span>
-        )}
-      </button>
+      <div className="flex items-stretch">
+        <button
+          type="button"
+          onClick={onToggle}
+          aria-expanded={expanded}
+          className="flex h-8 min-w-0 flex-1 items-center gap-1.5 px-2 text-left text-[13px] transition-colors hover:bg-[color-mix(in_srgb,var(--lume-text-primary)_5%,transparent)]"
+          title={change.repoRelativePath}
+        >
+          {expanded
+            ? <ChevronDown size={13} className="shrink-0 text-[var(--lume-text-muted)]" />
+            : <ChevronRight size={13} className="shrink-0 text-[var(--lume-text-muted)]" />}
+          <FileTypeIcon filename={fileNameOf(change.path)} size={14} />
+          <span className="min-w-0 flex-1 truncate">{change.path}</span>
+          <span className={cn('shrink-0 font-mono text-[11px]', KIND_LETTER_CLASSES[change.kind])} title={change.kind}>
+            {KIND_LETTERS[change.kind]}
+          </span>
+          {change.added !== null && change.added > 0 && (
+            <span className="shrink-0 font-mono text-[11px] text-[color:var(--lume-diff-added-fg)]">+{change.added}</span>
+          )}
+          {change.removed !== null && change.removed > 0 && (
+            <span className="shrink-0 font-mono text-[11px] text-[color:var(--lume-diff-deleted-fg)]">−{change.removed}</span>
+          )}
+        </button>
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={(
+              <Button
+                variant="ghost"
+                size="icon-xs"
+                type="button"
+                className="mr-1 self-center"
+                title="文件操作"
+                onClick={(event) => event.stopPropagation()}
+              />
+            )}
+          >
+            <MoreVertical size={13} />
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end">
+            {desktop && (
+              <DropdownMenuItem onSelect={() => void revealPathInSystem(change.path).catch(() => undefined)}>
+                在文件管理器中显示
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuItem onSelect={() => copyPath(change.path)}>复制绝对路径</DropdownMenuItem>
+            <DropdownMenuItem onSelect={() => copyPath(change.repoRelativePath)}>复制相对路径</DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
+      </div>
       {expanded && <GitDiffBody diff={diff} />}
     </div>
   )
