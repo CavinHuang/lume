@@ -12,6 +12,7 @@
  *    批量预加载全部 diff，Enter/prev/next 在命中文件间循环（展开 + scrollToIndex
  *    center）；计数为命中文件粒度（虚拟列表滚动以文件行为单位）；
  *  - 行级菜单（ZCode §1.3）：在文件管理器中显示（桌面）/复制绝对路径/复制相对路径；
+ *  - 来源选择跨挂载记忆（ZCode Ujt activeGitSourceId 按 workspace 键控迁移）；
  *  - 完全只读，无 stage/unstage/commit。
  *
  * v1 偏差（后续跟进）：last-turn 来源（ZCode 该构建中恒为空占位，无需移植）、
@@ -80,11 +81,20 @@ interface GitPanelProps {
   workspacePath?: string
 }
 
+/**
+ * 跨挂载来源选择记忆（ZCode Ujt activeGitSourceId 按 workspaceKey 键控的迁移语义：
+ * 切换写回/进入恢复；Dd 持久层同为 renderer 内存，reload 即失）。
+ */
+const sourceByWorkspace = new Map<string, GitPanelSource>()
+
 export function GitPanel({ workspacePath }: GitPanelProps) {
   const [status, setStatus] = useState<GitPanelStatus | null>(null)
   const [branchComparison, setBranchComparison] = useState<GitPanelBranchComparison | null>(null)
   const [loading, setLoading] = useState(false)
-  const [source, setSource] = useState<GitPanelSource>('unstaged')
+  // 进入恢复（ZCode Ad(a).activeGitSourceId；branch 失效回落由下方既有 effect 承担）。
+  const [source, setSource] = useState<GitPanelSource>(
+    () => sourceByWorkspace.get(workspacePath ?? '') ?? 'unstaged',
+  )
   const [expandedPaths, setExpandedPaths] = useState<ReadonlySet<string>>(new Set())
   const [diffs, setDiffs] = useState<ReadonlyMap<string, LoadedDiff>>(new Map())
   // ZCode refreshToken 等价：递增触发 status 重载 + diff 缓存失效。
@@ -156,6 +166,11 @@ export function GitPanel({ workspacePath }: GitPanelProps) {
   useEffect(() => {
     if (source === 'branch' && status !== null && !status.trackingBranchName) setSource('unstaged')
   }, [source, status])
+
+  // 切换写回（ZCode Ujt 的 jd(e, {activeGitSourceId}) 等效：按工作区记住最新选择）。
+  useEffect(() => {
+    sourceByWorkspace.set(workspacePath ?? '', source)
+  }, [source, workspacePath])
 
   const changes = useMemo(() => {
     if (source === 'branch') return branchComparison?.changes ?? []
