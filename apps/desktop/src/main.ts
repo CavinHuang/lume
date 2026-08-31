@@ -172,6 +172,7 @@ import {
 } from './tray-window-runtime'
 import { ensureBrowserRestoreSchemePrivileged, installBrowserRestoreBootstrapProtocol } from './browser/restore-protocol'
 import { BROWSER_GUEST_PARTITION, createBrowserIpc, type BrowserIpc } from './browser/ipc'
+import { applyDesktopChromiumNetworkPolicies, readDesktopNetworkConfigFromEnv } from './browser/network-policy'
 import { createLumeBrowserRuntime, type LumeBrowserRuntime } from './browser/assemble'
 import { handleGitPanelCommand } from './browser/git-panel-service'
 import { GIT_PANEL_IPC_CHANNELS } from '@lume/shared'
@@ -368,6 +369,22 @@ function handleSidecarBrowserExecute(child, payload): void {
 /** 装配内嵌浏览器运行时并注册 renderer↔main 通道 + 恢复停靠协议。 */
 function setupBrowserRuntime(configDir: string): void {
   if (browserRuntime) return
+  // 桌面会话网络策略(ZCode V6):default-session + 内嵌浏览器分区并发应用
+  // 代理/自定义 CA/不安全证书开关;配置由环境变量驱动(Lume 无该设置面)。
+  void applyDesktopChromiumNetworkPolicies(
+    {
+      defaultSession: session.defaultSession,
+      fromPartition: (partition: string) => session.fromPartition(partition),
+    },
+    readDesktopNetworkConfigFromEnv(process.env),
+    {
+      info: (message) => writeMainLog('info', 'desktop.network', 'browser.log', message),
+      warn: (message, error) => writeMainLog('warn', 'desktop.network', 'browser.warn', message, {
+        data: { error: error instanceof Error ? error.message : error == null ? null : String(error) },
+      }),
+    },
+    BROWSER_GUEST_PARTITION,
+  )
   browserRuntime = createLumeBrowserRuntime({
     getWindow: () => (mainWindow && !mainWindow.isDestroyed() ? mainWindow : null),
     emit: (event) => forwardBrowserEvent(event.method, event.params),

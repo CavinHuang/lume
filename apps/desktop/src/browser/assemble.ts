@@ -35,7 +35,8 @@
  *     (`<configDir>/browser-recovery/store.json`),restoreTabs 跨重启可用。
  */
 
-import { app, BrowserWindow, nativeImage, webContents } from "electron"
+import { app, BrowserWindow, Menu, nativeImage, webContents } from "electron"
+import { buildTextContextMenuTemplate } from "./core/text-context-menu"
 import { randomUUID } from "crypto"
 import { join } from "path"
 import {
@@ -216,6 +217,17 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
     dispose: () => residencyCoordinator.dispose(),
   }
 
+  /** ZCode Pve + Menu.popup:guest 文本右键菜单弹层(宿主窗)。 */
+  const popupContextMenu = (
+    guest: Electron.WebContents,
+    params: { selectionText?: string; editFlags?: { canCopy?: boolean }; x: number; y: number },
+  ): void => {
+    const items = buildTextContextMenuTemplate(params)
+    if (items.length === 0) return
+    const host = BrowserWindow.fromWebContents(guest.hostWebContents ?? guest) ?? undefined
+    Menu.buildFromTemplate(items as unknown as Electron.MenuItemConstructorOptions[]).popup({ window: host })
+  }
+
   /* 截图表面协调器(A8):prepare/release 经 deps.emit 发往窗口;ready 回报由
    * ipc 层接到 runtime.handleScreenshotSurfaceReady。 */
   const screenshotSurface = createDesktopBrowserScreenshotSurfaceCoordinator({
@@ -274,6 +286,7 @@ export function createLumeBrowserRuntime(deps: LumeBrowserRuntimeDeps): LumeBrow
     getWindow: deps.getWindow,
     webContentsFromId: (id) => webContents.fromId(id),
     isWebviewType: (contents) => contents.getType() === "webview",
+    popupContextMenu,
     ...(deps.attachTimeoutMs === undefined ? {} : { attachTimeoutMs: deps.attachTimeoutMs }),
     ...(deps.tabLimit === undefined ? {} : { tabLimit: deps.tabLimit }),
     screenshotSurfaceCoordinator: screenshotSurface,

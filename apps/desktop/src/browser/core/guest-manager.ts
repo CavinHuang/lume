@@ -1234,6 +1234,17 @@ export class BrowserGuestManager {
    * 代数校验 → CDP debugger.attach("1.3") → 安装四类跟踪器 → 视口覆盖 →
    * 唤醒等待者 → 持久化壳。
    */
+  /** ZCode Pve:guest 文本右键菜单(选中态复制);幂等安装,弹层经 deps 注入。 */
+  private readonly contextMenuWebContents = new WeakSet<Electron.WebContents>()
+  private installTextContextMenu(guest: Electron.WebContents): void {
+    if (!this.deps.popupContextMenu || this.contextMenuWebContents.has(guest)) return
+    this.contextMenuWebContents.add(guest)
+    guest.on("context-menu", (_event, params) => {
+      this.deps.popupContextMenu?.(guest, params)
+    })
+    guest.once("destroyed", () => this.contextMenuWebContents.delete(guest))
+  }
+
   attachGuest(tabId: string, webContentsId: number, scope?: GuestAttachScope): GuestAttachOutcome {
     let record = this.tabs.get(tabId)
     const guest = this.deps.webContentsFromId(webContentsId)
@@ -1249,6 +1260,7 @@ export class BrowserGuestManager {
       )
       return { ok: false, reason: "not-webview", recoveryRequested: false }
     }
+    this.installTextContextMenu(guest)
     if (this.closedTabIds.has(tabId)) {
       this.deps.log(`[browser-use] attachGuest rejected tabId=${tabId} reason=closed`)
       return { ok: false, reason: "closed", recoveryRequested: false }

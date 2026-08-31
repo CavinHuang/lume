@@ -194,6 +194,8 @@ export interface BrowserManagerDeps {
   webContentsFromId: (id: number) => Electron.WebContents | undefined
   /** Electron webContents 类型守卫:guest 必须是 webview */
   isWebviewType: (contents: Electron.WebContents) => boolean
+  /** 文本右键菜单弹层(ZCode Pve + Menu.popup;缺省不挂菜单) */
+  popupContextMenu?: (guest: Electron.WebContents, params: { selectionText?: string; editFlags?: { canCopy?: boolean }; x: number; y: number }) => void
   attachTimeoutMs?: number
   tabLimit?: number
   now?: () => number
