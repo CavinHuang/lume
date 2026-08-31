@@ -15,6 +15,7 @@ import {
   type TerminalCreateResult,
   type TerminalDataEvent,
   type TerminalDisposeInput,
+  type TerminalExitEvent,
   type TerminalResizeInput,
   type TerminalWriteInput,
 } from '@lume/shared'
@@ -29,7 +30,7 @@ export async function writeTerminal(input: TerminalWriteInput): Promise<void> {
   await invoke(TERMINAL_IPC_CHANNELS.write, input)
 }
 
-/** 上报面板尺寸（列/行；MVP 管道模式仅 sidecar 记录，node-pty 升级后生效）。 */
+/** 上报面板尺寸（列/行；直传 node-pty pty.resize，TUI 程序即时生效）。 */
 export async function resizeTerminal(input: TerminalResizeInput): Promise<void> {
   await invoke(TERMINAL_IPC_CHANNELS.resize, input)
 }
@@ -44,6 +45,22 @@ export function onTerminalData(listener: (event: TerminalDataEvent) => void): ()
   let active = true
   let dispose: (() => void) | null = null
   void listen<TerminalDataEvent>(TERMINAL_IPC_CHANNELS.data, (e) => {
+    if (active) listener(e.payload)
+  }).then((unlisten) => {
+    if (active) dispose = unlisten
+    else unlisten()
+  })
+  return () => {
+    active = false
+    dispose?.()
+  }
+}
+
+/** 订阅会话退出事件（显式 dispose 不发；订阅方自行按 id 过滤）。 */
+export function onTerminalExit(listener: (event: TerminalExitEvent) => void): () => void {
+  let active = true
+  let dispose: (() => void) | null = null
+  void listen<TerminalExitEvent>(TERMINAL_IPC_CHANNELS.exit, (e) => {
     if (active) listener(e.payload)
   }).then((unlisten) => {
     if (active) dispose = unlisten

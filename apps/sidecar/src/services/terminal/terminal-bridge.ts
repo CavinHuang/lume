@@ -1,11 +1,11 @@
 /**
  * sidecar 终端 RPC 桥 —— `terminal:create/write/resize/dispose` 方法注册 +
- * `terminal:data` 输出通知外发。
+ * `terminal:data` 输出通知 + `terminal:exit` 退出通知外发。
  *
  * 传输决策：不复用 browser 命令桥的 MAC+sequence 传输。那是为「sidecar→main 请求」
  * 设计的（sidecar 是被 fork 的一方，需防伪造载荷）；终端方向相反——main→sidecar
  * 走既有 fork RPC（进程内通道，desktop 侧 sidecarHost.call），sidecar→main 输出走
- * 既有通知通道（terminal:data），与 planning-todo-changed 等通知同型，无需再认证。
+ * 既有通知通道（terminal:data/exit），与 planning-todo-changed 等通知同型，无需再认证。
  *
  * 会话生命周期：桥懒创建并持有唯一 TerminalService 实例（getTerminalBridgeHandlers
  * 模块级缓存）；sidecar 优雅关停时由组合根调用 disposeTerminalBridge() 回收 shell。
@@ -15,6 +15,7 @@ import type { NotificationWriter, RpcHandler } from "../../rpc/types";
 import {
   TERMINAL_SIDECAR_METHODS,
   type TerminalDataEvent,
+  type TerminalExitEvent,
 } from "@lume/shared";
 import {
   createDefaultTerminalServiceDeps,
@@ -45,11 +46,16 @@ export interface TerminalBridge {
 }
 
 export function createTerminalBridge(input: { writeNotification: NotificationWriter }): TerminalBridge {
-  const service: TerminalService = createTerminalService({
-    ...createDefaultTerminalServiceDeps((event: TerminalDataEvent) => {
-      input.writeNotification(TERMINAL_SIDECAR_METHODS.data, event);
+  const service: TerminalService = createTerminalService(
+    createDefaultTerminalServiceDeps({
+      onOutput: (event: TerminalDataEvent) => {
+        input.writeNotification(TERMINAL_SIDECAR_METHODS.data, event);
+      },
+      onExit: (event: TerminalExitEvent) => {
+        input.writeNotification(TERMINAL_SIDECAR_METHODS.exit, event);
+      },
     }),
-  });
+  );
 
   const handlers: Record<string, RpcHandler> = {
     [TERMINAL_SIDECAR_METHODS.create]: async (params) => {

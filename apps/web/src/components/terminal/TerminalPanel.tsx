@@ -1,16 +1,17 @@
 /**
- * 右侧面板「终端」tab —— 简易终端（MVP 非 xterm：输出 <pre> + 单行输入）。
+ * 右侧面板「终端」tab —— 简易终端（非 xterm：输出 <pre> + 单行输入）。
  *
  * 对齐 ZCode SidePane terminal tab 的核心语义（docs/analysis/P3-wiki-terminal.md §2）：
- *  - 真实 shell 会话（sidecar terminal-service），数据流 terminal:data → 追加缓冲；
+ *  - 真实 shell 会话（sidecar node-pty terminal-service），数据流 terminal:data →
+ *    追加缓冲；退出流 terminal:exit → 会话标记 exited（ZCode per-id onDynamicExit）；
  *  - 会话与 tab 生命周期解耦：切换 tab 不杀 PTY（ZCode stash 注册表的 Lume 落法 =
  *    模块级会话仓，缓冲在 renderer 侧持续累积，重挂载即恢复画面）；
  *  - 关闭语义差异：tab 关闭/应用内不回收 PTY，仅 LRU（MAX_SESSIONS）淘汰与
  *    renderer 卸载（pagehide）时全量 dispose —— 显式按 tab 回收待 reducer 支持
  *    tab 关闭回调后跟进。
  *
- * 渲染限制（xterm 升级路径）：无逐字符网格/光标/滚动区，\r 覆写与 TUI 全屏程序
- * （vim/htop）不可用；单行输入模式（Enter 提交）。颜色为固定调色板近似。
+ * 渲染限制（xterm 升级路径）：无逐字符网格/光标/滚动区，TUI 全屏程序（vim/htop）
+ * 不可用；单行输入模式（Enter 提交）。颜色为固定调色板近似。
  */
 import { SquareTerminal, X } from 'lucide-react'
 import { useEffect, useLayoutEffect, useMemo, useReducer, useRef, useState, type FormEvent, type RefObject } from 'react'
@@ -21,6 +22,7 @@ import {
   createTerminalSession,
   disposeTerminal,
   onTerminalData,
+  onTerminalExit,
   resizeTerminal,
   writeTerminal,
 } from '@/lib/desktop-api/terminal'
@@ -32,8 +34,9 @@ interface TerminalSessionState {
   id: string
   shell: string | null
   buffer: string
-  status: 'ready' | 'error'
+  status: 'ready' | 'error' | 'exited'
   error?: string
+  exitCode?: number | null
 }
 
 /** 会话上限（LRU）：防止长期使用期间 shell 无界累积。 */
@@ -47,6 +50,7 @@ const sessions = new Map<string, TerminalSessionState>()
 const pendingCreates = new Map<string, Promise<void>>()
 const storeListeners = new Set<() => void>()
 let unsubscribePump: (() => void) | null = null
+let unsubscribeExitPump: (() => void) | null = null
 let pagehideBound = false
 
 function notifyStoreListeners(): void {
@@ -70,13 +74,22 @@ function evictOldestSession(): void {
   if (oldest?.id) void disposeTerminal({ id: oldest.id }).catch(() => undefined)
 }
 
-/** 数据泵：全局单订阅，按会话 id 分发（tab 未挂载期间输出照常累积）。 */
+/** 数据泵：全局单订阅（data/exit 各一），按会话 id 分发（tab 未挂载期间照常累积）。 */
 function ensureDataPump(): void {
-  if (unsubscribePump) return
-  unsubscribePump = onTerminalData((event) => {
+  if (unsubscribePump && unsubscribeExitPump) return
+  unsubscribePump ??= onTerminalData((event) => {
     for (const session of sessions.values()) {
       if (session.id !== event.id) continue
       session.buffer = appendCapped(session.buffer, event.data)
+      notifyStoreListeners()
+      return
+    }
+  })
+  unsubscribeExitPump ??= onTerminalExit((event) => {
+    for (const session of sessions.values()) {
+      if (session.id !== event.id) continue
+      session.status = 'exited'
+      session.exitCode = event.exitCode
       notifyStoreListeners()
       return
     }
@@ -211,7 +224,7 @@ export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
     scroller.scrollTop = scroller.scrollHeight
   }, [lines])
 
-  // 尺寸上报：ResizeObserver → 估算 cols/rows → 防抖上报（MVP 仅 sidecar 记录）。
+  // 尺寸上报：ResizeObserver → 估算 cols/rows → 防抖上报（sidecar 直传 pty.resize）。
   useEffect(() => {
     const container = scrollRef.current
     if (!container) return
@@ -241,7 +254,7 @@ export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
 
   const handleSubmit = (event: FormEvent) => {
     event.preventDefault()
-    if (!session?.id || !inputValue) return
+    if (!session?.id || session.status !== 'ready' || !inputValue) return
     setInputValue('')
     void writeTerminal({ id: session.id, data: `${inputValue}\n` }).catch(() => undefined)
   }
@@ -297,17 +310,30 @@ export function TerminalPanel({ workspacePath }: TerminalPanelProps) {
           ref={inputRef as RefObject<HTMLInputElement>}
           value={inputValue}
           onChange={(event) => setInputValue(event.target.value)}
+          disabled={session.status === 'exited'}
           className="h-7 rounded-md border-none bg-transparent px-1 font-mono text-xs"
-          placeholder={session.shell ? `${shellLabel(session.shell)} — 输入命令后回车` : '输入命令后回车'}
+          placeholder={
+            session.status === 'exited'
+              ? '进程已退出'
+              : session.shell
+                ? `${shellLabel(session.shell)} — 输入命令后回车`
+                : '输入命令后回车'
+          }
           autoComplete="off"
           autoCorrect="off"
           autoCapitalize="off"
           spellCheck={false}
         />
-        {inputValue && (
-          <Button variant="ghost" size="icon-xs" type="button" title="清空输入" onClick={() => setInputValue('')}>
-            <X size={12} />
+        {session.status === 'exited' ? (
+          <Button variant="outline" size="sm" type="button" onClick={() => retrySession(sessionKey, workspacePath)}>
+            重新打开
           </Button>
+        ) : (
+          inputValue && (
+            <Button variant="ghost" size="icon-xs" type="button" title="清空输入" onClick={() => setInputValue('')}>
+              <X size={12} />
+            </Button>
+          )
         )}
       </form>
       <span

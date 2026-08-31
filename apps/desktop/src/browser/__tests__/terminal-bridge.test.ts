@@ -69,6 +69,18 @@ describe('handleSidecarNotification', () => {
     expect(emitted).toEqual([])
   })
 
+  test('terminal:exit 转发为 lume:terminal-exit 事件;非数值 exitCode 规整为 null', () => {
+    const { relay, emitted } = createHarness()
+    expect(relay.handleSidecarNotification(TERMINAL_SIDECAR_METHODS.exit, { id: 't1', exitCode: 0 })).toBe(true)
+    expect(relay.handleSidecarNotification(TERMINAL_SIDECAR_METHODS.exit, { id: 't2', exitCode: 'x' })).toBe(true)
+    expect(emitted).toEqual([
+      { channel: TERMINAL_IPC_CHANNELS.exit, payload: { id: 't1', exitCode: 0 } },
+      { channel: TERMINAL_IPC_CHANNELS.exit, payload: { id: 't2', exitCode: null } },
+    ])
+    expect(relay.handleSidecarNotification(TERMINAL_SIDECAR_METHODS.exit, { exitCode: 0 })).toBe(true)
+    expect(emitted).toHaveLength(2)
+  })
+
   test('其它通知返回 false 交还通用路径', () => {
     const { relay, emitted } = createHarness()
     expect(relay.handleSidecarNotification('agent:title-updated', {})).toBe(false)

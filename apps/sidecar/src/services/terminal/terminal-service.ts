@@ -1,27 +1,30 @@
 /**
- * sidecar 终端会话服务 —— 右侧面板「终端」tab 的 PTY 执行体。
+ * sidecar 终端会话服务 —— 右侧面板「终端」tab 的 node-pty 执行体。
  *
- * 结构对齐 ZCode host 进程 createTerminalService（docs/analysis/P3-wiki-terminal.md §2）：
- * shell 探测链 + 会话表（Map<id, {process, cols, rows}>）+ 输出事件外发。差异：
+ * 结构对齐 ZCode host 进程 createTerminalService（docs/analysis/P3-wiki-terminal.md §2，
+ * 提取源 R11-host-pty.js）：lazy import("node-pty") + shell 探测链 + 会话表 +
+ * win32 ConPTY 双段降级（useConptyDll:true → conpty.dll 加载失败特征正则 → false）+
+ * onExit 自动清理。输出 50ms 批量 flush（终端数据可能高频，逐 chunk 过 RPC 代价高）。
  *
- *  - MVP 用 child_process.spawn 管道（stdio: 'pipe'）而非 node-pty：sidecar 是
- *    纯 Node 进程，node-pty 原生模块需按 Electron ABI rebuild，引入成本高。
- *    升级路径：把 spawnShell 换成 node-pty 的 pty.spawn（接口同形：write/resize/
- *    kill + onData/onExit），并在 resize 中接 pty.resize —— 其余层（bridge/IPC/
- *    renderer）无需改动。管道模式的已知限制：无行编辑/回显由 shell 自理
- *    （交互式提示可用），TUI 程序（vim/htop）与 resize 真实生效需 node-pty。
- *  - 输出 50ms 批量 flush（终端数据可能高频，逐 chunk 过 RPC/postMessage 代价高）。
+ * 与 ZCode 的偏差（均有意为之）：
+ *  - shell 探测最后一级静默回落 cmd.exe / /bin/sh（ZCode 直接抛错）——平台必有
+ *    默认 shell，抛错只发生在极端损坏环境。
+ *  - cwd 兜底链为 arg → HOME → tmpdir（ZCode 追加 "/" unix 兜底）。
+ *  - 不做 darwin spawn-helper chmod 与默认 PATH 合并——依赖 mxc-sdk 预编译产物。
  *
- * 传输：本服务不感知 IPC；输出经构造注入的 onOutput 回调外发，
- * 由 terminal-bridge.ts 落到 terminal:data 通知。
+ * 传输：本服务不感知 IPC；输出经构造注入的 onOutput 回调外发，退出经 onExit 回调，
+ * 由 terminal-bridge.ts 落到 terminal:data / terminal:exit 通知。
  */
-import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { homedir, platform } from "node:os";
-import { delimiter, join } from "node:path";
+import { homedir, platform, tmpdir } from "node:os";
+import { join } from "node:path";
 
-import { type TerminalCreateResult, type TerminalDataEvent } from "@lume/shared";
+import {
+  type TerminalCreateResult,
+  type TerminalDataEvent,
+  type TerminalExitEvent,
+} from "@lume/shared";
 
 /** 单次批量 flush 的输出上限（字节）：超出立即 flush，防单个 timer 窗口内无限堆积。 */
 const MAX_FLUSH_BYTES = 256_000;
@@ -29,17 +32,22 @@ const DEFAULT_FLUSH_DELAY_MS = 50;
 const DEFAULT_COLS = 80;
 const DEFAULT_ROWS = 24;
 
-/** 会话进程的最小结构面（Node ChildProcess 满足；测试以 EventEmitter+流桩体伪造）。 */
-export interface TerminalSessionProcess {
-  stdin: { write(chunk: string): unknown } | null;
-  stdout: { setEncoding(encoding: string): unknown; on(event: "data", listener: (chunk: string) => void): unknown } | null;
-  stderr: { setEncoding(encoding: string): unknown; on(event: "data", listener: (chunk: string) => void): unknown } | null;
-  kill(exitCode?: number | NodeJS.Signals): boolean;
-  once(event: "close", listener: (code: number | null) => void): unknown;
-  once(event: "error", listener: (error: Error) => void): unknown;
+/** node-pty spawn 选项最小面（含 win32 ConPTY 开关；声明见 src/types/node-pty.d.ts）。 */
+export type NodePtySpawnOptions = import("node-pty").IPtySpawnOptions;
+
+/** node-pty 模块最小结构面（测试以桩体伪造）。 */
+export interface NodePtyModuleLike {
+  spawn(file: string, args: readonly string[], options: NodePtySpawnOptions): PtySessionLike;
 }
 
-type SpawnShell = (command: string, args: readonly string[], options: SpawnOptions) => TerminalSessionProcess;
+/** 单个 PTY 会话的最小结构面（node-pty IPty；测试以桩体伪造）。 */
+export interface PtySessionLike {
+  write(data: string): void;
+  resize(cols: number, rows: number): void;
+  kill(): void;
+  onData(listener: (chunk: string) => void): void;
+  onExit(listener: (event: { exitCode: number; signal?: number }) => void): void;
+}
 
 export interface TerminalServiceDeps {
   /** shell 探测的平台/环境/存在性全部注入，测试可钉死 win32/unix 探测链。 */
@@ -47,11 +55,15 @@ export interface TerminalServiceDeps {
   env: NodeJS.ProcessEnv;
   exists: (path: string) => boolean;
   homeDir: string;
-  spawnShell: SpawnShell;
+  tmpDir: string;
+  /** lazy 加载 node-pty（进程内缓存；失败抛 ZCode 同款文案）。 */
+  loadNodePty: () => Promise<NodePtyModuleLike>;
   generateId: () => string;
   /** 输出批量 flush 间隔（0 = 逐 chunk 立即外发）。 */
   flushDelayMs: number;
   onOutput: (event: TerminalDataEvent) => void;
+  /** 进程自然退出通知（显式 dispose 不发）。 */
+  onExit: (event: TerminalExitEvent) => void;
 }
 
 export interface TerminalCreateOptions {
@@ -62,7 +74,7 @@ export interface TerminalCreateOptions {
 
 interface TerminalSession {
   id: string;
-  process: TerminalSessionProcess;
+  pty: PtySessionLike;
   shell: string;
   cols: number;
   rows: number;
@@ -72,10 +84,10 @@ interface TerminalSession {
 }
 
 export interface TerminalService {
-  create(options?: TerminalCreateOptions): TerminalCreateResult;
+  create(options?: TerminalCreateOptions): Promise<TerminalCreateResult>;
   write(id: string, data: string): void;
   resize(id: string, cols: number, rows: number): void;
-  /** 显式关闭会话（不发退出提示，静默回收）。 */
+  /** 显式关闭会话（kill + 静默回收，不发 exit 通知）。 */
   dispose(id: string): void;
   /** 进程退出/通道断开时的全量回收。 */
   disposeAll(): void;
@@ -124,6 +136,92 @@ function findOnPath(pathDirs: string[], name: string, exists: (path: string) => 
   return null;
 }
 
+/* ── PTY 环境 / cwd / spawn（对齐 ZCode resolveTerminalEnv / spawnTerminalProcess） ── */
+
+/** conpty.dll 加载失败特征（ZCode shouldFallbackFromConptyDll 同款正则）。 */
+const CONPTY_DLL_FALLBACK_PATTERN =
+  /conpty\.node module handle|conpty\.node module file name|cannot find conpty\.dll|error code:\s*126/i;
+
+export function shouldFallbackFromConptyDll(error: unknown): boolean {
+  return CONPTY_DLL_FALLBACK_PATTERN.test(errorMessage(error));
+}
+
+/**
+ * win32 用 ConPTY（useConptyDll:true 优先，加载失败按特征正则降级 Dll:false）；
+ * unix 固定 xterm-256color + utf8（Windows 不支持 encoding 选项，传了仅产生警告）。
+ */
+export function spawnTerminalProcess(input: {
+  platform: NodeJS.Platform;
+  nodePty: NodePtyModuleLike;
+  shell: string;
+  cols: number;
+  rows: number;
+  cwd: string;
+  env: NodeJS.ProcessEnv;
+}): PtySessionLike {
+  const { platform: platformName, nodePty, shell, cols, rows, cwd, env } = input;
+  if (platformName !== "win32") {
+    return nodePty.spawn(shell, [], { name: "xterm-256color", cols, rows, cwd, env, encoding: "utf8" });
+  }
+  const base: NodePtySpawnOptions = { useConpty: true, name: "xterm-256color", cols, rows, cwd, env };
+  try {
+    return nodePty.spawn(shell, [], { ...base, useConptyDll: true });
+  } catch (error) {
+    if (!shouldFallbackFromConptyDll(error)) throw error;
+    return nodePty.spawn(shell, [], { ...base, useConptyDll: false });
+  }
+}
+
+function isUsableUtf8Locale(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0 && /utf-?8/i.test(value);
+}
+
+/** 已有 locale 链（LC_ALL → LC_CTYPE → LANG）取首个 UTF-8 值，否则按平台兜底。 */
+export function resolveFallbackUtf8Locale(env: NodeJS.ProcessEnv, platformName: NodeJS.Platform): string {
+  for (const key of ["LC_ALL", "LC_CTYPE", "LANG"] as const) {
+    if (isUsableUtf8Locale(env[key])) return env[key];
+  }
+  return platformName === "darwin" ? "en_US.UTF-8" : "C.UTF-8";
+}
+
+/** 终端环境：TERM/COLORTERM 固定，CI=dumb 摘除，缺失的 UTF-8 locale 补齐（ZCode 同款）。 */
+export function resolveTerminalEnv(env: NodeJS.ProcessEnv, platformName: NodeJS.Platform): NodeJS.ProcessEnv {
+  const result: NodeJS.ProcessEnv = { ...env };
+  const locale = resolveFallbackUtf8Locale(env, platformName);
+  result.TERM = "xterm-256color";
+  result.COLORTERM = result.COLORTERM?.trim() || "truecolor";
+  if (result.CI === "1" && env.TERM === "dumb") delete result.CI;
+  if (!isUsableUtf8Locale(result.LANG)) result.LANG = locale;
+  if (!isUsableUtf8Locale(result.LC_CTYPE)) result.LC_CTYPE = locale;
+  if (result.LC_ALL !== undefined && !isUsableUtf8Locale(result.LC_ALL)) result.LC_ALL = locale;
+  return result;
+}
+
+/* ── node-pty lazy 加载（进程内缓存；ZCode loadNodePtyModule 同款文案） ── */
+
+let cachedNodePty: NodePtyModuleLike | null = null;
+
+export async function loadBundledNodePty(): Promise<NodePtyModuleLike> {
+  if (cachedNodePty) return cachedNodePty;
+  try {
+    const mod = (await import("node-pty")) as NodePtyModuleLike & { default?: NodePtyModuleLike };
+    cachedNodePty = mod.default ?? mod;
+    return cachedNodePty;
+  } catch (error) {
+    cachedNodePty = null;
+    throw toNodePtyUnavailableError(error);
+  }
+}
+
+/** ZCode loadNodePtyModule 同款失败文案（独立纯函数便于锁定形状）。 */
+export function toNodePtyUnavailableError(error: unknown): Error {
+  return new Error(`node-pty is unavailable in this runtime: ${errorMessage(error)}`);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
 /* ── 会话服务 ─────────────────────────────────────────────────────────── */
 
 export function createTerminalService(deps: TerminalServiceDeps): TerminalService {
@@ -150,40 +248,40 @@ export function createTerminalService(deps: TerminalServiceDeps): TerminalServic
     session.flushTimer = setTimeout(() => flushSession(session), deps.flushDelayMs);
   };
 
-  /** 进程退出/启动失败的收尾：仅在会话仍登记时发退出提示（显式 dispose 静默）。 */
-  const closeSession = (session: TerminalSession, code: number | null, message?: string): void => {
+  /**
+   * 进程自然退出：flush + 摘表 + exit 通知。stale 守卫——显式 dispose 已先摘表，
+   * kill 触发的迟到 onExit 在此静默（对齐 ZCode dispose 时序下 emitter 已释放的语义）。
+   */
+  const closeSession = (session: TerminalSession, exitCode: number | null): void => {
     flushSession(session);
     if (sessions.get(session.id) !== session) return;
     sessions.delete(session.id);
-    if (message) {
-      deps.onOutput({ id: session.id, data: `\r\n[终端] ${message}\r\n` });
-    } else {
-      deps.onOutput({ id: session.id, data: `\r\n[终端] 进程已退出 (code=${code ?? "unknown"})\r\n` });
-    }
+    deps.onExit({ id: session.id, exitCode });
   };
 
   return {
-    create(options: TerminalCreateOptions = {}): TerminalCreateResult {
+    async create(options: TerminalCreateOptions = {}): Promise<TerminalCreateResult> {
       const shell = detectShellForPlatform(deps.platform, deps.env, deps.exists);
-      const cwd = typeof options.cwd === "string" && options.cwd && deps.exists(options.cwd)
-        ? options.cwd
-        : deps.homeDir;
-      // 交互式 shell 需要继承完整用户环境；TERM/COLORTerm 让 ls 等输出 256 色 ANSI。
-      const env: NodeJS.ProcessEnv = {
-        ...deps.env,
-        TERM: "xterm-256color",
-        COLORTERM: "truecolor",
-      };
-      const spawnOptions: SpawnOptions = {
-        cwd,
-        env,
-        stdio: ["pipe", "pipe", "pipe"],
-        windowsHide: true,
-      };
-      const process = deps.spawnShell(shell, [], spawnOptions);
+      const cwd = resolveCwd(options.cwd, deps);
+      const env = resolveTerminalEnv(deps.env, deps.platform);
+      const nodePty = await deps.loadNodePty();
+      let pty: PtySessionLike;
+      try {
+        pty = spawnTerminalProcess({
+          platform: deps.platform,
+          nodePty,
+          shell,
+          cols: normalizeCols(options.cols),
+          rows: normalizeRows(options.rows),
+          cwd,
+          env,
+        });
+      } catch (error) {
+        throw new Error(`Failed to start terminal with shell '${shell}' in '${cwd}': ${errorMessage(error)}`);
+      }
       const session: TerminalSession = {
         id: deps.generateId(),
-        process,
+        pty,
         shell,
         cols: normalizeCols(options.cols),
         rows: normalizeRows(options.rows),
@@ -191,46 +289,33 @@ export function createTerminalService(deps: TerminalServiceDeps): TerminalServic
         flushTimer: null,
       };
       sessions.set(session.id, session);
-
-      process.stdout?.setEncoding("utf8");
-      process.stdout?.on("data", (chunk: string) => {
+      pty.onData((chunk: string) => {
         appendOutput(session, chunk);
       });
-      process.stderr?.setEncoding("utf8");
-      process.stderr?.on("data", (chunk: string) => {
-        appendOutput(session, chunk);
-      });
-      process.once("close", (code) => {
-        closeSession(session, code);
-      });
-      process.once("error", (error) => {
-        closeSession(session, null, `无法启动 shell：${error.message}`);
+      pty.onExit((event) => {
+        closeSession(session, typeof event?.exitCode === "number" ? event.exitCode : null);
       });
       return { id: session.id, shell };
     },
 
     write(id: string, data: string): void {
-      const session = requireSession(sessions, id);
-      if (!session.process.stdin) {
-        throw Object.assign(new Error(`终端会话 ${id} 的 stdin 不可用`), { code: "terminal_session_unavailable" });
-      }
-      session.process.stdin.write(data);
+      requireSession(sessions, id).pty.write(data);
     },
 
     resize(id: string, cols: number, rows: number): void {
       const session = requireSession(sessions, id);
-      // 管道模式无 PTY 尺寸语义，仅记录；node-pty 升级后此处接 pty.resize。
       session.cols = normalizeCols(cols);
       session.rows = normalizeRows(rows);
+      session.pty.resize(session.cols, session.rows);
     },
 
     dispose(id: string): void {
       const session = sessions.get(id);
       if (!session) return;
-      // 先摘表再 kill：close 事件按 stale 守卫静默，不发退出提示。
+      // 先摘表再 kill：迟到 onExit 按 stale 守卫静默，不发 exit 通知。
       sessions.delete(id);
       flushSession(session);
-      session.process.kill();
+      session.pty.kill();
     },
 
     disposeAll(): void {
@@ -241,19 +326,32 @@ export function createTerminalService(deps: TerminalServiceDeps): TerminalServic
   };
 }
 
+/** cwd 兜底链：入参（须存在）→ HOME → tmpdir（ZCode resolveTerminalCwd 同型）。 */
+function resolveCwd(candidate: string | null | undefined, deps: TerminalServiceDeps): string {
+  for (const dir of [candidate, deps.homeDir, deps.tmpDir]) {
+    if (typeof dir === "string" && dir && deps.exists(dir)) return dir;
+  }
+  throw new Error("No usable working directory found for terminal startup");
+}
+
 /* ── 载荷规整 ─────────────────────────────────────────────────────────── */
 
-/** 供真实装配（terminal-bridge）使用的默认依赖（真实进程环境）。 */
-export function createDefaultTerminalServiceDeps(onOutput: (event: TerminalDataEvent) => void): TerminalServiceDeps {
+/** 供真实装配（terminal-bridge）使用的默认依赖（真实进程环境 + bundled node-pty）。 */
+export function createDefaultTerminalServiceDeps(input: {
+  onOutput: (event: TerminalDataEvent) => void;
+  onExit: (event: TerminalExitEvent) => void;
+}): TerminalServiceDeps {
   return {
     platform: platform(),
     env: process.env,
     exists: (path) => existsSync(path),
     homeDir: homedir(),
-    spawnShell: (command, args, options) => spawn(command, [...args], options) as ChildProcess as TerminalSessionProcess,
+    tmpDir: tmpdir(),
+    loadNodePty: loadBundledNodePty,
     generateId: () => randomUUID(),
     flushDelayMs: DEFAULT_FLUSH_DELAY_MS,
-    onOutput,
+    onOutput: input.onOutput,
+    onExit: input.onExit,
   };
 }
 

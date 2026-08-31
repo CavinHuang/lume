@@ -5,8 +5,9 @@
  * apps/sidecar/src/services/terminal/terminal-service.ts）：
  *  1. renderer invoke（lume:terminal-create/write/resize/dispose）→ sidecar
  *     fork RPC（terminal:create/write/resize/dispose），create 透传 {id, shell}；
- *  2. sidecar terminal:data 通知 → main→renderer 事件 lume:terminal-data
- *     （输出块可能高频，不经通用 sidecar:event 总线，避免唤醒无关订阅者）。
+ *  2. sidecar terminal:data / terminal:exit 通知 → main→renderer 事件
+ *     lume:terminal-data / lume:terminal-exit（输出块可能高频，不经通用
+ *     sidecar:event 总线，避免唤醒无关订阅者）。
  *
  * 载荷校验在 sidecar 桥（zod）承担；本层只做形状防御，坏载荷静默丢弃。
  */
@@ -14,6 +15,7 @@ import {
   TERMINAL_IPC_CHANNELS,
   TERMINAL_SIDECAR_METHODS,
   type TerminalDataEvent,
+  type TerminalExitEvent,
 } from '@lume/shared'
 
 export interface TerminalRelayOptions {
@@ -51,11 +53,20 @@ export function createTerminalRelay(options: TerminalRelayOptions): TerminalRela
     },
 
     handleSidecarNotification(method, params) {
-      if (method !== TERMINAL_SIDECAR_METHODS.data) return false
-      const event = params as TerminalDataEvent | null
-      if (!event || typeof event.id !== 'string' || typeof event.data !== 'string') return true
-      options.emitEvent(TERMINAL_IPC_CHANNELS.data, event)
-      return true
+      if (method === TERMINAL_SIDECAR_METHODS.data) {
+        const event = params as TerminalDataEvent | null
+        if (!event || typeof event.id !== 'string' || typeof event.data !== 'string') return true
+        options.emitEvent(TERMINAL_IPC_CHANNELS.data, event)
+        return true
+      }
+      if (method === TERMINAL_SIDECAR_METHODS.exit) {
+        const event = params as TerminalExitEvent | null
+        if (!event || typeof event.id !== 'string') return true
+        const exitCode = typeof event.exitCode === 'number' ? event.exitCode : null
+        options.emitEvent(TERMINAL_IPC_CHANNELS.exit, { id: event.id, exitCode })
+        return true
+      }
+      return false
     },
   }
 }

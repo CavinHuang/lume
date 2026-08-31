@@ -132,9 +132,10 @@ export const ALLOWED_RENDERER_EVENT_CHANNELS = new Set([
   'lume:browser-view-suspend',
   'lume:browser-view-restore',
   'lume:open-browser-url',
-  // 右侧面板终端 tab：sidecar terminal:data 通知经 terminal-bridge.ts 中继为
-  // 专用事件（高频输出不进 sidecar:event 通用总线）。
+  // 右侧面板终端 tab：sidecar terminal:data / terminal:exit 通知经
+  // terminal-bridge.ts 中继为专用事件（高频输出不进 sidecar:event 通用总线）。
   'lume:terminal-data',
+  'lume:terminal-exit',
   // 右侧面板 Git 状态 tab：git-watcher.ts fs.watch 工作区变更 60s 防抖后通知
   // GitPanel 递增 revision 刷新（60s 轮询保留兜底）。
   'lume:browser-git-dirty',
