@@ -1,5 +1,6 @@
 import { createFileTreeRevealRequest, settleFileTreeReveal } from '@/components/right-panel/right-panel-files-state'
 import { useState, useCallback, useMemo, useEffect, useRef } from 'react'
+import { createPendingAttachmentsFromFiles } from './editor-attachment-paste'
 import { useAtomValue, useSetAtom } from 'jotai'
 import {
   agentStreamingStatesFamily,
@@ -121,6 +122,20 @@ export function AgentView({
       toast.error(`${attachment.filename}：${pendingAttachmentRejectionMessage(reason)}`)
     })
   }, [])
+
+  // 白板「加入聊天」(ZCode composer tse 监听同型):暂存 PNG 附件进输入框。
+  useEffect(() => {
+    const handler = (event: Event): void => {
+      const detail = (event as CustomEvent<{ file: File; handled: boolean }>).detail
+      if (!detail || !(detail.file instanceof File)) return
+      detail.handled = true
+      void createPendingAttachmentsFromFiles([detail.file]).then((attachments) => {
+        addPendingAttachments(attachments as PendingMessageAttachment[])
+      })
+    }
+    window.addEventListener('lume:add-whiteboard-to-chat', handler)
+    return () => window.removeEventListener('lume:add-whiteboard-to-chat', handler)
+  }, [addPendingAttachments])
 
   const removePendingAttachment = useCallback((id: string) => {
     const removed = pendingAttachmentsRef.current.find((attachment) => attachment.id === id)

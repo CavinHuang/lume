@@ -5,7 +5,7 @@
  * 导出 PNG。偏差(ZCode「加入聊天」= composer PNG 附件 CustomEvent):Lume
  * composer 尚无附件暂存通道,先落地为 PNG 文件下载,接通道后切换。
  */
-import { Download, Eraser, PenTool, Redo2, Trash2, Undo2 } from 'lucide-react'
+import { Download, Eraser, MessageSquarePlus, PenTool, Redo2, Trash2, Undo2 } from 'lucide-react'
 import { useCallback, useMemo, useState, useSyncExternalStore } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -47,13 +47,13 @@ export function WhiteboardPanel({ workspaceKey, boardId, onRename }: WhiteboardP
     addWhiteboardStroke(workspaceKey, boardId, stroke)
   }, [boardId, workspaceKey])
 
-  const exportPng = useCallback(() => {
-    if (!board) return
+  const exportPngDataUrl = useCallback((): string | null => {
+    if (!board) return null
     const offscreen = document.createElement('canvas')
     offscreen.width = board.width
     offscreen.height = board.height
     const context = offscreen.getContext('2d')
-    if (!context) return
+    if (!context) return null
     context.fillStyle = '#ffffff'
     context.fillRect(0, 0, board.width, board.height)
     for (const stroke of board.strokes) {
@@ -70,9 +70,28 @@ export function WhiteboardPanel({ workspaceKey, boardId, onRename }: WhiteboardP
       if (stroke.points.length === 1) context.lineTo(first.x + 0.01, first.y)
       context.stroke()
     }
-    const dataUrl = offscreen.toDataURL('image/png')
-    void saveBinaryFileDialog(`${board.name}.png`, dataUrl.slice(dataUrl.indexOf(',') + 1)).catch(() => undefined)
+    return offscreen.toDataURL('image/png')
   }, [board])
+
+  const exportPng = useCallback(() => {
+    const dataUrl = exportPngDataUrl()
+    if (!dataUrl || !board) return
+    void saveBinaryFileDialog(`${board.name}.png`, dataUrl.slice(dataUrl.indexOf(',') + 1)).catch(() => undefined)
+  }, [board, exportPngDataUrl])
+
+  // 加入聊天(ZCode wn:派发 CustomEvent 由 composer 暂存为 PNG 附件);聊天未挂载时回退下载。
+  const addToChat = useCallback(() => {
+    const dataUrl = exportPngDataUrl()
+    if (!dataUrl || !board) return
+    const base64 = dataUrl.slice(dataUrl.indexOf(',') + 1)
+    const binary = atob(base64)
+    const bytes = new Uint8Array(binary.length)
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i)
+    const detail = { file: new File([bytes], `${board.name}.png`, { type: 'image/png' }), handled: false }
+    window.dispatchEvent(new CustomEvent('lume:add-whiteboard-to-chat', { detail }))
+    if (detail.handled) return
+    void saveBinaryFileDialog(`${board.name}.png`, base64).catch(() => undefined)
+  }, [board, exportPngDataUrl])
 
   const canUndo = useMemo(() => (board?.strokes.length ?? 0) > 0, [board?.strokes.length])
   const canRedo = useMemo(() => (board?.undoneStrokes.length ?? 0) > 0, [board?.undoneStrokes.length])
@@ -153,6 +172,9 @@ export function WhiteboardPanel({ workspaceKey, boardId, onRename }: WhiteboardP
         </Button>
         <Button variant="ghost" size="icon-xs" type="button" title="清空" disabled={!canUndo} onClick={() => clearWhiteboardBoard(workspaceKey, boardId)}>
           <Trash2 size={13} />
+        </Button>
+        <Button variant="ghost" size="icon-xs" type="button" title="加入聊天(导出 PNG 附件)" onClick={addToChat}>
+          <MessageSquarePlus size={13} />
         </Button>
         <Button variant="ghost" size="icon-xs" type="button" title="导出 PNG" onClick={exportPng}>
           <Download size={13} />
