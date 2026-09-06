@@ -1,7 +1,7 @@
 /** Execute shell commands with one lifecycle for foreground and background work. */
 
 import { appendFile, mkdir, open, stat, writeFile } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { constants, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { StringDecoder } from 'node:string_decoder'
 import {
@@ -420,7 +420,7 @@ async function startDirectShellTask({
   proc.stderr?.on('data', (chunk: Buffer) => appendOutput('stderr', chunk))
 
   const done = new Promise<ShellTaskResult>((resolve) => {
-    const finish = async (code: number | null, spawnError?: string) => {
+    const finish = async (code: number | null, spawnError?: string, signal?: NodeJS.Signals) => {
       if (settled) return
       settled = true
       context.abortSignal?.removeEventListener('abort', abortHandler)
@@ -433,8 +433,14 @@ async function startDirectShellTask({
       // Flush after the decoder tails land so the last snapshot is complete.
       emitStreamSnapshot.flush()
       await writeChain.catch(() => undefined)
-      const interpretation = interpretShellExit(command, code ?? 1)
-      if (terminationReason === 'completed' && code !== 0 && interpretation.isError) terminationReason = 'nonzero'
+      // #865:POSIX 下 shell 自身被外部 signal 击杀时 close 以 (null, signal) 收尾;
+      // 换算 128+n 落入既有 nonzero 通道,不再被 exit-1 良性词表(no_matches 等)误读为
+      // 成功。自我击杀(abort/timeout/output_limit)已在 stop() 前置改写 terminationReason,
+      // 此处不触碰,保持其展示与元数据不变。
+      const signalNumber = terminationReason === 'completed' && signal ? constants.signals[signal] : undefined
+      const exitCode = code ?? (signalNumber !== undefined ? 128 + signalNumber : null)
+      const interpretation = interpretShellExit(command, exitCode ?? 1)
+      if (terminationReason === 'completed' && exitCode !== 0 && interpretation.isError) terminationReason = 'nonzero'
       if (spawnError) terminationReason = 'spawn_error'
       const stdoutStats = stdoutAccumulator.snapshot()
       const stderrStats = stderrAccumulator.snapshot()
@@ -449,15 +455,15 @@ async function startDirectShellTask({
         outputBytes,
         stdoutPreview,
         stderrPreview,
-        code,
+        code: exitCode,
         startedAt,
         terminationReason,
       })
       const firstLine = terminationReason === 'completed'
         ? (interpretation.semanticOutcome === 'no_matches'
           ? 'Command completed: no matches found (exit code 1).'
-          : `Command completed successfully (exit code ${code ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
-        : `Command terminated (${terminationReason}${code !== null ? `, exit code ${code}` : ''}).`
+          : `Command completed successfully (exit code ${exitCode ?? 0}${stdoutPreview || stderrPreview ? '' : ', no output'}).`)
+        : `Command terminated (${terminationReason}${exitCode !== null ? `, exit code ${exitCode}` : ''}).`
       const footer = truncationFooter(stdoutStats, stderrStats, outputFile)
       // #573④:验证用途的大输出附失败摘要,模型不必在 10 万字符里翻失败清单
       const verificationDigest = purpose?.toLowerCase() === 'verification'
@@ -473,8 +479,8 @@ async function startDirectShellTask({
           ...(verificationDigest.length > 0 ? [`failure digest:\n${verificationDigest.map((line) => `- ${line}`).join('\n')}`] : []),
           ...(footer ? [footer] : []),
         ],
-        code !== 0 && code !== null
-          ? `Bash failed (${shellType}, exit code ${code}): ${interpretation.message}`
+        exitCode !== 0 && exitCode !== null
+          ? `Bash failed (${shellType}, exit code ${exitCode}): ${interpretation.message}`
           : undefined,
         { outputFile, footer },
       )
@@ -483,7 +489,7 @@ async function startDirectShellTask({
       completeBackgroundTask(result)
       resolve(result)
     }
-    proc.once('close', (code) => { void finish(code) })
+    proc.once('close', (code, signal) => { void finish(code, undefined, signal ?? undefined) })
     proc.once('error', (error) => { void finish(null, error.message) })
   })
 

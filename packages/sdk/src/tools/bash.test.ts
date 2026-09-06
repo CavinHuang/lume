@@ -256,6 +256,34 @@ describe("BashTool shell invocation", () => {
     expect(result.content).toContain("No matches found");
   }, 15_000);
 
+  // #865:POSIX 下 shell 自身被 signal 击杀时 close 以 (null, signal) 收尾,
+  // 不得被 exit-1 良性词表误读为成功;换算 128+n 走既有 nonzero 通道。
+  test.skipIf(process.platform === "win32")("reports a signal-killed shell command as failure with a 128+n exit code", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-signal-"));
+    const result = await BashTool.call({ command: "kill -9 $$", timeout: 10_000 }, { cwd: root });
+    expect(result.is_error).toBeTrue();
+    expect(result.content).toContain("Command terminated (nonzero, exit code 137)");
+    expect(result._meta?.execution).toMatchObject({
+      version: 2,
+      outcome: "failed",
+      exitCode: 137,
+      terminationReason: "nonzero",
+    });
+  }, 15_000);
+
+  test.skipIf(process.platform === "win32")("does not report a signal-killed grep-shaped command as a no-match success", async () => {
+    const root = await mkdtemp(join(tmpdir(), "lume-bash-signal-grep-"));
+    const result = await BashTool.call({ command: "trap 'kill -9 $$' EXIT; grep foo bar", timeout: 10_000 }, { cwd: root });
+    expect(result.is_error).toBeTrue();
+    expect(result.content).not.toContain("Command completed");
+    expect(result._meta?.execution).toMatchObject({
+      version: 2,
+      outcome: "failed",
+      exitCode: 137,
+      terminationReason: "nonzero",
+    });
+  }, 15_000);
+
   test("recognizes PowerShell Select-String no-match as a semantic result", () => {
     expect(interpretShellExit("bun test | Select-String error", 1)).toEqual({
       isError: false,
