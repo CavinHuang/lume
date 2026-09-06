@@ -52,6 +52,8 @@ export function tryAcquireAutomationLease(input: {
   const dir = runtimeDir(input.jobId);
   mkdirSync(dir, { recursive: true });
   const lockPath = join(dir, "lease.lock");
+  // 冲突时读得的 state；恢复重取成功后据此保留已合并的待执行触发（#866）
+  let recoveredState: AutomationRuntimeState | null = null;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
       const fd = openSync(lockPath, "wx");
@@ -74,6 +76,9 @@ export function tryAcquireAutomationLease(input: {
             runId: input.runId,
             heartbeatAt: Date.now()
           },
+          ...(recoveredState?.pendingScheduledAt
+            ? { pendingScheduledAt: recoveredState.pendingScheduledAt }
+            : {}),
           updatedAt: Date.now()
         });
       } catch (error) {
@@ -89,27 +94,41 @@ export function tryAcquireAutomationLease(input: {
       return lease;
     } catch {
       const state = readAutomationRuntimeState(input.jobId);
-      if (!isStaleRunningLease(state)) return null;
-      try {
-        writeState({
-          ...state!,
-          status: "interrupted",
-          message: "Sidecar 重启或 lease 心跳超时；未知副作用不会自动重放。",
-          lease: undefined,
-          updatedAt: Date.now()
-        });
-      } catch (error) {
-        // 盘满下自愈写失败：放弃本周期，不得向外抛（fire-and-forget 调用链）
-        log.warn("stale lease 自愈写失败，放弃本周期", {
-          jobId: input.jobId,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        try { rmSync(lockPath, { force: true }); } catch { /* ignore */ }
-        return null;
-      }
-      try {
-        rmSync(lockPath, { force: true });
-      } catch {
+      recoveredState = state;
+      if (isStaleRunningLease(state)) {
+        try {
+          writeState({
+            ...state!,
+            status: "interrupted",
+            message: "Sidecar 重启或 lease 心跳超时；未知副作用不会自动重放。",
+            lease: undefined,
+            updatedAt: Date.now()
+          });
+        } catch (error) {
+          // 盘满下自愈写失败：放弃本周期，不得向外抛（fire-and-forget 调用链）
+          log.warn("stale lease 自愈写失败，放弃本周期", {
+            jobId: input.jobId,
+            error: error instanceof Error ? error.message : String(error)
+          });
+          try { rmSync(lockPath, { force: true }); } catch { /* ignore */ }
+          return null;
+        }
+        try {
+          rmSync(lockPath, { force: true });
+        } catch {
+          return null;
+        }
+      } else if (isOrphanLockState(state)) {
+        // #866:锁在而 state 缺失/损坏/终态 = 崩溃窗口或 rm 失败遗留的孤儿。
+        // 不写 state（终态保留原样，缺失无可写），只清锁后本调用内重取——
+        // 延迟到下个触发会困在合并触发机制里直到下个完整调度周期。
+        try {
+          rmSync(lockPath, { force: true });
+        } catch {
+          return null;
+        }
+      } else {
+        // 活跃 running（心跳新鲜）与 waiting_*（#587 交互保留，心跳冻结是设计内）必须让路
         return null;
       }
     }
@@ -153,8 +172,8 @@ export function finishAutomationLease(
       rmSync(join(runtimeDir(lease.jobId), "lease.lock"), { force: true });
     } catch (error) {
       // rm 抛错（Windows EPERM）会向上传播打断 executeJob 收尾链、连 run 记录都丢；
-      // 孤儿锁由下次 tryAcquire 的 stale 自愈路径回收（round12 磁盘格式 review）
-      log.warn("清理 lease.lock 失败，交由 stale 自愈回收", {
+      // 此时 state 已是终态，孤儿锁由下次 tryAcquire 的孤儿回收路径清理（#866；round12 磁盘格式 review）
+      log.warn("清理 lease.lock 失败，交由孤儿回收", {
         jobId: lease.jobId,
         error: error instanceof Error ? error.message : String(error)
       });
@@ -221,7 +240,16 @@ export function recoverAutomationRuntimeStates(): AutomationRuntimeState[] {
 
 function recoverSingleState(entry: { name: string }, states: AutomationRuntimeState[]): void {
   const state = readAutomationRuntimeState(entry.name);
-  if (!state) return;
+  if (!state) {
+    // #866:state 缺失/损坏而 lease.lock 在 = 崩溃孤儿，启动即清，不等首个触发
+    //（终态+锁留待 tryAcquire 回收）；rm 失败由外层 per-entry 兜底记录
+    const lockPath = join(runtimeDir(entry.name), "lease.lock");
+    if (existsSync(lockPath)) {
+      rmSync(lockPath, { force: true });
+      log.warn("回收孤儿 lease.lock（state 缺失）", { jobId: entry.name });
+    }
+    return;
+  }
   if (isStaleRunningLease(state)) {
     const interrupted: AutomationRuntimeState = {
       ...state,
@@ -258,6 +286,17 @@ export function isStaleRunningLease(state: AutomationRuntimeState | null): boole
     state?.status === "running"
     && state.lease
     && Date.now() - state.lease.heartbeatAt > STALE_LEASE_MS
+  );
+}
+
+// #866:锁在而 state 缺失/损坏或为终态 = 崩溃窗口或 rm 失败遗留的孤儿。
+// 活跃判定只认 running 与 waiting_*；waiting_* 心跳冻结是 #587 设计内
+// （交互收尾依赖 status+lease），任意年龄都不得回收，故用补集白名单。
+function isOrphanLockState(state: AutomationRuntimeState | null): boolean {
+  return !state || (
+    state.status !== "running"
+    && state.status !== "waiting_for_user"
+    && state.status !== "waiting_for_approval"
   );
 }
 
