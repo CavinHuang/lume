@@ -557,7 +557,7 @@ function LogLine({ line, showRawJson, onSelectTrace }: { line: LogLineEntryExt; 
     writeClipboardText(text).then(() => {
       setCopied(true)
       setTimeout(() => setCopied(false), 1500)
-    }).catch(() => {})
+    }).catch(() => toast.error('复制日志失败'))
   }
 
   const displayText = showRawJson && line.rawJson ? line.rawJson : line.text
