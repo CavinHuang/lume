@@ -118,30 +118,47 @@ export function wrapToolDefinitionWithRuntimePolicies(input: ToolRuntimeWrapInpu
         if (leaseHeartbeat) clearInterval(leaseHeartbeat);
         lease?.();
       };
-      const fileGuard = await enforceFileAccessPolicy(input, rawInput, context.toolUseId);
-      if (fileGuard) {
+      // #871：守卫与 tool_started 事件宿主位于既有 try/finally 之前，任一抛出
+      // （如 ledger 对竞态删除文件的 stat/readFile）都会让 lease 与 heartbeat
+      // 双双滞留——heartbeat 持续刷新会击穿 lease 自身 TTL 看门狗，同 workspace
+      // 后续写类调用永久挂起。此处兜底释放后原样上抛，不改变异常传播语义。
+      try {
+        const fileGuard = await enforceFileAccessPolicy(input, rawInput, context.toolUseId);
+        if (fileGuard) {
+          releaseLease();
+          log.warn("tool call blocked by file access policy", {
+            threadId: input.threadId,
+            toolName: tool.name,
+            canonicalName: descriptor.canonicalName,
+            toolUseId: context.toolUseId,
+            elapsedMs: Date.now() - startedAt
+          });
+          return fileGuard;
+        }
+
+        context.emitEvent?.({
+          type: "system",
+          subtype: "tool_started",
+          canonical_name: descriptor.canonicalName,
+          source: descriptor.source,
+          risk_level: descriptor.metadata.riskLevel,
+          tool_name: tool.name,
+          tool_use_id: context.toolUseId ?? "",
+          input_summary: inputSummary,
+          session_id: context.sessionId ?? input.threadId
+        } as any);
+      } catch (error) {
         releaseLease();
-        log.warn("tool call blocked by file access policy", {
+        log.error("tool runtime guard failed before tool.call", {
           threadId: input.threadId,
           toolName: tool.name,
           canonicalName: descriptor.canonicalName,
           toolUseId: context.toolUseId,
+          error,
           elapsedMs: Date.now() - startedAt
         });
-        return fileGuard;
+        throw error;
       }
-
-      context.emitEvent?.({
-        type: "system",
-        subtype: "tool_started",
-        canonical_name: descriptor.canonicalName,
-        source: descriptor.source,
-        risk_level: descriptor.metadata.riskLevel,
-        tool_name: tool.name,
-        tool_use_id: context.toolUseId ?? "",
-        input_summary: inputSummary,
-        session_id: context.sessionId ?? input.threadId
-      } as any);
 
       let result: ToolResult = errorResult(context.toolUseId, `${tool.name} 未返回结果`);
       const backgroundLease = lease && descriptor.canonicalName === "bash"

@@ -810,4 +810,76 @@ describe("wrapToolDefinitionWithRuntimePolicies", () => {
     // 底层调用随后完成时不再影响已返回的结果
     finish?.({ type: "tool_result", tool_use_id: "", content: "late" });
   });
+
+  // #871：文件守卫（ledger 对竞态删除文件的 stat/readFile）抛错后 lease 必须
+  // 释放，否则 heartbeat 击穿 TTL 看门狗，同 workspace 后续写类调用永久挂起
+  test("releases the writer lease when the file access guard throws (#871)", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const filePath = join(root, "note.txt");
+    await writeFile(filePath, "before", "utf-8");
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-guard-throw",
+      cwd: root,
+      // 竞态形状：assertCanOverwrite 内 stat/readFile 抛出（如文件被删）
+      fileLedger: {
+        recordRead() {},
+        async assertCanOverwrite() {
+          throw new Error("ENOENT: no such file or directory, stat");
+        },
+        clearThread() {}
+      }
+    });
+
+    // 异常传播语义与修复前一致：原样穿出，不转 governed error result
+    await expect(
+      writeTool.call({ file_path: filePath }, { cwd: root, toolUseId: "tool-guard" })
+    ).rejects.toThrow("ENOENT");
+
+    // lease 已释放：同 workspace 的下一次写类调用不被前序 promise 挂死
+    await expect(
+      writeTool.call({ file_path: join(root, "new.txt") }, { cwd: root, toolUseId: "tool-next" })
+    ).resolves.toMatchObject({ content: "written" });
+  });
+
+  // #871 同类窗口：tool_started 事件宿主同步抛出也必须释放写 lease
+  test("releases the writer lease when emitEvent throws synchronously (#871)", async () => {
+    const root = join(tmpdir(), `lume-wrapper-${crypto.randomUUID()}`);
+    await mkdir(root, { recursive: true });
+    const writeTool = wrapToolDefinitionWithRuntimePolicies({
+      descriptor: descriptor("Write", {
+        name: "Write",
+        description: "write",
+        inputSchema: { type: "object", properties: {} },
+        async call() {
+          return { type: "tool_result", tool_use_id: "", content: "written" };
+        }
+      }),
+      threadId: "thread-event-throw",
+      cwd: root,
+      fileLedger: createFileAccessLedger()
+    });
+
+    await expect(
+      writeTool.call({ file_path: join(root, "new.txt") }, {
+        cwd: root,
+        toolUseId: "tool-event",
+        emitEvent: () => {
+          throw new Error("event host boom");
+        }
+      })
+    ).rejects.toThrow("event host boom");
+
+    await expect(
+      writeTool.call({ file_path: join(root, "next.txt") }, { cwd: root, toolUseId: "tool-event-next" })
+    ).resolves.toMatchObject({ content: "written" });
+  });
 });
